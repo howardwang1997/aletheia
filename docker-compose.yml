@@ -1,0 +1,23 @@
+# Local infra for Aletheia. Postgres + pgvector is the experiment-ledger /
+# work-log backbone (and, from Phase 2, the semantic-recall store).
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: aletheia-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: aletheia
+      POSTGRES_PASSWORD: aletheia
+      POSTGRES_DB: aletheia
+    ports:
+      - "5432:5432"
+    volumes:
+      - aletheia_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aletheia -d aletheia"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  aletheia_pgdata:

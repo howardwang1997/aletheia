@@ -1,0 +1,33 @@
+# Critic Gateway roster. The default panel runs ALL configured vendors on every
+# critique pass, each producing a supportive AND an adversarial stance.
+# Always pin to the latest model generation per vendor (no outdated models).
+#
+# transport: "api" (default) or "cli" (subprocess, e.g. OpenAI Codex). Only opt
+# into "cli" where a sanctioned subscription exists; "api" is the reliable default.
+
+panel:
+  - id: openai
+    enabled: true
+    transport: api
+    model: gpt-5.5            # latest OpenAI
+  - id: gemini
+    enabled: true
+    transport: api
+    model: gemini-latest      # resolve to the newest Gemini at call time
+  - id: deepseek
+    enabled: true
+    transport: api
+    model: deepseek-chat      # latest DeepSeek (OpenAI-compatible API)
+    base_url: https://api.deepseek.com
+  - id: zhipu
+    enabled: true
+    transport: api
+    model: glm-latest         # latest Zhipu GLM
+    base_url: https://open.bigmodel.cn/api/paas/v4
+
+# Gate policy: how the per-vendor verdicts combine into CritiquePanel.gate_passed.
+consensus:
+  # "any_blocker" -> gate fails if any vendor returns a `blocker` finding.
+  # "majority"    -> gate passes if a majority verdict is approve/approve_with_changes.
+  rule: any_blocker
+  max_design_iterations: 3

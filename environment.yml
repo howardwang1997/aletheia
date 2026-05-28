@@ -1,0 +1,34 @@
+name: aletheia
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      # --- agent runtime ---
+      - claude-agent-sdk
+      - anthropic
+      # --- cross-vendor critics (Phase 1+) ---
+      - openai
+      - google-genai
+      - zhipuai
+      # --- backend ---
+      - fastapi
+      - "uvicorn[standard]"
+      - sse-starlette
+      - "pydantic>=2"
+      - pydantic-settings
+      - "SQLAlchemy>=2"
+      - alembic
+      - "psycopg[binary]>=3"
+      - pgvector
+      - python-dotenv
+      - PyYAML
+      - httpx
+      - tenacity
+      # --- dev ---
+      - pytest
+      - pytest-asyncio
+      - ruff
+# Phase 1 (materials) — add when reaching the MVP domain plugin:
+#   conda install -n aletheia -c conda-forge rdkit pymatgen matminer matbench scikit-learn pandas numpy mp-api
