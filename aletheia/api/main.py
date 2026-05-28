@@ -7,8 +7,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from aletheia.api import events_sse, runs
+from aletheia.api import events_sse, runs, sessions
 from aletheia.db import create_all
+from aletheia.orchestrator.session import get_session_manager
 
 
 @asynccontextmanager
@@ -16,6 +17,8 @@ async def lifespan(app: FastAPI):
     # Phase 0 convenience: ensure tables exist. Alembic owns migrations later.
     create_all()
     yield
+    # Shut down any live conversation sessions cleanly.
+    await get_session_manager().close_all()
 
 
 app = FastAPI(title="Aletheia", version="0.0.1", lifespan=lifespan)
@@ -29,6 +32,7 @@ app.add_middleware(
 )
 
 app.include_router(runs.router)
+app.include_router(sessions.router)
 app.include_router(events_sse.router)
 
 

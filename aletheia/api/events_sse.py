@@ -22,6 +22,10 @@ async def events(request: Request, run_id: str | None = None):
                 break
             if run_id and evt.get("run_id") != run_id:
                 continue
-            yield {"event": evt.get("type", "message"), "data": json.dumps(evt, default=str)}
+            # Emit UNNAMED frames (default "message" event) so the browser's
+            # EventSource.onmessage fires. The event type lives inside the JSON
+            # payload (read as e.type on the client). Naming the SSE event here
+            # would route frames to addEventListener(type) and bypass onmessage.
+            yield {"data": json.dumps(evt, default=str)}
 
     return EventSourceResponse(gen())

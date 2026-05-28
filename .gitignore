@@ -223,5 +223,7 @@ __marimo__/
 # frontend
 /frontend/node_modules/
 /frontend/.next/
+# the Python `lib/` rule above also matches frontend/lib — keep our TS source
+!frontend/lib/
 # local infra / logs
 *.log
