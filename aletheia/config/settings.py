@@ -110,6 +110,10 @@ class Settings(BaseSettings):
     feishu_webhook_url: str | None = Field(default=None, alias="FEISHU_WEBHOOK_URL")
     mp_api_key: str | None = Field(default=None, alias="MP_API_KEY")
 
+    # --- per-vendor endpoint overrides (OpenAI-compatible critics) ---
+    zhipu_base_url: str | None = Field(default=None, alias="ZHIPU_BASE_URL")
+    deepseek_base_url: str | None = Field(default=None, alias="DEEPSEEK_BASE_URL")
+
     @property
     def critics(self) -> CriticsConfig:
         return CriticsConfig.load()
@@ -120,6 +124,14 @@ class Settings(BaseSettings):
             "gemini": self.google_api_key,
             "deepseek": self.deepseek_api_key,
             "zhipu": self.zhipu_api_key,
+        }.get(vendor_id)
+
+    def vendor_base_url(self, vendor_id: str) -> str | None:
+        """Env override for an OpenAI-compatible vendor's endpoint (else None ->
+        the provider falls back to the base_url in critics.yaml)."""
+        return {
+            "zhipu": self.zhipu_base_url,
+            "deepseek": self.deepseek_base_url,
         }.get(vendor_id)
 
 

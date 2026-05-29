@@ -25,7 +25,13 @@ def test_registry_resolves_every_vendor():
     assert _PROVIDERS["zhipu"]["api"] is ZhipuAPIProvider
 
 
-def test_gateway_instantiates_distinct_vendor_models():
+def test_gateway_instantiates_distinct_vendor_models(monkeypatch):
+    import aletheia.critics.gateway as gw_mod
+
+    # pretend every vendor's key is present so _providers resolves all three
+    monkeypatch.setattr(
+        gw_mod, "get_settings", lambda: types.SimpleNamespace(vendor_key=lambda _id: "k")
+    )
     cfg = CriticsConfig(
         panel=[
             CriticConfig(id="openai", transport="api", model="gpt-5.5"),
@@ -39,6 +45,25 @@ def test_gateway_instantiates_distinct_vendor_models():
     provs = CriticGateway(cfg)._providers()
     assert [p.critic_id for p in provs] == ["openai", "gemini", "deepseek"]
     assert isinstance(provs[2], DeepSeekAPIProvider)
+
+
+def test_unkeyed_vendors_are_skipped(monkeypatch):
+    import aletheia.critics.gateway as gw_mod
+
+    # only openai-cli is usable (Coding-Plan login, no key); api vendors lack keys
+    monkeypatch.setattr(
+        gw_mod, "get_settings", lambda: types.SimpleNamespace(vendor_key=lambda _id: None)
+    )
+    cfg = CriticsConfig(
+        panel=[
+            CriticConfig(id="openai", transport="cli", model="gpt-5.5"),
+            CriticConfig(id="gemini", transport="api", model="gemini-latest"),
+            CriticConfig(id="deepseek", transport="api", model="deepseek-chat",
+                         base_url="https://api.deepseek.com"),
+        ]
+    )
+    provs = CriticGateway(cfg)._providers()
+    assert [p.critic_id for p in provs] == ["openai"]  # unkeyed api vendors skipped
 
 
 def test_openai_compatible_requires_key(monkeypatch):
@@ -75,7 +100,9 @@ def test_openai_compatible_builds_client_with_key_and_base_url(monkeypatch):
     fake_openai = types.ModuleType("openai")
     fake_openai.OpenAI = _FakeClient
     monkeypatch.setitem(sys.modules, "openai", fake_openai)
-    fake_settings = types.SimpleNamespace(vendor_key=lambda _id: "sk-zhipu")
+    fake_settings = types.SimpleNamespace(
+        vendor_key=lambda _id: "sk-zhipu", vendor_base_url=lambda _id: None
+    )
     monkeypatch.setattr(mod, "get_settings", lambda: fake_settings)
 
     prov = ZhipuAPIProvider(

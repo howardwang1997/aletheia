@@ -105,6 +105,15 @@ class CriticGateway:
     def __init__(self, config: CriticsConfig | None = None) -> None:
         self.config = config or get_settings().critics
 
+    def _has_credentials(self, c: Any) -> bool:
+        """A vendor is usable only if its credentials are present. OpenAI via the
+        Codex CLI uses the Coding-Plan login (no key); everything else needs a key.
+        This lets enabled-but-unkeyed vendors be skipped gracefully (e.g. run
+        OpenAI-only until Gemini/DeepSeek keys are configured) instead of crashing."""
+        if c.id == "openai" and c.transport == "cli":
+            return True
+        return bool(get_settings().vendor_key(c.id))
+
     def _providers(self) -> list[CriticProvider]:
         providers: list[CriticProvider] = []
         for c in self.config.active:
@@ -112,7 +121,7 @@ class CriticGateway:
             if not impls:
                 continue
             cls = impls.get(c.transport)
-            if cls is None:
+            if cls is None or not self._has_credentials(c):
                 continue
             providers.append(cls(c))
         return providers

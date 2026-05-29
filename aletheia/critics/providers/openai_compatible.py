@@ -31,11 +31,13 @@ class OpenAICompatibleProvider(CriticProvider):
                 f"No API key for vendor '{self.critic_id}' "
                 f"(set the corresponding *_API_KEY for critic transport 'api')."
             )
-        if not self.config.base_url:
+        base_url = settings.vendor_base_url(self.critic_id) or self.config.base_url
+        if not base_url:
             raise RuntimeError(
-                f"base_url is required for OpenAI-compatible vendor '{self.critic_id}'."
+                f"base_url is required for OpenAI-compatible vendor '{self.critic_id}' "
+                f"(set it in critics.yaml or {self.critic_id.upper()}_BASE_URL)."
             )
-        client = OpenAI(api_key=key, base_url=self.config.base_url)
+        client = OpenAI(api_key=key, base_url=base_url)
         # JSON mode is the portable structured-output path across OpenAI-compatible
         # endpoints; the instruction already asks for the JSON schema by field.
         resp = client.chat.completions.create(
