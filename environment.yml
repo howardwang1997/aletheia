@@ -1,0 +1,44 @@
+name: aletheia
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  # --- materials / scientific stack (conda-forge ships prebuilt wheels; avoids
+  #     source builds. NB: the `matbench` PyPI package pins an ancient scikit-learn
+  #     that won't build on py3.11 — we load the same expt_gap data via matminer
+  #     and do our own fixed-seed split instead.) ---
+  - numpy
+  - pandas
+  - scikit-learn
+  - matplotlib              # parity plots / artifacts
+  - pymatgen                # Composition parsing
+  - matminer                # Magpie composition featurizer + expt_gap dataset loader
+  - pip:
+      # --- agent runtime ---
+      - claude-agent-sdk
+      - anthropic
+      # --- cross-vendor critics (Phase 1+) ---
+      - openai
+      - google-genai
+      - zhipuai
+      # --- backend ---
+      - fastapi
+      - "uvicorn[standard]"
+      - sse-starlette
+      - python-multipart        # FastAPI file uploads (dataset registration)
+      - "pydantic>=2"
+      - pydantic-settings
+      - "SQLAlchemy>=2"
+      - alembic
+      - "psycopg[binary]>=3"
+      - pgvector
+      - python-dotenv
+      - PyYAML
+      - httpx
+      - tenacity
+      - mp-api                  # Materials Project (optional, needs MP_API_KEY)
+      # --- dev ---
+      - pytest
+      - pytest-asyncio
+      - ruff

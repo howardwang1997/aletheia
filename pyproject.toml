@@ -1,0 +1,27 @@
+[project]
+name = "aletheia"
+version = "0.0.1"
+description = "Autonomous AI Scientist — a lights-out research lab built on the Claude Agent SDK"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [{ name = "howardwang1997" }]
+
+# Dependencies are managed via conda (environment.yml). This file exists so the
+# `aletheia` package is importable/installable in-place: `pip install -e .`
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["aletheia*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
