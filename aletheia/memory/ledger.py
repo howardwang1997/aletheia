@@ -11,7 +11,18 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Index, String, Text, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -216,6 +227,56 @@ class MemoryChunk(Base):
     embedding: Mapped[list[float]] = mapped_column(Vector(_EMBED_DIM))
     meta_json: Mapped[dict | None] = mapped_column(JSONB)
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# --- platform IAM: who may operate the lab -------------------------------
+AUTH_PROVIDERS = ("local", "github", "feishu", "phone")
+USER_ROLES = ("owner", "operator", "viewer")
+
+
+class User(Base):
+    """A human operator of the platform. One user may have several linked logins
+    (local password, GitHub, Feishu, phone) — see Identity."""
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    display_name: Mapped[str | None] = mapped_column(String(128))
+    email: Mapped[str | None] = mapped_column(String(256), index=True)
+    role: Mapped[str] = mapped_column(String(16), default="owner")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Identity(Base):
+    """A login method bound to a user. ``subject`` is the provider-scoped id
+    (local: email; github: user id; feishu: open_id; phone: E.164). ``secret_hash``
+    holds the pbkdf2 password for the local provider; null for OAuth/phone."""
+
+    __tablename__ = "identities"
+    __table_args__ = (UniqueConstraint("provider", "subject", name="uq_identity_provider_subject"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(16))
+    subject: Mapped[str] = mapped_column(String(256))
+    secret_hash: Mapped[str | None] = mapped_column(Text)
+    meta_json: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AuthSession(Base):
+    """A server-side session. The cookie carries an opaque token; only its sha256
+    is stored here, so sessions are revocable and the raw token never persists."""
+
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Event(Base):

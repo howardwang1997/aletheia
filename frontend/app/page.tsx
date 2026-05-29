@@ -1,11 +1,20 @@
 "use client";
 
 import { Activity } from "@/components/Activity";
+import { AuthGate } from "@/components/AuthGate";
 import { Conversation } from "@/components/Conversation";
 import { DataPanel } from "@/components/DataPanel";
 import { useSession } from "@/lib/useSession";
 
 export default function Home() {
+  return (
+    <AuthGate>
+      <Lab />
+    </AuthGate>
+  );
+}
+
+function Lab() {
   const s = useSession();
   return (
     <main className="app">
