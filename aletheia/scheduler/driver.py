@@ -141,7 +141,12 @@ class ExperimentDriver:
         # 5) review_results gate ---------------------------------------------
         rpanel = await self.gateway.review(
             "results",
-            {"design": design, "metrics": result.get("metrics"), "analysis": analysis},
+            {
+                "design": design,
+                "metrics": result.get("metrics"),
+                "eval_summary": (result.get("info") or {}).get("eval_summary", ""),
+                "analysis": analysis,
+            },
             exp_id or self.run_id,
             run_id=self.run_id,
             dry_run=self.dry_run,
@@ -263,15 +268,23 @@ class ExperimentDriver:
 
     async def _analyze(self, design, result, exp_id) -> str:
         metrics = result.get("metrics", {})
+        eval_summary = (result.get("info") or {}).get("eval_summary", "")
         prompt = (
-            "Interpret these regression results. Note whether they look sound, any "
-            "overfitting/leakage risk, and what to try next.\n\n"
-            f"DESIGN: {json.dumps(design)}\nMETRICS: {json.dumps(metrics)}"
+            "Interpret these regression results. The HEADLINE metric is "
+            "leave-chemical-system-out MAE (GroupKFold) — the honest generalization "
+            "number; the random holdout is optimistic by comparison. Note whether the "
+            "result beats the baselines, any overfitting/leakage risk, the gap-range "
+            "error pattern, and what to try next.\n\n"
+            f"DESIGN: {json.dumps(design)}\nMETRICS: {json.dumps(metrics)}\n"
+            f"EVAL PROTOCOL SUMMARY: {eval_summary}"
         )
         text = await reason_stage(
             self.run_id, "analysis", prompt,
             dry_run=self.dry_run,
-            dry_text=f"[dry-run] Analysis: MAE={metrics.get('mae')}, R2={metrics.get('r2')}; no obvious leakage.",
+            dry_text=(
+                f"[dry-run] Analysis: LCSO MAE={metrics.get('mae_lcso')} (headline), "
+                f"holdout MAE={metrics.get('mae_holdout')}; beats baselines; no obvious leakage."
+            ),
         )
         return text
 
@@ -305,10 +318,15 @@ class ExperimentDriver:
 
     async def _write_up(self, plan, design, result, analysis, rpanel, exp_id) -> None:
         metrics = result.get("metrics", {})
+        eval_summary = (result.get("info") or {}).get("eval_summary", "")
         prompt = (
             "Write a concise (≤300 words) experiment report in markdown with sections "
-            "Objective, Method, Results, Critic Review, Conclusion.\n\n"
+            "Objective, Method, Results, Critic Review, Conclusion. In Results, lead "
+            "with the leave-chemical-system-out MAE (the honest headline), then give the "
+            "RepeatedKFold mean±std and the baseline comparison, and note the gap-range "
+            "error breakdown. Do not present the random-holdout number as the headline.\n\n"
             f"PLAN: {json.dumps(plan)}\nDESIGN: {json.dumps(design)}\nMETRICS: {json.dumps(metrics)}\n"
+            f"EVAL PROTOCOL SUMMARY: {eval_summary}\n"
             f"ANALYSIS: {analysis}\nCRITIC: {rpanel.consensus_verdict}"
         )
         report = await reason_stage(
@@ -317,10 +335,14 @@ class ExperimentDriver:
             dry_text=(
                 f"# Experiment Report (dry-run)\n\n"
                 f"**Objective:** {plan.get('objective', 'n/a')}\n\n"
-                f"**Method:** {design.get('model')} on Magpie composition features.\n\n"
-                f"**Results:** MAE={metrics.get('mae')}, R2={metrics.get('r2')}, RMSE={metrics.get('rmse')}.\n\n"
+                f"**Method:** {design.get('model')} on Magpie composition features; "
+                f"leave-chemical-system-out GroupKFold (headline) + RepeatedKFold 5x5 + baselines.\n\n"
+                f"**Results:** LCSO MAE={metrics.get('mae_lcso')} eV, R²={metrics.get('r2_lcso')} "
+                f"(headline); RepeatedKFold MAE={metrics.get('mae_cv_mean')}±{metrics.get('mae_cv_std')}; "
+                f"holdout MAE={metrics.get('mae_holdout')}, RMSE={metrics.get('rmse_holdout')}.\n\n"
+                f"**Eval protocol:** {eval_summary}\n\n"
                 f"**Critic Review:** {rpanel.consensus_verdict}.\n\n"
-                f"**Conclusion:** Pipeline ran end-to-end; see metrics."
+                f"**Conclusion:** Pipeline ran end-to-end under a leakage-aware protocol; see metrics."
             ),
         )
         path = run_artifacts_dir(self.run_id) / "report.md"

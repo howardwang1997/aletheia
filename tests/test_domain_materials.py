@@ -33,18 +33,32 @@ def test_materials_plugin_trains_and_scores(tmp_path):
         "random_state": 0,
     }
 
-    X, y, feature_names = plug.featurize(df, design)
+    X, y, feature_names, groups = plug.featurize(df, design)
     assert len(feature_names) > 100  # Magpie ~132 descriptors
     assert len(X) == len(y) == len(df)  # all toy compositions featurize cleanly
+    assert len(groups) == len(df)  # one chemical-system key per row
+    assert "Ga-N" in set(groups)  # GaN -> chemical system Ga-N
 
-    result = plug.train_evaluate(X, y, design, tmp_path)
-    assert set(result.metrics) == {"mae", "r2", "rmse"}
+    result = plug.train_evaluate(X, y, design, tmp_path, groups=groups)
+    # headline aliases + explicit protocol metrics are all present
+    assert {
+        "mae", "r2", "rmse",
+        "mae_lcso", "r2_lcso", "rmse_lcso", "mae_cv_mean", "mae_cv_std", "r2_cv_mean",
+        "mae_holdout", "r2_holdout", "rmse_holdout",
+    } <= set(result.metrics)
+    # the headline triple shares one (LCSO) provenance — internally consistent
+    assert result.metrics["mae"] == result.metrics["mae_lcso"]
+    assert result.metrics["r2"] == result.metrics["r2_lcso"]
+    assert result.metrics["rmse"] == result.metrics["rmse_lcso"]
     assert isinstance(result.metrics["mae"], float)
     assert result.metrics["mae"] >= 0.0
-    # model + parity plot artifacts written to the workdir
+    assert result.metrics["mae_cv_std"] >= 0.0
+    # model + eval-panel artifacts written to the workdir
     kinds = {a["kind"] for a in result.artifacts}
-    assert "model" in kinds
+    assert {"model", "eval"} <= kinds
     assert (tmp_path / "model.joblib").exists()
+    assert (tmp_path / "eval.json").exists()
+    assert "eval_summary" in result.info and "LCSO" in result.info["eval_summary"]
     assert result.info["n_test"] >= 1
 
 
