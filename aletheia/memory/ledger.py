@@ -33,6 +33,8 @@ STAGES = (
     "write_up",
     "archive",
 )
+DATA_SOURCES = ("benchmark", "upload", "api")  # how a dataset is connected
+DATA_STATUSES = ("needed", "ready", "error")  # readiness gate vocab
 
 
 class Run(Base):
@@ -144,6 +146,32 @@ class ComputeJob(Base):
     status: Mapped[str] = mapped_column(String(32), default="queued")
     resources_json: Mapped[dict | None] = mapped_column(JSONB)
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DataAsset(Base):
+    """A dataset connected to a run — the human's "connect data pipelines" role.
+
+    Two ways it appears (both converge on status="ready", which the launch gate checks):
+      - pull: Aletheia calls the `request_data` tool during scoping -> status="needed",
+        requested_by="agent"; the human then satisfies it.
+      - push: the human registers/uploads data up front -> profiled and seeded into
+        the scoping conversation so Aletheia plans against the real columns/target.
+    """
+
+    __tablename__ = "data_assets"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    source: Mapped[str] = mapped_column(String(16))  # benchmark | upload | api
+    ref: Mapped[str | None] = mapped_column(Text)  # benchmark name | file path | api dataset id
+    target_column: Mapped[str | None] = mapped_column(String(128))
+    feature_kind: Mapped[str | None] = mapped_column(String(32))  # e.g. "composition"
+    description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="needed")  # needed | ready | error
+    uri: Mapped[str | None] = mapped_column(Text)  # stored path for uploads
+    profile_json: Mapped[dict | None] = mapped_column(JSONB)  # columns/dtypes/n_rows/stats
+    requested_by: Mapped[str] = mapped_column(String(16), default="human")  # agent | human
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Event(Base):

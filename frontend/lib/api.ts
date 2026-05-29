@@ -57,6 +57,80 @@ export async function interruptSession(runId: string) {
   await fetch(`${API_BASE}/sessions/${runId}/interrupt`, { method: "POST" });
 }
 
+// --- datasets (the human's connect-data step) ---
+
+export interface DatasetAsset {
+  id: string;
+  source: string;
+  ref?: string | null;
+  status: string;
+  target_column?: string | null;
+  description?: string | null;
+  profile?: Record<string, unknown> | null;
+  requested_by?: string;
+}
+
+export async function listDatasets(runId: string) {
+  const res = await fetch(`${API_BASE}/runs/${runId}/datasets`);
+  if (!res.ok) throw new Error(`listDatasets failed: ${res.status}`);
+  return (await res.json()) as DatasetAsset[];
+}
+
+export async function uploadDataset(
+  runId: string,
+  file: File,
+  opts: { target_column?: string; description?: string; asset_id?: string } = {},
+) {
+  const form = new FormData();
+  form.append("file", file);
+  if (opts.target_column) form.append("target_column", opts.target_column);
+  if (opts.description) form.append("description", opts.description);
+  if (opts.asset_id) form.append("asset_id", opts.asset_id);
+  const res = await fetch(`${API_BASE}/runs/${runId}/datasets/upload`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) throw new Error(`uploadDataset failed: ${res.status}`);
+  return await res.json();
+}
+
+export async function satisfyDataset(runId: string, assetId: string) {
+  const res = await fetch(`${API_BASE}/runs/${runId}/datasets/${assetId}/ready`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error(`satisfyDataset failed: ${res.status}`);
+  return await res.json();
+}
+
+// --- launch / resume the autonomous loop ---
+
+export async function launchRun(runId: string, dryRun: boolean | null = null) {
+  const res = await fetch(`${API_BASE}/runs/${runId}/launch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dry_run: dryRun }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(
+      res.status === 409
+        ? `data not ready: ${JSON.stringify((body.detail || {}).pending || [])}`
+        : `launchRun failed: ${res.status}`,
+    );
+  }
+  return (await res.json()) as { run_id: string; status: string; mode: string };
+}
+
+export async function resumeRun(runId: string, dryRun: boolean | null = null) {
+  const res = await fetch(`${API_BASE}/runs/${runId}/resume`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dry_run: dryRun }),
+  });
+  if (!res.ok) throw new Error(`resumeRun failed: ${res.status}`);
+  return await res.json();
+}
+
 export function subscribeEvents(
   onEvent: (e: LabEvent) => void,
   runId?: string,

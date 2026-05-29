@@ -23,7 +23,12 @@ from aletheia.events.normalizer import normalize_message
 from aletheia.memory.service import finalize_plan
 from aletheia.orchestrator.auth import configure_auth, has_credentials
 from aletheia.orchestrator.gate import build_tool_gate
-from aletheia.orchestrator.tools import build_finalize_goal_tool, build_memory_tool
+from aletheia.orchestrator.tools import (
+    build_finalize_goal_tool,
+    build_inspect_dataset_tool,
+    build_memory_tool,
+    build_request_data_tool,
+)
 
 SCOPING_PROMPT = (
     "You are Aletheia, an autonomous AI scientist, in the SCOPING phase with your "
@@ -36,15 +41,26 @@ SCOPING_PROMPT = (
     "purchasable data; constraints; compute budget; what success looks like).\n"
     "- Be concise and concrete. Propose 1-2 candidate directions when useful, with trade-offs.\n"
     "- Use the `memory_log` tool to jot key decisions as they are made.\n"
+    "- DATA: Aletheia runs on data the human connects. Two cases:\n"
+    "  (a) If the user has NOT provided data, call `request_data` to declare what you "
+    "need (a public benchmark by name, an uploaded file, or a keyed API source). The "
+    "human satisfies it before launch.\n"
+    "  (b) If the user HAS provided data, call `inspect_dataset` to read its real "
+    "columns/target and design against them — never guess column names.\n"
     "- When — and ONLY when — the user has confirmed the objective and the essentials "
     "are clear, call `finalize_goal` exactly once with a complete, concrete experiment "
     "plan (objective, domain, direction, hypothesis, dataset, method, baselines, metrics, "
     "success_criteria, risks, est_compute). Then briefly summarize and stop.\n"
-    "- You may ONLY converse and use the `memory_log` and `finalize_goal` tools. You "
-    "cannot run code, browse, or read files in this phase."
+    "- You may ONLY converse and use the `memory_log`, `request_data`, `inspect_dataset`, "
+    "and `finalize_goal` tools. You cannot run code, browse, or read files in this phase."
 )
 
-ALLOWLIST = {"mcp__aletheia__memory_log", "mcp__aletheia__finalize_goal"}
+ALLOWLIST = {
+    "mcp__aletheia__memory_log",
+    "mcp__aletheia__finalize_goal",
+    "mcp__aletheia__request_data",
+    "mcp__aletheia__inspect_dataset",
+}
 
 
 class ConversationSession:
@@ -110,7 +126,12 @@ class ConversationSession:
         server = create_sdk_mcp_server(
             name="aletheia",
             version="0.0.1",
-            tools=[build_memory_tool(self.run_id), build_finalize_goal_tool(self.run_id)],
+            tools=[
+                build_memory_tool(self.run_id),
+                build_finalize_goal_tool(self.run_id),
+                build_request_data_tool(self.run_id),
+                build_inspect_dataset_tool(self.run_id),
+            ],
         )
         options = ClaudeAgentOptions(
             model=settings.claude_model,

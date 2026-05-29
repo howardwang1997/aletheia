@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from aletheia.api import events_sse, runs, sessions
+from aletheia.api import datasets, events_sse, runs, sessions
 from aletheia.db import create_all
 from aletheia.orchestrator.session import get_session_manager
 
@@ -33,6 +33,7 @@ app.add_middleware(
 
 app.include_router(runs.router)
 app.include_router(sessions.router)
+app.include_router(datasets.router)
 app.include_router(events_sse.router)
 
 

@@ -5,22 +5,26 @@
 # transport: "api" (default) or "cli" (subprocess, e.g. OpenAI Codex). Only opt
 # into "cli" where a sanctioned subscription exists; "api" is the reliable default.
 
+# Phase 1: only OpenAI/GPT-5.5 is wired (single-vendor gate). Default transport
+# "cli" runs it on the OpenAI Coding Plan via the Codex CLI (no API key); switch
+# to "api" to bill OPENAI_API_KEY instead. The other three vendors are enabled in
+# Phase 2 once their providers land (panel then runs all four every pass).
 panel:
   - id: openai
     enabled: true
-    transport: api
+    transport: cli            # Codex CLI on the Coding Plan (api = OPENAI_API_KEY)
     model: gpt-5.5            # latest OpenAI
   - id: gemini
-    enabled: true
+    enabled: false            # Phase 2
     transport: api
     model: gemini-latest      # resolve to the newest Gemini at call time
   - id: deepseek
-    enabled: true
+    enabled: false            # Phase 2
     transport: api
     model: deepseek-chat      # latest DeepSeek (OpenAI-compatible API)
     base_url: https://api.deepseek.com
   - id: zhipu
-    enabled: true
+    enabled: false            # Phase 2
     transport: api
     model: glm-latest         # latest Zhipu GLM
     base_url: https://open.bigmodel.cn/api/paas/v4

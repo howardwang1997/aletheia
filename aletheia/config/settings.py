@@ -69,11 +69,16 @@ class Settings(BaseSettings):
     claude_auth_mode: Literal["subscription", "api_key"] = "subscription"
     claude_model: str = "claude-opus-4-7"
 
+    # --- Codex CLI (critic transport "cli": GPT-5.5 on the OpenAI Coding Plan) ---
+    codex_command: str = "codex"
+    codex_timeout_s: float = 240.0
+
     # --- budget guardrails (per run) ---
     budget_usd: float = 20.0
     budget_gpu_hours: float = 4.0
     max_concurrent_jobs: int = 2
     wall_clock_hours: float = 24.0
+    est_stage_cost_usd: float = 0.10  # estimated cost charged per Opus reasoning stage
 
     # --- vendor keys (read without the ALETHEIA_ prefix) ---
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
