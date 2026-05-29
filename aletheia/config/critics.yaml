@@ -5,33 +5,46 @@
 # transport: "api" (default) or "cli" (subprocess, e.g. OpenAI Codex). Only opt
 # into "cli" where a sanctioned subscription exists; "api" is the reliable default.
 
-# Phase 1: only OpenAI/GPT-5.5 is wired (single-vendor gate). Default transport
-# "cli" runs it on the OpenAI Coding Plan via the Codex CLI (no API key); switch
-# to "api" to bill OPENAI_API_KEY instead. The other three vendors are enabled in
-# Phase 2 once their providers land (panel then runs all four every pass).
+# Phase 2: cross-model peer-review panel. Each gate fans out to several DISTINCT
+# vendor models (no same-model self-play), each reviewing in an isolated context,
+# then rebutting over dynamic rounds (see `rounds`) to a rule-based consensus.
+# Default panel = OpenAI + Gemini + DeepSeek (3 distinct models); Zhipu is an
+# available spare. Always pin to the latest generation per vendor.
 panel:
   - id: openai
     enabled: true
     transport: cli            # Codex CLI on the Coding Plan (api = OPENAI_API_KEY)
     model: gpt-5.5            # latest OpenAI
   - id: gemini
-    enabled: false            # Phase 2
+    enabled: true
     transport: api
     model: gemini-latest      # resolve to the newest Gemini at call time
   - id: deepseek
-    enabled: false            # Phase 2
+    enabled: true
     transport: api
     model: deepseek-chat      # latest DeepSeek (OpenAI-compatible API)
     base_url: https://api.deepseek.com
   - id: zhipu
-    enabled: false            # Phase 2
+    enabled: false            # available spare (key present); flip on for a 4th model
     transport: api
     model: glm-latest         # latest Zhipu GLM
     base_url: https://open.bigmodel.cn/api/paas/v4
 
-# Gate policy: how the per-vendor verdicts combine into CritiquePanel.gate_passed.
+# Gate policy: how the per-model verdicts combine into CritiquePanel.gate_passed.
 consensus:
-  # "any_blocker" -> gate fails if any vendor returns a `blocker` finding.
+  # "any_blocker" -> gate fails if any reviewer returns an unrefuted `blocker`.
   # "majority"    -> gate passes if a majority verdict is approve/approve_with_changes.
   rule: any_blocker
   max_design_iterations: 3
+
+# Dynamic, disagreement-driven rebuttal depth. Important gates (design/results) can
+# run up to N rounds; rounds early-stop once reviewers converge (disagreement below
+# the threshold). Minor targets resolve in a single round.
+rounds:
+  dynamic: true
+  disagreement_threshold: 0.34   # fraction of reviewers dissenting -> run another round
+  importance:
+    design: 5
+    results: 5
+    direction: 1
+    default: 1

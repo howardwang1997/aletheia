@@ -104,6 +104,8 @@ button:hover { border-color: var(--accent); }
 .t-tool_use .k, .t-memory_log .k { color: var(--yellow); }
 .t-tool_result .k, .t-result .k, .t-goal_finalized .k { color: var(--green); }
 .t-error .k, .t-tool_denied .k { color: var(--red); }
+.t-critique_round .k, .t-critique_panel .k { color: var(--accent); }
+.v-rounds { color: var(--muted); font-size: 11px; }
 
 .plan-card { margin: 12px; padding: 10px; border: 1px solid var(--green); border-radius: 8px; background: rgba(63,185,80,0.06); }
 .plan-title { color: var(--green); margin-bottom: 8px; font-weight: 600; }

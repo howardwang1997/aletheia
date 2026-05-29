@@ -35,9 +35,29 @@ class ConsensusConfig(BaseModel):
     max_design_iterations: int = 3
 
 
+class RoundsConfig(BaseModel):
+    """Dynamic peer-review rebuttal depth.
+
+    ``importance`` maps a gate target (design/results/direction) to the MAX number of
+    rounds; ``default`` covers anything unlisted. When ``dynamic`` is on, rounds run
+    only while reviewer disagreement exceeds ``disagreement_threshold`` (fraction of
+    reviewers dissenting from the majority verdict), early-stopping on convergence.
+    """
+
+    dynamic: bool = True
+    disagreement_threshold: float = 0.34
+    importance: dict[str, int] = Field(
+        default_factory=lambda: {"design": 5, "results": 5, "direction": 1, "default": 1}
+    )
+
+    def max_rounds(self, target: str) -> int:
+        return int(self.importance.get(target, self.importance.get("default", 1)))
+
+
 class CriticsConfig(BaseModel):
     panel: list[CriticConfig] = Field(default_factory=list)
     consensus: ConsensusConfig = Field(default_factory=ConsensusConfig)
+    rounds: RoundsConfig = Field(default_factory=RoundsConfig)
 
     @classmethod
     def load(cls, path: Path = CRITICS_YAML) -> "CriticsConfig":

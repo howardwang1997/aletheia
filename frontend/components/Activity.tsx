@@ -71,7 +71,9 @@ function line(e: LabEvent): string {
     case "compute_status":
       return `🧮 job ${p.job_id ?? ""}: ${p.status ?? ""}${p.metrics ? ` ${JSON.stringify(p.metrics)}` : ""}`;
     case "critique_panel":
-      return `⚖ ${p.target}: ${p.consensus_verdict} (gate ${p.gate_passed ? "✓" : "✗"})`;
+      return `⚖ ${p.target}: ${p.consensus_verdict} (gate ${p.gate_passed ? "✓" : "✗"}${p.rounds ? `, ${p.rounds} round${p.rounds > 1 ? "s" : ""}` : ""})`;
+    case "critique_round":
+      return `🔁 ${p.target} round ${p.round}/${p.max_rounds} — disagreement ${p.disagreement}`;
     case "optimize":
       return `🔧 kept ${p.kept} (MAE ${p.mae})`;
     case "budget":
@@ -143,6 +145,7 @@ function Verdicts({ critiques }: { critiques: any[] }) {
             <span className={c.gate_passed ? "gate-ok" : "gate-no"}>
               gate {c.gate_passed ? "passed" : "failed"}
             </span>
+            {c.rounds ? <span className="v-rounds"> · {c.rounds} round{c.rounds > 1 ? "s" : ""}</span> : null}
           </div>
           {(c.critiques ?? []).map((cc: any, j: number) => (
             <div key={j} className="v-sub">
