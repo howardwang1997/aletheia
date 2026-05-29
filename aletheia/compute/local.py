@@ -83,16 +83,16 @@ class LocalBackend(ComputeBackend):
             # mirror the real protocol so the dashboard/report render the full panel;
             # headline mae/r2 = the (pessimistic) leave-chemical-system-out numbers.
             metrics = {
-                "mae": 0.63, "r2": 0.41, "rmse": 0.61,
-                "mae_lcso": 0.63, "r2_lcso": 0.41,
+                "mae": 0.63, "r2": 0.41, "rmse": 0.84,
+                "mae_lcso": 0.63, "r2_lcso": 0.41, "rmse_lcso": 0.84,
                 "mae_cv_mean": 0.49, "mae_cv_std": 0.03, "r2_cv_mean": 0.65,
                 "mae_holdout": 0.49, "r2_holdout": 0.65, "rmse_holdout": 0.61,
             }
             info = {
                 "dry_run": True,
                 "eval_summary": (
-                    "LCSO(GroupKFold) MAE 0.630 eV, R² 0.410 (HEADLINE) | "
-                    "RepeatedKFold 5x5 MAE 0.490±0.030 | random holdout MAE 0.490, RMSE 0.610 | "
+                    "LCSO(GroupKFold) MAE 0.630 eV, R² 0.410, RMSE 0.840 (HEADLINE, all same split) | "
+                    "RepeatedKFold 5x5 MAE 0.490±0.030 | random holdout MAE 0.490 (comparison only) | "
                     "baselines(LCSO MAE): dummy_mean 1.100, ridge 0.850, knn 0.780, gbm 0.610, "
                     "random_forest 0.630 | errors by gap: metal~0 n=10 MAE=0.20; [0.5,2) n=8 MAE=0.55"
                 ),

@@ -110,7 +110,7 @@ class MaterialsBandGapPlugin(DomainPlugin):
 
         # 2. leave-chemical-system-out (GroupKFold) -> HEADLINE
         lcso = self._lcso_scores(self._make_model(design), X, y_arr, groups)
-        mae_lcso, r2_lcso = lcso["mae"], lcso["r2"]
+        mae_lcso, r2_lcso, rmse_lcso = lcso["mae"], lcso["r2"], lcso["rmse"]
 
         # 3. single random holdout -> comparison + parity plot + stratification source
         X_tr, X_te, y_tr, y_te = train_test_split(
@@ -162,7 +162,7 @@ class MaterialsBandGapPlugin(DomainPlugin):
             },
             "headline": {"metric": "mae_lcso", "value": mae_lcso},
             "splits": {
-                "lcso_groupkfold": {"mae": mae_lcso, "r2": r2_lcso},
+                "lcso_groupkfold": {"mae": mae_lcso, "r2": r2_lcso, "rmse": rmse_lcso},
                 "repeated_kfold_5x5": {
                     "mae_mean": mae_cv_mean, "mae_std": mae_cv_std, "r2_mean": r2_cv_mean,
                 },
@@ -180,13 +180,15 @@ class MaterialsBandGapPlugin(DomainPlugin):
 
         metrics = {
             # headline aliases (OPTIMIZE compares + the report leads with these) =
-            # the honest leave-chemical-system-out numbers, not the optimistic holdout
+            # the honest leave-chemical-system-out numbers, not the optimistic holdout.
+            # All three share LCSO provenance so the headline triple is consistent.
             "mae": mae_lcso,
             "r2": r2_lcso,
-            "rmse": rmse_holdout,
+            "rmse": rmse_lcso,
             # explicit protocol metrics (each persisted as its own ledger row)
             "mae_lcso": mae_lcso,
             "r2_lcso": r2_lcso,
+            "rmse_lcso": rmse_lcso,
             "mae_cv_mean": mae_cv_mean,
             "mae_cv_std": mae_cv_std,
             "r2_cv_mean": r2_cv_mean,
@@ -214,7 +216,7 @@ class MaterialsBandGapPlugin(DomainPlugin):
         Falls back to plain KFold when no usable grouping is available.
         """
         import numpy as np
-        from sklearn.metrics import mean_absolute_error, r2_score
+        from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
         from sklearn.model_selection import GroupKFold, KFold, cross_val_predict
 
         n_groups = int(len(np.unique(groups))) if groups is not None else len(y)
@@ -228,6 +230,7 @@ class MaterialsBandGapPlugin(DomainPlugin):
         return {
             "mae": float(mean_absolute_error(y, oof)),
             "r2": float(r2_score(y, oof)),
+            "rmse": float(mean_squared_error(y, oof) ** 0.5),
             "n_groups": n_groups,
             "n_splits": n_splits,
         }
@@ -272,9 +275,10 @@ class MaterialsBandGapPlugin(DomainPlugin):
             if r["mae"] is not None
         )
         return (
-            f"LCSO(GroupKFold) MAE {lc['mae']:.3f} eV, R² {lc['r2']:.3f} (HEADLINE) | "
+            f"LCSO(GroupKFold) MAE {lc['mae']:.3f} eV, R² {lc['r2']:.3f}, "
+            f"RMSE {lc['rmse']:.3f} (HEADLINE, all same split) | "
             f"RepeatedKFold 5x5 MAE {rk['mae_mean']:.3f}±{rk['mae_std']:.3f} | "
-            f"random holdout MAE {ho['mae']:.3f}, RMSE {ho['rmse']:.3f} | "
+            f"random holdout MAE {ho['mae']:.3f} (comparison only) | "
             f"baselines(LCSO MAE): {bl_str} | errors by gap: {gap_str}"
         )
 

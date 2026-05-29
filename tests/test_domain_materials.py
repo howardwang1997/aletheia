@@ -43,10 +43,13 @@ def test_materials_plugin_trains_and_scores(tmp_path):
     # headline aliases + explicit protocol metrics are all present
     assert {
         "mae", "r2", "rmse",
-        "mae_lcso", "r2_lcso", "mae_cv_mean", "mae_cv_std", "r2_cv_mean",
+        "mae_lcso", "r2_lcso", "rmse_lcso", "mae_cv_mean", "mae_cv_std", "r2_cv_mean",
         "mae_holdout", "r2_holdout", "rmse_holdout",
     } <= set(result.metrics)
-    assert result.metrics["mae"] == result.metrics["mae_lcso"]  # headline = honest LCSO
+    # the headline triple shares one (LCSO) provenance — internally consistent
+    assert result.metrics["mae"] == result.metrics["mae_lcso"]
+    assert result.metrics["r2"] == result.metrics["r2_lcso"]
+    assert result.metrics["rmse"] == result.metrics["rmse_lcso"]
     assert isinstance(result.metrics["mae"], float)
     assert result.metrics["mae"] >= 0.0
     assert result.metrics["mae_cv_std"] >= 0.0
