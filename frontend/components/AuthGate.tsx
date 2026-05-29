@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import {
   AuthProviders,
   AuthUser,
@@ -12,6 +12,12 @@ import {
   phoneRequest,
   phoneVerify,
 } from "@/lib/api";
+
+const AuthContext = createContext<AuthUser | null>(null);
+// the signed-in user (null only while the gate hasn't mounted children)
+export const useAuthUser = () => useContext(AuthContext);
+// viewers are read-only; owner/operator may control the lab
+export const useCanControl = () => useContext(AuthContext)?.role !== "viewer";
 
 // Wraps the app: until the session resolves to a user, the lab is not mounted
 // (so it never fires authenticated requests while logged out).
@@ -28,7 +34,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   if (!user) return <Login providers={providers} onAuthed={() => getMe().then(setUser)} />;
 
   return (
-    <>
+    <AuthContext.Provider value={user}>
       <div className="auth-bar">
         <span className="auth-who">
           {user.display_name || user.email || "user"} · <em>{user.role}</em>
@@ -44,7 +50,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         </button>
       </div>
       {children}
-    </>
+    </AuthContext.Provider>
   );
 }
 

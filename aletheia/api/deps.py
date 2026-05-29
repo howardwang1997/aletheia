@@ -23,8 +23,30 @@ def _token_from(request: Request) -> str | None:
     return request.query_params.get("token")
 
 
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+_CONTROL_ROLES = {"owner", "operator"}
+
+
 async def require_user(request: Request) -> dict[str, Any]:
+    """Any authenticated user. Use for read-only endpoints."""
     user = await asyncio.to_thread(auth_session.validate, _token_from(request))
     if user is None:
         raise HTTPException(status_code=401, detail="not authenticated")
+    return user
+
+
+async def require_access(request: Request) -> dict[str, Any]:
+    """Method-aware gate: any authenticated user may read (GET/HEAD/OPTIONS);
+    only owner/operator may mutate. Viewers are read-only."""
+    user = await require_user(request)
+    if request.method not in _SAFE_METHODS and user["role"] not in _CONTROL_ROLES:
+        raise HTTPException(status_code=403, detail="read-only role: this action requires operator")
+    return user
+
+
+async def require_owner(request: Request) -> dict[str, Any]:
+    """Owner only — user/role administration."""
+    user = await require_user(request)
+    if user["role"] != "owner":
+        raise HTTPException(status_code=403, detail="owner only")
     return user

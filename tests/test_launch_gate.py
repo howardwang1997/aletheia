@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from aletheia.api.deps import require_user
+from aletheia.api.deps import require_access
 from aletheia.api.main import app
 from aletheia.data.registry import register_dataset
 from aletheia.db import create_all
@@ -14,8 +14,9 @@ from aletheia.memory.service import create_run, finalize_plan
 
 @pytest.fixture(autouse=True)
 def _bypass_auth():
-    """These tests exercise the launch gate, not auth — stand in an owner."""
-    app.dependency_overrides[require_user] = lambda: {"id": "test", "role": "owner"}
+    """These tests exercise the launch gate, not auth — stand in an owner.
+    The gated routers depend on require_access, so override that."""
+    app.dependency_overrides[require_access] = lambda: {"id": "test", "role": "owner"}
     yield
     app.dependency_overrides.clear()
 

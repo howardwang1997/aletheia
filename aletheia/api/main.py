@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from aletheia.api import auth, datasets, events_sse, runs, sessions
-from aletheia.api.deps import require_user
+from aletheia.api.deps import require_access
 from aletheia.auth.users import bootstrap_owner
 from aletheia.db import create_all
 from aletheia.orchestrator.session import get_session_manager
@@ -35,7 +35,8 @@ app.add_middleware(
 )
 
 # /auth is open (it issues the session); everything else requires a valid session.
-_protected = [Depends(require_user)]
+# require_access reads for any role, restricts mutations to owner/operator.
+_protected = [Depends(require_access)]
 app.include_router(auth.router)
 app.include_router(runs.router, dependencies=_protected)
 app.include_router(sessions.router, dependencies=_protected)

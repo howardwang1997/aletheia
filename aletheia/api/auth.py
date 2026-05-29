@@ -10,11 +10,16 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
-from aletheia.api.deps import require_user
+from aletheia.api.deps import require_owner, require_user
 from aletheia.auth import session as auth_session
 from aletheia.auth.providers import get_oauth_provider
 from aletheia.auth.providers import phone as phone_provider
-from aletheia.auth.users import authenticate_local, resolve_login
+from aletheia.auth.users import (
+    authenticate_local,
+    list_users,
+    resolve_login,
+    set_user_role,
+)
 from aletheia.config import get_settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -56,6 +61,29 @@ async def providers() -> dict:
 @router.get("/me")
 async def me(user: dict = Depends(require_user)) -> dict:
     return user
+
+
+# --- user/role administration (owner only) --------------------------------
+class RoleBody(BaseModel):
+    role: str
+
+
+@router.get("/users")
+async def users_list(_owner: dict = Depends(require_owner)) -> list[dict]:
+    return await asyncio.to_thread(list_users)
+
+
+@router.post("/users/{user_id}/role")
+async def users_set_role(
+    user_id: str, body: RoleBody, _owner: dict = Depends(require_owner)
+) -> dict:
+    try:
+        ok = await asyncio.to_thread(set_user_role, user_id, body.role)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not ok:
+        raise HTTPException(status_code=404, detail="user not found")
+    return {"ok": True, "user_id": user_id, "role": body.role}
 
 
 @router.post("/login")

@@ -17,6 +17,7 @@ export function DataPanel({
   onConnect,
   onLaunch,
   onResume,
+  canControl = true,
 }: {
   finalized: boolean;
   datasets: DatasetAsset[];
@@ -26,6 +27,7 @@ export function DataPanel({
   onConnect: (body: { source: string; ref?: string; target_column?: string }) => void;
   onLaunch: () => void;
   onResume: () => void;
+  canControl?: boolean;
 }) {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [target, setTarget] = useState("");
@@ -34,7 +36,7 @@ export function DataPanel({
   const [ref, setRef] = useState("");
 
   const allReady = datasets.every((d) => d.status === "ready");
-  const canLaunch = finalized && allReady && !launched;
+  const canLaunch = finalized && allReady && !launched && canControl;
 
   const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -71,7 +73,7 @@ export function DataPanel({
               {d.requested_by === "agent" ? " (requested by Aletheia)" : ""}
             </span>
             <span className="dp-status">{d.status}</span>
-            {d.status !== "ready" && (
+            {d.status !== "ready" && canControl && (
               <button
                 className="dp-satisfy"
                 onClick={() => {
@@ -92,7 +94,7 @@ export function DataPanel({
           value={target}
           onChange={(e) => setTarget(e.target.value)}
         />
-        <button onClick={() => { setPendingAsset(undefined); fileRef.current?.click(); }}>
+        <button disabled={!canControl} onClick={() => { setPendingAsset(undefined); fileRef.current?.click(); }}>
           + upload file
         </button>
         <input ref={fileRef} type="file" accept=".csv,.tsv,.parquet,.json,.jsonl" hidden onChange={onPick} />
@@ -116,7 +118,7 @@ export function DataPanel({
           onChange={(e) => setRef(e.target.value)}
         />
         <button
-          disabled={!ref.trim()}
+          disabled={!ref.trim() || !canControl}
           onClick={() => {
             onConnect({ source, ref: ref.trim(), target_column: target || undefined });
             setRef("");
@@ -132,7 +134,7 @@ export function DataPanel({
             🚀 Launch experiment
           </button>
         ) : paused ? (
-          <button className="launch resume" onClick={onResume}>
+          <button className="launch resume" disabled={!canControl} onClick={onResume}>
             ▶ Resume (paused)
           </button>
         ) : (
