@@ -55,16 +55,19 @@ export function useSession() {
   const [nonce, setNonce] = useState(0);
   const [datasets, setDatasets] = useState<DatasetAsset[]>([]);
   const esRef = useRef<EventSource | null>(null);
+  const runIdRef = useRef<string | null>(null);
 
+  // Stable (no deps) so it never re-triggers the session effect; reads the
+  // current run id from a ref. Always safe to call with an explicit id too.
   const refreshDatasets = useCallback(async (rid?: string) => {
-    const id = rid ?? runId;
+    const id = rid ?? runIdRef.current;
     if (!id) return;
     try {
       setDatasets(await listDatasets(id));
     } catch {
       /* ignore */
     }
-  }, [runId]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,6 +82,7 @@ export function useSession() {
         const { run_id, mode } = await createSession(undefined, dryRun);
         if (cancelled) return;
         setRunId(run_id);
+        runIdRef.current = run_id;
         setMode(mode);
         const es = subscribeEvents((e) => {
           setEvents((prev) => [...prev.slice(-999), e]);
