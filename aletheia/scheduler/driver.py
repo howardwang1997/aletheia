@@ -20,9 +20,12 @@ from aletheia.config import get_settings
 from aletheia.critics.gateway import CriticGateway
 from aletheia.domains.registry import get_domain_plugin
 from aletheia.events.bus import get_bus, make_event
+from aletheia.iam import policy
+from aletheia.iam.github_app import GitHubBackend, RepoResult, get_github_backend
 from aletheia.memory.service import (
     get_run,
     record_artifacts,
+    set_experiment_repo,
     set_run_status,
 )
 from aletheia.memory.vector import format_briefing, index_chunk, recall
@@ -58,6 +61,9 @@ class ExperimentDriver:
         settings = get_settings()
         self.guard = LoopGuard(settings.critics.consensus.max_design_iterations)
         self.budget: BudgetTracker | None = None  # set in _run (cap depends on the run)
+        self.gh: GitHubBackend = get_github_backend(dry_run=dry_run)
+        self.repo: RepoResult | None = None  # set by _iam_setup once a repo exists
+        self.branch: str | None = None  # this experiment's branch
 
     async def _index(self, kind: str, text: str, exp_id: str | None, **meta: Any) -> None:
         """Best-effort: embed a reasoning fragment into the recall store (off-thread)."""
@@ -65,6 +71,73 @@ class ExperimentDriver:
             index_chunk, kind, text,
             run_id=self.run_id, experiment_id=exp_id, meta=meta or None, dry_run=self.dry_run,
         )
+
+    async def _iam_setup(self, plan: dict, domain: str, exp_id: str | None) -> None:
+        """Create (or reuse) this project's repo and the experiment's branch, behind
+        the policy gate. Best-effort: any failure is logged, never breaks the run."""
+        if not exp_id:
+            return
+        try:
+            slug = plan.get("direction") or plan.get("objective") or "experiment"
+            name = policy.repo_name(domain, slug)
+            created_today = await asyncio.to_thread(policy.created_repos_last_24h)
+            verdict = policy.check_repo_create(name, created_today)
+            if not verdict.allow:
+                await get_bus().publish(
+                    make_event("iam", run_id=self.run_id, payload={"op": "repo_denied", "name": name, "reason": verdict.reason})
+                )
+                return
+            repo = await asyncio.to_thread(
+                self.gh.ensure_repo, name,
+                description=str(plan.get("objective", ""))[:200],
+                private=(get_settings().iam_repo_visibility == "private"),
+            )
+            self.repo = repo
+            if repo.created:
+                await get_bus().publish(
+                    make_event("iam_repo_created", run_id=self.run_id, payload={"repo": repo.full_name, "url": repo.html_url})
+                )
+            branch = policy.branch_name(exp_id, plan.get("objective") or "exp")
+            if policy.check_push(repo.name).allow:
+                self.branch = await asyncio.to_thread(self.gh.ensure_branch, repo.full_name, branch)
+            await asyncio.to_thread(set_experiment_repo, exp_id, repo.full_name, self.branch)
+            await get_bus().publish(
+                make_event("iam", run_id=self.run_id, payload={"op": "branch_ready", "repo": repo.full_name, "branch": self.branch, "backend": self.gh.name})
+            )
+        except Exception as exc:  # noqa: BLE001 - IAM is best-effort
+            await get_bus().publish(
+                make_event("iam", run_id=self.run_id, payload={"op": "error", "error": str(exc)})
+            )
+
+    async def _iam_finalize(self, report: str, rpanel, exp_id: str | None) -> None:
+        """Commit the experiment report to its branch and open a PR carrying the
+        critic verdict (PR-per-experiment). Best-effort."""
+        if not (self.repo and self.branch and exp_id):
+            return
+        try:
+            await asyncio.to_thread(
+                self.gh.put_file, self.repo.full_name, "report.md", report,
+                message=f"experiment {exp_id}: report", branch=self.branch,
+            )
+            body = (
+                f"Autonomous experiment `{exp_id}`.\n\n"
+                f"**Critic consensus:** {rpanel.consensus_verdict} "
+                f"(gate {'passed' if rpanel.gate_passed else 'failed'}).\n\n"
+                "Report committed on this branch."
+            )
+            pr = await asyncio.to_thread(
+                self.gh.open_pr, self.repo.full_name,
+                head=self.branch, base="main",
+                title=f"Experiment {exp_id}: {rpanel.consensus_verdict}", body=body,
+            )
+            await asyncio.to_thread(record_artifacts, exp_id, [{"kind": "pr", "uri": pr.html_url}])
+            await get_bus().publish(
+                make_event("iam_pr_opened", run_id=self.run_id, payload={"repo": self.repo.full_name, "url": pr.html_url, "number": pr.number})
+            )
+        except Exception as exc:  # noqa: BLE001 - IAM is best-effort
+            await get_bus().publish(
+                make_event("iam", run_id=self.run_id, payload={"op": "error", "error": str(exc)})
+            )
 
     async def _status(self, state: str, detail: str | None = None) -> None:
         await get_bus().publish(
@@ -142,6 +215,9 @@ class ExperimentDriver:
         design = await self._design_gate(design, plan, plugin, exp_id)
         if design is None:
             return  # rejected past the loop limit -> paused + escalated
+
+        # design approved -> set up the project repo + experiment branch (IAM)
+        await self._iam_setup(plan, domain, exp_id)
 
         # 3) EXECUTION --------------------------------------------------------
         await record_transition(self.run_id, exp_id, "experiment_design", "execution", "design approved; running")
@@ -422,6 +498,8 @@ class ExperimentDriver:
             f"{rpanel.consensus_verdict}.",
             exp_id, mae_lcso=metrics.get("mae_lcso"), model=design.get("model"),
         )
+        # commit the report to the experiment branch + open the PR (IAM)
+        await self._iam_finalize(report, rpanel, exp_id)
 
 
 # --- launch / task tracking ---

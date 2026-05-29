@@ -78,6 +78,12 @@ function line(e: LabEvent): string {
       return `🔁 ${p.target} round ${p.round}/${p.max_rounds} — disagreement ${p.disagreement}`;
     case "optimize":
       return `🔧 kept ${p.kept} (MAE ${p.mae})`;
+    case "iam_repo_created":
+      return `📁 repo ${p.repo ?? ""}`;
+    case "iam_pr_opened":
+      return `🔀 PR #${p.number ?? ""} ${p.repo ?? ""}`;
+    case "iam":
+      return `🔐 ${p.op ?? ""}${p.branch ? ` ${p.branch}` : ""}${p.reason ? ` — ${p.reason}` : ""}${p.error ? ` — ${p.error}` : ""}`;
     case "budget":
       return `💰 +$${p.amount} → $${Number(p.cumulative ?? 0).toFixed(2)} / $${p.cap}`;
     case "budget_breach":

@@ -93,6 +93,19 @@ def finalize_plan(run_id: str, plan: dict[str, Any]) -> str:
         return exp.id
 
 
+def set_experiment_repo(
+    experiment_id: str, code_repo: str | None = None, code_branch: str | None = None
+) -> None:
+    """Record the GitHub repo/branch this experiment lives in (IAM audit trail)."""
+    with session_scope() as s:
+        exp = s.get(Experiment, experiment_id)
+        if exp is not None:
+            if code_repo is not None:
+                exp.code_repo = code_repo
+            if code_branch is not None:
+                exp.code_branch = code_branch
+
+
 def set_run_status(run_id: str, status: str) -> None:
     with session_scope() as s:
         run = s.get(Run, run_id)

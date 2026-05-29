@@ -124,9 +124,44 @@ class Settings(BaseSettings):
     zhipu_base_url: str | None = Field(default=None, alias="ZHIPU_BASE_URL")
     deepseek_base_url: str | None = Field(default=None, alias="DEEPSEEK_BASE_URL")
 
+    # --- GitHub App (IAM: repo-per-project, branch + PR per experiment) ---
+    # A GitHub App (not a PAT) gives the autonomous agent short-lived, fine-grained,
+    # per-repo access with no human seat and central revocation. Repos are created
+    # under the account/org where the App is installed.
+    github_app_id: str | None = Field(default=None, alias="GITHUB_APP_ID")
+    github_app_installation_id: str | None = Field(default=None, alias="GITHUB_APP_INSTALLATION_ID")
+    github_app_private_key: str | None = Field(default=None, alias="GITHUB_APP_PRIVATE_KEY")
+    github_app_private_key_path: str | None = Field(default=None, alias="GITHUB_APP_PRIVATE_KEY_PATH")
+    github_owner: str | None = Field(default=None, alias="GITHUB_OWNER")  # else derived from install
+    github_owner_is_org: bool = Field(default=False, alias="GITHUB_OWNER_IS_ORG")  # org vs personal acct
+
+    # --- IAM policy (irreversible-op guardrails) ---
+    iam_repo_prefix: str = "aletheia"  # repos the agent may touch must start with this
+    iam_repo_visibility: Literal["private", "public"] = "private"
+    iam_create_repo_daily_cap: int = 5  # rate-limit repo creation; never auto-delete
+
     @property
     def critics(self) -> CriticsConfig:
         return CriticsConfig.load()
+
+    @property
+    def github_configured(self) -> bool:
+        return bool(
+            self.github_app_id
+            and self.github_app_installation_id
+            and (self.github_app_private_key or self.github_app_private_key_path)
+        )
+
+    def github_private_key_pem(self) -> str | None:
+        """The App private key PEM — inline value wins, else read from the path."""
+        if self.github_app_private_key:
+            return self.github_app_private_key
+        if self.github_app_private_key_path:
+            from pathlib import Path
+
+            p = Path(self.github_app_private_key_path).expanduser()
+            return p.read_text() if p.exists() else None
+        return None
 
     def vendor_key(self, vendor_id: str) -> str | None:
         return {

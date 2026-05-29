@@ -39,6 +39,7 @@ dependencies:
       - httpx
       - tenacity
       - mp-api                  # Materials Project (optional, needs MP_API_KEY)
+      - githubkit               # GitHub App auth (IAM: repo/branch/PR per experiment)
       # --- dev ---
       - pytest
       - pytest-asyncio
