@@ -37,10 +37,11 @@ def test_dry_run_job_synthesizes_metrics():
     job_id = backend.submit(spec)
     st = backend.status(job_id)
     assert st.status == "done"
-    assert set(st.metrics) == {"mae", "r2", "rmse"}
+    # headline aliases + the leakage-aware protocol keys
+    assert {"mae", "r2", "rmse", "mae_lcso", "mae_cv_mean", "mae_holdout"} <= set(st.metrics)
     # persisted to the ledger
     names = {m["name"] for m in list_metrics(exp_id)}
-    assert {"mae", "r2", "rmse"} <= names
+    assert {"mae", "r2", "rmse", "mae_lcso", "mae_cv_mean"} <= names
 
 
 def test_subprocess_job_trains_offline(tmp_path):

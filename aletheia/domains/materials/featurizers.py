@@ -42,3 +42,15 @@ def magpie_features(df: Any, composition_col: str = "composition") -> tuple[Any,
     work = work.dropna(subset=feature_names, how="any")
     X = work[feature_names]
     return X, feature_names, work
+
+
+def composition_groups(work: Any) -> Any:
+    """Per-row chemical-system grouping key for the featurized frame.
+
+    Each row maps to its chemical system — the sorted set of element symbols, e.g.
+    ``Ga-N`` or ``O-Si`` (pymatgen ``Composition.chemical_system``). Rows sharing a
+    system are kept together across CV folds so leave-chemical-system-out scoring
+    measures real generalization (not interpolation within a known system). Aligned
+    with the rows ``magpie_features`` kept.
+    """
+    return work["_comp_obj"].map(lambda c: c.chemical_system).to_numpy()
