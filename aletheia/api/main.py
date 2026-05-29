@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from aletheia.api import datasets, events_sse, runs, sessions
+from aletheia.api import auth, datasets, events_sse, runs, sessions
+from aletheia.api.deps import require_user
+from aletheia.auth.users import bootstrap_owner
 from aletheia.db import create_all
 from aletheia.orchestrator.session import get_session_manager
 
@@ -16,6 +18,7 @@ from aletheia.orchestrator.session import get_session_manager
 async def lifespan(app: FastAPI):
     # Phase 0 convenience: ensure tables exist. Alembic owns migrations later.
     create_all()
+    bootstrap_owner()  # seed the owner's local login from settings (idempotent)
     yield
     # Shut down any live conversation sessions cleanly.
     await get_session_manager().close_all()
@@ -31,10 +34,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(runs.router)
-app.include_router(sessions.router)
-app.include_router(datasets.router)
-app.include_router(events_sse.router)
+# /auth is open (it issues the session); everything else requires a valid session.
+_protected = [Depends(require_user)]
+app.include_router(auth.router)
+app.include_router(runs.router, dependencies=_protected)
+app.include_router(sessions.router, dependencies=_protected)
+app.include_router(datasets.router, dependencies=_protected)
+app.include_router(events_sse.router, dependencies=_protected)
 
 
 @app.get("/healthz", tags=["meta"])

@@ -154,3 +154,33 @@ button.launch.resume { background: var(--yellow); }
 .gate-no { color: var(--red); }
 .v-sub { color: var(--muted); padding-left: 8px; }
 .report-pre { white-space: pre-wrap; word-break: break-word; font-size: 11px; max-height: 220px; overflow-y: auto; margin: 0; }
+
+/* --- platform auth --- */
+.auth-loading { padding: 40px; color: var(--muted); text-align: center; }
+.auth-bar { display: flex; justify-content: flex-end; align-items: center; gap: 12px;
+  padding: 6px 14px; font-size: 12px; color: var(--muted);
+  border-bottom: 1px solid var(--border); background: var(--panel); }
+.auth-who em { font-style: normal; color: var(--accent); }
+.auth-signout { background: none; border: 1px solid var(--border); color: var(--muted);
+  border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+.auth-signout:hover { color: var(--fg); }
+.auth-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+.auth-card { width: 320px; padding: 28px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--panel); }
+.auth-card h1 { margin: 0 0 4px; }
+.auth-sub { margin: 0 0 18px; color: var(--muted); font-size: 13px; }
+.auth-form { display: flex; flex-direction: column; gap: 8px; }
+.auth-form input, .auth-phone input { padding: 9px 11px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--bg); color: var(--fg); font-size: 13px; }
+.auth-form button { padding: 9px; border: none; border-radius: 8px; background: var(--accent);
+  color: #fff; font-weight: 600; cursor: pointer; }
+.auth-divider { text-align: center; color: var(--muted); font-size: 11px; margin: 14px 0 8px;
+  text-transform: uppercase; letter-spacing: 0.08em; }
+.auth-provider { display: block; text-align: center; padding: 9px; border-radius: 8px;
+  border: 1px solid var(--border); color: var(--fg); text-decoration: none; margin-bottom: 8px; }
+.auth-provider:hover { background: var(--bg); }
+.auth-phone-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.auth-phone-row input { flex: 1; }
+.auth-phone-row button { padding: 0 12px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); color: var(--fg); cursor: pointer; white-space: nowrap; }
+.auth-err { margin-top: 12px; color: var(--red); font-size: 12px; }

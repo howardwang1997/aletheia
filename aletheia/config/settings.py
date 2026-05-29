@@ -140,6 +140,28 @@ class Settings(BaseSettings):
     iam_repo_visibility: Literal["private", "public"] = "private"
     iam_create_repo_daily_cap: int = 5  # rate-limit repo creation; never auto-delete
 
+    # --- platform IAM: session auth for the dashboard/API ---
+    app_base_url: str = "http://localhost:8000"  # backend (OAuth redirect target)
+    frontend_base_url: str = "http://localhost:3000"  # where to send the user post-login
+    auth_session_ttl_hours: int = 720  # 30 days
+    auth_cookie_name: str = "aletheia_session"
+    auth_cookie_secure: bool = False  # set true behind HTTPS in prod
+    auth_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
+    # owner bootstrap: a local-password account seeded on first boot
+    owner_email: str | None = Field(default=None, alias="ALETHEIA_OWNER_EMAIL")
+    owner_password: str | None = Field(default=None, alias="ALETHEIA_OWNER_PASSWORD")
+    # OAuth / phone provider credentials (real flows enabled when present)
+    github_oauth_client_id: str | None = Field(default=None, alias="GITHUB_OAUTH_CLIENT_ID")
+    github_oauth_client_secret: str | None = Field(default=None, alias="GITHUB_OAUTH_CLIENT_SECRET")
+    feishu_app_id: str | None = Field(default=None, alias="FEISHU_APP_ID")
+    feishu_app_secret: str | None = Field(default=None, alias="FEISHU_APP_SECRET")
+    phone_otp_dev_mode: bool = True  # emit the OTP to logs instead of sending SMS
+    sms_webhook_url: str | None = Field(default=None, alias="SMS_WEBHOOK_URL")
+    # who may sign in via a not-yet-linked identity (email or phone, comma-sep).
+    # empty => only the bootstrapped owner + already-linked identities + the very
+    # first user may sign in (no open self-registration for a personal lab).
+    auth_allowed_logins: str | None = Field(default=None, alias="ALETHEIA_ALLOWED_LOGINS")
+
     @property
     def critics(self) -> CriticsConfig:
         return CriticsConfig.load()
@@ -151,6 +173,24 @@ class Settings(BaseSettings):
             and self.github_app_installation_id
             and (self.github_app_private_key or self.github_app_private_key_path)
         )
+
+    @property
+    def allowed_logins_set(self) -> set[str]:
+        raw = self.auth_allowed_logins or ""
+        return {x.strip().lower() for x in raw.split(",") if x.strip()}
+
+    def auth_provider_enabled(self, provider: str) -> bool:
+        """Whether a login provider has the config it needs to run real flows.
+        local + phone(dev) are always available; OAuth needs client credentials."""
+        if provider == "local":
+            return True
+        if provider == "github":
+            return bool(self.github_oauth_client_id and self.github_oauth_client_secret)
+        if provider == "feishu":
+            return bool(self.feishu_app_id and self.feishu_app_secret)
+        if provider == "phone":
+            return self.phone_otp_dev_mode or bool(self.sms_webhook_url)
+        return False
 
     def github_private_key_pem(self) -> str | None:
         """The App private key PEM — inline value wins, else read from the path."""
