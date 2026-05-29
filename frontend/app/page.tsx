@@ -1,7 +1,7 @@
 "use client";
 
 import { Activity } from "@/components/Activity";
-import { AuthGate } from "@/components/AuthGate";
+import { AuthGate, useCanControl } from "@/components/AuthGate";
 import { Conversation } from "@/components/Conversation";
 import { DataPanel } from "@/components/DataPanel";
 import { useSession } from "@/lib/useSession";
@@ -16,6 +16,7 @@ export default function Home() {
 
 function Lab() {
   const s = useSession();
+  const canControl = useCanControl();
   return (
     <main className="app">
       <div className="header">
@@ -32,6 +33,7 @@ function Lab() {
             setDryRun={s.setDryRun}
             onNew={s.newSession}
             mode={s.mode}
+            canControl={canControl}
           />
           <DataPanel
             finalized={!!s.finalizedPlan}
@@ -42,6 +44,7 @@ function Lab() {
             onConnect={s.connectData}
             onLaunch={s.launch}
             onResume={s.resume}
+            canControl={canControl}
           />
         </div>
         <Activity

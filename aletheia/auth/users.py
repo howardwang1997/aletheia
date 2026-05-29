@@ -14,7 +14,7 @@ from aletheia.auth.passwords import hash_password, verify_password
 from aletheia.auth.providers.base import Claim
 from aletheia.config import get_settings
 from aletheia.db import session_scope
-from aletheia.memory.ledger import Identity, User
+from aletheia.memory.ledger import USER_ROLES, Identity, User
 
 
 def resolve_login(claim: Claim) -> str | None:
@@ -69,6 +69,38 @@ def authenticate_local(email: str, password: str) -> str | None:
         if ident is None or not verify_password(password, ident.secret_hash):
             return None
         return ident.user_id
+
+
+def list_users() -> list[dict]:
+    with session_scope() as s:
+        rows = s.query(User).order_by(User.created_at).all()
+        return [
+            {
+                "id": u.id,
+                "email": u.email,
+                "display_name": u.display_name,
+                "role": u.role,
+                "is_active": u.is_active,
+            }
+            for u in rows
+        ]
+
+
+def set_user_role(user_id: str, role: str) -> bool:
+    """Set a user's role. Refuses to demote the last owner (lockout guard).
+    Returns False if the user does not exist; raises ValueError on a bad role."""
+    if role not in USER_ROLES:
+        raise ValueError(f"invalid role: {role}")
+    with session_scope() as s:
+        u = s.get(User, user_id)
+        if u is None:
+            return False
+        if u.role == "owner" and role != "owner":
+            owners = s.query(func.count(User.id)).filter(User.role == "owner").scalar() or 0
+            if owners <= 1:
+                raise ValueError("cannot demote the last owner")
+        u.role = role
+        return True
 
 
 def bootstrap_owner() -> None:

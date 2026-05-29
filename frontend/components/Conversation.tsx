@@ -12,6 +12,7 @@ export function Conversation({
   setDryRun,
   onNew,
   mode,
+  canControl = true,
 }: {
   chat: ChatMsg[];
   onSend: (text: string) => void;
@@ -20,6 +21,7 @@ export function Conversation({
   setDryRun: (v: boolean) => void;
   onNew: () => void;
   mode: string;
+  canControl?: boolean;
 }) {
   const [text, setText] = useState("");
 
@@ -70,9 +72,10 @@ export function Conversation({
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
-          placeholder="Type a message…"
+          placeholder={canControl ? "Type a message…" : "read-only (viewer)"}
+          disabled={!canControl}
         />
-        <button onClick={submit}>Send</button>
+        <button onClick={submit} disabled={!canControl}>Send</button>
       </div>
     </section>
   );
