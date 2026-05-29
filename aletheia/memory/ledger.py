@@ -33,7 +33,13 @@ STAGES = (
     "write_up",
     "archive",
 )
-DATA_SOURCES = ("benchmark", "upload", "api")  # how a dataset is connected
+# how a dataset is connected:
+#   benchmark  - a named public dataset (matminer/matbench), auto-downloaded
+#   upload     - a single file the human uploaded
+#   directory  - a local directory of files (multi-file / sharded datasets)
+#   url        - an online file or archive (downloaded + extracted on connect)
+#   api        - a keyed data source (e.g. Materials Project) — Phase 2
+DATA_SOURCES = ("benchmark", "upload", "directory", "url", "api")
 DATA_STATUSES = ("needed", "ready", "error")  # readiness gate vocab
 
 

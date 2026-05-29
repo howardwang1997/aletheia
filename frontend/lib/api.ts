@@ -94,6 +94,27 @@ export async function uploadDataset(
   return await res.json();
 }
 
+export async function registerDataset(
+  runId: string,
+  body: {
+    source: string; // benchmark | directory | url
+    ref?: string;
+    target_column?: string;
+    description?: string;
+  },
+) {
+  const res = await fetch(`${API_BASE}/runs/${runId}/datasets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error(`registerDataset failed: ${res.status} ${JSON.stringify(b.detail ?? "")}`);
+  }
+  return await res.json();
+}
+
 export async function satisfyDataset(runId: string, assetId: string) {
   const res = await fetch(`${API_BASE}/runs/${runId}/datasets/${assetId}/ready`, {
     method: "POST",

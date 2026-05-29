@@ -14,9 +14,15 @@ import os
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from aletheia.data.registry import attach_upload, list_datasets, mark_ready, register_dataset
+from aletheia.data.registry import (
+    attach_local,
+    attach_upload,
+    attach_url,
+    list_datasets,
+    mark_ready,
+    register_dataset,
+)
 from aletheia.events.bus import get_bus, make_event
-from aletheia.memory.ledger import DATA_SOURCES
 from aletheia.paths import run_data_dir
 
 router = APIRouter(prefix="/runs", tags=["datasets"])
@@ -37,30 +43,100 @@ async def get_datasets(run_id: str) -> list[dict]:
     return await asyncio.to_thread(list_datasets, run_id)
 
 
+# input "source" values that mean "a local filesystem path" (a single file OR a
+# directory) — attach_local auto-detects which and sets the canonical source.
+_LOCAL_PATH_SOURCES = {"path", "local", "file", "directory", "dir", "folder"}
+
+
 @router.post("/{run_id}/datasets")
 async def register(run_id: str, req: RegisterDatasetRequest) -> dict:
-    if req.source not in DATA_SOURCES:
-        raise HTTPException(400, f"source must be one of {DATA_SOURCES}")
-    status = "ready" if req.ready else "needed"
-    asset_id = await asyncio.to_thread(
-        register_dataset,
-        run_id,
-        req.source,
-        ref=req.ref,
-        target_column=req.target_column,
-        feature_kind=req.feature_kind,
-        description=req.description,
-        status=status,
-        requested_by="human",
+    src = (req.source or "").lower().strip()
+
+    # 1) a local path (file or directory) — the on-disk case. attach_local profiles
+    #    it now (so the profile seeds scoping + the readiness gate opens) and records
+    #    the canonical source (upload for a file, directory for a folder).
+    if src in _LOCAL_PATH_SOURCES:
+        if not req.ref:
+            raise HTTPException(400, "ref (the local path) is required")
+        try:
+            asset = await asyncio.to_thread(
+                attach_local,
+                run_id,
+                req.ref,
+                target_column=req.target_column,
+                feature_kind=req.feature_kind,
+                description=req.description,
+            )
+        except FileNotFoundError as e:
+            raise HTTPException(400, f"path not found / no tabular files: {e}")
+        except Exception as e:  # surface a clear error instead of 500
+            raise HTTPException(400, f"could not connect path: {e}")
+        return await _registered(run_id, asset)
+
+    # 2) an online URL (download + extract archives)
+    if src == "url":
+        if not req.ref:
+            raise HTTPException(400, "ref (the URL) is required")
+        try:
+            asset = await asyncio.to_thread(
+                attach_url,
+                run_id,
+                req.ref,
+                target_column=req.target_column,
+                feature_kind=req.feature_kind,
+                description=req.description,
+            )
+        except Exception as e:
+            raise HTTPException(400, f"could not connect url: {e}")
+        return await _registered(run_id, asset)
+
+    # 3) a named benchmark / keyed api source — recorded now, fetched at load time
+    if src in ("benchmark", "api"):
+        status = "ready" if req.ready else "needed"
+        asset_id = await asyncio.to_thread(
+            register_dataset,
+            run_id,
+            src,
+            ref=req.ref,
+            target_column=req.target_column,
+            feature_kind=req.feature_kind,
+            description=req.description,
+            status=status,
+            requested_by="human",
+        )
+        await get_bus().publish(
+            make_event(
+                "data_registered",
+                run_id=run_id,
+                payload={"asset_id": asset_id, "source": src, "ref": req.ref, "status": status},
+            )
+        )
+        return {"asset_id": asset_id, "status": status}
+
+    raise HTTPException(
+        400,
+        "source must be one of: path (file or directory) | url | benchmark | api "
+        "(ref is required for path/url)",
     )
+
+
+async def _registered(run_id: str, asset: dict | None) -> dict:
+    if asset is None:
+        raise HTTPException(400, "dataset could not be registered")
     await get_bus().publish(
         make_event(
             "data_registered",
             run_id=run_id,
-            payload={"asset_id": asset_id, "source": req.source, "ref": req.ref, "status": status},
+            payload={
+                "asset_id": asset["id"],
+                "source": asset["source"],
+                "ref": asset.get("ref"),
+                "status": asset["status"],
+                "profile": asset.get("profile"),
+            },
         )
     )
-    return {"asset_id": asset_id, "status": status}
+    return asset
 
 
 @router.post("/{run_id}/datasets/upload")

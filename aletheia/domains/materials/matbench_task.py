@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from aletheia.domains.base import DomainPlugin, ExperimentResult
-from aletheia.domains.materials.datasets import load_benchmark, load_upload, resolve_columns
+from aletheia.domains.materials.datasets import load_benchmark, resolve_columns
 from aletheia.domains.materials.featurizers import magpie_features
 
 
@@ -22,12 +22,17 @@ class MaterialsBandGapPlugin(DomainPlugin):
         source = data_spec.get("source", "benchmark")
         if source == "benchmark":
             df = load_benchmark(data_spec.get("ref") or "matbench_expt_gap")
-        elif source == "upload":
-            df = load_upload(data_spec.get("uri") or data_spec["ref"])
+        elif source in ("upload", "directory", "url"):
+            # file, directory of files, or an online URL — all via the loaders.
+            from aletheia.data.loaders import materialize, read_tabular
+
+            path = materialize(data_spec)
+            max_rows = data_spec.get("max_rows")
+            df = read_tabular(path, nrows=int(max_rows) if max_rows else None)
         elif source == "api":
             raise NotImplementedError(
                 "Materials Project ('api') fetch is a Phase-2 adapter; provide a "
-                "benchmark name or an uploaded file for Phase 1."
+                "benchmark name, file, directory, or URL for Phase 1."
             )
         else:
             raise ValueError(f"unknown data source: {source!r}")

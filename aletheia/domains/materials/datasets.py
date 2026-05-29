@@ -27,18 +27,6 @@ def load_benchmark(ref: str) -> Any:
     return load_dataset(ref)
 
 
-def load_upload(uri: str) -> Any:
-    """Load a user-uploaded CSV/parquet/json file."""
-    import pandas as pd
-
-    p = str(uri)
-    if p.endswith(".parquet"):
-        return pd.read_parquet(p)
-    if p.endswith(".json"):
-        return pd.read_json(p)
-    return pd.read_csv(p)
-
-
 def resolve_columns(
     df: Any, data_spec: dict[str, Any]
 ) -> tuple[str, str]:

@@ -14,6 +14,7 @@ export function DataPanel({
   launched,
   paused,
   onUpload,
+  onConnect,
   onLaunch,
   onResume,
 }: {
@@ -22,12 +23,15 @@ export function DataPanel({
   launched: boolean;
   paused: boolean;
   onUpload: (file: File, opts: { target_column?: string; asset_id?: string }) => void;
+  onConnect: (body: { source: string; ref?: string; target_column?: string }) => void;
   onLaunch: () => void;
   onResume: () => void;
 }) {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [target, setTarget] = useState("");
   const [pendingAsset, setPendingAsset] = useState<string | undefined>(undefined);
+  const [source, setSource] = useState("path");
+  const [ref, setRef] = useState("");
 
   const allReady = datasets.every((d) => d.status === "ready");
   const canLaunch = finalized && allReady && !launched;
@@ -89,9 +93,37 @@ export function DataPanel({
           onChange={(e) => setTarget(e.target.value)}
         />
         <button onClick={() => { setPendingAsset(undefined); fileRef.current?.click(); }}>
-          + upload dataset
+          + upload file
         </button>
-        <input ref={fileRef} type="file" accept=".csv,.parquet,.json" hidden onChange={onPick} />
+        <input ref={fileRef} type="file" accept=".csv,.tsv,.parquet,.json,.jsonl" hidden onChange={onPick} />
+      </div>
+
+      <div className="dp-connect">
+        <select value={source} onChange={(e) => setSource(e.target.value)}>
+          <option value="path">local path</option>
+          <option value="url">URL</option>
+          <option value="benchmark">benchmark</option>
+        </select>
+        <input
+          placeholder={
+            source === "path"
+              ? "/path/to/file.csv  or  /path/to/dataset-dir"
+              : source === "url"
+                ? "https://… (file or .zip/.tar.gz)"
+                : "matbench_expt_gap"
+          }
+          value={ref}
+          onChange={(e) => setRef(e.target.value)}
+        />
+        <button
+          disabled={!ref.trim()}
+          onClick={() => {
+            onConnect({ source, ref: ref.trim(), target_column: target || undefined });
+            setRef("");
+          }}
+        >
+          connect
+        </button>
       </div>
 
       <div className="dp-actions">

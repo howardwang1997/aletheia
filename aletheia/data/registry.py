@@ -121,7 +121,7 @@ def all_ready(run_id: str) -> bool:
     return not pending_datasets(run_id)
 
 
-def attach_upload(
+def attach_local(
     run_id: str,
     path: str,
     *,
@@ -130,18 +130,23 @@ def attach_upload(
     feature_kind: str | None = "composition",
     description: str | None = None,
 ) -> dict[str, Any] | None:
-    """Profile an uploaded file and mark it ready.
+    """Profile a local file OR directory and mark it ready.
 
-    If ``asset_id`` is given, it satisfies an existing (``needed``) request (pull);
-    otherwise it creates a fresh ``ready`` upload asset (push).
+    Source is inferred: a directory -> ``directory``, a file -> ``upload``. If
+    ``asset_id`` is given it satisfies an existing (``needed``) request (pull);
+    otherwise it creates a fresh ``ready`` asset (push).
     """
-    from aletheia.data.profiler import profile_file
+    import os
 
-    profile = profile_file(path, target_hint=target_column)
+    from aletheia.data.profiler import profile_path
+
+    profile = profile_path(path, target_hint=target_column)
+    source = "directory" if os.path.isdir(path) else "upload"
     if asset_id:
         return update_dataset(
             asset_id,
             status="ready",
+            source=source,
             uri=path,
             ref=path,
             profile_json=profile,
@@ -151,7 +156,7 @@ def attach_upload(
         )
     new_id = register_dataset(
         run_id,
-        source="upload",
+        source=source,
         ref=path,
         uri=path,
         target_column=target_column,
@@ -162,3 +167,67 @@ def attach_upload(
         profile_json=profile,
     )
     return get_dataset(new_id)
+
+
+def attach_url(
+    run_id: str,
+    url: str,
+    *,
+    asset_id: str | None = None,
+    target_column: str | None = None,
+    feature_kind: str | None = "composition",
+    description: str | None = None,
+) -> dict[str, Any] | None:
+    """Download an online dataset (extracting archives), profile it, mark it ready.
+    The original URL is kept as ``ref``; the local materialized path is ``uri``."""
+    from aletheia.data.loaders import download
+    from aletheia.data.profiler import profile_path
+    from aletheia.paths import run_data_dir
+
+    local = download(url, run_data_dir(run_id))
+    profile = profile_path(str(local), target_hint=target_column)
+    if asset_id:
+        return update_dataset(
+            asset_id,
+            status="ready",
+            source="url",
+            ref=url,
+            uri=str(local),
+            profile_json=profile,
+            target_column=target_column,
+            feature_kind=feature_kind,
+            description=description,
+        )
+    new_id = register_dataset(
+        run_id,
+        source="url",
+        ref=url,
+        uri=str(local),
+        target_column=target_column,
+        feature_kind=feature_kind,
+        description=description,
+        status="ready",
+        requested_by="human",
+        profile_json=profile,
+    )
+    return get_dataset(new_id)
+
+
+def attach_upload(
+    run_id: str,
+    path: str,
+    *,
+    asset_id: str | None = None,
+    target_column: str | None = None,
+    feature_kind: str | None = "composition",
+    description: str | None = None,
+) -> dict[str, Any] | None:
+    """Back-compat single-file entry point (delegates to ``attach_local``)."""
+    return attach_local(
+        run_id,
+        path,
+        asset_id=asset_id,
+        target_column=target_column,
+        feature_kind=feature_kind,
+        description=description,
+    )

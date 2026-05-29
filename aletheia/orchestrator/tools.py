@@ -104,10 +104,11 @@ def build_request_data_tool(run_id: str):
 
     @tool(
         "request_data",
-        "Declare a dataset you need to run the experiment. Use source='benchmark' "
-        "for a known public dataset (give its name as ref), 'upload' to ask the "
-        "human for a file, or 'api' for a keyed data source. The human will satisfy "
-        "it before launch.",
+        "Declare a dataset you need to run the experiment. source is one of: "
+        "'benchmark' (a known public dataset — give its name as ref), 'upload' (ask "
+        "the human for a file), 'directory' (a folder of files), 'url' (an online "
+        "file or .zip/.tar.gz — give the link as ref), or 'api' (a keyed source). "
+        "The human satisfies it before launch.",
         REQUEST_DATA_FIELDS,
     )
     async def request_data(args: dict[str, Any]) -> dict[str, Any]:

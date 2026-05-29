@@ -30,6 +30,7 @@ export default function Home() {
             launched={s.launched}
             paused={s.paused}
             onUpload={s.upload}
+            onConnect={s.connectData}
             onLaunch={s.launch}
             onResume={s.resume}
           />

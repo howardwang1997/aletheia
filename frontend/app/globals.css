@@ -103,8 +103,12 @@ button:hover { border-color: var(--accent); }
 .dp-src { flex: 1; word-break: break-word; }
 .dp-status { color: var(--muted); font-size: 11px; }
 .dp-satisfy, .dp-upload button { padding: 3px 8px; font-size: 11px; }
-.dp-upload { display: flex; gap: 6px; margin-bottom: 8px; }
+.dp-upload { display: flex; gap: 6px; margin-bottom: 6px; }
 .dp-upload input { flex: 1; }
+.dp-connect { display: flex; gap: 6px; margin-bottom: 8px; }
+.dp-connect select { flex: 0 0 auto; }
+.dp-connect input { flex: 1; }
+.dp-connect button { padding: 3px 10px; font-size: 11px; }
 .dp-actions { display: flex; align-items: center; gap: 10px; }
 button.launch { background: var(--accent); color: #06121f; border: none; font-weight: 600; padding: 8px 14px; }
 button.launch:disabled { background: var(--panel2); color: var(--muted); cursor: not-allowed; }

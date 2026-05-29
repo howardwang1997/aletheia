@@ -8,6 +8,7 @@ Phase-1 dependency and is imported lazily so this module stays import-safe.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 # Column names that commonly denote a regression target in materials/ML datasets.
@@ -76,17 +77,37 @@ def profile_dataframe(
     }
 
 
-def profile_file(path: str, target_hint: str | None = None) -> dict[str, Any]:
-    """Read a CSV/parquet file and profile it. Returns the profile + ``path``."""
-    import pandas as pd
+def profile_path(
+    path: str, target_hint: str | None = None, sample_rows: int = 200_000
+) -> dict[str, Any]:
+    """Profile a file OR a directory of files, sampling for very large data.
 
-    p = str(path)
-    if p.endswith(".parquet"):
-        df = pd.read_parquet(p)
-    elif p.endswith(".json"):
-        df = pd.read_json(p)
-    else:
-        df = pd.read_csv(p)
+    Reads at most ``sample_rows`` rows (across files for a directory) so profiling
+    stays cheap on huge / sharded datasets, and records how many files were found,
+    whether the profile is a sample, and the cheap total row count when available.
+    """
+    from aletheia.data.loaders import count_rows, list_tabular_files, read_tabular
+
+    p = Path(path)
+    files = list_tabular_files(p)
+    df = read_tabular(p, nrows=sample_rows)
     profile = profile_dataframe(df, target_hint=target_hint)
-    profile["path"] = p
+    profile["path"] = str(p)
+    profile["is_directory"] = p.is_dir()
+    profile["n_files"] = len(files)
+    profile["files"] = [str(f) for f in files[:20]]
+    profile["profiled_rows"] = int(len(df))
+
+    total = count_rows(p)
+    if total is not None:
+        profile["total_rows"] = int(total)
+        profile["sampled"] = total > len(df)
+    else:
+        # couldn't count cheaply; we sampled if we hit the row cap
+        profile["sampled"] = len(df) >= sample_rows
     return profile
+
+
+# Back-compat alias (single-file callers): now also handles directories.
+def profile_file(path: str, target_hint: str | None = None) -> dict[str, Any]:
+    return profile_path(path, target_hint=target_hint)

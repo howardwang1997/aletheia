@@ -7,6 +7,7 @@ import {
   createSession,
   launchRun,
   listDatasets,
+  registerDataset,
   resumeRun,
   sendMessage as apiSend,
   subscribeEvents,
@@ -130,6 +131,19 @@ export function useSession() {
     [runId, refreshDatasets],
   );
 
+  const connectData = useCallback(
+    async (body: { source: string; ref?: string; target_column?: string }) => {
+      if (!runId) return;
+      try {
+        await registerDataset(runId, body);
+        await refreshDatasets(runId);
+      } catch (err) {
+        setEvents((prev) => [...prev, { type: "error", payload: { error: String(err) } }]);
+      }
+    },
+    [runId, refreshDatasets],
+  );
+
   const launch = useCallback(async () => {
     if (!runId) return;
     try {
@@ -238,6 +252,7 @@ export function useSession() {
     setDryRun,
     send,
     upload,
+    connectData,
     launch,
     resume,
     refreshDatasets,
