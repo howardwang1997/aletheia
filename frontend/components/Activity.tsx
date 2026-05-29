@@ -1,6 +1,7 @@
 "use client";
 
 import { LabEvent } from "@/lib/api";
+import { Markdown } from "@/components/Markdown";
 
 const PHASE1_STAGES = [
   "experiment_design",
@@ -211,7 +212,9 @@ export function Activity({
       {report?.preview && (
         <div className="report-card">
           <div className="plan-title">📄 Report</div>
-          <pre className="report-pre">{report.preview}</pre>
+          <div className="report-md">
+            <Markdown>{report.preview}</Markdown>
+          </div>
         </div>
       )}
 

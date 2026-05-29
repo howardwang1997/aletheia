@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Markdown } from "@/components/Markdown";
 import { ChatMsg } from "@/lib/useSession";
 
 export function Conversation({
@@ -57,7 +58,9 @@ export function Conversation({
         {chat.map((m, i) => (
           <div key={i} className={`bubble ${m.role}`}>
             <div className="who">{m.role === "user" ? "You" : "Aletheia"}</div>
-            <div className="text">{m.text}</div>
+            <div className="text">
+              {m.role === "agent" ? <Markdown>{m.text}</Markdown> : m.text}
+            </div>
           </div>
         ))}
       </div>
