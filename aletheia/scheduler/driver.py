@@ -22,12 +22,12 @@ from aletheia.domains.registry import get_domain_plugin
 from aletheia.events.bus import get_bus, make_event
 from aletheia.memory.service import (
     get_run,
-    list_artifacts,
     record_artifacts,
     set_run_status,
 )
 from aletheia.notify.feishu import notify_feishu
 from aletheia.orchestrator.reasoner import reason_stage
+from aletheia.orchestrator.worker import is_degraded, run_worker
 from aletheia.paths import run_artifacts_dir
 from aletheia.scheduler.budget import BudgetPaused, BudgetTracker
 from aletheia.scheduler.statemachine import LoopGuard, record_transition
@@ -267,26 +267,57 @@ class ExperimentDriver:
         return {"job_id": job_id, "metrics": st.metrics or {}, "artifacts": st.artifacts, "info": st.info}
 
     async def _analyze(self, design, result, exp_id) -> str:
+        """Decomposed analysis: four independent concerns each reviewed in its OWN
+        isolated worker context (run in parallel), then synthesized. The main loop
+        keeps only the merged text — never the sub-workers' internal turns."""
         metrics = result.get("metrics", {})
         eval_summary = (result.get("info") or {}).get("eval_summary", "")
-        prompt = (
-            "Interpret these regression results. The HEADLINE metric is "
-            "leave-chemical-system-out MAE (GroupKFold) — the honest generalization "
-            "number; the random holdout is optimistic by comparison. Note whether the "
-            "result beats the baselines, any overfitting/leakage risk, the gap-range "
-            "error pattern, and what to try next.\n\n"
+        evidence = (
             f"DESIGN: {json.dumps(design)}\nMETRICS: {json.dumps(metrics)}\n"
             f"EVAL PROTOCOL SUMMARY: {eval_summary}"
         )
-        text = await reason_stage(
-            self.run_id, "analysis", prompt,
+        # one focused, isolated sub-check per concern — independent, so parallel
+        subchecks = {
+            "leakage": "Assess DATA LEAKAGE risk only (train/test contamination, grouped split adequacy).",
+            "overfit": "Assess OVERFITTING only (holdout vs LCSO vs RepeatedKFold spread; CV std).",
+            "baseline": "Assess BASELINE ADEQUACY only (does the model beat dummy/ridge/knn/gbm meaningfully?).",
+            "stats": "Assess STATISTICAL VALIDITY only (CI width, error stratification by gap range, sample sizes).",
+        }
+        header = (
+            "Interpret these regression results. The HEADLINE metric is "
+            "leave-chemical-system-out MAE (GroupKFold); the random holdout is optimistic. "
+        )
+        findings = await asyncio.gather(
+            *[
+                run_worker(
+                    self.run_id, f"analysis:{name}",
+                    f"{header}{focus}\nBe concise (2-3 sentences).\n\n{evidence}",
+                    dry_run=self.dry_run,
+                    dry_value=f"[dry-run] {name}: nominal; LCSO MAE={metrics.get('mae_lcso')}.",
+                )
+                for name, focus in subchecks.items()
+            ]
+        )
+        # drop sub-checks that degraded (transient API failure) so error text never
+        # pollutes the synthesis; note which were unavailable instead.
+        ok = [(n, f) for n, f in zip(subchecks, findings) if not is_degraded(f)]
+        sub_text = "\n".join(f"- {n}: {f}" for n, f in ok)
+        unavailable = [n for n, f in zip(subchecks, findings) if is_degraded(f)]
+        if unavailable:
+            sub_text += f"\n- (unavailable sub-checks, excluded: {', '.join(unavailable)})"
+        synthesis = await run_worker(
+            self.run_id, "analysis",
+            "Synthesize these independent sub-reviews into one analysis: overall soundness, "
+            "the biggest risk, and what to try next. Lead with the LCSO headline.\n\n"
+            f"SUB-REVIEWS:\n{sub_text}\n\nMETRICS: {json.dumps(metrics)}",
             dry_run=self.dry_run,
-            dry_text=(
+            dry_value=(
                 f"[dry-run] Analysis: LCSO MAE={metrics.get('mae_lcso')} (headline), "
-                f"holdout MAE={metrics.get('mae_holdout')}; beats baselines; no obvious leakage."
+                f"holdout MAE={metrics.get('mae_holdout')}; beats baselines; no obvious leakage. "
+                f"Sub-checks: {sub_text}"
             ),
         )
-        return text
+        return synthesis
 
     async def _optimize(self, design, result, data_spec, domain, exp_id, plugin):
         # try the alternate baseline model once; keep whichever has lower MAE
