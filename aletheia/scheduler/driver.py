@@ -25,6 +25,7 @@ from aletheia.memory.service import (
     record_artifacts,
     set_run_status,
 )
+from aletheia.memory.vector import format_briefing, index_chunk, recall
 from aletheia.notify.feishu import notify_feishu
 from aletheia.orchestrator.reasoner import reason_stage
 from aletheia.orchestrator.worker import is_degraded, run_worker
@@ -57,6 +58,13 @@ class ExperimentDriver:
         settings = get_settings()
         self.guard = LoopGuard(settings.critics.consensus.max_design_iterations)
         self.budget: BudgetTracker | None = None  # set in _run (cap depends on the run)
+
+    async def _index(self, kind: str, text: str, exp_id: str | None, **meta: Any) -> None:
+        """Best-effort: embed a reasoning fragment into the recall store (off-thread)."""
+        await asyncio.to_thread(
+            index_chunk, kind, text,
+            run_id=self.run_id, experiment_id=exp_id, meta=meta or None, dry_run=self.dry_run,
+        )
 
     async def _status(self, state: str, detail: str | None = None) -> None:
         await get_bus().publish(
@@ -116,6 +124,14 @@ class ExperimentDriver:
         await get_bus().publish(
             make_event("run_started", run_id=self.run_id, payload={"mode": "dry_run" if self.dry_run else "real"})
         )
+
+        # index the campaign's hypothesis so future runs can recall it
+        hypo = " ".join(
+            str(plan.get(k, "")).strip()
+            for k in ("objective", "direction", "hypothesis")
+        ).strip()
+        if hypo:
+            await self._index("hypothesis", hypo, exp_id, domain=domain)
 
         # 1) EXPERIMENT_DESIGN ------------------------------------------------
         await self._guard_budget("usd", get_settings().est_stage_cost_usd)
@@ -186,11 +202,21 @@ class ExperimentDriver:
         fallback.setdefault("random_state", 42)
         if data_spec.get("target_column"):
             fallback["target_column"] = data_spec["target_column"]
+        # recall-before-design: pull similar prior work from OTHER runs so the
+        # design avoids repeating approaches that already failed / converged.
+        query = " ".join(
+            str(plan.get(k, "")).strip() for k in ("objective", "direction", "hypothesis")
+        ).strip()
+        prior = await asyncio.to_thread(
+            recall, query, run_id=None, exclude_run_id=self.run_id, dry_run=self.dry_run
+        )
+        briefing = format_briefing(prior)
         prompt = (
             "Turn this research plan into a concrete experiment design for a "
             "composition->property regression.\n\n"
             f"PLAN:\n{json.dumps(plan, indent=2)}\n\nDATA:\n{json.dumps(data_spec, indent=2)}\n\n"
-            "Return ONLY JSON with keys: model ('random_forest' or 'gradient_boosting'), "
+            + (briefing + "\n\n" if briefing else "")
+            + "Return ONLY JSON with keys: model ('random_forest' or 'gradient_boosting'), "
             "model_params (object), test_size (0-1), random_state (int). Choose sensible values."
         )
         text = await reason_stage(
@@ -202,6 +228,11 @@ class ExperimentDriver:
         await record_transition(
             self.run_id, exp_id, "experiment_design", "experiment_design",
             f"concrete design: {design.get('model')} {design.get('model_params')}",
+        )
+        await self._index(
+            "design_rationale",
+            f"{design.get('model')} with {design.get('model_params')} on {query}",
+            exp_id, model=design.get("model"),
         )
         return design
 
@@ -382,6 +413,14 @@ class ExperimentDriver:
             await asyncio.to_thread(record_artifacts, exp_id, [{"kind": "report", "uri": str(path)}])
         await get_bus().publish(
             make_event("report", run_id=self.run_id, payload={"uri": str(path), "preview": report[:400]})
+        )
+        # index the headline result so future runs recall what this campaign found
+        await self._index(
+            "conclusion",
+            f"{plan.get('objective', '')}: {design.get('model')} -> LCSO MAE "
+            f"{metrics.get('mae_lcso')} eV, R² {metrics.get('r2_lcso')}; verdict "
+            f"{rpanel.consensus_verdict}.",
+            exp_id, mae_lcso=metrics.get("mae_lcso"), model=design.get("model"),
         )
 
 

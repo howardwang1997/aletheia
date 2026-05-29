@@ -50,6 +50,41 @@ def build_memory_tool(run_id: str):
     return memory_log
 
 
+def build_recall_tool(run_id: str):
+    """A ``memory_recall`` MCP tool: semantic search over past research (across all
+    runs) so scoping plans against prior hypotheses, designs, critiques, and
+    conclusions instead of re-running dead ends."""
+    from claude_agent_sdk import tool
+
+    from aletheia.memory.vector import recall
+
+    @tool(
+        "memory_recall",
+        "Search past research memory (all runs) for work relevant to a query — "
+        "prior hypotheses, designs, critic findings, and conclusions. Use this "
+        "while scoping to avoid repeating approaches that already failed or "
+        "converged. Returns the most similar fragments.",
+        {"query": str},
+    )
+    async def memory_recall(args: dict[str, Any]) -> dict[str, Any]:
+        query = str(args.get("query", "")).strip()
+        hits = await asyncio.to_thread(recall, query, run_id=None)
+        if not hits:
+            text = "No relevant prior research found in memory."
+        else:
+            lines = [
+                f"- [{h['kind']}, sim={h['similarity']:.2f}] {h['text'][:240]}"
+                for h in hits
+            ]
+            text = "Relevant prior research:\n" + "\n".join(lines)
+        await get_bus().publish(
+            make_event("memory_recall", run_id=run_id, payload={"query": query, "n_hits": len(hits)})
+        )
+        return {"content": [{"type": "text", "text": text}]}
+
+    return memory_recall
+
+
 def build_finalize_goal_tool(run_id: str):
     """A ``finalize_goal`` MCP tool: record the agreed experiment plan."""
     from claude_agent_sdk import tool

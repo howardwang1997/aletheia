@@ -33,6 +33,7 @@ dependencies:
       - alembic
       - "psycopg[binary]>=3"
       - pgvector
+      - sentence-transformers   # local embeddings for semantic recall (all-MiniLM-L6-v2)
       - python-dotenv
       - PyYAML
       - httpx

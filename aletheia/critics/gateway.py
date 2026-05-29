@@ -29,6 +29,7 @@ from aletheia.critics.providers.openai_compatible import DeepSeekAPIProvider, Zh
 from aletheia.critics.schemas import CriticFinding, Critique, CritiquePanel
 from aletheia.events.bus import get_bus, make_event
 from aletheia.memory.service import record_critique_panel
+from aletheia.memory.vector import index_chunk
 from aletheia.orchestrator.worker import run_worker
 
 # vendor id -> {transport: provider class}. Cross-vendor panel (Phase 2).
@@ -286,6 +287,16 @@ class CriticGateway:
             target=panel.target, target_ref=panel.target_ref,
             consensus_verdict=panel.consensus_verdict, gate_passed=panel.gate_passed,
             raw_json=raw,
+        )
+        # index the critique summary so future runs recall what critics flagged
+        summary = f"{target} review -> {panel.consensus_verdict}: " + " | ".join(
+            c.summary for c in panel.critiques if c.summary
+        )
+        await asyncio.to_thread(
+            index_chunk, "critique_summary", summary,
+            run_id=run_id, experiment_id=target_ref,
+            meta={"target": target, "verdict": panel.consensus_verdict, "gate_passed": panel.gate_passed},
+            dry_run=dry_run,
         )
         await self._emit_panel(panel, len(rounds), run_id)
         return panel

@@ -54,6 +54,8 @@ function line(e: LabEvent): string {
       return typeof p.content === "string" ? p.content : JSON.stringify(p.content ?? {});
     case "memory_log":
       return `📝 ${p.note ?? ""}`;
+    case "memory_recall":
+      return `🧠 recall "${p.query ?? ""}" — ${p.n_hits ?? 0} hit${p.n_hits === 1 ? "" : "s"}`;
     case "goal_finalized":
       return "experiment plan recorded";
     case "tool_denied":

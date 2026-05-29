@@ -27,6 +27,7 @@ from aletheia.orchestrator.tools import (
     build_finalize_goal_tool,
     build_inspect_dataset_tool,
     build_memory_tool,
+    build_recall_tool,
     build_request_data_tool,
 )
 
@@ -54,12 +55,16 @@ SCOPING_PROMPT = (
     "- Ask all clarifying questions directly as ordinary chat messages — do NOT use the "
     "`AskUserQuestion` tool (or any UI/question tool); the conversation itself is how you "
     "ask, so just write the question.\n"
-    "- You may ONLY converse and use the `memory_log`, `request_data`, `inspect_dataset`, "
-    "and `finalize_goal` tools. You cannot run code, browse, or read files in this phase."
+    "- Early in scoping, call `memory_recall` to check whether related work has been "
+    "tried before, and let what you find shape the direction you propose.\n"
+    "- You may ONLY converse and use the `memory_log`, `memory_recall`, `request_data`, "
+    "`inspect_dataset`, and `finalize_goal` tools. You cannot run code, browse, or read "
+    "files in this phase."
 )
 
 ALLOWLIST = {
     "mcp__aletheia__memory_log",
+    "mcp__aletheia__memory_recall",
     "mcp__aletheia__finalize_goal",
     "mcp__aletheia__request_data",
     "mcp__aletheia__inspect_dataset",
@@ -131,6 +136,7 @@ class ConversationSession:
             version="0.0.1",
             tools=[
                 build_memory_tool(self.run_id),
+                build_recall_tool(self.run_id),
                 build_finalize_goal_tool(self.run_id),
                 build_request_data_tool(self.run_id),
                 build_inspect_dataset_tool(self.run_id),
@@ -177,7 +183,7 @@ class ConversationSession:
     async def _run_dryrun_loop(self) -> None:
         await self._status("awaiting_user", "ready")
         while True:
-            text = await self._queue.get()
+            await self._queue.get()  # scripted dry-run: the message text is ignored
             self._turn += 1
             await self._status("thinking")
             await asyncio.sleep(0.3)

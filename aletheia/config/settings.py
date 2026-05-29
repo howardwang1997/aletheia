@@ -85,6 +85,16 @@ class Settings(BaseSettings):
     # --- database ---
     database_url: str = "postgresql+psycopg://aletheia:aletheia@localhost:5432/aletheia"
 
+    # --- semantic recall (pgvector) ---
+    # backend: "local" = sentence-transformers (offline, production default);
+    #          "hash"  = deterministic offline stub (tests / dry-run, zero spend).
+    # embedding_dim MUST match the backend's output dim and is fixed at table
+    # creation — keep MiniLM's 384 unless you also recreate the embeddings table.
+    embedding_backend: Literal["local", "hash"] = "local"
+    embedding_model: str = "all-MiniLM-L6-v2"
+    embedding_dim: int = 384
+    recall_k: int = 5  # default neighbours returned by memory.recall
+
     # --- Claude runtime ---
     claude_auth_mode: Literal["subscription", "api_key"] = "subscription"
     claude_model: str = "claude-opus-4-7"

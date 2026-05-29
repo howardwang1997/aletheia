@@ -54,6 +54,12 @@ def session_scope() -> Iterator[Session]:
 
 def create_all() -> None:
     """Create tables directly (Phase 0 convenience; Alembic owns this later)."""
+    from sqlalchemy import text
+
     import aletheia.memory.ledger  # noqa: F401  (register models)
 
-    Base.metadata.create_all(engine())
+    eng = engine()
+    # pgvector's Vector column (memory_chunks.embedding) needs the extension first.
+    with eng.begin() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    Base.metadata.create_all(eng)
