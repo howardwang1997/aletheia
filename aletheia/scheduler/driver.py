@@ -27,7 +27,7 @@ from aletheia.memory.service import (
 )
 from aletheia.notify.feishu import notify_feishu
 from aletheia.orchestrator.reasoner import reason_stage
-from aletheia.orchestrator.worker import run_worker
+from aletheia.orchestrator.worker import is_degraded, run_worker
 from aletheia.paths import run_artifacts_dir
 from aletheia.scheduler.budget import BudgetPaused, BudgetTracker
 from aletheia.scheduler.statemachine import LoopGuard, record_transition
@@ -298,7 +298,13 @@ class ExperimentDriver:
                 for name, focus in subchecks.items()
             ]
         )
-        sub_text = "\n".join(f"- {name}: {f}" for name, f in zip(subchecks, findings))
+        # drop sub-checks that degraded (transient API failure) so error text never
+        # pollutes the synthesis; note which were unavailable instead.
+        ok = [(n, f) for n, f in zip(subchecks, findings) if not is_degraded(f)]
+        sub_text = "\n".join(f"- {n}: {f}" for n, f in ok)
+        unavailable = [n for n, f in zip(subchecks, findings) if is_degraded(f)]
+        if unavailable:
+            sub_text += f"\n- (unavailable sub-checks, excluded: {', '.join(unavailable)})"
         synthesis = await run_worker(
             self.run_id, "analysis",
             "Synthesize these independent sub-reviews into one analysis: overall soundness, "

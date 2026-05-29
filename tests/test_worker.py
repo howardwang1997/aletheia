@@ -7,7 +7,12 @@ import asyncio
 
 from aletheia.events.bus import get_bus
 from aletheia.orchestrator.reasoner import reason_stage
-from aletheia.orchestrator.worker import run_worker
+from aletheia.orchestrator.worker import (
+    _looks_like_api_error,
+    degraded_marker,
+    is_degraded,
+    run_worker,
+)
 
 
 async def _collect(run_id, n, coro):
@@ -61,3 +66,37 @@ def test_reason_stage_shim():
         reason_stage("run-w3", "analysis", "interpret", dry_run=True, dry_text="shimmed")
     )
     assert out == "shimmed"
+
+
+def test_degradation_helpers():
+    assert _looks_like_api_error("")
+    assert _looks_like_api_error("API Error: 529 Overloaded")
+    assert _looks_like_api_error("the service is Overloaded right now")
+    assert not _looks_like_api_error("LCSO MAE 0.466; no leakage.")
+    m = degraded_marker("analysis:leakage")
+    assert is_degraded(m) and not is_degraded("a real finding")
+
+
+def test_analysis_excludes_degraded_subchecks(monkeypatch):
+    """A degraded sub-check is filtered out of the synthesis input (no error text)."""
+    import aletheia.scheduler.driver as drv
+
+    captured = {}
+
+    async def fake_worker(run_id, label, prompt, **kw):
+        if label == "analysis":  # the synthesis call
+            captured["prompt"] = prompt
+            return "synthesis"
+        if label == "analysis:leakage":
+            return degraded_marker(label)  # this one failed
+        return f"{label}: fine"
+
+    monkeypatch.setattr(drv, "run_worker", fake_worker)
+    driver = drv.ExperimentDriver("run-an", dry_run=False)
+    result = {"metrics": {"mae_lcso": 0.4, "mae_holdout": 0.4}, "info": {"eval_summary": "s"}}
+    out = asyncio.run(driver._analyze({"model": "rf"}, result, "exp-an"))
+    assert out == "synthesis"
+    # synthesis prompt saw the healthy sub-checks but NOT the degraded leakage text
+    assert "worker-unavailable" not in captured["prompt"]
+    assert "unavailable sub-checks, excluded: leakage" in captured["prompt"]
+    assert "overfit: fine" in captured["prompt"]

@@ -14,6 +14,7 @@ override, tool wiring, and multi-turn allowance.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from aletheia.config import get_settings
@@ -26,6 +27,29 @@ STAGE_SYSTEM = (
     "loop in a lights-out lab. Be rigorous, concrete, and concise. When asked for "
     "JSON, return ONLY a single JSON object."
 )
+
+_DEGRADED_PREFIX = "[worker-unavailable"
+# extra outer attempts on a transient API error (the SDK already retries internally)
+_OUTER_ATTEMPTS = 2
+_BACKOFF_S = 8.0
+
+
+def degraded_marker(label: str) -> str:
+    """Sentinel a worker returns when it could not produce real output (e.g. a
+    transient API overload that survived the SDK's own retries). Downstream code
+    should ignore degraded results rather than treat the text as a real answer."""
+    return f"{_DEGRADED_PREFIX}: {label}]"
+
+
+def is_degraded(text: str | None) -> bool:
+    return (text or "").startswith(_DEGRADED_PREFIX)
+
+
+def _looks_like_api_error(text: str) -> bool:
+    """The SDK surfaces an exhausted-retry API failure as its final assistant text
+    (e.g. 'API Error: 529 Overloaded ...'); treat empty output the same way."""
+    t = (text or "").strip()
+    return (not t) or t.startswith("API Error:") or ("Overloaded" in t[:120])
 
 
 async def run_worker(
@@ -73,12 +97,28 @@ async def run_worker(
         opts["permission_mode"] = "bypassPermissions"
     options = ClaudeAgentOptions(**opts)
 
-    chunks: list[str] = []
-    async with ClaudeSDKClient(options=options) as client:
-        await client.query(prompt)
-        async for msg in client.receive_response():
-            for evt in normalize_message(msg, run_id, agent=label):
-                await get_bus().publish(evt)
-                if evt["type"] == "assistant_text":
-                    chunks.append((evt.get("payload") or {}).get("text", ""))
-    return "\n".join(chunks).strip()
+    last = ""
+    for attempt in range(1, _OUTER_ATTEMPTS + 1):
+        chunks: list[str] = []
+        try:
+            async with ClaudeSDKClient(options=options) as client:
+                await client.query(prompt)
+                async for msg in client.receive_response():
+                    for evt in normalize_message(msg, run_id, agent=label):
+                        await get_bus().publish(evt)
+                        if evt["type"] == "assistant_text":
+                            chunks.append((evt.get("payload") or {}).get("text", ""))
+            last = "\n".join(chunks).strip()
+        except Exception as exc:  # noqa: BLE001 - transient client/transport failures
+            last = f"API Error: {exc}"
+        if not _looks_like_api_error(last):
+            return last
+        if attempt < _OUTER_ATTEMPTS:
+            await asyncio.sleep(_BACKOFF_S * attempt)
+    # transient failure survived the SDK's retries + our outer attempts: degrade
+    # cleanly so downstream ignores it instead of ingesting an error string.
+    await get_bus().publish(
+        make_event("worker_degraded", run_id=run_id, agent=label,
+                   payload={"label": label, "reason": last[:200]})
+    )
+    return degraded_marker(label)

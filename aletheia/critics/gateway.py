@@ -230,9 +230,11 @@ class CriticGateway:
         self, target: str, content: str, assignments: list[tuple[CriticProvider, str]]
     ) -> list[Critique]:
         results = await asyncio.gather(
-            *[asyncio.to_thread(self._review_one, p, target, st, content) for p, st in assignments]
+            *[asyncio.to_thread(self._review_one, p, target, st, content) for p, st in assignments],
+            return_exceptions=True,
         )
-        return list(results)
+        # a reviewer that errored (vendor API hiccup) is dropped, not fatal to the gate
+        return [r for r in results if isinstance(r, Critique)]
 
     async def review(
         self, target: str, content_obj: dict[str, Any], target_ref: str,
