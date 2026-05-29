@@ -51,6 +51,9 @@ SCOPING_PROMPT = (
     "are clear, call `finalize_goal` exactly once with a complete, concrete experiment "
     "plan (objective, domain, direction, hypothesis, dataset, method, baselines, metrics, "
     "success_criteria, risks, est_compute). Then briefly summarize and stop.\n"
+    "- Ask all clarifying questions directly as ordinary chat messages — do NOT use the "
+    "`AskUserQuestion` tool (or any UI/question tool); the conversation itself is how you "
+    "ask, so just write the question.\n"
     "- You may ONLY converse and use the `memory_log`, `request_data`, `inspect_dataset`, "
     "and `finalize_goal` tools. You cannot run code, browse, or read files in this phase."
 )

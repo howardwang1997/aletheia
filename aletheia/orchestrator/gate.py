@@ -31,10 +31,12 @@ def build_tool_gate(
                 payload={"tool": tool_name, "reason": "not in allowlist"},
             )
         )
+        available = ", ".join(sorted(t.split("__")[-1] for t in allowlist)) or "none"
         return PermissionResultDeny(
             message=(
-                f"Tool '{tool_name}' is not permitted in this phase. "
-                "Continue the conversation; only memory_log and finalize_goal are available."
+                f"Tool '{tool_name}' is not available in this phase. To ask the user "
+                "something, just write it as your normal reply — the conversation is the "
+                f"channel, no tool is needed. Available tools: {available}."
             )
         )
 
