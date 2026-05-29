@@ -10,11 +10,27 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Index, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from aletheia.config import get_settings
 from aletheia.db import Base
+
+# Embedding dimension is fixed at table-creation time (pgvector requires a
+# concrete dim). Read it once from settings; changing it later means recreating
+# the memory_chunks table.
+_EMBED_DIM = get_settings().embedding_dim
+
+# what kind of content a recall chunk holds:
+MEMORY_KINDS = (
+    "hypothesis",
+    "design_rationale",
+    "critique_summary",
+    "conclusion",
+    "note",
+)
 
 
 def _uuid() -> str:
@@ -178,6 +194,28 @@ class DataAsset(Base):
     profile_json: Mapped[dict | None] = mapped_column(JSONB)  # columns/dtypes/n_rows/stats
     requested_by: Mapped[str] = mapped_column(String(16), default="human")  # agent | human
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class MemoryChunk(Base):
+    """Semantic-recall store: embedded fragments of research reasoning (hypotheses,
+    design rationales, critique summaries, conclusions). Lets the orchestrator ask
+    "have we tried X? what failed? what did critics say?" before designing — the
+    anti-chaos backbone that stops the loop re-running dead ends.
+
+    run_id is nullable so recall can be cross-run (portfolio memory); queries
+    rank by cosine distance over ``embedding``.
+    """
+
+    __tablename__ = "memory_chunks"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    experiment_id: Mapped[str | None] = mapped_column(String(32))
+    kind: Mapped[str] = mapped_column(String(32), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[list[float]] = mapped_column(Vector(_EMBED_DIM))
+    meta_json: Mapped[dict | None] = mapped_column(JSONB)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Event(Base):
