@@ -38,6 +38,7 @@ const ACTIVITY_TYPES = new Set([
   "stage",
   "compute_submitted",
   "compute_status",
+  "code",
   "critique_panel",
   "critique_round",
   "iam",

@@ -71,9 +71,18 @@ class LocalBackend(ComputeBackend):
         )
         workdir = run_workspace(spec.run_id) / f"job_{job_id}"
         workdir.mkdir(parents=True, exist_ok=True)
+        design = dict(spec.design)
+        # a coder-authored solution: persist it and point the design at it so the
+        # plugin's harness uses it as the candidate estimator (sandboxed in-subprocess)
+        solution_code = design.pop("solution_code", None)
+        if solution_code:
+            sol_path = workdir / "solution.py"
+            sol_path.write_text(solution_code)
+            design["solution_path"] = str(sol_path.resolve())
+            spec.design = design
         (workdir / "payload.json").write_text(
             json.dumps(
-                {"domain": spec.domain, "design": spec.design, "data_spec": spec.data_spec}
+                {"domain": spec.domain, "design": design, "data_spec": spec.data_spec}
             )
         )
         job = _Job(job_id=job_id, spec=spec, workdir=workdir)
@@ -106,12 +115,16 @@ class LocalBackend(ComputeBackend):
 
         (workdir / "train.py").write_text(_TRAIN_SCRIPT)
         log = (workdir / "job.log").open("wb")
-        # sys.executable == this env's python (aletheia is editable-installed)
+        # sys.executable == this env's python (aletheia is editable-installed).
+        # Restricted subprocess: CPU/memory rlimits applied in the child.
+        from aletheia.coder.sandbox import resource_limits
+
         job.proc = subprocess.Popen(
             [sys.executable, str(workdir / "train.py")],
             cwd=str(workdir),
             stdout=log,
             stderr=subprocess.STDOUT,
+            preexec_fn=resource_limits(),
         )
         set_compute_job_status(job_id, "running")
         self._jobs[job_id] = job
@@ -125,6 +138,15 @@ class LocalBackend(ComputeBackend):
         if job.finalized and job.terminal is not None:
             return job.terminal
         if job.proc is not None and job.proc.poll() is None:
+            # wall-clock backstop: kill a training subprocess that overruns
+            from aletheia.config import get_settings
+
+            if time.time() - job.started_at > get_settings().sandbox_timeout_s:
+                job.proc.kill()
+                set_compute_job_status(job_id, "failed")
+                job.finalized = True
+                job.terminal = JobStatus(job_id=job_id, status="failed", error="sandbox timeout")
+                return job.terminal
             return JobStatus(job_id=job_id, status="running")
         # process exited (or dry-run path that wasn't pre-finalized) -> finalize
         return self._finalize(job)

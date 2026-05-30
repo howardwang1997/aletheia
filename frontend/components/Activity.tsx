@@ -24,6 +24,8 @@ function statusLabel(status: { state: string; detail?: string }): string {
       return "goal finalized ✓";
     case "designing":
       return "designing experiment…";
+    case "coding":
+      return "writing model code…";
     case "executing":
       return "running training…";
     case "analyzing":
@@ -70,6 +72,10 @@ function line(e: LabEvent): string {
       return `→ ${p.stage ?? ""}: ${p.rationale ?? ""}`;
     case "compute_submitted":
       return `🧮 job ${p.job_id ?? ""} submitted`;
+    case "code":
+      return `⌨ solution ${p.accepted ? "accepted" : "rejected"} (${p.lines ?? 0} lines)${
+        !p.accepted && p.reasons?.length ? ` — ${p.reasons.join("; ")}` : ""
+      }`;
     case "compute_status":
       return `🧮 job ${p.job_id ?? ""}: ${p.status ?? ""}${p.metrics ? ` ${JSON.stringify(p.metrics)}` : ""}`;
     case "critique_panel":

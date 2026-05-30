@@ -103,6 +103,15 @@ class Settings(BaseSettings):
     codex_command: str = "codex"
     codex_timeout_s: float = 240.0
 
+    # --- coder sandbox (executing AI-authored model code) ---
+    # NB: the AST allowlist + rlimits are a guardrail against runaway/accidental
+    # code, NOT a hard boundary against truly adversarial code (Docker is the
+    # later, stronger option). The code is authored by the trusted Opus coder.
+    sandbox_timeout_s: float = 600.0  # wall-clock kill for a training subprocess
+    sandbox_cpu_seconds: int = 600  # RLIMIT_CPU
+    sandbox_max_memory_mb: int = 4096  # RLIMIT_AS (best-effort on macOS)
+    coder_enabled: bool = True  # author a solution.py each run (falls back if it fails the gate)
+
     # --- budget guardrails (per run) ---
     budget_usd: float = 20.0
     budget_gpu_hours: float = 4.0
