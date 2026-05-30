@@ -16,7 +16,7 @@ from typing import Any
 from aletheia.coder.sandbox import check_code
 from aletheia.coder.worker import CANNED_SOLUTION, CODER_SYSTEM, coder_prompt, extract_code
 from aletheia.compute.base import JobSpec
-from aletheia.compute.local import get_local_backend
+from aletheia.compute.factory import get_compute_backend
 from aletheia.compute.mcp_tools import resolve_data_spec
 from aletheia.config import get_settings
 from aletheia.critics.gateway import CriticGateway
@@ -59,7 +59,7 @@ class ExperimentDriver:
         self.run_id = run_id
         self.dry_run = dry_run
         self.gateway = CriticGateway()
-        self.backend = get_local_backend()
+        self.backend = get_compute_backend()
         settings = get_settings()
         self.guard = LoopGuard(settings.critics.consensus.max_design_iterations)
         self.budget: BudgetTracker | None = None  # set in _run (cap depends on the run)
