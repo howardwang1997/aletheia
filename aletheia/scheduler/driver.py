@@ -13,6 +13,8 @@ import json
 import re
 from typing import Any
 
+from aletheia.coder.sandbox import check_code
+from aletheia.coder.worker import CANNED_SOLUTION, CODER_SYSTEM, coder_prompt, extract_code
 from aletheia.compute.base import JobSpec
 from aletheia.compute.local import get_local_backend
 from aletheia.compute.mcp_tools import resolve_data_spec
@@ -71,6 +73,36 @@ class ExperimentDriver:
             index_chunk, kind, text,
             run_id=self.run_id, experiment_id=exp_id, meta=meta or None, dry_run=self.dry_run,
         )
+
+    async def _code(self, design: dict, data_spec: dict, exp_id: str | None) -> str | None:
+        """CODE stage: the coder authors a constrained build_pipeline() solution.
+        It is statically gated; a passing solution is used as the candidate model,
+        a failing one is rejected and the run falls back to the fixed design model."""
+        if not get_settings().coder_enabled:
+            return None
+        await self._status("coding", "authoring model code")
+        text = await run_worker(
+            self.run_id, "coder", coder_prompt(design, data_spec),
+            system=CODER_SYSTEM, dry_run=self.dry_run, dry_value=CANNED_SOLUTION,
+        )
+        if is_degraded(text):
+            return None  # worker unavailable -> fall back to the fixed model
+        code = extract_code(text)
+        ok, reasons = check_code(code)
+        await get_bus().publish(
+            make_event(
+                "code", run_id=self.run_id,
+                payload={"accepted": ok, "lines": code.count("\n") + 1, "reasons": reasons[:5]},
+            )
+        )
+        if not ok:
+            await record_transition(
+                self.run_id, exp_id, "experiment_design", "experiment_design",
+                f"coder solution rejected by gate: {reasons[:3]}; using fixed model",
+            )
+            return None
+        await self._index("design_rationale", f"coder solution:\n{code[:400]}", exp_id)
+        return code
 
     async def _iam_setup(self, plan: dict, domain: str, exp_id: str | None) -> None:
         """Create (or reuse) this project's repo and the experiment's branch, behind
@@ -219,6 +251,11 @@ class ExperimentDriver:
         # design approved -> set up the project repo + experiment branch (IAM)
         await self._iam_setup(plan, domain, exp_id)
 
+        # 2b) CODE: the coder authors the model (gated); falls back to the design model
+        solution_code = await self._code(design, data_spec, exp_id)
+        if solution_code:
+            design["solution_code"] = solution_code
+
         # 3) EXECUTION --------------------------------------------------------
         await record_transition(self.run_id, exp_id, "experiment_design", "execution", "design approved; running")
         await self._status("executing")
@@ -238,6 +275,9 @@ class ExperimentDriver:
                 "metrics": result.get("metrics"),
                 "eval_summary": (result.get("info") or {}).get("eval_summary", ""),
                 "analysis": analysis,
+                # the coder's actual model code, so an adversarial reviewer can check
+                # for leakage / metric-gaming, not just trust the reported numbers
+                "solution_code": design.get("solution_code", ""),
             },
             exp_id or self.run_id,
             run_id=self.run_id,

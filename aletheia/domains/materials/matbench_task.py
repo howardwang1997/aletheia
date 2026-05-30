@@ -66,7 +66,30 @@ class MaterialsBandGapPlugin(DomainPlugin):
         return X, y, feature_names, groups
 
     # --- train / evaluate ---
+    def _load_solution_pipeline(self, path: str):
+        """Load a coder-authored ``build_pipeline()`` estimator, re-checking the
+        AST gate (defense in depth — the driver already gated it before submit)."""
+        import importlib.util
+        from pathlib import Path
+
+        from aletheia.coder.sandbox import check_code
+
+        src = Path(path).read_text()
+        ok, reasons = check_code(src)
+        if not ok:
+            raise RuntimeError(f"solution failed the code gate: {reasons}")
+        spec = importlib.util.spec_from_file_location("aletheia_solution", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.build_pipeline()
+
     def _make_model(self, design: dict[str, Any]):
+        # a coder-authored solution overrides the fixed model; it runs through the
+        # identical LCSO/CV/holdout/baseline protocol below (no special-casing).
+        solution_path = design.get("solution_path")
+        if solution_path:
+            return self._load_solution_pipeline(solution_path)
+
         from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
 
         model = (design.get("model") or "random_forest").lower()

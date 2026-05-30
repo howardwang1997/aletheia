@@ -1,0 +1,111 @@
+"""Static safety gate + resource limits for AI-authored model code.
+
+``check_code`` walks the AST and rejects anything outside a tight allowlist
+(imports, dangerous builtins, dunder-escape patterns). ``resource_limits``
+returns a ``preexec_fn`` that caps CPU + address space for the training
+subprocess. These are guardrails against runaway/accidental code on a personal
+machine — NOT a hard sandbox against a determined adversary (that is Docker,
+later). The code is authored by the trusted Opus coder; this catches mistakes
+and obvious foot-guns and keeps the surface honest.
+"""
+
+from __future__ import annotations
+
+import ast
+
+# Module roots the solution may import. Enough to build sklearn pipelines /
+# feature transforms; deliberately excludes io / net / process / serialization.
+ALLOWED_IMPORT_ROOTS = {
+    "sklearn",
+    "numpy",
+    "np",
+    "scipy",
+    "pandas",
+    "math",
+    "statistics",
+    "typing",
+    "dataclasses",
+    "functools",
+    "itertools",
+    "collections",
+    "warnings",
+    "random",
+}
+
+# Names that must never be called/used in solution code.
+FORBIDDEN_NAMES = {
+    "eval", "exec", "compile", "__import__", "open", "input",
+    "exit", "quit", "breakpoint", "globals", "locals", "vars",
+    "memoryview", "help",
+}
+
+# Attribute names that enable sandbox escapes via introspection.
+FORBIDDEN_ATTRS = {
+    "__globals__", "__builtins__", "__subclasses__", "__bases__", "__mro__",
+    "__class__", "__dict__", "__code__", "__closure__", "__import__",
+    "__getattribute__", "__reduce__", "__reduce_ex__",
+}
+
+REQUIRED_FUNCTION = "build_pipeline"
+
+
+def _import_root(name: str) -> str:
+    return (name or "").split(".")[0]
+
+
+def check_code(source: str) -> tuple[bool, list[str]]:
+    """Return (ok, reasons). ok=True means the code passes the static gate and
+    defines the required ``build_pipeline`` function."""
+    reasons: list[str] = []
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return False, [f"syntax error: {exc}"]
+
+    defines_required = False
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name == REQUIRED_FUNCTION:
+                defines_required = True
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if _import_root(alias.name) not in ALLOWED_IMPORT_ROOTS:
+                    reasons.append(f"forbidden import: {alias.name}")
+        elif isinstance(node, ast.ImportFrom):
+            if _import_root(node.module or "") not in ALLOWED_IMPORT_ROOTS:
+                reasons.append(f"forbidden import: from {node.module}")
+        elif isinstance(node, ast.Attribute):
+            if node.attr in FORBIDDEN_ATTRS:
+                reasons.append(f"forbidden attribute access: {node.attr}")
+        elif isinstance(node, ast.Name):
+            if node.id in FORBIDDEN_NAMES:
+                reasons.append(f"forbidden name: {node.id}")
+
+    if not defines_required:
+        reasons.append(f"must define a `{REQUIRED_FUNCTION}()` function")
+    return (len(reasons) == 0), reasons
+
+
+def resource_limits():
+    """A ``preexec_fn`` for subprocess.Popen that caps CPU time and address space.
+    Returns None on platforms without ``resource`` (caller skips it)."""
+    try:
+        import resource
+    except ImportError:  # pragma: no cover - non-POSIX
+        return None
+
+    from aletheia.config import get_settings
+
+    s = get_settings()
+    cpu = int(s.sandbox_cpu_seconds)
+    mem_bytes = int(s.sandbox_max_memory_mb) * 1024 * 1024
+
+    def _apply():  # runs in the child, after fork, before exec
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
+        try:
+            resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
+        except (ValueError, OSError):
+            pass  # RLIMIT_AS is unreliable on macOS; CPU + wall-clock still apply
+
+    return _apply
