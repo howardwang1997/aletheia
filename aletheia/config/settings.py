@@ -112,6 +112,16 @@ class Settings(BaseSettings):
     sandbox_max_memory_mb: int = 4096  # RLIMIT_AS (best-effort on macOS)
     coder_enabled: bool = True  # author a solution.py each run (falls back if it fails the gate)
 
+    # --- compute backend ---
+    # "local"  = restricted subprocess on the host (soft guardrails).
+    # "docker" = HARD sandbox: host featurizes + stages X/y, a light no-network
+    #            container runs only the (untrusted) model code via train_evaluate.
+    compute_backend: Literal["local", "docker"] = "local"
+    sandbox_docker_image: str = "aletheia-sandbox:latest"
+    sandbox_docker_cpus: float = 2.0
+    sandbox_docker_pids: int = 256
+    sandbox_allow_network: bool = False  # keep False — the hard boundary is no-network
+
     # --- budget guardrails (per run) ---
     budget_usd: float = 20.0
     budget_gpu_hours: float = 4.0
