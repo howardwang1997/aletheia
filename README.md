@@ -11,6 +11,24 @@ that reviews designs/results from supportive and adversarial angles. A Postgres
 streams live activity and lets you steer the lab. See the full design in
 `docs/` and the approved plan.
 
+## Ultimate goal
+
+**用AI做最前沿的科学研究 — have AI conduct frontier scientific research, end to end.**
+Not AutoML on a benchmark: the north star is a system that *poses novel, literature-grounded
+questions*, designs and runs experiments with frontier methods, reasons about what it learned,
+and writes up cited results — autonomously, within guardrails. Every change is weighed by whether
+it moves Aletheia toward that. See the roadmap in the approved plan and `docs/ARCHITECTURE.md`.
+
+## Invariants (the safety/quality spine — never traded for a feature)
+
+1. **Deterministic FSM + hard gates** — capability is added as gated stages, not free-roaming autonomy.
+2. **Honest evaluation** — a fixed, leakage-aware harness computes metrics; the agent never grades its own homework (independent re-compute when it authors training code).
+3. **Adversarial cross-model peer review** — ≥1 distinct-vendor red-team reviewer per gate; novelty/SOTA claims must cite literature.
+4. **Full provenance** — every transition/decision/metric/critique/artifact is in the ledger; every claim traces to code (a PR).
+5. **Budget guardrails + sandboxed code** — per-run caps; AI-authored code runs behind an AST gate + a no-network Docker hard sandbox.
+6. **Latest models always.**
+7. **Human role** — set the domain/direction + connect data/keys; the AI does the science lights-out within the guardrails (irreversible/outward actions stay gated).
+
 ## Architecture (one-liner)
 
 `Next.js dashboard ⇄ FastAPI ⇄ {orchestrator (Opus 4.7), critic gateway, memory/ledger,

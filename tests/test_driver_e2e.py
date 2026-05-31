@@ -55,3 +55,15 @@ async def test_full_dry_run_loop():
 
     # a report artifact was written
     assert any(a["kind"] == "report" for a in list_artifacts(exp_id))
+
+    # SURVEY ran before design: a survey transition + ≥1 ingested literature chunk
+    from aletheia.memory.ledger import Decision, MemoryChunk
+
+    with session_scope() as s:
+        assert s.query(Decision).filter(
+            Decision.run_id == run_id, Decision.stage_to == "survey"
+        ).first() is not None
+        lit = s.query(MemoryChunk).filter(
+            MemoryChunk.run_id == run_id, MemoryChunk.kind == "literature"
+        ).count()
+        assert lit >= 1

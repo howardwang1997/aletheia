@@ -41,6 +41,7 @@ MEMORY_KINDS = (
     "critique_summary",
     "conclusion",
     "note",
+    "literature",  # external prior work (arXiv/OpenAlex), ingested by the SURVEY stage
 )
 
 

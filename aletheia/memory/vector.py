@@ -107,9 +107,18 @@ def format_briefing(chunks: list[dict[str, Any]]) -> str:
     """Render recalled chunks into a compact 'prior work' briefing for a prompt."""
     if not chunks:
         return ""
-    lines = ["PRIOR WORK (from past runs — avoid repeating dead ends):"]
+    lines = ["RELEVANT PRIOR WORK & LITERATURE (ground the design in it; don't repeat dead ends):"]
     for c in chunks:
         tag = c["kind"].replace("_", " ")
         snippet = c["text"][:240].replace("\n", " ")
-        lines.append(f"- [{tag}, sim={c['similarity']:.2f}] {snippet}")
+        extra = ""
+        if c["kind"] == "literature":
+            meta = c.get("meta") or {}
+            bits = [
+                str(meta["year"]) if meta.get("year") else None,
+                f"{meta['citations']} cites" if meta.get("citations") is not None else None,
+            ]
+            joined = ", ".join(b for b in bits if b)
+            extra = f" ({joined})" if joined else ""
+        lines.append(f"- [{tag}{extra}, sim={c['similarity']:.2f}] {snippet}")
     return "\n".join(lines)

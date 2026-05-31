@@ -31,6 +31,9 @@ from aletheia.memory.service import (
     set_run_status,
 )
 from aletheia.memory.vector import format_briefing, index_chunk, recall
+from aletheia.orchestrator.gate import build_tool_gate
+from aletheia.orchestrator.tools import build_search_literature_tool
+from aletheia.research import literature
 from aletheia.notify.feishu import notify_feishu
 from aletheia.orchestrator.reasoner import reason_stage
 from aletheia.orchestrator.worker import is_degraded, run_worker
@@ -66,6 +69,7 @@ class ExperimentDriver:
         self.gh: GitHubBackend = get_github_backend(dry_run=dry_run)
         self.repo: RepoResult | None = None  # set by _iam_setup once a repo exists
         self.branch: str | None = None  # this experiment's branch
+        self.survey_brief: str = ""  # literature briefing from the SURVEY stage
 
     async def _index(self, kind: str, text: str, exp_id: str | None, **meta: Any) -> None:
         """Best-effort: embed a reasoning fragment into the recall store (off-thread)."""
@@ -73,6 +77,65 @@ class ExperimentDriver:
             index_chunk, kind, text,
             run_id=self.run_id, experiment_id=exp_id, meta=meta or None, dry_run=self.dry_run,
         )
+
+    async def _survey(self, plan: dict, exp_id: str | None) -> str:
+        """SURVEY: ground the work in the literature before designing. A research
+        worker searches arXiv/OpenAlex (ingesting papers into recall) and returns a
+        briefing. Dry-run ingests 2 canned papers and returns a canned briefing —
+        no network. Best-effort: failure yields an empty briefing, never breaks the loop."""
+        await self._status("surveying", "researching the literature")
+        topic = " ".join(
+            str(plan.get(k, "")).strip() for k in ("objective", "direction", "hypothesis")
+        ).strip() or (plan.get("domain") or "materials")
+        brief = ""
+        try:
+            if self.dry_run:
+                papers = [
+                    literature.Paper(
+                        title="Magpie composition features for band-gap regression",
+                        abstract="Composition-only descriptors predict band gaps; tree models are strong baselines.",
+                        year=2024, source="arxiv",
+                    ),
+                    literature.Paper(
+                        title="Leakage-aware evaluation for materials ML",
+                        abstract="Random splits overstate performance; leave-chemical-system-out is the honest metric.",
+                        year=2023, citations=31, source="openalex",
+                    ),
+                ]
+                await asyncio.to_thread(literature.ingest, papers, self.run_id, True)
+                brief = literature.briefing(papers)
+            else:
+                from claude_agent_sdk import create_sdk_mcp_server
+
+                server = create_sdk_mcp_server(
+                    name="research", version="0.0.1",
+                    tools=[build_search_literature_tool(self.run_id)],
+                )
+                allow = {"mcp__research__search_literature"}
+                brief = await run_worker(
+                    self.run_id, "survey",
+                    f"Survey the prior work for this research direction:\n{topic}\n\n"
+                    "Call search_literature a few times with focused queries to map the "
+                    "literature, then write a ≤150-word briefing of what's been done, the "
+                    "strongest prior methods/results, and where the gaps are.",
+                    system=(
+                        "You are a meticulous research librarian. Ground claims in the "
+                        "literature you retrieve; never invent papers or numbers."
+                    ),
+                    mcp_servers={"research": server},
+                    allowed_tools=list(allow),
+                    can_use_tool=build_tool_gate(allow, self.run_id),
+                    max_turns=6, dry_run=False,
+                )
+                if is_degraded(brief):
+                    brief = ""
+        except Exception as exc:  # noqa: BLE001 - survey is best-effort
+            await get_bus().publish(
+                make_event("literature", run_id=self.run_id, payload={"error": str(exc)})
+            )
+            brief = ""
+        await record_transition(self.run_id, exp_id, None, "survey", "literature surveyed")
+        return brief
 
     async def _code(self, design: dict, data_spec: dict, exp_id: str | None) -> str | None:
         """CODE stage: the coder authors a constrained build_pipeline() solution.
@@ -238,6 +301,9 @@ class ExperimentDriver:
         if hypo:
             await self._index("hypothesis", hypo, exp_id, domain=domain)
 
+        # 0) SURVEY — ground the work in the literature before designing
+        self.survey_brief = await self._survey(plan, exp_id)
+
         # 1) EXPERIMENT_DESIGN ------------------------------------------------
         await self._guard_budget("usd", get_settings().est_stage_cost_usd)
         await self._status("designing")
@@ -331,6 +397,7 @@ class ExperimentDriver:
             "Turn this research plan into a concrete experiment design for a "
             "composition->property regression.\n\n"
             f"PLAN:\n{json.dumps(plan, indent=2)}\n\nDATA:\n{json.dumps(data_spec, indent=2)}\n\n"
+            + (self.survey_brief + "\n\n" if self.survey_brief else "")
             + (briefing + "\n\n" if briefing else "")
             + "Return ONLY JSON with keys: model ('random_forest' or 'gradient_boosting'), "
             "model_params (object), test_size (0-1), random_state (int). Choose sensible values."
@@ -354,8 +421,11 @@ class ExperimentDriver:
 
     async def _design_gate(self, design, plan, plugin, exp_id) -> dict[str, Any] | None:
         while True:
+            content = (
+                {"design": design, "literature": self.survey_brief} if self.survey_brief else design
+            )
             panel = await self.gateway.review(
-                "design", design, exp_id or self.run_id, run_id=self.run_id, dry_run=self.dry_run
+                "design", content, exp_id or self.run_id, run_id=self.run_id, dry_run=self.dry_run
             )
             if panel.gate_passed:
                 return design
