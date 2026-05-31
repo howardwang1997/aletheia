@@ -30,6 +30,12 @@ ALLOWED_IMPORT_ROOTS = {
     "collections",
     "warnings",
     "random",
+    # SOTA model frameworks (B-2) — fit/predict estimators only; the eval harness
+    # still computes the metrics (the coder never grades its own homework).
+    "xgboost",
+    "lightgbm",
+    "torch",
+    "skorch",
 }
 
 # Names that must never be called/used in solution code.

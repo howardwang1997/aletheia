@@ -10,7 +10,8 @@
 FROM python:3.11-slim
 
 RUN pip install --no-cache-dir \
-    "numpy" "pandas" "scikit-learn" "scipy" "joblib" "matplotlib"
+    "numpy" "pandas" "scikit-learn" "scipy" "joblib" "matplotlib" \
+    "xgboost" "lightgbm"
 
 ENV MPLBACKEND=Agg \
     PYTHONDONTWRITEBYTECODE=1 \
