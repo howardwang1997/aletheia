@@ -56,14 +56,21 @@ async def test_full_dry_run_loop():
     # a report artifact was written
     assert any(a["kind"] == "report" for a in list_artifacts(exp_id))
 
-    # SURVEY ran before design: a survey transition + ≥1 ingested literature chunk
-    from aletheia.memory.ledger import Decision, MemoryChunk
+    # research front-end ran before design: survey → ideate transitions, a chosen
+    # hypothesis persisted, a direction (novelty) gate, and ≥1 ingested literature chunk
+    from aletheia.memory.ledger import Decision, Experiment, MemoryChunk
 
     with session_scope() as s:
-        assert s.query(Decision).filter(
-            Decision.run_id == run_id, Decision.stage_to == "survey"
-        ).first() is not None
+        stages = {
+            d.stage_to
+            for d in s.query(Decision).filter(Decision.run_id == run_id).all()
+        }
+        assert {"survey", "ideate", "experiment_design"} <= stages
         lit = s.query(MemoryChunk).filter(
             MemoryChunk.run_id == run_id, MemoryChunk.kind == "literature"
         ).count()
         assert lit >= 1
+        assert s.get(Experiment, exp_id).hypothesis  # IDEATE set it
+        assert s.query(CritiquePanelRow).filter(
+            CritiquePanelRow.target_ref == exp_id, CritiquePanelRow.target == "direction"
+        ).first() is not None
