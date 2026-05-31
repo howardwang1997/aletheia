@@ -603,14 +603,18 @@ class ExperimentDriver:
         return {"job_id": job_id, "metrics": st.metrics or {}, "artifacts": st.artifacts, "info": st.info}
 
     async def _analyze(self, design, result, exp_id) -> str:
-        """Decomposed analysis: four independent concerns each reviewed in its OWN
-        isolated worker context (run in parallel), then synthesized. The main loop
-        keeps only the merged text — never the sub-workers' internal turns."""
+        """Decomposed, scientific analysis: independent concerns reviewed in parallel
+        isolated worker contexts, then synthesized into a scientific reading —
+        hypothesis verdict, claims (finding→mechanism→implication), an ablation reading
+        of the baseline panel, a comparison to the surveyed literature/SOTA, and
+        limitations. The main loop keeps only the merged text, never the sub-turns."""
         metrics = result.get("metrics", {})
         eval_summary = (result.get("info") or {}).get("eval_summary", "")
+        lit = f"LITERATURE (prior work):\n{self.survey_brief}\n" if self.survey_brief else ""
         evidence = (
+            f"HYPOTHESIS: {json.dumps(self.hypothesis) if self.hypothesis else 'n/a'}\n"
             f"DESIGN: {json.dumps(design)}\nMETRICS: {json.dumps(metrics)}\n"
-            f"EVAL PROTOCOL SUMMARY: {eval_summary}"
+            f"EVAL PROTOCOL SUMMARY: {eval_summary}\n{lit}"
         )
         # one focused, isolated sub-check per concern — independent, so parallel
         subchecks = {
@@ -618,6 +622,9 @@ class ExperimentDriver:
             "overfit": "Assess OVERFITTING only (holdout vs LCSO vs RepeatedKFold spread; CV std).",
             "baseline": "Assess BASELINE ADEQUACY only (does the model beat dummy/ridge/knn/gbm meaningfully?).",
             "stats": "Assess STATISTICAL VALIDITY only (CI width, error stratification by gap range, sample sizes).",
+            "sota": "Assess PRIOR WORK / SOTA only: is the headline LCSO result competitive with the "
+                    "literature above, and does it support or refute the hypothesis? If no comparable "
+                    "published number is available, say so explicitly — do not invent one.",
         }
         header = (
             "Interpret these regression results. The HEADLINE metric is "
@@ -643,13 +650,21 @@ class ExperimentDriver:
             sub_text += f"\n- (unavailable sub-checks, excluded: {', '.join(unavailable)})"
         synthesis = await run_worker(
             self.run_id, "analysis",
-            "Synthesize these independent sub-reviews into one analysis: overall soundness, "
-            "the biggest risk, and what to try next. Lead with the LCSO headline.\n\n"
-            f"SUB-REVIEWS:\n{sub_text}\n\nMETRICS: {json.dumps(metrics)}",
+            "Synthesize these independent sub-reviews into a SCIENTIFIC analysis, grounded in "
+            "the metrics + literature (do not overclaim). Produce:\n"
+            "1) HYPOTHESIS VERDICT — supported or refuted, judged against its prediction.\n"
+            "2) CLAIMS — 1-2, each as finding -> mechanism -> implication.\n"
+            "3) ABLATION READING — what the baseline panel + gap-range stratification reveal.\n"
+            "4) SOTA COMPARISON — how the LCSO headline sits vs the prior work (or 'no comparable number').\n"
+            "5) LIMITATIONS. Lead with the LCSO headline.\n\n"
+            f"HYPOTHESIS: {json.dumps(self.hypothesis) if self.hypothesis else 'n/a'}\n"
+            f"SUB-REVIEWS:\n{sub_text}\n\nMETRICS: {json.dumps(metrics)}\n{lit}",
             dry_run=self.dry_run,
             dry_value=(
-                f"[dry-run] Analysis: LCSO MAE={metrics.get('mae_lcso')} (headline), "
-                f"holdout MAE={metrics.get('mae_holdout')}; beats baselines; no obvious leakage. "
+                f"[dry-run] Analysis — Hypothesis verdict: supported (LCSO MAE={metrics.get('mae_lcso')} "
+                f"< baselines). Claim: composition features carry band-gap signal -> tree model captures "
+                f"it -> usable screen. Ablation: beats dummy/ridge/knn/gbm; worst on wide-gap bin. "
+                f"SOTA: comparable to prior work in the briefing. Limitations: composition-only, one dataset. "
                 f"Sub-checks: {sub_text}"
             ),
         )

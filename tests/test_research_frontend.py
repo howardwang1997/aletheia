@@ -44,6 +44,35 @@ def test_ideate_dry_persists_hypothesis():
         assert s.get(Experiment, exp_id).hypothesis  # persisted to the experiment
 
 
+def test_analysis_is_scientific(monkeypatch):
+    """ANALYSIS runs a SOTA sub-check and synthesizes a scientific reading grounded
+    in the hypothesis + surveyed literature (verdict, claims, ablation, SOTA)."""
+    import aletheia.scheduler.driver as drv
+
+    create_all()
+    seen = {"labels": [], "synth_prompt": ""}
+
+    async def fake_worker(run_id, label, prompt, **kw):
+        seen["labels"].append(label)
+        if label == "analysis":
+            seen["synth_prompt"] = prompt
+            return "synthesis"
+        return f"{label}: fine"
+
+    monkeypatch.setattr(drv, "run_worker", fake_worker)
+    d = drv.ExperimentDriver("an-sci", dry_run=False)  # workers are faked
+    d.survey_brief = "Prior work: GBM reaches ~0.4 eV on band-gap regression."
+    d.hypothesis = {"statement": "GBM beats RF on LCSO", "prediction": "lower LCSO MAE"}
+    result = {"metrics": {"mae_lcso": 0.4, "mae_holdout": 0.4}, "info": {"eval_summary": "s"}}
+
+    out = asyncio.run(d._analyze({"model": "gbm"}, result, "an-sci"))
+    assert out == "synthesis"
+    assert "analysis:sota" in seen["labels"]  # the SOTA/prior-work sub-check ran
+    p = seen["synth_prompt"]
+    assert "HYPOTHESIS VERDICT" in p and "SOTA COMPARISON" in p and "ABLATION" in p
+    assert "GBM beats RF on LCSO" in p and "Prior work" in p  # hypothesis + literature fed in
+
+
 def test_direction_gate_dry_passes_and_records_panel():
     run_id, exp_id = _setup()
     d = ExperimentDriver(run_id, dry_run=True)
