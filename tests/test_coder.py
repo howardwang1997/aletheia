@@ -45,6 +45,43 @@ def test_gate_rejects_dangerous_code(src, needle):
     assert any(needle in r for r in reasons), reasons
 
 
+@pytest.mark.parametrize(
+    "src",
+    [
+        "import xgboost\ndef build_pipeline():\n    return xgboost.XGBRegressor()\n",
+        "from lightgbm import LGBMRegressor\ndef build_pipeline():\n    return LGBMRegressor()\n",
+        "import torch\ndef build_pipeline():\n    from sklearn.dummy import DummyRegressor\n    return DummyRegressor()\n",
+    ],
+)
+def test_gate_accepts_sota_frameworks(src):
+    ok, reasons = check_code(src)  # B-2: SOTA frameworks are allowed
+    assert ok, reasons
+
+
+def test_xgboost_solution_runs_through_harness(tmp_path):
+    """A coder SOTA model (xgboost) runs through the SAME fixed honest harness —
+    the coder picks the model, the harness still computes the metrics."""
+    plug = MaterialsBandGapPlugin()
+    sol = tmp_path / "solution.py"
+    sol.write_text(
+        "def build_pipeline():\n"
+        "    from xgboost import XGBRegressor\n"
+        "    return XGBRegressor(n_estimators=20, max_depth=3, verbosity=0)\n"
+    )
+    design = {"solution_path": str(sol), "random_state": 0, "test_size": 0.25}
+
+    import xgboost
+
+    assert isinstance(plug._make_model(design), xgboost.XGBRegressor)
+
+    rng = np.random.default_rng(0)
+    X = rng.standard_normal((30, 5))
+    y = X[:, 0] * 2.0 + rng.standard_normal(30) * 0.1
+    groups = np.array([f"g{i % 6}" for i in range(30)], dtype=object)
+    result = plug.train_evaluate(X, y, design, tmp_path, groups=groups)
+    assert {"mae_lcso", "mae_cv_mean", "mae_holdout"} <= set(result.metrics)
+
+
 def test_extract_code_pulls_block():
     assert extract_code("blah\n```python\ndef build_pipeline():\n    pass\n```\nend").startswith(
         "def build_pipeline"

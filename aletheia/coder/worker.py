@@ -24,12 +24,20 @@ Write a Python module that defines EXACTLY one function:
         compute any metric — only construct and return the model.\"\"\"
 
 The input X is a dense Magpie composition feature matrix (numeric, ~130 features);
-y is the target property. Prefer a well-regularized model; you may compose
-preprocessing (scaling, feature selection) inside a Pipeline.
+y is the target property. You may use a STATE-OF-THE-ART model — gradient boosting
+(xgboost / lightgbm) or a small neural net (torch, wrapped as a fit/predict estimator
+e.g. via skorch or a tiny custom class) — and compose preprocessing (scaling, feature
+selection) inside a Pipeline. Prefer well-regularized models; default to a strong
+gradient-boosting baseline unless you have reason to go deeper.
+
+The evaluation is NOT yours: a fixed, leakage-aware harness trains + scores the model
+you return (LCSO GroupKFold headline + RepeatedKFold + a baseline panel). So you only
+construct the model — you cannot influence the metric. Make it honestly strong.
 
 Hard rules (your code is statically checked and rejected if violated):
-- Import ONLY from: sklearn, numpy, scipy, pandas, math, statistics, typing,
-  dataclasses, functools, itertools, collections, warnings, random.
+- Import ONLY from: sklearn, numpy, scipy, pandas, math, statistics, xgboost,
+  lightgbm, torch, skorch (+ typing, dataclasses, functools, itertools, collections,
+  warnings, random).
 - No file/network/process access; no eval/exec/open/__import__/pickle/joblib;
   no dunder introspection (__globals__, __subclasses__, ...).
 Return ONLY the code in a single ```python ... ``` block."""
