@@ -5,6 +5,7 @@ import { Markdown } from "@/components/Markdown";
 
 const PHASE1_STAGES = [
   "survey",
+  "ideate",
   "experiment_design",
   "execution",
   "analysis",
@@ -25,6 +26,8 @@ function statusLabel(status: { state: string; detail?: string }): string {
       return "goal finalized ✓";
     case "surveying":
       return "surveying the literature…";
+    case "ideating":
+      return "forming a hypothesis…";
     case "designing":
       return "designing experiment…";
     case "coding":

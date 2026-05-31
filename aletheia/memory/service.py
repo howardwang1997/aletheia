@@ -93,6 +93,14 @@ def finalize_plan(run_id: str, plan: dict[str, Any]) -> str:
         return exp.id
 
 
+def set_experiment_hypothesis(experiment_id: str, hypothesis: str) -> None:
+    """Record the hypothesis the IDEATE stage chose for this experiment."""
+    with session_scope() as s:
+        exp = s.get(Experiment, experiment_id)
+        if exp is not None:
+            exp.hypothesis = hypothesis
+
+
 def set_experiment_repo(
     experiment_id: str, code_repo: str | None = None, code_branch: str | None = None
 ) -> None:

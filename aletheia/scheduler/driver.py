@@ -27,6 +27,7 @@ from aletheia.iam.github_app import GitHubBackend, RepoResult, get_github_backen
 from aletheia.memory.service import (
     get_run,
     record_artifacts,
+    set_experiment_hypothesis,
     set_experiment_repo,
     set_run_status,
 )
@@ -42,6 +43,18 @@ from aletheia.scheduler.budget import BudgetPaused, BudgetTracker
 from aletheia.scheduler.statemachine import LoopGuard, record_transition
 
 _JSON = re.compile(r"\{.*\}", re.DOTALL)
+_JSON_ARR = re.compile(r"\[.*\]", re.DOTALL)
+
+
+def _parse_json(text: str, pattern: re.Pattern, default: Any) -> Any:
+    """Extract the first JSON object/array matching ``pattern``; ``default`` on failure."""
+    m = pattern.search(text or "")
+    if not m:
+        return default
+    try:
+        return json.loads(m.group(0))
+    except (json.JSONDecodeError, ValueError):
+        return default
 
 
 def _parse_design(text: str, fallback: dict[str, Any]) -> dict[str, Any]:
@@ -70,6 +83,8 @@ class ExperimentDriver:
         self.repo: RepoResult | None = None  # set by _iam_setup once a repo exists
         self.branch: str | None = None  # this experiment's branch
         self.survey_brief: str = ""  # literature briefing from the SURVEY stage
+        self.survey_gaps: list[str] = []  # research gaps surfaced by SURVEY
+        self.hypothesis: dict[str, Any] = {}  # the hypothesis chosen by IDEATE
 
     async def _index(self, kind: str, text: str, exp_id: str | None, **meta: Any) -> None:
         """Best-effort: embed a reasoning fragment into the recall store (off-thread)."""
@@ -78,16 +93,17 @@ class ExperimentDriver:
             run_id=self.run_id, experiment_id=exp_id, meta=meta or None, dry_run=self.dry_run,
         )
 
-    async def _survey(self, plan: dict, exp_id: str | None) -> str:
-        """SURVEY: ground the work in the literature before designing. A research
-        worker searches arXiv/OpenAlex (ingesting papers into recall) and returns a
-        briefing. Dry-run ingests 2 canned papers and returns a canned briefing —
-        no network. Best-effort: failure yields an empty briefing, never breaks the loop."""
+    async def _survey(self, plan: dict, exp_id: str | None) -> tuple[str, list[str]]:
+        """Deep-research SURVEY: decompose the direction into sub-questions, fan out
+        parallel isolated librarian workers (each drives search_literature + ingests),
+        then synthesize a thematic briefing + explicit research gaps. Mirrors the
+        literature-review workflow. Returns (briefing, gaps). Best-effort — any failure
+        yields an empty briefing, never breaks the loop."""
         await self._status("surveying", "researching the literature")
         topic = " ".join(
             str(plan.get(k, "")).strip() for k in ("objective", "direction", "hypothesis")
         ).strip() or (plan.get("domain") or "materials")
-        brief = ""
+        briefing, gaps = "", []
         try:
             if self.dry_run:
                 papers = [
@@ -103,39 +119,139 @@ class ExperimentDriver:
                     ),
                 ]
                 await asyncio.to_thread(literature.ingest, papers, self.run_id, True)
-                brief = literature.briefing(papers)
+                briefing = literature.briefing(papers)
+                gaps = [
+                    "Few works report a fair leave-chemical-system-out baseline.",
+                    "Composition-only vs structure-aware features are rarely compared honestly.",
+                ]
             else:
-                from claude_agent_sdk import create_sdk_mcp_server
-
-                server = create_sdk_mcp_server(
-                    name="research", version="0.0.1",
-                    tools=[build_search_literature_tool(self.run_id)],
-                )
-                allow = {"mcp__research__search_literature"}
-                brief = await run_worker(
-                    self.run_id, "survey",
-                    f"Survey the prior work for this research direction:\n{topic}\n\n"
-                    "Call search_literature a few times with focused queries to map the "
-                    "literature, then write a ≤150-word briefing of what's been done, the "
-                    "strongest prior methods/results, and where the gaps are.",
-                    system=(
-                        "You are a meticulous research librarian. Ground claims in the "
-                        "literature you retrieve; never invent papers or numbers."
-                    ),
-                    mcp_servers={"research": server},
-                    allowed_tools=list(allow),
-                    can_use_tool=build_tool_gate(allow, self.run_id),
-                    max_turns=6, dry_run=False,
-                )
-                if is_degraded(brief):
-                    brief = ""
+                subqs = await self._decompose(topic)
+                findings = await asyncio.gather(*[self._librarian(topic, sq) for sq in subqs])
+                findings = [f for f in findings if f and not is_degraded(f)]
+                briefing, gaps = await self._synthesize(topic, findings)
         except Exception as exc:  # noqa: BLE001 - survey is best-effort
             await get_bus().publish(
                 make_event("literature", run_id=self.run_id, payload={"error": str(exc)})
             )
-            brief = ""
-        await record_transition(self.run_id, exp_id, None, "survey", "literature surveyed")
-        return brief
+        await record_transition(
+            self.run_id, exp_id, None, "survey", f"literature surveyed; {len(gaps)} gap(s) found"
+        )
+        return briefing, gaps
+
+    async def _decompose(self, topic: str) -> list[str]:
+        text = await run_worker(
+            self.run_id, "survey:decompose",
+            f"Break this research direction into 3-4 focused literature sub-questions that "
+            f"together map the prior work:\n{topic}\n\nReturn ONLY a JSON array of short query strings.",
+            system="You scope systematic literature reviews.", dry_run=False,
+        )
+        subqs = _parse_json(text, _JSON_ARR, [])
+        subqs = [str(s).strip() for s in subqs if str(s).strip()][:4]
+        return subqs or [topic]
+
+    async def _librarian(self, topic: str, subq: str) -> str:
+        from claude_agent_sdk import create_sdk_mcp_server
+
+        server = create_sdk_mcp_server(
+            name="research", version="0.0.1", tools=[build_search_literature_tool(self.run_id)]
+        )
+        allow = {"mcp__research__search_literature"}
+        return await run_worker(
+            self.run_id, f"survey:{subq[:24]}",
+            f"Research this sub-question for the direction '{topic}':\n{subq}\n\n"
+            "Call search_literature with focused queries, then give a ≤60-word finding citing the "
+            "strongest prior work and any gap you notice.",
+            system="You are a meticulous research librarian; ground claims in retrieved papers, never invent.",
+            mcp_servers={"research": server}, allowed_tools=list(allow),
+            can_use_tool=build_tool_gate(allow, self.run_id), max_turns=5, dry_run=False,
+        )
+
+    async def _synthesize(self, topic: str, findings: list[str]) -> tuple[str, list[str]]:
+        joined = "\n".join(f"- {f}" for f in findings) or "(no findings retrieved)"
+        text = await run_worker(
+            self.run_id, "survey:synthesize",
+            f"Synthesize a literature briefing for '{topic}' from these findings:\n{joined}\n\n"
+            'Return ONLY JSON: {"briefing": "<=150 words on prior work + strongest methods/results", '
+            '"gaps": ["concrete unexplored gap", ...]}.',
+            system="You synthesize literature reviews and surface concrete research gaps.", dry_run=False,
+        )
+        obj = _parse_json(text, _JSON, {})
+        gaps = [str(g).strip() for g in (obj.get("gaps") or []) if str(g).strip()][:6]
+        return str(obj.get("briefing", "")).strip(), gaps
+
+    async def _ideate(self, plan: dict, exp_id: str | None) -> dict:
+        """IDEATE: from the survey + gaps, generate testable hypotheses and pick the
+        most novel + feasible one. Persist it to the experiment. Mirrors the
+        hypothesis-generation workflow."""
+        await self._status("ideating", "forming a hypothesis")
+        prompt = (
+            f"PLAN:\n{json.dumps(plan, indent=2)}\n\n"
+            + (self.survey_brief + "\n\n" if self.survey_brief else "")
+            + ("RESEARCH GAPS:\n- " + "\n- ".join(self.survey_gaps) + "\n\n" if self.survey_gaps else "")
+            + "Propose 2-3 TESTABLE hypotheses for this direction (each: statement, one-line rationale, "
+            "concrete prediction). Then pick the ONE that is most NOVEL given the literature/gaps above "
+            "and feasible on CPU within budget. Return ONLY JSON for the chosen one: "
+            '{"statement": "...", "rationale": "...", "prediction": "...", "novelty_note": "..."}.'
+        )
+        text = await reason_stage(
+            self.run_id, "ideate", prompt, dry_run=self.dry_run,
+            dry_text=(
+                '{"statement": "Magpie features + gradient boosting beat a leakage-aware LCSO '
+                'baseline for experimental band-gap regression", "rationale": "GBM captures nonlinear '
+                'composition-property relations", "prediction": "LCSO MAE below the random-forest baseline", '
+                '"novelty_note": "Few prior works report a fair LCSO comparison"}'
+            ),
+        )
+        hypo = _parse_json(text, _JSON, {})
+        statement = str(
+            hypo.get("statement") or plan.get("hypothesis") or plan.get("objective") or ""
+        ).strip()
+        self.hypothesis = hypo if hypo else {"statement": statement}
+        if statement and exp_id:
+            await asyncio.to_thread(set_experiment_hypothesis, exp_id, statement)
+        await self._index("hypothesis", statement, exp_id)
+        await record_transition(self.run_id, exp_id, "survey", "ideate", f"hypothesis: {statement[:80]}")
+        return self.hypothesis
+
+    async def _direction_gate(self, plan: dict, exp_id: str | None) -> bool:
+        """Novelty + feasibility gate on the chosen hypothesis (cross-model peer review,
+        target='direction'). Bounded re-ideation on reject; escalate + pause past the limit."""
+        while True:
+            content = {
+                "hypothesis": self.hypothesis, "gaps": self.survey_gaps, "literature": self.survey_brief,
+            }
+            panel = await self.gateway.review(
+                "direction", content, exp_id or self.run_id, run_id=self.run_id, dry_run=self.dry_run
+            )
+            if panel.gate_passed:
+                return True
+            n = self.guard.bump("direction")
+            if self.guard.exceeded("direction"):
+                await get_bus().publish(
+                    make_event("escalation", run_id=self.run_id, payload={
+                        "reason": "direction rejected past loop limit", "verdict": panel.consensus_verdict})
+                )
+                await asyncio.to_thread(set_run_status, self.run_id, "paused")
+                await self._status("paused", "direction gate could not be satisfied")
+                return False
+            findings = [
+                f"{f['severity']}/{f['category']}: {f['claim']} -> {f['suggestion']}"
+                for c in panel.model_dump()["critiques"]
+                for f in c["findings"]
+            ]
+            prompt = (
+                f"The critic REJECTED this research direction (revision {n}):\n{json.dumps(self.hypothesis)}\n\n"
+                "Findings:\n" + "\n".join(findings) + "\n\nPropose a revised, more novel/feasible "
+                'hypothesis. Return ONLY JSON: {"statement","rationale","prediction","novelty_note"}.'
+            )
+            text = await reason_stage(
+                self.run_id, "ideate", prompt, dry_run=self.dry_run,
+                dry_text='{"statement": "revised hypothesis", "rationale": "r", "prediction": "p", "novelty_note": "n"}',
+            )
+            self.hypothesis = _parse_json(text, _JSON, self.hypothesis)
+            stmt = str(self.hypothesis.get("statement", "")).strip()
+            if stmt and exp_id:
+                await asyncio.to_thread(set_experiment_hypothesis, exp_id, stmt)
 
     async def _code(self, design: dict, data_spec: dict, exp_id: str | None) -> str | None:
         """CODE stage: the coder authors a constrained build_pipeline() solution.
@@ -301,8 +417,11 @@ class ExperimentDriver:
         if hypo:
             await self._index("hypothesis", hypo, exp_id, domain=domain)
 
-        # 0) SURVEY — ground the work in the literature before designing
-        self.survey_brief = await self._survey(plan, exp_id)
+        # 0) SURVEY (deep research) → IDEATE → novelty/feasibility gate
+        self.survey_brief, self.survey_gaps = await self._survey(plan, exp_id)
+        await self._ideate(plan, exp_id)
+        if not await self._direction_gate(plan, exp_id):
+            return  # direction rejected past the loop limit -> paused + escalated
 
         # 1) EXPERIMENT_DESIGN ------------------------------------------------
         await self._guard_budget("usd", get_settings().est_stage_cost_usd)
