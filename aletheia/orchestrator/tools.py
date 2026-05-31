@@ -50,6 +50,32 @@ def build_memory_tool(run_id: str):
     return memory_log
 
 
+def build_search_literature_tool(run_id: str):
+    """A ``search_literature`` MCP tool: search arXiv + OpenAlex for prior work and
+    ingest the results into the recall store. Granted ONLY to the SURVEY worker."""
+    from claude_agent_sdk import tool
+
+    @tool(
+        "search_literature",
+        "Search academic literature (arXiv + OpenAlex) for prior work relevant to a "
+        "query. Results are ingested into memory and the top papers are returned. Call "
+        "this a few times with focused queries to map the prior work before designing.",
+        {"query": str},
+    )
+    async def search_literature(args: dict[str, Any]) -> dict[str, Any]:
+        from aletheia.research import literature
+
+        query = str(args.get("query", "")).strip()
+        papers = await asyncio.to_thread(literature.search, query, 8)
+        await asyncio.to_thread(literature.ingest, papers, run_id, False)
+        await get_bus().publish(
+            make_event("literature", run_id=run_id, payload={"query": query, "n": len(papers)})
+        )
+        return {"content": [{"type": "text", "text": literature.briefing(papers) or "No papers found."}]}
+
+    return search_literature
+
+
 def build_recall_tool(run_id: str):
     """A ``memory_recall`` MCP tool: semantic search over past research (across all
     runs) so scoping plans against prior hypotheses, designs, critiques, and

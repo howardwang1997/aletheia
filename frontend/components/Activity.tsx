@@ -4,6 +4,7 @@ import { LabEvent } from "@/lib/api";
 import { Markdown } from "@/components/Markdown";
 
 const PHASE1_STAGES = [
+  "survey",
   "experiment_design",
   "execution",
   "analysis",
@@ -22,6 +23,8 @@ function statusLabel(status: { state: string; detail?: string }): string {
       return "awaiting your reply";
     case "finalized":
       return "goal finalized ✓";
+    case "surveying":
+      return "surveying the literature…";
     case "designing":
       return "designing experiment…";
     case "coding":
@@ -58,6 +61,10 @@ function line(e: LabEvent): string {
       return `📝 ${p.note ?? ""}`;
     case "memory_recall":
       return `🧠 recall "${p.query ?? ""}" — ${p.n_hits ?? 0} hit${p.n_hits === 1 ? "" : "s"}`;
+    case "literature":
+      return p.error
+        ? `📚 literature error: ${p.error}`
+        : `📚 literature "${p.query ?? ""}" — ${p.n ?? 0} paper${p.n === 1 ? "" : "s"}`;
     case "goal_finalized":
       return "experiment plan recorded";
     case "tool_denied":

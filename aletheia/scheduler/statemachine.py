@@ -13,6 +13,7 @@ from aletheia.memory.service import log_note
 
 # Ordered stages the driver walks (the two gates are folded into the driver logic).
 PHASE1_STAGES = (
+    "survey",
     "experiment_design",
     "execution",
     "analysis",
