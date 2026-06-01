@@ -71,6 +71,7 @@ CLAIM_TYPES = (
     "mechanism",
     "limitation",
     "reproducibility",
+    "comparison",  # a controlled ablation: method/config A vs B on the same eval
     "cost",
     "safety",
 )
