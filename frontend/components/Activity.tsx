@@ -28,6 +28,8 @@ function statusLabel(status: { state: string; detail?: string }): string {
       return "surveying the literature…";
     case "ideating":
       return "forming a hypothesis…";
+    case "scoring":
+      return "scoring the hypothesis…";
     case "designing":
       return "designing experiment…";
     case "coding":
@@ -84,6 +86,11 @@ function line(e: LabEvent): string {
       return `▶ run started (${p.mode ?? ""})`;
     case "domain_fallback":
       return `⚠ domain '${p.requested}' unsupported — ran '${p.ran}'`;
+    case "scorecard": {
+      const sc = (p.scores ?? {}) as Record<string, number>;
+      const nov = sc.novelty != null ? ` (novelty ${Number(sc.novelty).toFixed(2)}, EIG ${Number(sc.expected_information_gain ?? 0).toFixed(2)})` : "";
+      return `🎯 scorecard: ${p.decision ?? ""}${nov}${p.reason ? ` — ${p.reason}` : ""}`;
+    }
     case "research_blocked":
       return `🛑 run blocked — ${p.reason ?? ""}`;
     case "research_degraded":

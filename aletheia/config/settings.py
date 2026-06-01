@@ -130,6 +130,13 @@ class Settings(BaseSettings):
     est_stage_cost_usd: float = 0.10  # estimated cost charged per Opus reasoning stage
     max_experiments_per_campaign: int = 3  # one Run -> up to N linked experiments (go/no-go decides)
 
+    # --- hypothesis scorecard (gate low-value experiments before spending compute) ---
+    # scores are 0..1; a hypothesis is blocked if it scores below these on the two
+    # dimensions that make an experiment worth running at all.
+    hypothesis_min_novelty: float = 0.4
+    hypothesis_min_eval_clarity: float = 0.4
+    campaign_min_eig: float = 0.3  # stop the campaign when expected information gain drops below this
+
     # --- vendor keys (read without the ALETHEIA_ prefix) ---
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     claude_code_oauth_token: str | None = Field(default=None, alias="CLAUDE_CODE_OAUTH_TOKEN")

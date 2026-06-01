@@ -15,6 +15,7 @@ from aletheia.memory.ledger import (
     CritiquePanel,
     Decision,
     Experiment,
+    HypothesisScorecard,
     LiteratureFinding,
     Metric,
     Run,
@@ -459,6 +460,39 @@ def list_literature_findings(run_id: str) -> list[dict[str, Any]]:
         )
         return [
             {"id": r.id, **{k: getattr(r, k) for k in _LIT_FIELDS}} for r in rows
+        ]
+
+
+def record_scorecard(
+    run_id: str,
+    *,
+    experiment_id: str | None,
+    scores: dict[str, Any],
+    decision: str,
+    rationale: str | None = None,
+) -> str:
+    with session_scope() as s:
+        row = HypothesisScorecard(
+            run_id=run_id, experiment_id=experiment_id,
+            scores=scores, decision=decision, rationale=rationale,
+        )
+        s.add(row)
+        s.flush()
+        return row.id
+
+
+def list_scorecards(run_id: str, experiment_id: str | None = None) -> list[dict[str, Any]]:
+    with session_scope() as s:
+        q = s.query(HypothesisScorecard).filter(HypothesisScorecard.run_id == run_id)
+        if experiment_id is not None:
+            q = q.filter(HypothesisScorecard.experiment_id == experiment_id)
+        rows = q.order_by(HypothesisScorecard.created_at).all()
+        return [
+            {
+                "id": r.id, "experiment_id": r.experiment_id, "scores": r.scores,
+                "decision": r.decision, "rationale": r.rationale,
+            }
+            for r in rows
         ]
 
 

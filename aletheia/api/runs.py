@@ -15,6 +15,7 @@ from aletheia.memory.service import (
     list_claims,
     list_literature_findings,
     list_runs,
+    list_scorecards,
     list_sota_results,
 )
 from aletheia.orchestrator.client import run_task
@@ -79,6 +80,12 @@ async def get_run_literature(run_id: str) -> list[dict]:
 async def get_run_sota(run_id: str, domain: str | None = None) -> list[dict]:
     """Structured published SOTA rows the run compares against."""
     return await asyncio.to_thread(list_sota_results, run_id, domain)
+
+
+@router.get("/{run_id}/scorecards")
+async def get_run_scorecards(run_id: str, experiment_id: str | None = None) -> list[dict]:
+    """Pre-execution hypothesis scorecards (per-dimension scores + proceed/block)."""
+    return await asyncio.to_thread(list_scorecards, run_id, experiment_id)
 
 
 class LaunchRequest(BaseModel):

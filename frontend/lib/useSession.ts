@@ -40,6 +40,7 @@ const ACTIVITY_TYPES = new Set([
   "domain_fallback",
   "research_blocked",
   "research_degraded",
+  "scorecard",
   "experiment",
   "campaign",
   "campaign_finished",

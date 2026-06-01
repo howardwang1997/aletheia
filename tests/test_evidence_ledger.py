@@ -66,7 +66,9 @@ def test_dry_run_leaves_claims():
     assert any(e["evidence_kind"] == "metric" for e in metric["evidence"])
 
     novelty = next(c for c in claims if c["claim_type"] == "novelty")
-    assert novelty["strength"] == "speculative"  # no structured novelty check in v1
+    # created speculative in IDEATE; Phase I's scorecard upgrades it to weak once it is
+    # scored + grounded in structured findings (still LLM-judged -> not strong).
+    assert novelty["strength"] in ("speculative", "weak")
 
     sota = next(c for c in claims if c["claim_type"] == "sota")
     assert sota["strength"] in ("weak", "moderate", "strong")
