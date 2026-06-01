@@ -34,6 +34,42 @@ def test_survey_dry_returns_briefing_and_gaps_and_ingests():
         assert n >= 1
 
 
+def test_survey_discovers_and_records_frontier_methods():
+    """SURVEY extracts the field's frontier methods (not a hardcoded model template),
+    persists a survey.md artifact, and indexes each method as a recall chunk."""
+    from aletheia.memory.service import list_artifacts
+
+    run_id, exp_id = _setup()
+    d = ExperimentDriver(run_id, dry_run=True)
+    asyncio.run(d._survey({"objective": "predict band gap", "direction": "composition ML"}, exp_id))
+    assert d.survey_methods and "name" in d.survey_methods[0]  # methods discovered
+    assert any(a["kind"] == "survey" for a in list_artifacts(exp_id))  # recorded each run
+    with session_scope() as s:
+        methods = s.query(MemoryChunk).filter(
+            MemoryChunk.run_id == run_id, MemoryChunk.kind == "method"
+        ).count()
+        assert methods >= 1  # methods are recallable
+
+
+def test_design_and_coder_are_survey_method_driven():
+    """DESIGN feeds the surveyed methods (no fixed RF/GBM menu) and the coder prompt
+    carries them — method choice is discovered, not templated."""
+    from aletheia.coder.worker import coder_prompt
+    from aletheia.domains.registry import get_domain_plugin
+
+    run_id, exp_id = _setup()
+    d = ExperimentDriver(run_id, dry_run=True)
+    d.profile = get_domain_plugin("materials").profile()
+    d.survey_methods = d.profile.dry_frontier_methods
+    # the design dry-run adopts the first surveyed method, not a fixed default
+    design = asyncio.run(d._design({"objective": "predict band gap"}, {}, get_domain_plugin("materials"), exp_id))
+    assert design.get("model") == d.survey_methods[0]["name"]
+    assert "method_note" in design
+    # the coder prompt carries the surveyed frontier methods
+    p = coder_prompt(design, {}, feature_desc="Magpie", methods=d.survey_methods)
+    assert d.survey_methods[0]["name"] in p and "frontier methods" in p
+
+
 def test_ideate_dry_persists_hypothesis():
     run_id, exp_id = _setup()
     d = ExperimentDriver(run_id, dry_run=True)

@@ -28,6 +28,7 @@ const ACTIVITY_TYPES = new Set([
   "memory_log",
   "memory_recall",
   "literature",
+  "survey_recorded",
   "goal_finalized",
   "tool_denied",
   "result",

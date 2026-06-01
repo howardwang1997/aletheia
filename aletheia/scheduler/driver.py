@@ -87,6 +87,7 @@ class ExperimentDriver:
         self.branch: str | None = None  # this experiment's branch
         self.survey_brief: str = ""  # literature briefing from the SURVEY stage
         self.survey_gaps: list[str] = []  # research gaps surfaced by SURVEY
+        self.survey_methods: list[dict[str, str]] = []  # frontier methods the SURVEY found the field using
         self.survey_papers: list[literature.Paper] = []  # citable refs for WRITE_UP
         self.hypothesis: dict[str, Any] = {}  # the hypothesis chosen by IDEATE
         self.profile: DomainProfile | None = None  # the domain's vocabulary (set in _run)
@@ -103,7 +104,8 @@ class ExperimentDriver:
         parallel isolated librarian workers (each drives search_literature + ingests),
         then synthesize a thematic briefing + explicit research gaps. Mirrors the
         literature-review workflow. Returns (briefing, gaps). Best-effort — any failure
-        yields an empty briefing, never breaks the loop."""
+        yields an empty briefing, never breaks the loop. Sets ``self.survey_methods``
+        (the frontier methods the field uses) and records a ``survey.md`` artifact."""
         if self.profile is None:  # standalone call (tests); _run sets it before SURVEY
             run = await asyncio.to_thread(get_run, self.run_id)
             self.profile = get_domain_plugin((run or {}).get("domain")).profile()
@@ -111,19 +113,20 @@ class ExperimentDriver:
         topic = " ".join(
             str(plan.get(k, "")).strip() for k in ("objective", "direction", "hypothesis")
         ).strip() or (plan.get("domain") or "materials")
-        briefing, gaps = "", []
+        briefing, gaps, methods = "", [], []
         try:
             if self.dry_run:
                 papers = list(self.profile.dry_papers) if self.profile else []
                 await asyncio.to_thread(literature.ingest, papers, self.run_id, True)
                 briefing = literature.briefing(papers)
                 gaps = list(self.profile.dry_gaps) if self.profile else []
+                methods = list(self.profile.dry_frontier_methods) if self.profile else []
                 self.survey_papers = papers
             else:
                 subqs = await self._decompose(topic)
                 findings = await asyncio.gather(*[self._librarian(topic, sq) for sq in subqs])
                 findings = [f for f in findings if f and not is_degraded(f)]
-                briefing, gaps = await self._synthesize(topic, findings)
+                briefing, gaps, methods = await self._synthesize(topic, findings)
                 # The librarians ingested papers into the recall store; pull them back
                 # as structured, citable references for the WRITE_UP stage.
                 self.survey_papers = await asyncio.to_thread(self._recall_papers, topic)
@@ -131,10 +134,55 @@ class ExperimentDriver:
             await get_bus().publish(
                 make_event("literature", run_id=self.run_id, payload={"error": str(exc)})
             )
+        self.survey_methods = methods
+        await self._record_survey(topic, briefing, gaps, methods, exp_id)
         await record_transition(
-            self.run_id, exp_id, None, "survey", f"literature surveyed; {len(gaps)} gap(s) found"
+            self.run_id, exp_id, None, "survey",
+            f"literature surveyed; {len(gaps)} gap(s), {len(methods)} frontier method(s) found",
         )
         return briefing, gaps
+
+    async def _record_survey(
+        self, topic: str, briefing: str, gaps: list[str], methods: list[dict], exp_id: str | None
+    ) -> None:
+        """Persist this survey's result each run: a survey.md artifact (briefing +
+        gaps + the frontier methods the field uses + the retrieved papers) and a
+        recall chunk per method, so 'what the field is doing' is durable + recallable."""
+        method_lines = "\n".join(
+            f"- **{m.get('name','')}** — {m.get('why','')} _(source: {m.get('source','')})_"
+            for m in methods
+        ) or "- (none extracted)"
+        gap_lines = "\n".join(f"- {g}" for g in gaps) or "- (none)"
+        paper_lines = "\n".join(
+            f"- {p.title}{f' ({p.year})' if p.year else ''}" for p in self.survey_papers[:8]
+        ) or "- (none retrieved)"
+        md = (
+            f"# Literature Survey\n\n**Topic:** {topic}\n\n"
+            f"## Briefing\n\n{briefing or '(none)'}\n\n"
+            f"## Frontier methods (the field's state of the art)\n\n{method_lines}\n\n"
+            f"## Open gaps\n\n{gap_lines}\n\n"
+            f"## Papers retrieved\n\n{paper_lines}\n"
+        )
+        try:
+            path = run_artifacts_dir(self.run_id) / "survey.md"
+            path.write_text(md)
+            if exp_id:
+                await asyncio.to_thread(
+                    record_artifacts, exp_id, [{"kind": "survey", "uri": str(path)}]
+                )
+            for m in methods:
+                await self._index(
+                    "method", f"{m.get('name','')}: {m.get('why','')} (source: {m.get('source','')})",
+                    exp_id, source=m.get("source"),
+                )
+            await get_bus().publish(
+                make_event("survey_recorded", run_id=self.run_id,
+                           payload={"methods": len(methods), "gaps": len(gaps), "uri": str(path)})
+            )
+        except Exception as exc:  # noqa: BLE001 - recording is best-effort
+            await get_bus().publish(
+                make_event("literature", run_id=self.run_id, payload={"error": f"record_survey: {exc}"})
+            )
 
     async def _decompose(self, topic: str) -> list[str]:
         text = await run_worker(
@@ -157,25 +205,35 @@ class ExperimentDriver:
         return await run_worker(
             self.run_id, f"survey:{subq[:24]}",
             f"Research this sub-question for the direction '{topic}':\n{subq}\n\n"
-            "Call search_literature with focused queries, then give a ≤60-word finding citing the "
-            "strongest prior work and any gap you notice.",
+            "Call search_literature with focused queries, then give a ≤70-word finding that names the "
+            "strongest / state-of-the-art METHODS the field uses, the prior work they come from, and any "
+            "gap you notice.",
             system="You are a meticulous research librarian; ground claims in retrieved papers, never invent.",
             mcp_servers={"research": server}, allowed_tools=list(allow),
             can_use_tool=build_tool_gate(allow, self.run_id), max_turns=5, dry_run=False,
         )
 
-    async def _synthesize(self, topic: str, findings: list[str]) -> tuple[str, list[str]]:
+    async def _synthesize(self, topic: str, findings: list[str]) -> tuple[str, list[str], list[dict]]:
         joined = "\n".join(f"- {f}" for f in findings) or "(no findings retrieved)"
         text = await run_worker(
             self.run_id, "survey:synthesize",
             f"Synthesize a literature briefing for '{topic}' from these findings:\n{joined}\n\n"
             'Return ONLY JSON: {"briefing": "<=150 words on prior work + strongest methods/results", '
-            '"gaps": ["concrete unexplored gap", ...]}.',
-            system="You synthesize literature reviews and surface concrete research gaps.", dry_run=False,
+            '"gaps": ["concrete unexplored gap", ...], '
+            '"methods": [{"name": "the frontier/SOTA method the field uses", "why": "one line", '
+            '"source": "the prior work it comes from"}, ...]}.',
+            system="You synthesize literature reviews, surface concrete gaps, and name the field's "
+            "state-of-the-art methods (never invent — ground them in the findings).", dry_run=False,
         )
         obj = _parse_json(text, _JSON, {})
         gaps = [str(g).strip() for g in (obj.get("gaps") or []) if str(g).strip()][:6]
-        return str(obj.get("briefing", "")).strip(), gaps
+        methods = [
+            {"name": str(m.get("name", "")).strip(), "why": str(m.get("why", "")).strip(),
+             "source": str(m.get("source", "")).strip()}
+            for m in (obj.get("methods") or [])
+            if isinstance(m, dict) and str(m.get("name", "")).strip()
+        ][:6]
+        return str(obj.get("briefing", "")).strip(), gaps, methods
 
     def _recall_papers(self, topic: str, k: int = 12) -> list[literature.Paper]:
         """Reconstruct citable Papers from the literature chunks ingested by the
@@ -290,6 +348,7 @@ class ExperimentDriver:
                 feature_desc=self.profile.feature_desc if self.profile else "a dense numeric feature matrix",
                 protocol=self.profile.protocol_desc if self.profile
                 else "grouped cross-validation (headline) + RepeatedKFold + a baseline panel",
+                methods=self.survey_methods or None,
             ),
             system=CODER_SYSTEM, dry_run=self.dry_run, dry_value=CANNED_SOLUTION,
         )
@@ -728,19 +787,38 @@ class ExperimentDriver:
         briefing = format_briefing(prior)
         task = self.profile.task if self.profile else "property regression"
         feature_desc = self.profile.feature_desc if self.profile else "a numeric feature matrix"
+        # Method choice is DISCOVERED from the survey's frontier methods, not a fixed
+        # menu — the designer picks the most promising one feasible on these features,
+        # and the coder implements it (the harness still scores it).
+        methods_block = ""
+        if self.survey_methods:
+            methods_block = (
+                "FRONTIER METHODS the survey found this field using (choose the most promising one that is "
+                "feasible on the features above; the coder will implement it):\n"
+                + "\n".join(f"- {m.get('name','')}: {m.get('why','')}" for m in self.survey_methods)
+                + "\n\n"
+            )
         prompt = (
             f"Turn this research plan into a concrete experiment design for a {task} on "
             f"{feature_desc}.\n\n"
             f"PLAN:\n{json.dumps(plan, indent=2)}\n\nDATA:\n{json.dumps(data_spec, indent=2)}\n\n"
             + (self.survey_brief + "\n\n" if self.survey_brief else "")
+            + methods_block
             + (briefing + "\n\n" if briefing else "")
-            + "Return ONLY JSON with keys: model ('random_forest' or 'gradient_boosting'), "
-            "model_params (object), test_size (0-1), random_state (int). Choose sensible values."
+            + "Choose the most promising method grounded in the frontier methods above (do NOT default to a "
+            "fixed model). Return ONLY JSON with keys: model (a short method name), model_params (object), "
+            "method_note (one line: which surveyed method + why), test_size (0-1), random_state (int)."
+        )
+        dry_model = (
+            self.survey_methods[0]["name"] if self.survey_methods else fallback["model"]
         )
         text = await reason_stage(
             self.run_id, "experiment_design", prompt,
             dry_run=self.dry_run,
-            dry_text=f"[dry-run] Design: {fallback['model']} on {feature_desc}, 80/20 split.",
+            dry_text=json.dumps({
+                "model": dry_model, "model_params": {}, "test_size": 0.2, "random_state": 42,
+                "method_note": f"adopt the surveyed frontier method '{dry_model}' for {task}",
+            }),
         )
         design = _parse_design(text, fallback)
         await record_transition(

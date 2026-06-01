@@ -64,6 +64,8 @@ function line(e: LabEvent): string {
       return `📝 ${p.note ?? ""}`;
     case "memory_recall":
       return `🧠 recall "${p.query ?? ""}" — ${p.n_hits ?? 0} hit${p.n_hits === 1 ? "" : "s"}`;
+    case "survey_recorded":
+      return `📝 survey recorded — ${p.methods ?? 0} frontier method(s), ${p.gaps ?? 0} gap(s)`;
     case "literature":
       return p.error
         ? `📚 literature error: ${p.error}`

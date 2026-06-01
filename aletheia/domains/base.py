@@ -47,6 +47,7 @@ class DomainProfile:
     sota_reference: str = "no comparable published benchmark"
     dry_papers: list[Any] = field(default_factory=list)  # list[research.literature.Paper]
     dry_gaps: list[str] = field(default_factory=list)
+    dry_frontier_methods: list[dict[str, str]] = field(default_factory=list)  # [{name, why, source}]
     dry_hypothesis: dict[str, Any] = field(default_factory=dict)
     dry_next_hypothesis: dict[str, Any] = field(default_factory=dict)
     dry_metrics: dict[str, float] = field(default_factory=dict)

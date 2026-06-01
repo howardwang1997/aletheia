@@ -174,6 +174,14 @@ class MoleculePropertyPlugin(DomainPlugin):
                 "Few solubility studies report a fair scaffold-split RMSE against GNN SOTA.",
                 "Fingerprint baselines vs message-passing GNNs are rarely compared under the same split.",
             ],
+            dry_frontier_methods=[
+                {"name": "D-MPNN (Chemprop)",
+                 "why": "directed message-passing GNN; ESOL SOTA on scaffold splits",
+                 "source": "MoleculeNet / Chemprop"},
+                {"name": "gradient boosting on ECFP fingerprints (XGBoost/LightGBM)",
+                 "why": "strong, cheap fingerprint baseline competitive on ESOL",
+                 "source": "surveyed prior work"},
+            ],
             dry_hypothesis={
                 "statement": (
                     "ECFP fingerprints + gradient boosting reach a competitive scaffold-split RMSE for "
