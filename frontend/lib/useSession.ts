@@ -41,6 +41,7 @@ const ACTIVITY_TYPES = new Set([
   "research_blocked",
   "research_degraded",
   "scorecard",
+  "reproduction",
   "experiment",
   "campaign",
   "campaign_finished",

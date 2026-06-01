@@ -112,19 +112,26 @@ class ExperimentDriver:
         gate_verdict: str | None = None,
         has_sota: bool = False,
         method_match: bool = True,
+        reproduced: bool | None = None,
     ) -> str:
         """Deterministic, harness-owned claim strength — never the LLM's self-rating.
-        Keeps a report from implying stronger evidence than the ledger holds."""
+        Keeps a report from implying stronger evidence than the ledger holds.
+
+        ``reproduced``: True = an independent re-run confirmed the headline; False =
+        it contradicted it; None = not attempted. A metric claim reaches `strong` ONLY
+        when a reproduction confirmed it."""
         if kind == "metric":
             if protocol_status == "degraded_kfold" or not method_match:
                 return "weak"  # headline rests on a degraded protocol / a fallback method
             if gate_passed is None:
                 return "moderate"  # pre-gate: a grouped number, not yet peer-reviewed
-            if gate_passed and gate_verdict == "approve":
-                return "strong"
-            if gate_passed:  # approve_with_changes
-                return "moderate"
-            return "weak"  # gate did not pass
+            if not gate_passed:
+                return "weak"  # gate did not pass
+            if reproduced is False:
+                return "weak"  # an independent re-run contradicted the headline
+            if reproduced and gate_verdict == "approve":
+                return "strong"  # grouped + clean approve + CONFIRMED reproduction
+            return "moderate"  # approve_with_changes, or reproduction not attempted/confirmed
         if kind == "sota":
             return "moderate" if has_sota else "weak"  # curated string, no structured row yet (Phase H)
         if kind == "mechanism":
@@ -750,17 +757,70 @@ class ExperimentDriver:
             await self._status("degraded", "headline protocol degraded to KFold")
         return True
 
-    async def _finalize_claims(self, protocol_status: str | None, rpanel) -> None:
+    @staticmethod
+    def _repro_match(original: float | None, repro: float | None, tol: float) -> tuple[bool, float | None]:
+        """Did the re-run reproduce the headline within a relative tolerance?"""
+        if original is None or repro is None:
+            return False, None
+        denom = max(abs(float(original)), 1e-9)
+        rel = abs(float(original) - float(repro)) / denom
+        return rel <= tol, round(rel, 4)
+
+    async def _reproduce(
+        self, design: dict, data_spec: dict, domain: str | None, result: dict, exp_id: str | None
+    ) -> dict[str, Any]:
+        """Independent re-run (locked code + a new seed) through the FIXED harness, to
+        confirm the headline before it can be claimed `strong`. Re-runs with
+        ``experiment_id=None`` so it lands in its own workdir and never clobbers the
+        original's metrics/artifacts. Best-effort — a failed re-run is recorded as a
+        non-reproduction, never crashes the experiment."""
+        if not get_settings().reproduction_enabled:
+            return {"attempted": False}
+        hk = self.profile.headline_metric if self.profile else "mae"
+        original = (result.get("metrics") or {}).get(hk)
+        await self._guard_budget("usd", get_settings().est_stage_cost_usd)
+        await self._status("reproducing", "independent re-run (locked code, new seed)")
+        repro_design = {**design, "random_state": int(design.get("random_state", 42)) + 1}
+        try:
+            repro_result = await self._execute(repro_design, data_spec, domain, None)
+        except Exception as exc:  # noqa: BLE001 - reproduction is best-effort
+            await get_bus().publish(
+                make_event("reproduction", run_id=self.run_id,
+                           payload={"attempted": True, "reproduced": False, "error": str(exc)})
+            )
+            return {"attempted": True, "reproduced": False, "error": str(exc),
+                    "mode": "locked-code reseed", "metric": hk, "original": original}
+        repro_v = (repro_result.get("metrics") or {}).get(hk)
+        reproduced, delta = self._repro_match(original, repro_v, get_settings().reproduction_rel_tol)
+        payload = {"attempted": True, "reproduced": reproduced, "mode": "locked-code reseed",
+                   "metric": hk, "original": original, "repro": repro_v, "delta": delta}
+        await get_bus().publish(make_event("reproduction", run_id=self.run_id, payload=payload))
+        await record_transition(
+            self.run_id, exp_id, "analysis", "analysis",
+            f"reproduction ({hk}): original={original} repro={repro_v} -> "
+            f"{'confirmed' if reproduced else 'NOT confirmed'} (rel Δ {delta})",
+        )
+        return payload
+
+    async def _finalize_claims(
+        self, protocol_status: str | None, rpanel, reproduction: dict | None = None,
+        exp_id: str | None = None,
+    ) -> None:
         """After the results gate, set the final strength + status of the proposed
-        metric/mechanism claims from the (harness-owned) evidence rule."""
+        metric/mechanism claims from the (harness-owned) evidence rule, and record a
+        reproducibility claim from the independent re-run."""
         verdict = rpanel.consensus_verdict
         passed = bool(rpanel.gate_passed)
         status = "supported" if passed else ("refuted" if verdict == "reject" else "unverified")
+        repro = reproduction or {}
+        # reproduced: True confirmed / False contradicted / None not attempted
+        reproduced = repro.get("reproduced") if repro.get("attempted") else None
         if self._claim_ids.get("metric"):
             await asyncio.to_thread(
                 update_claim, self._claim_ids["metric"],
                 strength=self._claim_strength(
-                    "metric", protocol_status=protocol_status, gate_passed=passed, gate_verdict=verdict
+                    "metric", protocol_status=protocol_status, gate_passed=passed,
+                    gate_verdict=verdict, reproduced=reproduced,
                 ),
                 status=status,
             )
@@ -769,6 +829,26 @@ class ExperimentDriver:
                 update_claim, self._claim_ids["mechanism"],
                 strength=self._claim_strength("mechanism", gate_passed=passed),
                 status=status,
+            )
+        # a reproducibility claim: did an independent re-run confirm the headline?
+        if repro.get("attempted"):
+            confirmed = bool(repro.get("reproduced"))
+            await asyncio.to_thread(
+                create_claim, self.run_id,
+                claim_text=(
+                    f"An independent re-run ({repro.get('mode', 'rerun')}) "
+                    f"{'confirmed' if confirmed else 'did NOT confirm'} the headline "
+                    f"{repro.get('metric', '')} (original={repro.get('original')}, "
+                    f"reproduced={repro.get('repro')}, rel Δ {repro.get('delta')})."
+                ),
+                claim_type="reproducibility",
+                strength="moderate" if confirmed else "weak",
+                status="supported" if confirmed else "refuted",
+                experiment_id=exp_id, created_by="reproduction", stage="analysis",
+                evidence=[
+                    {"evidence_kind": "reproduction", "evidence_ref": repro.get("mode", "rerun"),
+                     "note": f"original={repro.get('original')} reproduced={repro.get('repro')}"}
+                ],
             )
 
     async def _guard_budget(self, kind: str, amount: float) -> None:
@@ -962,6 +1042,12 @@ class ExperimentDriver:
         if not await self._post_execution_guards(result, exp_id):
             return None
 
+        # 3c) REPRODUCTION: an independent re-run (locked code, new seed) — a metric
+        # claim can only reach `strong` if this confirms the headline within tolerance.
+        result.setdefault("info", {})["reproduction"] = await self._reproduce(
+            design, data_spec, domain, result, exp_id
+        )
+
         # 4) ANALYSIS
         await self._guard_budget("usd", get_settings().est_stage_cost_usd)
         await record_transition(self.run_id, exp_id, "execution", "analysis", "training complete; analyzing")
@@ -969,7 +1055,7 @@ class ExperimentDriver:
         analysis = await self._analyze(design, result, exp_id)
 
         # 5) review_results gate — the critics see the CLAIMS + evidence (proposed in
-        # analysis) + the protocol status, so they review evidence, not just prose.
+        # analysis) + the protocol status + the reproduction, so they review evidence.
         info = result.get("info") or {}
         rpanel = await self.gateway.review(
             "results",
@@ -979,6 +1065,7 @@ class ExperimentDriver:
                 "eval_summary": info.get("eval_summary", ""),
                 "protocol_status": info.get("protocol_status"),
                 "degraded": info.get("protocol_status") == "degraded_kfold",
+                "reproduction": info.get("reproduction"),
                 "claims": await asyncio.to_thread(list_claims, self.run_id, exp_id),
                 "analysis": analysis,
                 # the coder's actual model code, so an adversarial reviewer can check
@@ -995,8 +1082,11 @@ class ExperimentDriver:
             actor="critic",
         )
         # finalize the proposed claims now that the gate has spoken (harness-owned
-        # strength: a metric claim only reaches `strong` with grouped CV + a clean approve).
-        await self._finalize_claims(info.get("protocol_status"), rpanel)
+        # strength: a metric claim only reaches `strong` with grouped CV + a clean
+        # approve + a CONFIRMED reproduction).
+        await self._finalize_claims(
+            info.get("protocol_status"), rpanel, info.get("reproduction") or {}, exp_id
+        )
 
         # 6) OPTIMIZE (<=1 iteration)
         await self._status("optimizing")
@@ -1491,6 +1581,16 @@ class ExperimentDriver:
             "result as a strong/headline generalization claim; describe it as preliminary.\n"
             if protocol_status == "degraded_kfold" else ""
         )
+        repro = info.get("reproduction") or {}
+        if repro.get("attempted"):
+            repro_note = (
+                f"REPRODUCTION: an independent re-run ({repro.get('mode', 'rerun')}) "
+                f"{'CONFIRMED' if repro.get('reproduced') else 'did NOT confirm'} the headline "
+                f"(original={repro.get('original')}, reproduced={repro.get('repro')}, rel Δ {repro.get('delta')}). "
+                "Report BOTH numbers; you may call the result reproduced ONLY if it was confirmed.\n"
+            )
+        else:
+            repro_note = "REPRODUCTION: not attempted — do not call the result reproduced.\n"
         prompt = (
             "Write a structured scientific paper in markdown (IMRAD), grounded ONLY in the numbers and "
             "the literature below. Use flowing prose (no bullet points outside the method/baseline list). "
@@ -1514,7 +1614,7 @@ class ExperimentDriver:
             "preliminary, and speculative/unverified claims (e.g. novelty) explicitly as such (e.g. 'we did not "
             "verify novelty against a structured literature search'). Do not assert SOTA superiority beyond the "
             "curated KNOWN SOTA string.\n"
-            f"{degraded_note}"
+            f"{degraded_note}{repro_note}"
             f"CLAIM TABLE:\n{claim_table}\n\n"
             f"HYPOTHESIS: {json.dumps(self.hypothesis)}\n"
             f"PLAN: {json.dumps(plan)}\nDESIGN: {json.dumps(design)}\nMETRICS: {json.dumps(metrics)}\n"
