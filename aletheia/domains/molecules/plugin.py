@@ -93,7 +93,10 @@ class MoleculePropertyPlugin(DomainPlugin):
         return {
             "dummy_mean": DummyRegressor(strategy="mean"),
             "ridge": Ridge(),
-            "knn": KNeighborsRegressor(metric="jaccard"),  # apt for binary fingerprints
+            # Tanimoto/jaccard is the chem-apt similarity, but it forces a dtype cast on
+            # the integer fingerprint matrix; for a reference baseline we keep the panel
+            # dtype-clean with the default metric.
+            "knn": KNeighborsRegressor(),
             "rf": RandomForestRegressor(n_estimators=200, random_state=rs, n_jobs=-1),
             "gbm": GradientBoostingRegressor(n_estimators=200, max_depth=3, random_state=rs),
         }

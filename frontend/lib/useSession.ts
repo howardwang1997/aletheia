@@ -37,6 +37,7 @@ const ACTIVITY_TYPES = new Set([
   "data_requested",
   "data_registered",
   "run_started",
+  "domain_fallback",
   "experiment",
   "campaign",
   "campaign_finished",
