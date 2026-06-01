@@ -44,6 +44,7 @@ const ACTIVITY_TYPES = new Set([
   "reproduction",
   "experiment",
   "campaign",
+  "campaign_plan",
   "campaign_finished",
   "stage",
   "compute_submitted",
