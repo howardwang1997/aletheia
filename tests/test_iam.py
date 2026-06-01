@@ -144,9 +144,12 @@ async def test_driver_creates_repo_branch_pr_dry_run(monkeypatch):
     driver = ExperimentDriver(run_id, dry_run=True)
     await driver.run()
 
-    # the dry-run backend recorded the full repo/branch/file/PR lifecycle
+    # the dry-run backend recorded the full repo/branch/file/PR lifecycle; WRITE_UP
+    # now commits the cited paper AND its bibliography (two put_file calls).
     ops = [c["op"] for c in driver.gh.calls]
-    assert ops == ["ensure_repo", "ensure_branch", "put_file", "open_pr"]
+    assert ops == ["ensure_repo", "ensure_branch", "put_file", "put_file", "open_pr"]
+    paths = [c["path"] for c in driver.gh.calls if c["op"] == "put_file"]
+    assert paths == ["report.md", "references.bib"]
 
     # repo + branch persisted on the experiment (audit trail)
     with session_scope() as s:
