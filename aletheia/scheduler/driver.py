@@ -32,6 +32,7 @@ from aletheia.memory.service import (
     list_claims,
     record_artifacts,
     record_literature_finding,
+    record_metrics,
     record_scorecard,
     record_sota_result,
     set_experiment_hypothesis,
@@ -99,6 +100,7 @@ class ExperimentDriver:
         self.survey_sota: list[dict[str, Any]] = []  # structured SOTAResult rows (curated + extracted)
         self.hypothesis: dict[str, Any] = {}  # the hypothesis chosen by IDEATE
         self.profile: DomainProfile | None = None  # the domain's vocabulary (set in _run)
+        self.plugin: Any = None  # the resolved DomainPlugin (set in _run)
         self.domain: str | None = None  # the run's domain name (materials | molecules | …)
         self._claim_ids: dict[str, str] = {}  # role -> claim id, reset per experiment round
         self._last_scores: dict[str, float] = {}  # latest hypothesis scorecard scores (campaign EIG)
@@ -652,6 +654,51 @@ class ExperimentDriver:
         await self._index("design_rationale", f"coder solution:\n{code[:400]}", exp_id)
         return code
 
+    async def _code_rag(self, design: dict, exp_id: str | None) -> None:
+        """RAG-aware coder: author the GENERATION STRATEGY (answer prompt + retrieval
+        depth k) for a host-side-LLM domain, instead of build_pipeline() code. Mutates
+        ``design`` with a validated ``answer_prompt`` + ``k``; falls back to the default
+        prompt on any problem. The fixed harness still scores deterministically."""
+        if not get_settings().coder_enabled:
+            return
+        await self._status("coding", "authoring the RAG generation strategy")
+        methods = "\n".join(f"- {m.get('name','')}: {m.get('why','')}" for m in (self.survey_methods or [])) \
+            or "- (none surveyed)"
+        prompt = (
+            "Design the GENERATION STRATEGY for a retrieval-augmented QA system. A fixed harness retrieves "
+            "passages and scores answers against gold (recall@k + token-F1 + exact-match) — you do NOT score. "
+            "Choose a concise answer PROMPT (it MUST use the placeholders {context} and {question}) that yields "
+            "short, grounded answers, and a retrieval depth k (1-10).\n\n"
+            f"PLAN/DESIGN: {json.dumps(design)}\nSURVEYED METHODS:\n{methods}\n\n"
+            'Return ONLY JSON: {"answer_prompt": "...{context}...{question}...", "k": <int 1-10>}.'
+        )
+        text = await run_worker(
+            self.run_id, "coder", prompt,
+            system="You design concise, grounded RAG answer prompts; you never fabricate facts.",
+            dry_run=self.dry_run,
+            dry_value=json.dumps({"answer_prompt": self._DEFAULT_RAG_PROMPT, "k": int(design.get("k", 5))}),
+        )
+        strategy = _parse_json(text, _JSON, {}) if not is_degraded(text) else {}
+        ap = str(strategy.get("answer_prompt", "")).strip()
+        accepted = bool(ap) and "{context}" in ap and "{question}" in ap
+        if accepted:
+            design["answer_prompt"] = ap
+        try:
+            kk = int(strategy.get("k", design.get("k", 5)))
+            design["k"] = max(1, min(10, kk))
+        except (TypeError, ValueError):
+            pass
+        await get_bus().publish(
+            make_event("code", run_id=self.run_id, payload={
+                "accepted": accepted, "kind": "rag_strategy", "k": design.get("k"),
+                "reasons": [] if accepted else ["invalid/missing answer_prompt; using default"]})
+        )
+        await self._index(
+            "design_rationale",
+            f"RAG generation strategy: k={design.get('k')}, prompt={'custom' if accepted else 'default'}",
+            exp_id,
+        )
+
     async def _iam_setup(self, plan: dict, domain: str, exp_id: str | None) -> None:
         """Create (or reuse) this project's repo and the experiment's branch, behind
         the policy gate. Best-effort: any failure is logged, never breaks the run."""
@@ -798,7 +845,7 @@ class ExperimentDriver:
         await self._status("reproducing", "independent re-run (locked code, new seed)")
         repro_design = {**design, "random_state": int(design.get("random_state", 42)) + 1}
         try:
-            repro_result = await self._execute(repro_design, data_spec, domain, None)
+            repro_result = await self._run_eval(repro_design, data_spec, domain, None)
         except Exception as exc:  # noqa: BLE001 - reproduction is best-effort
             await get_bus().publish(
                 make_event("reproduction", run_id=self.run_id,
@@ -925,6 +972,7 @@ class ExperimentDriver:
                 make_event("domain_fallback", run_id=self.run_id,
                            payload={"requested": domain, "ran": plugin.name})
             )
+        self.plugin = plugin
         self.profile = plugin.profile()  # the domain's vocabulary for every stage
         data_spec = resolve_data_spec(self.run_id)
         self.budget = await asyncio.to_thread(BudgetTracker, self.run_id)
@@ -1043,15 +1091,19 @@ class ExperimentDriver:
         # design approved -> set up (or reuse) the project repo + this experiment's branch
         await self._iam_setup(plan, domain, exp_id)
 
-        # 2b) CODE: the coder authors the model (gated); falls back to the design model
-        solution_code = await self._code(design, data_spec, exp_id)
-        if solution_code:
-            design["solution_code"] = solution_code
+        # 2b) CODE: the coder authors the method. Host-side-LLM domains (RAG) get a
+        # generation STRATEGY (answer prompt + k); regression domains get build_pipeline().
+        if self.profile and self.profile.host_side_run:
+            await self._code_rag(design, exp_id)
+        else:
+            solution_code = await self._code(design, data_spec, exp_id)
+            if solution_code:
+                design["solution_code"] = solution_code
 
         # 3) EXECUTION
         await record_transition(self.run_id, exp_id, "experiment_design", "execution", "design approved; running")
         await self._status("executing")
-        result = await self._execute(design, data_spec, domain, exp_id)
+        result = await self._run_eval(design, data_spec, domain, exp_id)
 
         # 3b) fail-closed: a real run must produce verifiable artifacts; a degraded
         # (KFold-fallback) headline is surfaced, not hidden.
@@ -1417,6 +1469,81 @@ class ExperimentDriver:
             )
             design = _parse_design(text, design)
 
+    async def _run_eval(self, design, data_spec, domain, exp_id) -> dict[str, Any]:
+        """Dispatch the evaluation: host-side (trusted, real LLM step) for domains that
+        declare it, else the compute-backend sandbox. Scoring stays the fixed harness
+        either way."""
+        if self.profile and self.profile.host_side_run:
+            return await self._rag_eval_hostside(design, data_spec, domain, exp_id)
+        return await self._execute(design, data_spec, domain, exp_id)
+
+    _DEFAULT_RAG_PROMPT = (
+        "Answer the question using ONLY the context. Be concise (a short phrase). "
+        "If the context does not contain the answer, say 'unknown'.\n\n"
+        "CONTEXT:\n{context}\n\nQUESTION: {question}\nANSWER:"
+    )
+
+    async def _rag_generate(self, question: str, contexts: list[str], prompt: str) -> str:
+        """Generate one answer HOST-SIDE. Real run → a Claude call (trusted; the no-network
+        sandbox is untouched). Dry-run / no creds → the offline extractive baseline."""
+        from aletheia.domains.rag.retriever import extractive_answerer
+
+        if self.dry_run:
+            return extractive_answerer(question, contexts)
+        ctx = "\n".join(contexts)
+        filled = prompt.replace("{context}", ctx).replace("{question}", question)
+        text = await run_worker(
+            self.run_id, "rag_generate", filled,
+            system="You answer questions strictly from the provided context; never invent facts.",
+            dry_run=False, dry_value=extractive_answerer(question, contexts),
+        )
+        # a degraded worker (API hiccup) falls back to the offline answerer, never crashes the eval
+        return extractive_answerer(question, contexts) if is_degraded(text) else text.strip()
+
+    async def _rag_eval_hostside(self, design, data_spec, domain, exp_id) -> dict[str, Any]:
+        """Run the RAG eval host-side: retrieve (offline, deterministic) → generate
+        (host-side LLM) → score (fixed deterministic harness). The LLM authors only the
+        answer text; recall@k / F1 / EM are computed by the harness."""
+        from aletheia.domains.rag.retriever import extractive_answerer, retrieve
+
+        await self._status("executing", "host-side RAG generation + scoring")
+        plugin = self.plugin or get_domain_plugin(domain)
+        data = await asyncio.to_thread(plugin.load_data, data_spec)
+        corpus, cases = data["corpus"], data["cases"]
+        k = int(design.get("k", 5))
+        prompt = str(design.get("answer_prompt") or self._DEFAULT_RAG_PROMPT)
+        model = get_settings().claude_model
+
+        if not self.dry_run:
+            await self._guard_budget("usd", get_settings().est_stage_cost_usd)
+        # pre-generate all answers (async, host-side), then hand a sync lookup to the
+        # deterministic scorer.
+        answers: dict[str, str] = {}
+        for case in cases:
+            q = str(case.get("question", ""))
+            contexts = [r["text"] for r in retrieve(corpus, q, k)]
+            answers[q] = await self._rag_generate(q, contexts, prompt)
+
+        def _answerer(q: str, contexts: list[str]) -> str:
+            return answers.get(q, extractive_answerer(q, contexts))
+
+        label = "extractive (dry-run)" if self.dry_run else f"host-side LLM ({model})"
+        per_call_cost = 0.0 if self.dry_run else 0.001  # estimate; trued up later
+        result = await asyncio.to_thread(
+            plugin.evaluate, corpus, cases, k,
+            answerer=_answerer, workdir=run_artifacts_dir(self.run_id) / "rag_eval",
+            design=design, answerer_label=label, cost_per_answer=per_call_cost,
+        )
+        if exp_id:  # mirror the compute backend's ledger recording (skip for reproduction)
+            await asyncio.to_thread(record_metrics, exp_id, result.metrics, "test")
+            await asyncio.to_thread(record_artifacts, exp_id, result.artifacts)
+        await get_bus().publish(
+            make_event("compute_status", run_id=self.run_id,
+                       payload={"job_id": "host-side", "status": "done", "metrics": result.metrics})
+        )
+        return {"job_id": "host-side", "metrics": result.metrics,
+                "artifacts": result.artifacts, "info": result.info}
+
     async def _execute(self, design, data_spec, domain, exp_id) -> dict[str, Any]:
         spec = JobSpec(
             run_id=self.run_id, domain=domain, design=design, data_spec=data_spec,
@@ -1553,7 +1680,7 @@ class ExperimentDriver:
             alt["target_column"] = data_spec["target_column"]
         if alt.get("model") == design.get("model"):
             return design, result  # nothing distinct to try
-        alt_result = await self._execute(alt, data_spec, domain, exp_id)
+        alt_result = await self._run_eval(alt, data_spec, domain, exp_id)
         # compare on the domain's declared headline metric, honoring its goal
         # (min for error metrics like MAE; max for F1/recall).
         hk = self.profile.headline_metric if self.profile else "mae"

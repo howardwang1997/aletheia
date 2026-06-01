@@ -46,6 +46,9 @@ class DomainProfile:
     # whether the domain scores a subjective quality dimension via the cross-vendor
     # critic panel (a `faithfulness` metric), in addition to deterministic metrics:
     quality_via_critics: bool = False
+    # whether the eval runs HOST-SIDE in the driver (trusted: keys + network for a real
+    # LLM step) rather than in the compute-backend sandbox. Scoring stays deterministic.
+    host_side_run: bool = False
     units: str = ""  # e.g. "eV"; "" for unitless targets
     protocol_desc: str = "grouped cross-validation + holdout + baseline panel"
     feature_desc: str = "a numeric feature matrix"
