@@ -32,6 +32,7 @@ from aletheia.memory.service import (
     list_claims,
     record_artifacts,
     record_literature_finding,
+    record_scorecard,
     record_sota_result,
     set_experiment_hypothesis,
     set_experiment_repo,
@@ -100,6 +101,7 @@ class ExperimentDriver:
         self.profile: DomainProfile | None = None  # the domain's vocabulary (set in _run)
         self.domain: str | None = None  # the run's domain name (materials | molecules | …)
         self._claim_ids: dict[str, str] = {}  # role -> claim id, reset per experiment round
+        self._last_scores: dict[str, float] = {}  # latest hypothesis scorecard scores (campaign EIG)
 
     @staticmethod
     def _claim_strength(
@@ -470,6 +472,126 @@ class ExperimentDriver:
             if stmt and exp_id:
                 await asyncio.to_thread(set_experiment_hypothesis, exp_id, stmt)
 
+    # --- hypothesis scorecard (gate low-value experiments before spending compute) ---
+    _SCORE_DIMS = (
+        "novelty", "feasibility", "expected_information_gain", "sota_relevance",
+        "dataset_fit", "evaluation_clarity", "cost_risk", "failure_interpretability",
+    )
+
+    async def _score_hypothesis(self, plan: dict) -> dict[str, float]:
+        """Score the chosen hypothesis on 8 dimensions (0..1), grounded in the
+        structured prior work + SOTA from the survey. The LLM scores; a fixed rule
+        (``_scorecard_decision``) gates. Dry-run → canned high scores (proceeds)."""
+        findings = "\n".join(
+            f"- {f.get('method','')} on {f.get('dataset','')}: {f.get('result','')} (gap: {f.get('gap','')})"
+            for f in self.survey_findings[:8]
+        ) or "(no structured prior work)"
+        sota = "\n".join(
+            f"- {r.get('method','')} {r.get('metric','')}={r.get('score','')} on {r.get('dataset','')}"
+            for r in self.survey_sota[:8]
+        ) or "(no SOTA rows)"
+        gaps = ("\n- " + "\n- ".join(self.survey_gaps)) if self.survey_gaps else " (none)"
+        prompt = (
+            f"Score this research HYPOTHESIS before we spend compute on it.\n"
+            f"HYPOTHESIS: {json.dumps(self.hypothesis)}\n"
+            f"OBJECTIVE: {plan.get('objective', '')}\n"
+            f"OPEN GAPS:{gaps}\n"
+            f"PRIOR WORK (structured):\n{findings}\n"
+            f"KNOWN SOTA (structured):\n{sota}\n\n"
+            "Score each 0..1 (cost_risk: higher = costlier/riskier), grounded in the prior work above — "
+            "novelty is LOW if a listed prior-work row already does essentially this. Return ONLY JSON: "
+            '{"novelty": .., "feasibility": .., "expected_information_gain": .., "sota_relevance": .., '
+            '"dataset_fit": .., "evaluation_clarity": .., "cost_risk": .., "failure_interpretability": .., '
+            '"rationale": "one line"}.'
+        )
+        text = await reason_stage(
+            self.run_id, "scorecard", prompt, dry_run=self.dry_run,
+            dry_text=json.dumps({
+                "novelty": 0.7, "feasibility": 0.8, "expected_information_gain": 0.7,
+                "sota_relevance": 0.7, "dataset_fit": 0.8, "evaluation_clarity": 0.8,
+                "cost_risk": 0.2, "failure_interpretability": 0.7,
+                "rationale": "novel + feasible + clearly evaluable on the available data",
+            }),
+        )
+        obj = _parse_json(text, _JSON, {})
+        scores: dict[str, float] = {}
+        for d in self._SCORE_DIMS:
+            try:
+                scores[d] = max(0.0, min(1.0, float(obj.get(d))))
+            except (TypeError, ValueError):
+                scores[d] = 0.0
+        scores["rationale"] = str(obj.get("rationale", "")).strip()
+        return scores
+
+    def _scorecard_decision(self, scores: dict[str, float]) -> tuple[bool, str]:
+        """Fixed harness rule: an experiment is worth running only if it clears the
+        novelty + evaluation-clarity floors. Low on either → block."""
+        s = get_settings()
+        nov = float(scores.get("novelty", 0.0))
+        clar = float(scores.get("evaluation_clarity", 0.0))
+        if nov < s.hypothesis_min_novelty:
+            return False, f"novelty {nov:.2f} below floor {s.hypothesis_min_novelty}"
+        if clar < s.hypothesis_min_eval_clarity:
+            return False, f"evaluation clarity {clar:.2f} below floor {s.hypothesis_min_eval_clarity}"
+        return True, "scorecard cleared the novelty + evaluation floors"
+
+    async def _scorecard_gate(self, plan: dict, exp_id: str | None) -> bool:
+        """Score the hypothesis, persist the scorecard, and gate on it (cheap +
+        deterministic, BEFORE the cross-model direction gate). Bounded re-ideation on
+        block; escalate + pause past the limit. Returns True to proceed."""
+        while True:
+            scores = await self._score_hypothesis(plan)
+            proceed, reason = self._scorecard_decision(scores)
+            await asyncio.to_thread(
+                record_scorecard, self.run_id, experiment_id=exp_id, scores=scores,
+                decision=("proceed" if proceed else "block"),
+                rationale=scores.get("rationale") or reason,
+            )
+            await get_bus().publish(
+                make_event("scorecard", run_id=self.run_id, payload={
+                    "decision": "proceed" if proceed else "block", "reason": reason,
+                    "scores": {k: scores.get(k) for k in self._SCORE_DIMS}})
+            )
+            if proceed:
+                self._last_scores = scores
+                # the novelty claim (from IDEATE) is now SCORED + grounded in structured
+                # prior work — upgrade it from speculative (still LLM-judged → only weak).
+                if (
+                    self._claim_ids.get("novelty")
+                    and scores.get("novelty", 0.0) >= get_settings().hypothesis_min_novelty
+                    and self.survey_findings
+                ):
+                    await asyncio.to_thread(
+                        update_claim, self._claim_ids["novelty"], strength="weak",
+                    )
+                return True
+            self.guard.bump("scorecard")
+            if self.guard.exceeded("scorecard"):
+                await get_bus().publish(
+                    make_event("escalation", run_id=self.run_id, payload={
+                        "reason": "hypothesis scorecard could not clear the floors", "detail": reason})
+                )
+                await self._block_run(exp_id, f"hypothesis blocked by scorecard: {reason}")
+                return False
+            # re-ideate for a more novel / clearly-evaluable hypothesis
+            await self._reideate_for_scorecard(plan, exp_id, reason)
+
+    async def _reideate_for_scorecard(self, plan: dict, exp_id: str | None, reason: str) -> None:
+        prompt = (
+            f"The hypothesis was BLOCKED by the pre-execution scorecard: {reason}.\n"
+            f"Current hypothesis: {json.dumps(self.hypothesis)}\n\n"
+            "Propose a revised hypothesis that is MORE NOVEL vs the surveyed prior work and has a CLEARER "
+            'evaluation. Return ONLY JSON: {"statement","rationale","prediction","novelty_note"}.'
+        )
+        text = await reason_stage(
+            self.run_id, "ideate", prompt, dry_run=self.dry_run,
+            dry_text='{"statement": "revised, more novel hypothesis", "rationale": "r", "prediction": "p", "novelty_note": "n"}',
+        )
+        self.hypothesis = _parse_json(text, _JSON, self.hypothesis)
+        stmt = str(self.hypothesis.get("statement", "")).strip()
+        if stmt and exp_id:
+            await asyncio.to_thread(set_experiment_hypothesis, exp_id, stmt)
+
     async def _code(self, design: dict, data_spec: dict, exp_id: str | None) -> str | None:
         """CODE stage: the coder authors a constrained build_pipeline() solution.
         It is statically gated; a passing solution is used as the candidate model,
@@ -755,6 +877,12 @@ class ExperimentDriver:
                 await self._ideate(plan, cur_exp_id)
             else:
                 await self._adopt_hypothesis(next_hint or {}, cur_exp_id)
+            # SCORECARD gate (cheap + deterministic) BEFORE the cross-model direction
+            # gate: block low-novelty / unclear-evaluation hypotheses before spending
+            # peer-review + compute on them.
+            await self._status("scoring", "scoring the hypothesis")
+            if not await self._scorecard_gate(plan, cur_exp_id):
+                return  # scorecard blocked past the loop limit -> paused + escalated
             if not await self._direction_gate(plan, cur_exp_id):
                 return  # direction rejected past the loop limit -> paused + escalated
 
@@ -922,9 +1050,11 @@ class ExperimentDriver:
             for o in outcomes
         )
         gaps = ("OPEN GAPS:\n- " + "\n- ".join(self.survey_gaps) + "\n\n") if self.survey_gaps else ""
+        eig = float(self._last_scores.get("expected_information_gain", 1.0))
         prompt = (
             f"You are steering a research campaign (objective: {plan.get('objective', '')}). "
             f"{round_idx} of at most {max_exps} experiments have run:\n{trajectory}\n\n{gaps}"
+            f"The last hypothesis scored expected_information_gain={eig:.2f} (0..1). "
             "Decide whether one MORE experiment would be informative (a new angle, an ablation that would "
             "explain the result, or a gap still worth closing) — or whether the program has converged. "
             "If continuing, propose the next testable hypothesis, DISTINCT from the rounds above and still "
@@ -941,6 +1071,15 @@ class ExperimentDriver:
             }),
         )
         decision = _parse_json(text, _JSON, {"continue": False})
+        # deterministic stop: when the last hypothesis's expected information gain is
+        # below the floor, the program has converged — don't spend compute on another
+        # round regardless of the LLM's enthusiasm.
+        floor = get_settings().campaign_min_eig
+        if decision.get("continue") and eig < floor:
+            decision["continue"] = False
+            decision["rationale"] = (
+                f"expected information gain {eig:.2f} below floor {floor}; program converged"
+            )
         await self._index(
             "design_rationale",
             f"campaign go/no-go after round {round_idx}: continue={decision.get('continue')} — "

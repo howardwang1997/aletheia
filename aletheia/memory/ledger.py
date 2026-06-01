@@ -226,6 +226,22 @@ class ClaimEvidence(Base):
     claim: Mapped[Claim] = relationship(back_populates="evidence")
 
 
+class HypothesisScorecard(Base):
+    """A structured pre-execution score of a hypothesis (novelty / feasibility / EIG /
+    …). The LLM scores; a fixed harness rule turns the scores into a proceed/block
+    decision — so compute is spent on questions worth answering, auditably."""
+
+    __tablename__ = "hypothesis_scorecards"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    experiment_id: Mapped[str | None] = mapped_column(ForeignKey("experiments.id"), index=True)
+    scores: Mapped[dict | None] = mapped_column(JSONB)  # {novelty, feasibility, expected_information_gain, …}
+    decision: Mapped[str | None] = mapped_column(String(16))  # proceed | block
+    rationale: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class LiteratureFinding(Base):
     """A structured row distilled from the SURVEY's retrieved papers — so novelty +
     SOTA reasoning can stand on queryable prior work, not a prose briefing alone."""
