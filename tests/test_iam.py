@@ -128,6 +128,9 @@ async def test_driver_creates_repo_branch_pr_dry_run(monkeypatch):
     # isolate from the daily repo-creation cap (the persistent dev DB accumulates
     # iam_repo_created events across runs; the cap working is covered in the policy test)
     monkeypatch.setattr(policy, "created_repos_last_24h", lambda: 0)
+    # single experiment -> exactly one repo/branch/PR lifecycle to assert against
+    from aletheia.config import get_settings
+    monkeypatch.setattr(get_settings(), "max_experiments_per_campaign", 1)
     create_all()
     run_id = create_run("iam e2e", domain="materials", status="scoping")
     register_dataset(run_id, "benchmark", ref="matbench_expt_gap", status="ready")

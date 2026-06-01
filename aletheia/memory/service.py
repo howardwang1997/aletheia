@@ -93,6 +93,32 @@ def finalize_plan(run_id: str, plan: dict[str, Any]) -> str:
         return exp.id
 
 
+def create_experiment(
+    run_id: str,
+    plan: dict[str, Any],
+    *,
+    hypothesis: str | None = None,
+    parent_experiment_id: str | None = None,
+    stage: str = "experiment_design",
+    status: str = "planned",
+) -> str:
+    """Create an additional Experiment for a campaign round, linked to the prior
+    round via ``parent_experiment_id``. Round 1 reuses ``finalize_plan``'s
+    experiment; rounds 2..N use this. Returns the new experiment id."""
+    with session_scope() as s:
+        exp = Experiment(
+            run_id=run_id,
+            hypothesis=hypothesis or plan.get("hypothesis"),
+            design_json=plan,
+            stage=stage,
+            status=status,
+            parent_experiment_id=parent_experiment_id,
+        )
+        s.add(exp)
+        s.flush()
+        return exp.id
+
+
 def set_experiment_hypothesis(experiment_id: str, hypothesis: str) -> None:
     """Record the hypothesis the IDEATE stage chose for this experiment."""
     with session_scope() as s:

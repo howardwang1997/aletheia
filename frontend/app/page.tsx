@@ -53,6 +53,7 @@ function Lab() {
           cost={s.cost}
           finalizedPlan={s.finalizedPlan}
           stageHistory={s.stageHistory}
+          experiments={s.experiments}
           critiques={s.critiques}
           report={s.report}
           finalMetrics={s.finalMetrics}

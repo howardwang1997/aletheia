@@ -78,6 +78,12 @@ function line(e: LabEvent): string {
       return `📦 data ${p.status ?? ""}: ${p.source ?? ""} ${p.ref ?? ""}`;
     case "run_started":
       return `▶ run started (${p.mode ?? ""})`;
+    case "experiment":
+      return `🧪 experiment ${p.round ?? ""}${p.of ? `/${p.of}` : ""}`;
+    case "campaign":
+      return `🧭 campaign: ${p.decision ?? ""}${p.rationale ? ` — ${p.rationale}` : ""}`;
+    case "campaign_finished":
+      return `🏁 campaign done — best LCSO ${p.best_mae_lcso ?? "?"} (round ${p.best_round ?? "?"}, ${p.experiments ?? "?"} exps)`;
     case "stage":
       return `→ ${p.stage ?? ""}: ${p.rationale ?? ""}`;
     case "compute_submitted":
@@ -188,6 +194,7 @@ export function Activity({
   cost,
   finalizedPlan,
   stageHistory = [],
+  experiments = [],
   critiques = [],
   report = null,
   finalMetrics = null,
@@ -197,6 +204,7 @@ export function Activity({
   cost: number;
   finalizedPlan: Record<string, string> | null;
   stageHistory?: string[];
+  experiments?: { round?: number; exp_id?: string; of?: number }[];
   critiques?: any[];
   report?: { uri?: string; preview?: string } | null;
   finalMetrics?: Record<string, number> | null;
@@ -209,6 +217,13 @@ export function Activity({
       </div>
 
       <div className={`pill s-${status.state}`}>{statusLabel(status)}</div>
+
+      {experiments.length > 1 && (
+        <div className="campaign-bar">
+          Campaign — experiment {experiments.length}
+          {experiments[0]?.of ? ` of ${experiments[0].of}` : ""}
+        </div>
+      )}
 
       {stageHistory.length > 0 && <StageTimeline reached={stageHistory} />}
 
