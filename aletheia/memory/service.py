@@ -15,8 +15,10 @@ from aletheia.memory.ledger import (
     CritiquePanel,
     Decision,
     Experiment,
+    LiteratureFinding,
     Metric,
     Run,
+    SOTAResult,
 )
 
 
@@ -431,3 +433,54 @@ def list_claims(run_id: str, experiment_id: str | None = None) -> list[dict[str,
                 }
             )
         return out
+
+
+# --- structured literature + SOTA (Phase H) -------------------------------
+
+_LIT_FIELDS = ("paper_id", "query", "method", "dataset", "metric", "result", "limitation", "gap", "relevance", "source")
+_SOTA_FIELDS = ("task", "dataset", "metric", "score", "method", "source", "split_policy", "notes")
+
+
+def record_literature_finding(run_id: str, **fields: Any) -> int:
+    with session_scope() as s:
+        row = LiteratureFinding(run_id=run_id, **{k: fields.get(k) for k in _LIT_FIELDS})
+        s.add(row)
+        s.flush()
+        return row.id
+
+
+def list_literature_findings(run_id: str) -> list[dict[str, Any]]:
+    with session_scope() as s:
+        rows = (
+            s.query(LiteratureFinding)
+            .filter(LiteratureFinding.run_id == run_id)
+            .order_by(LiteratureFinding.id)
+            .all()
+        )
+        return [
+            {"id": r.id, **{k: getattr(r, k) for k in _LIT_FIELDS}} for r in rows
+        ]
+
+
+def record_sota_result(run_id: str, domain: str | None, **fields: Any) -> int:
+    with session_scope() as s:
+        score = fields.get("score")
+        row = SOTAResult(
+            run_id=run_id, domain=domain,
+            score=(float(score) if score is not None else None),
+            **{k: fields.get(k) for k in _SOTA_FIELDS if k != "score"},
+        )
+        s.add(row)
+        s.flush()
+        return row.id
+
+
+def list_sota_results(run_id: str, domain: str | None = None) -> list[dict[str, Any]]:
+    with session_scope() as s:
+        q = s.query(SOTAResult).filter(SOTAResult.run_id == run_id)
+        if domain is not None:
+            q = q.filter(SOTAResult.domain == domain)
+        rows = q.order_by(SOTAResult.id).all()
+        return [
+            {"id": r.id, "domain": r.domain, **{k: getattr(r, k) for k in _SOTA_FIELDS}} for r in rows
+        ]

@@ -45,7 +45,14 @@ class DomainProfile:
     protocol_desc: str = "grouped cross-validation + holdout + baseline panel"
     feature_desc: str = "a numeric feature matrix"
     sota_reference: str = "no comparable published benchmark"
+    # structured form of ``sota_reference`` — published SOTA rows for this domain so
+    # "beat the SOTA" is a row comparison, not prose. Each: {method, dataset, metric,
+    # score, split_policy, source}.
+    sota_rows: list[dict[str, Any]] = field(default_factory=list)
     dry_papers: list[Any] = field(default_factory=list)  # list[research.literature.Paper]
+    # canned structured literature findings for the dry-run path (offline). Each:
+    # {paper_id, method, dataset, metric, result, limitation, gap, relevance}.
+    dry_literature_findings: list[dict[str, Any]] = field(default_factory=list)
     dry_gaps: list[str] = field(default_factory=list)
     dry_frontier_methods: list[dict[str, str]] = field(default_factory=list)  # [{name, why, source}]
     dry_hypothesis: dict[str, Any] = field(default_factory=dict)

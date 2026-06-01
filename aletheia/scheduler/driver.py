@@ -31,6 +31,8 @@ from aletheia.memory.service import (
     get_run,
     list_claims,
     record_artifacts,
+    record_literature_finding,
+    record_sota_result,
     set_experiment_hypothesis,
     set_experiment_repo,
     set_run_status,
@@ -92,8 +94,11 @@ class ExperimentDriver:
         self.survey_gaps: list[str] = []  # research gaps surfaced by SURVEY
         self.survey_methods: list[dict[str, str]] = []  # frontier methods the SURVEY found the field using
         self.survey_papers: list[literature.Paper] = []  # citable refs for WRITE_UP
+        self.survey_findings: list[dict[str, Any]] = []  # structured LiteratureFinding rows
+        self.survey_sota: list[dict[str, Any]] = []  # structured SOTAResult rows (curated + extracted)
         self.hypothesis: dict[str, Any] = {}  # the hypothesis chosen by IDEATE
         self.profile: DomainProfile | None = None  # the domain's vocabulary (set in _run)
+        self.domain: str | None = None  # the run's domain name (materials | molecules | …)
         self._claim_ids: dict[str, str] = {}  # role -> claim id, reset per experiment round
 
     @staticmethod
@@ -126,6 +131,27 @@ class ExperimentDriver:
             return "speculative"  # no structured literature/novelty check in v1
         return "weak"
 
+    def _compare_to_sota(
+        self, headline_metric: str, headline_value: float | None
+    ) -> tuple[dict | None, list[dict], bool]:
+        """Compare the headline against the structured SOTA rows on the same metric
+        FAMILY (mae/rmse → lower is better; r2 → higher). Returns
+        (best_comparable_row, all_comparable_rows, did_we_beat_it)."""
+        fam = headline_metric.split("_")[0].lower()  # "mae_lcso" -> "mae"
+        comparable = [
+            r for r in self.survey_sota
+            if str(r.get("metric", "")).lower().startswith(fam) and r.get("score") is not None
+        ]
+        if not comparable or headline_value is None:
+            return None, comparable, False
+        if fam == "r2":
+            best = max(comparable, key=lambda r: r["score"])
+            beat = headline_value > best["score"]
+        else:  # error metrics: lower is better
+            best = min(comparable, key=lambda r: r["score"])
+            beat = headline_value < best["score"]
+        return best, comparable, beat
+
     async def _index(self, kind: str, text: str, exp_id: str | None, **meta: Any) -> None:
         """Best-effort: embed a reasoning fragment into the recall store (off-thread)."""
         await asyncio.to_thread(
@@ -142,12 +168,15 @@ class ExperimentDriver:
         (the frontier methods the field uses) and records a ``survey.md`` artifact."""
         if self.profile is None:  # standalone call (tests); _run sets it before SURVEY
             run = await asyncio.to_thread(get_run, self.run_id)
-            self.profile = get_domain_plugin((run or {}).get("domain")).profile()
+            self.domain = (run or {}).get("domain")
+            self.profile = get_domain_plugin(self.domain).profile()
         await self._status("surveying", "researching the literature")
         topic = " ".join(
             str(plan.get(k, "")).strip() for k in ("objective", "direction", "hypothesis")
         ).strip() or (plan.get("domain") or "materials")
         briefing, gaps, methods = "", [], []
+        lit_findings: list[dict[str, Any]] = []  # structured prior-work rows
+        extracted_sota: list[dict[str, Any]] = []  # SOTA rows the survey pulled from the literature
         try:
             if self.dry_run:
                 papers = list(self.profile.dry_papers) if self.profile else []
@@ -155,13 +184,14 @@ class ExperimentDriver:
                 briefing = literature.briefing(papers)
                 gaps = list(self.profile.dry_gaps) if self.profile else []
                 methods = list(self.profile.dry_frontier_methods) if self.profile else []
+                lit_findings = list(self.profile.dry_literature_findings) if self.profile else []
                 self.survey_papers = papers
             else:
                 subqs = await self._decompose(topic)
-                findings = await asyncio.gather(*[self._librarian(topic, sq) for sq in subqs])
-                findings = [f for f in findings if f and not is_degraded(f)]
-                if findings:
-                    briefing, gaps, methods = await self._synthesize(topic, findings)
+                prose = await asyncio.gather(*[self._librarian(topic, sq) for sq in subqs])
+                prose = [f for f in prose if f and not is_degraded(f)]
+                if prose:
+                    briefing, gaps, methods, lit_findings, extracted_sota = await self._synthesize(topic, prose)
                 else:
                     await get_bus().publish(
                         make_event(
@@ -178,6 +208,11 @@ class ExperimentDriver:
                 make_event("literature", run_id=self.run_id, payload={"error": str(exc)})
             )
         self.survey_methods = methods
+        self.survey_findings = lit_findings
+        # the domain's curated published SOTA (always recorded) + any survey-extracted rows
+        curated_sota = list(self.profile.sota_rows) if self.profile else []
+        self.survey_sota = curated_sota + extracted_sota
+        await self._record_structured_literature(topic)
         await self._record_survey(topic, briefing, gaps, methods, exp_id)
         await record_transition(
             self.run_id, exp_id, None, "survey",
@@ -220,11 +255,38 @@ class ExperimentDriver:
                 )
             await get_bus().publish(
                 make_event("survey_recorded", run_id=self.run_id,
-                           payload={"methods": len(methods), "gaps": len(gaps), "uri": str(path)})
+                           payload={"methods": len(methods), "gaps": len(gaps),
+                                    "findings": len(self.survey_findings), "sota": len(self.survey_sota),
+                                    "uri": str(path)})
             )
         except Exception as exc:  # noqa: BLE001 - recording is best-effort
             await get_bus().publish(
                 make_event("literature", run_id=self.run_id, payload={"error": f"record_survey: {exc}"})
+            )
+
+    async def _record_structured_literature(self, topic: str) -> None:
+        """Persist the structured prior-work + SOTA rows so novelty/SOTA claims can
+        point at queryable evidence (not a prose briefing). Best-effort."""
+        try:
+            for f in self.survey_findings:
+                await asyncio.to_thread(
+                    record_literature_finding, self.run_id,
+                    paper_id=f.get("paper_id"), query=f.get("query") or topic, method=f.get("method"),
+                    dataset=f.get("dataset"), metric=f.get("metric"), result=f.get("result"),
+                    limitation=f.get("limitation"), gap=f.get("gap"), relevance=f.get("relevance"),
+                    source=f.get("source") or ("profile" if self.dry_run else "survey"),
+                )
+            domain = self.domain
+            for r in self.survey_sota:
+                await asyncio.to_thread(
+                    record_sota_result, self.run_id, domain,
+                    task=domain, dataset=r.get("dataset"), metric=r.get("metric"), score=r.get("score"),
+                    method=r.get("method"), source=r.get("source"), split_policy=r.get("split_policy"),
+                    notes=r.get("notes"),
+                )
+        except Exception as exc:  # noqa: BLE001 - recording is best-effort
+            await get_bus().publish(
+                make_event("literature", run_id=self.run_id, payload={"error": f"record_structured: {exc}"})
             )
 
     async def _decompose(self, topic: str) -> list[str]:
@@ -256,7 +318,9 @@ class ExperimentDriver:
             can_use_tool=build_tool_gate(allow, self.run_id), max_turns=5, dry_run=False,
         )
 
-    async def _synthesize(self, topic: str, findings: list[str]) -> tuple[str, list[str], list[dict]]:
+    async def _synthesize(
+        self, topic: str, findings: list[str]
+    ) -> tuple[str, list[str], list[dict], list[dict], list[dict]]:
         joined = "\n".join(f"- {f}" for f in findings) or "(no findings retrieved)"
         text = await run_worker(
             self.run_id, "survey:synthesize",
@@ -264,9 +328,15 @@ class ExperimentDriver:
             'Return ONLY JSON: {"briefing": "<=150 words on prior work + strongest methods/results", '
             '"gaps": ["concrete unexplored gap", ...], '
             '"methods": [{"name": "the frontier/SOTA method the field uses", "why": "one line", '
-            '"source": "the prior work it comes from"}, ...]}.',
-            system="You synthesize literature reviews, surface concrete gaps, and name the field's "
-            "state-of-the-art methods (never invent — ground them in the findings).", dry_run=False,
+            '"source": "the prior work it comes from"}, ...], '
+            '"findings": [{"paper_id": "doi/url/title", "method": "...", "dataset": "...", "metric": "...", '
+            '"result": "the reported number", "limitation": "...", "gap": "...", "relevance": "..."}, ...], '
+            '"sota": [{"method": "...", "dataset": "...", "metric": "...", "score": <number or null>, '
+            '"split_policy": "...", "source": "the paper/leaderboard"}, ...]}. '
+            "Only include findings/sota you can ground in the retrieved papers — never invent a number.",
+            system="You synthesize literature reviews, surface concrete gaps, name the field's "
+            "state-of-the-art methods, and extract structured prior-work rows (never invent — ground "
+            "everything in the findings).", dry_run=False,
         )
         obj = _parse_json(text, _JSON, {})
         gaps = [str(g).strip() for g in (obj.get("gaps") or []) if str(g).strip()][:6]
@@ -276,7 +346,9 @@ class ExperimentDriver:
             for m in (obj.get("methods") or [])
             if isinstance(m, dict) and str(m.get("name", "")).strip()
         ][:6]
-        return str(obj.get("briefing", "")).strip(), gaps, methods
+        lit_findings = [m for m in (obj.get("findings") or []) if isinstance(m, dict)][:12]
+        sota = [m for m in (obj.get("sota") or []) if isinstance(m, dict)][:8]
+        return str(obj.get("briefing", "")).strip(), gaps, methods, lit_findings, sota
 
     def _recall_papers(self, topic: str, k: int = 12) -> list[literature.Paper]:
         """Reconstruct citable Papers from the literature chunks ingested by the
@@ -334,17 +406,26 @@ class ExperimentDriver:
         if statement and exp_id:
             await asyncio.to_thread(set_experiment_hypothesis, exp_id, statement)
         await self._index("hypothesis", statement, exp_id)
-        # evidence-ledger: a novelty claim per hypothesis. In v1 there is no structured
-        # literature/novelty check, so it stays speculative + unverified — never stated
-        # as established novelty in the write-up.
+        # evidence-ledger: a novelty claim per hypothesis, now GROUNDED in concrete
+        # prior-work rows (Phase H). The full novelty *judgment* (scorecard) is Phase I,
+        # so it stays speculative — but its evidence points at the structured findings
+        # it was checked against, not just gaps.
         note = str(self.hypothesis.get("novelty_note", "")).strip()
+        prior_work = [
+            {"evidence_kind": "paper", "evidence_ref": str(f.get("paper_id") or f.get("method") or "prior work"),
+             "note": f"{f.get('method', '')} on {f.get('dataset', '')}".strip(" on ")}
+            for f in self.survey_findings[:4]
+        ]
+        evidence = prior_work or [
+            {"evidence_kind": "experiment", "evidence_ref": exp_id or self.run_id,
+             "note": "no structured prior work retrieved; novelty unchecked"}
+        ]
         self._claim_ids["novelty"] = await asyncio.to_thread(
             create_claim, self.run_id,
             claim_text=f"This direction is novel: {note or statement}",
             claim_type="novelty", strength=self._claim_strength("novelty"),
             status="unverified", experiment_id=exp_id, created_by="ideate", stage="ideate",
-            evidence=[{"evidence_kind": "experiment", "evidence_ref": exp_id or self.run_id,
-                       "note": "surveyed gaps; no structured novelty check (Phase H)"}],
+            evidence=evidence,
         )
         await record_transition(self.run_id, exp_id, "survey", "ideate", f"hypothesis: {statement[:80]}")
         return self.hypothesis
@@ -613,6 +694,7 @@ class ExperimentDriver:
         plan = run.get("plan") or {}
         exp_id = run.get("plan_experiment_id")
         domain = run.get("domain") or "materials"
+        self.domain = domain
         try:
             plugin = get_domain_plugin(domain, strict=not self.dry_run)
         except ValueError as exc:
@@ -1203,14 +1285,34 @@ class ExperimentDriver:
         )
         # evidence-ledger: finalize this experiment's claims before the writer sees them.
         protocol_status = info.get("protocol_status")
-        has_sota = bool(sota) and "no comparable" not in sota.lower()
+        # SOTA claim now stands on STRUCTURED rows (Phase H): find the best comparable
+        # published number on the headline metric family and compute a real win/loss.
+        best_sota, comparable, beat = self._compare_to_sota(hk, hv)
+        if not comparable:
+            sota_text = f"No structured SOTA row comparable on {hk}; known reference: {sota}."
+            sota_strength = "weak"
+        else:
+            rel = "beats" if beat else "does not beat"
+            sota_text = (
+                f"The headline {hk} ({hv}{usfx}) {rel} the best comparable published result "
+                f"({best_sota.get('method')} {best_sota.get('score')} on {best_sota.get('dataset')})."
+            )
+            # only a grouped + gate-passed WIN earns 'strong'; otherwise comparable -> moderate
+            sota_strength = (
+                "strong" if (beat and protocol_status == "grouped" and rpanel.gate_passed) else "moderate"
+            )
+        sota_evidence = [
+            {"evidence_kind": "paper",
+             "evidence_ref": f"{r.get('method')} ({r.get('source')})",
+             "note": f"{r.get('metric')}={r.get('score')} on {r.get('dataset')} [{r.get('split_policy')}]"}
+            for r in comparable[:4]
+        ] or [{"evidence_kind": "metric", "evidence_ref": hk, "note": f"curated SOTA string: {sota}"}]
         await asyncio.to_thread(
             create_claim, self.run_id,
-            claim_text=f"The headline {hk} ({hv}{usfx}) is competitive with known SOTA: {sota}.",
-            claim_type="sota",
-            strength=self._claim_strength("sota", has_sota=has_sota),
-            status="unverified", experiment_id=exp_id, created_by="write_up", stage="write_up",
-            evidence=[{"evidence_kind": "metric", "evidence_ref": hk, "note": f"curated SOTA string: {sota}"}],
+            claim_text=sota_text, claim_type="sota", strength=sota_strength,
+            status=("supported" if comparable else "unverified"),
+            experiment_id=exp_id, created_by="write_up", stage="write_up",
+            evidence=sota_evidence,
         )
         # method-provenance: if the executed estimator is the RF fallback while a
         # different method was requested, record it as a limitation (and the metric

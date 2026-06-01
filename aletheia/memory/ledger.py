@@ -226,6 +226,48 @@ class ClaimEvidence(Base):
     claim: Mapped[Claim] = relationship(back_populates="evidence")
 
 
+class LiteratureFinding(Base):
+    """A structured row distilled from the SURVEY's retrieved papers — so novelty +
+    SOTA reasoning can stand on queryable prior work, not a prose briefing alone."""
+
+    __tablename__ = "literature_findings"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    paper_id: Mapped[str | None] = mapped_column(String(256))  # doi | url | title key
+    query: Mapped[str | None] = mapped_column(Text)
+    method: Mapped[str | None] = mapped_column(Text)
+    dataset: Mapped[str | None] = mapped_column(Text)
+    metric: Mapped[str | None] = mapped_column(String(128))
+    result: Mapped[str | None] = mapped_column(Text)  # the reported number / outcome
+    limitation: Mapped[str | None] = mapped_column(Text)
+    gap: Mapped[str | None] = mapped_column(Text)
+    relevance: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str | None] = mapped_column(String(64))  # arxiv | openalex | profile | …
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SOTAResult(Base):
+    """A published state-of-the-art number for a domain/task/dataset — the structured
+    form of ``DomainProfile.sota_reference``, so "beat the SOTA" is a row comparison,
+    not a prose claim. Rows come from the domain profile (curated) + survey extraction."""
+
+    __tablename__ = "sota_results"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    domain: Mapped[str | None] = mapped_column(String(128), index=True)
+    task: Mapped[str | None] = mapped_column(Text)
+    dataset: Mapped[str | None] = mapped_column(Text)
+    metric: Mapped[str | None] = mapped_column(String(128))
+    score: Mapped[float | None] = mapped_column(Float)
+    method: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str | None] = mapped_column(Text)  # paper / leaderboard ref
+    split_policy: Mapped[str | None] = mapped_column(String(128))  # e.g. "scaffold" | "random"
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class BudgetEvent(Base):
     __tablename__ = "budget_events"
 

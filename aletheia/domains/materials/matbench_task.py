@@ -177,6 +177,22 @@ class MaterialsBandGapPlugin(DomainPlugin):
             ),
             feature_desc="Magpie composition features (numeric, ~130 features)",
             sota_reference="matbench_expt_gap leaderboard: best test MAE ≈ 0.33 eV",
+            sota_rows=[
+                {"method": "MODNet (structure/composition)", "dataset": "matbench_expt_gap",
+                 "metric": "mae", "score": 0.33, "split_policy": "matbench 5-fold",
+                 "source": "Matbench leaderboard"},
+                {"method": "CrabNet (composition transformer)", "dataset": "matbench_expt_gap",
+                 "metric": "mae", "score": 0.35, "split_policy": "matbench 5-fold",
+                 "source": "Matbench leaderboard"},
+            ],
+            dry_literature_findings=[
+                {"paper_id": "10.0000/magpie", "method": "Magpie + tree models", "dataset": "matbench_expt_gap",
+                 "metric": "mae", "result": "≈0.45 eV random split", "limitation": "random split is optimistic",
+                 "gap": "no fair LCSO baseline reported", "relevance": "direct baseline"},
+                {"paper_id": "10.0000/leakage", "method": "leave-chemical-system-out eval", "dataset": "materials ML",
+                 "metric": "mae", "result": "LCSO > random by ~0.1 eV", "limitation": "few datasets",
+                 "gap": "rarely adopted as headline", "relevance": "evaluation protocol"},
+            ],
             dry_papers=[
                 Paper(
                     title="Magpie composition features for band-gap regression",

@@ -9,7 +9,14 @@ from pydantic import BaseModel
 
 from aletheia.data.registry import all_ready, pending_datasets
 from aletheia.events.store import list_events
-from aletheia.memory.service import create_run, get_run, list_claims, list_runs
+from aletheia.memory.service import (
+    create_run,
+    get_run,
+    list_claims,
+    list_literature_findings,
+    list_runs,
+    list_sota_results,
+)
 from aletheia.orchestrator.client import run_task
 from aletheia.orchestrator.session import auto_dry_run
 from aletheia.scheduler.driver import launch_driver
@@ -60,6 +67,18 @@ async def get_run_claims(run_id: str, experiment_id: str | None = None) -> list[
     """The evidence ledger: every claim this run made + its strength/status + evidence
     refs — so a reviewer can see what is supported vs speculative."""
     return await asyncio.to_thread(list_claims, run_id, experiment_id)
+
+
+@router.get("/{run_id}/literature")
+async def get_run_literature(run_id: str) -> list[dict]:
+    """Structured prior-work rows the SURVEY distilled (method/dataset/metric/result/gap)."""
+    return await asyncio.to_thread(list_literature_findings, run_id)
+
+
+@router.get("/{run_id}/sota")
+async def get_run_sota(run_id: str, domain: str | None = None) -> list[dict]:
+    """Structured published SOTA rows the run compares against."""
+    return await asyncio.to_thread(list_sota_results, run_id, domain)
 
 
 class LaunchRequest(BaseModel):
