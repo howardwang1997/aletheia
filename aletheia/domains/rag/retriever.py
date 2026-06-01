@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from typing import Any
 
 _TOKEN = re.compile(r"[a-z0-9]+")
 _SENT = re.compile(r"(?<=[.!?])\s+")
@@ -40,6 +41,28 @@ def extractive_answer(question: str, top_doc_text: str) -> str:
     q = set(tokenize(question))
     sentences = [s.strip() for s in _SENT.split(top_doc_text or "") if s.strip()] or [top_doc_text or ""]
     return max(sentences, key=lambda s: _overlap(q, s))
+
+
+def dense_retrieve(corpus: list[dict], question: str, k: int, *, embed: Any) -> list[dict]:
+    """Semantic (embedding-based) retrieval: embed the question + every doc via the
+    injected ``embed(list[str]) -> list[unit-vec]`` and rank by cosine similarity (a
+    dot product on unit-norm vectors). Captures meaning beyond literal token overlap —
+    the surveyed frontier retrieval method. ``embed`` is injected so the ranking is
+    testable offline with a stub (the real backend is sentence-transformers)."""
+    import numpy as np
+
+    if not corpus:
+        return []
+    texts = [d.get("text", "") for d in corpus]
+    vecs = embed([question] + texts)
+    q = np.asarray(vecs[0], dtype=float)
+    docs = np.asarray(vecs[1:], dtype=float)
+    sims = docs @ q  # unit vectors -> cosine similarity
+    order = np.argsort(-sims)[: max(1, k)]
+    return [
+        {"doc_id": corpus[i].get("doc_id"), "text": corpus[i].get("text", ""), "score": float(sims[i])}
+        for i in order
+    ]
 
 
 def extractive_answerer(question: str, contexts: list[str]) -> str:
