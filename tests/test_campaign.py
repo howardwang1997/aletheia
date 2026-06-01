@@ -11,7 +11,7 @@ from aletheia.config import get_settings
 from aletheia.data.registry import register_dataset
 from aletheia.db import create_all, session_scope
 from aletheia.memory.ledger import Experiment, Run
-from aletheia.memory.service import create_run, finalize_plan, list_artifacts
+from aletheia.memory.service import create_run, finalize_plan, list_artifacts, list_metrics
 from aletheia.scheduler.driver import ExperimentDriver
 
 
@@ -58,6 +58,36 @@ async def test_campaign_runs_linked_experiments(monkeypatch):
     all_arts = [a for e in (first_exp, child[0].id) for a in list_artifacts(e)]
     assert sum(1 for a in all_arts if a["kind"] == "report") >= 1
     assert any(a["kind"] == "campaign" for a in list_artifacts(first_exp))
+
+
+@pytest.mark.asyncio
+async def test_molecules_domain_runs_end_to_end(monkeypatch):
+    """The whole loop is domain-agnostic: a dry-run on domain='molecules' reaches
+    ARCHIVE with a cited paper whose headline metric + wording come from the molecules
+    profile (RMSE / scaffold-split, no materials 'LCSO'/'eV')."""
+    monkeypatch.setattr(get_settings(), "max_experiments_per_campaign", 1)
+    create_all()
+    run_id = create_run("molecules e2e", domain="molecules", status="scoping")
+    register_dataset(run_id, "benchmark", ref="esol", status="ready")
+    exp_id = finalize_plan(
+        run_id,
+        {"objective": "predict aqueous solubility from structure", "domain": "molecules", "dataset": "esol"},
+    )
+
+    driver = ExperimentDriver(run_id, dry_run=True)
+    await driver.run()
+
+    with session_scope() as s:
+        assert s.get(Run, run_id).status == "completed"
+
+    from aletheia.paths import run_artifacts_dir
+
+    report = (run_artifacts_dir(run_id) / "report.md").read_text()
+    assert "scaffold" in report.lower()  # molecules-profile protocol wording
+    assert "LCSO" not in report and " eV" not in report  # no materials leakage
+    # the molecules dry metrics (RMSE headline) flowed through to the ledger
+    names = {m["name"] for m in list_metrics(exp_id)}
+    assert "rmse_scaffold" in names
 
 
 @pytest.mark.asyncio

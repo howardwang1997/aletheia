@@ -13,9 +13,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from aletheia.domains.base import DomainPlugin, ExperimentResult
+from aletheia.domains.base import DomainPlugin, DomainProfile, ExperimentResult
 from aletheia.domains.materials.datasets import load_benchmark, resolve_columns
 from aletheia.domains.materials.featurizers import composition_groups, magpie_features
+from aletheia.domains.protocol import grouped_regression_eval
 
 # Band-gap bins (eV) for error stratification. The first bin isolates metals /
 # near-zero-gap entries, whose abundance can inflate the aggregate MAE.
@@ -106,158 +107,24 @@ class MaterialsBandGapPlugin(DomainPlugin):
     def train_evaluate(
         self, X: Any, y: Any, design: dict[str, Any], workdir: Path, groups: Any = None
     ) -> ExperimentResult:
-        import json
-
-        import joblib
-        import numpy as np
-        from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-        from sklearn.model_selection import RepeatedKFold, cross_validate, train_test_split
-
-        workdir = Path(workdir)
-        workdir.mkdir(parents=True, exist_ok=True)
-
-        y_arr = np.asarray(y, dtype=float)
-        random_state = int(design.get("random_state", 42))
-        test_size = float(design.get("test_size", 0.2))
-        model_name = design.get("model") or "random_forest"
-
-        # 1. RepeatedKFold 5x5 -> confidence (mean ± std)
-        rkf = RepeatedKFold(n_splits=5, n_repeats=5, random_state=random_state)
-        cv = cross_validate(
-            self._make_model(design), X, y_arr, cv=rkf,
-            scoring=("neg_mean_absolute_error", "r2"), n_jobs=1,
-        )
-        mae_cv = -cv["test_neg_mean_absolute_error"]
-        mae_cv_mean, mae_cv_std = float(mae_cv.mean()), float(mae_cv.std())
-        r2_cv_mean = float(cv["test_r2"].mean())
-
-        # 2. leave-chemical-system-out (GroupKFold) -> HEADLINE
-        lcso = self._lcso_scores(self._make_model(design), X, y_arr, groups)
-        mae_lcso, r2_lcso, rmse_lcso = lcso["mae"], lcso["r2"], lcso["rmse"]
-
-        # 3. single random holdout -> comparison + parity plot + stratification source
-        X_tr, X_te, y_tr, y_te = train_test_split(
-            X, y_arr, test_size=test_size, random_state=random_state
-        )
-        model = self._make_model(design)
-        model.fit(X_tr, y_tr)
-        pred = model.predict(X_te)
-        mae_holdout = float(mean_absolute_error(y_te, pred))
-        r2_holdout = float(r2_score(y_te, pred))
-        rmse_holdout = float(mean_squared_error(y_te, pred) ** 0.5)
-
-        # 4. baseline panel under the SAME grouped CV (Ridge/KNN scaled within folds)
-        baselines_lcso = {
-            name: self._lcso_scores(est, X, y_arr, groups)["mae"]
-            for name, est in self._baseline_models(design).items()
-        }
-        baselines_lcso[model_name] = mae_lcso  # the chosen model, for reference
-
-        # 5. error stratified by gap range (on the holdout predictions)
-        error_by_gap = self._error_by_gap(y_te, pred)
-
-        # final model fit on ALL data + artifacts
-        final = self._make_model(design)
-        final.fit(X, y_arr)
-        model_path = workdir / "model.joblib"
-        joblib.dump(final, model_path)
-        artifacts: list[dict[str, Any]] = [{"kind": "model", "uri": str(model_path)}]
-        try:
-            plot_path = workdir / "parity.png"
-            self._parity_plot(y_te, pred, plot_path)
-            artifacts.append({"kind": "plot", "uri": str(plot_path)})
-        except Exception:  # plotting is best-effort; never fail the run on it
-            pass
-
-        eval_payload = {
-            "protocol": {
-                "headline_metric": "mae_lcso",
-                "repeated_kfold": {"n_splits": 5, "n_repeats": 5},
-                "grouped_cv": {
-                    "strategy": "GroupKFold(chemical_system)",
-                    "n_splits": lcso["n_splits"],
-                    "n_groups": int(lcso["n_groups"]),
-                },
-                "holdout": {"test_size": test_size, "random_state": random_state},
-                "leakage_controls": (
-                    "grouped by chemical system; Ridge/KNN scaling fit within each fold"
-                ),
-            },
-            "headline": {"metric": "mae_lcso", "value": mae_lcso},
-            "splits": {
-                "lcso_groupkfold": {"mae": mae_lcso, "r2": r2_lcso, "rmse": rmse_lcso},
-                "repeated_kfold_5x5": {
-                    "mae_mean": mae_cv_mean, "mae_std": mae_cv_std, "r2_mean": r2_cv_mean,
-                },
-                "random_holdout": {
-                    "mae": mae_holdout, "r2": r2_holdout, "rmse": rmse_holdout,
-                    "n_test": int(len(y_te)),
-                },
-            },
-            "baselines_lcso_mae": baselines_lcso,
-            "error_by_gap_range": error_by_gap,
-        }
-        eval_path = workdir / "eval.json"
-        eval_path.write_text(json.dumps(eval_payload, indent=2))
-        artifacts.append({"kind": "eval", "uri": str(eval_path)})
-
-        metrics = {
-            # headline aliases (OPTIMIZE compares + the report leads with these) =
-            # the honest leave-chemical-system-out numbers, not the optimistic holdout.
-            # All three share LCSO provenance so the headline triple is consistent.
-            "mae": mae_lcso,
-            "r2": r2_lcso,
-            "rmse": rmse_lcso,
-            # explicit protocol metrics (each persisted as its own ledger row)
-            "mae_lcso": mae_lcso,
-            "r2_lcso": r2_lcso,
-            "rmse_lcso": rmse_lcso,
-            "mae_cv_mean": mae_cv_mean,
-            "mae_cv_std": mae_cv_std,
-            "r2_cv_mean": r2_cv_mean,
-            "mae_holdout": mae_holdout,
-            "r2_holdout": r2_holdout,
-            "rmse_holdout": rmse_holdout,
-        }
-        return ExperimentResult(
-            metrics=metrics,
-            artifacts=artifacts,
-            info={
-                "n_train": int(len(X_tr)),
-                "n_test": int(len(y_te)),
-                "model": model_name,
-                "eval_summary": self._eval_summary(eval_payload),
-            },
+        # The leakage-aware protocol is shared across domains (domains/protocol.py);
+        # materials supplies only the model/baseline factories, the chemical-system
+        # grouping (passed in via ``groups``), the gap-range stratifier, and labels.
+        return grouped_regression_eval(
+            model_factory=lambda: self._make_model(design),
+            baseline_models=self._baseline_models(design),
+            X=X, y=y, groups=groups, design=design, workdir=Path(workdir),
+            model_name=design.get("model") or "random_forest",
+            grouped_key="lcso",
+            headline_label="LCSO(GroupKFold)",
+            grouped_abbr="LCSO",
+            group_strategy_desc="GroupKFold(chemical_system)",
+            units="eV",
+            stratifier=self._error_by_gap,
+            stratify_label="gap",
         )
 
     # --- evaluation helpers ---
-    def _lcso_scores(self, estimator: Any, X: Any, y: Any, groups: Any) -> dict[str, Any]:
-        """Leave-chemical-system-out scores via GroupKFold out-of-fold predictions.
-
-        Each chemical system sits entirely in one held-out fold, so the score reflects
-        generalization to unseen systems rather than interpolation within known ones.
-        Falls back to plain KFold when no usable grouping is available.
-        """
-        import numpy as np
-        from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-        from sklearn.model_selection import GroupKFold, KFold, cross_val_predict
-
-        n_groups = int(len(np.unique(groups))) if groups is not None else len(y)
-        n_splits = max(2, min(5, n_groups))
-        if groups is not None and n_groups >= 2:
-            cv = GroupKFold(n_splits=n_splits)
-            oof = cross_val_predict(estimator, X, y, cv=cv, groups=groups, n_jobs=1)
-        else:
-            cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
-            oof = cross_val_predict(estimator, X, y, cv=cv, n_jobs=1)
-        return {
-            "mae": float(mean_absolute_error(y, oof)),
-            "r2": float(r2_score(y, oof)),
-            "rmse": float(mean_squared_error(y, oof) ** 0.5),
-            "n_groups": n_groups,
-            "n_splits": n_splits,
-        }
-
     def _baseline_models(self, design: dict[str, Any]) -> dict[str, Any]:
         from sklearn.dummy import DummyRegressor
         from sklearn.ensemble import GradientBoostingRegressor
@@ -287,43 +154,6 @@ class MaterialsBandGapPlugin(DomainPlugin):
             rows.append({"range": label, "n": n, "mae": float(err[mask].mean()) if n else None})
         return rows
 
-    @staticmethod
-    def _eval_summary(payload: dict[str, Any]) -> str:
-        s = payload["splits"]
-        lc, rk, ho = s["lcso_groupkfold"], s["repeated_kfold_5x5"], s["random_holdout"]
-        bl_str = ", ".join(f"{k} {v:.3f}" for k, v in payload["baselines_lcso_mae"].items())
-        gap_str = "; ".join(
-            f"{r['range']} n={r['n']} MAE={r['mae']:.3f}"
-            for r in payload["error_by_gap_range"]
-            if r["mae"] is not None
-        )
-        return (
-            f"LCSO(GroupKFold) MAE {lc['mae']:.3f} eV, R² {lc['r2']:.3f}, "
-            f"RMSE {lc['rmse']:.3f} (HEADLINE, all same split) | "
-            f"RepeatedKFold 5x5 MAE {rk['mae_mean']:.3f}±{rk['mae_std']:.3f} | "
-            f"random holdout MAE {ho['mae']:.3f} (comparison only) | "
-            f"baselines(LCSO MAE): {bl_str} | errors by gap: {gap_str}"
-        )
-
-    @staticmethod
-    def _parity_plot(y_true: Any, y_pred: Any, path: Path) -> None:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-
-        fig, ax = plt.subplots(figsize=(4, 4))
-        ax.scatter(y_true, y_pred, s=10, alpha=0.6)
-        lo = float(min(min(y_true), min(y_pred)))
-        hi = float(max(max(y_true), max(y_pred)))
-        ax.plot([lo, hi], [lo, hi], "r--", lw=1)
-        ax.set_xlabel("Actual")
-        ax.set_ylabel("Predicted")
-        ax.set_title("Parity")
-        fig.tight_layout()
-        fig.savefig(path, dpi=110)
-        plt.close(fig)
-
     def baselines(self) -> list[dict[str, Any]]:
         return [
             {"model": "random_forest", "model_params": {"n_estimators": 100}, "featurizer": "magpie"},
@@ -333,3 +163,64 @@ class MaterialsBandGapPlugin(DomainPlugin):
                 "featurizer": "magpie",
             },
         ]
+
+    def profile(self) -> DomainProfile:
+        from aletheia.research.literature import Paper
+
+        return DomainProfile(
+            task="composition→property regression",
+            headline_metric="mae_lcso",
+            units="eV",
+            protocol_desc=(
+                "leave-chemical-system-out GroupKFold (headline) + RepeatedKFold 5x5 + a "
+                "baseline panel + gap-range stratification"
+            ),
+            feature_desc="Magpie composition features (numeric, ~130 features)",
+            sota_reference="matbench_expt_gap leaderboard: best test MAE ≈ 0.33 eV",
+            dry_papers=[
+                Paper(
+                    title="Magpie composition features for band-gap regression",
+                    abstract="Composition-only descriptors predict band gaps; tree models are strong baselines.",
+                    year=2024, source="arxiv",
+                ),
+                Paper(
+                    title="Leakage-aware evaluation for materials ML",
+                    abstract="Random splits overstate performance; leave-chemical-system-out is the honest metric.",
+                    year=2023, citations=31, source="openalex",
+                ),
+            ],
+            dry_gaps=[
+                "Few works report a fair leave-chemical-system-out baseline.",
+                "Composition-only vs structure-aware features are rarely compared honestly.",
+            ],
+            dry_hypothesis={
+                "statement": (
+                    "Magpie features + gradient boosting beat a leakage-aware LCSO baseline for "
+                    "experimental band-gap regression"
+                ),
+                "rationale": "GBM captures nonlinear composition-property relations",
+                "prediction": "LCSO MAE below the random-forest baseline",
+                "novelty_note": "Few prior works report a fair LCSO comparison",
+            },
+            dry_next_hypothesis={
+                "statement": (
+                    "Adding oxidation-state features improves LCSO band-gap accuracy over "
+                    "composition-only Magpie features"
+                ),
+                "rationale": "valence governs gap size",
+                "prediction": "lower LCSO MAE than round 1",
+                "novelty_note": "rarely tested under LCSO",
+            },
+            dry_metrics={
+                "mae": 0.63, "r2": 0.41, "rmse": 0.84,
+                "mae_lcso": 0.63, "r2_lcso": 0.41, "rmse_lcso": 0.84,
+                "mae_cv_mean": 0.49, "mae_cv_std": 0.03, "r2_cv_mean": 0.65,
+                "mae_holdout": 0.49, "r2_holdout": 0.65, "rmse_holdout": 0.61,
+            },
+            dry_eval_summary=(
+                "LCSO(GroupKFold) MAE 0.630 eV, R² 0.410, RMSE 0.840 (HEADLINE, all same split) | "
+                "RepeatedKFold 5x5 MAE 0.490±0.030 | random holdout MAE 0.490 (comparison only) | "
+                "baselines(LCSO MAE): dummy_mean 1.100, ridge 0.850, knn 0.780, gbm 0.610, "
+                "random_forest 0.630 | errors by gap: metal~0 n=10 MAE=0.20; [0.5,2) n=8 MAE=0.55"
+            ),
+        )

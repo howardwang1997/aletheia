@@ -62,6 +62,20 @@ DRY_RUN_INFO = {
 }
 
 
+def _dry_result(domain: str | None) -> tuple[dict, dict]:
+    """Synthesized dry-run (metrics, info) for a domain — from its plugin profile so
+    each domain's dry-run renders its own panel. Generic fallback on any failure."""
+    try:
+        from aletheia.domains.registry import get_domain_plugin
+
+        prof = get_domain_plugin(domain).profile()
+        metrics = dict(prof.dry_metrics) or dict(DRY_RUN_METRICS)
+        info = {"dry_run": True, "eval_summary": prof.dry_eval_summary or DRY_RUN_INFO["eval_summary"]}
+        return metrics, info
+    except Exception:  # noqa: BLE001 - dry-run must never fail the loop
+        return dict(DRY_RUN_METRICS), dict(DRY_RUN_INFO)
+
+
 @dataclass
 class _Job:
     job_id: str
@@ -107,9 +121,11 @@ class LocalBackend(ComputeBackend):
         job = _Job(job_id=job_id, spec=spec, workdir=workdir)
 
         if spec.dry_run:
-            # compute-dry-run: synthesize a plausible result, spawn nothing.
+            # compute-dry-run: synthesize a plausible result FROM THE DOMAIN'S PROFILE
+            # (so each domain's dry-run reports its own metrics/units), spawn nothing.
+            dmetrics, dinfo = _dry_result(spec.domain)
             (workdir / "metrics.json").write_text(
-                json.dumps({"metrics": dict(DRY_RUN_METRICS), "artifacts": [], "info": dict(DRY_RUN_INFO)})
+                json.dumps({"metrics": dmetrics, "artifacts": [], "info": dinfo})
             )
             self._jobs[job_id] = job
             self._finalize(job)  # persists + sets terminal status immediately

@@ -1,13 +1,42 @@
-"""Map a run's domain string to a DomainPlugin. Materials is the only Phase-1
-domain; chemistry/others slot in here later."""
+"""Map a run's domain string to a DomainPlugin. New domains slot in by adding a
+loader to ``_LOADERS`` — the rest of the loop is domain-agnostic (it reads each
+plugin's ``profile()`` for all domain-specific vocabulary)."""
 
 from __future__ import annotations
+
+import sys
+from typing import Callable
 
 from aletheia.domains.base import DomainPlugin
 
 
-def get_domain_plugin(domain: str | None) -> DomainPlugin:
+def _materials() -> DomainPlugin:
     from aletheia.domains.materials.matbench_task import MaterialsBandGapPlugin
 
-    # Phase 1: every run resolves to the materials band-gap plugin.
     return MaterialsBandGapPlugin()
+
+
+def _molecules() -> DomainPlugin:
+    from aletheia.domains.molecules.plugin import MoleculePropertyPlugin
+
+    return MoleculePropertyPlugin()
+
+
+_LOADERS: dict[str, Callable[[], DomainPlugin]] = {
+    "materials": _materials,
+    "molecules": _molecules,
+}
+
+DEFAULT_DOMAIN = "materials"
+
+
+def get_domain_plugin(domain: str | None) -> DomainPlugin:
+    """Resolve a domain string to its plugin. Unknown / blank domains fall back to
+    the default (materials), logged so the choice is visible."""
+    key = (domain or "").strip().lower()
+    loader = _LOADERS.get(key)
+    if loader is None:
+        if key:
+            print(f"[domains] unknown domain {domain!r}; using {DEFAULT_DOMAIN}", file=sys.stderr)
+        loader = _LOADERS[DEFAULT_DOMAIN]
+    return loader()
