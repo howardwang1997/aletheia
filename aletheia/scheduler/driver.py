@@ -1111,6 +1111,9 @@ class ExperimentDriver:
             "analysis": analysis,
             "verdict": rpanel.consensus_verdict,
             "hypothesis": str(self.hypothesis.get("statement", "")).strip(),
+            # what the planner intended this round to be (round 1 = the baseline)
+            "experiment_type": str(self.hypothesis.get("experiment_type") or ("baseline" if round_idx == 1 else "")),
+            "open_question": str(self.hypothesis.get("open_question") or ""),
         }
 
     async def _adopt_hypothesis(self, hypo: dict[str, Any], exp_id: str | None) -> None:
@@ -1126,53 +1129,101 @@ class ExperimentDriver:
             self.run_id, exp_id, None, "ideate", f"campaign round hypothesis: {statement[:80]}"
         )
 
+    # the kinds of experiment the planner may propose for the next round
+    EXPERIMENT_TYPES = (
+        "baseline", "ablation", "method_comparison", "data_scaling",
+        "robustness", "failure_analysis", "reproduction", "sota_attempt",
+    )
+
     async def _campaign_step(
         self, plan: dict, outcomes: list[dict], round_idx: int, max_exps: int
     ) -> dict[str, Any]:
-        """Go/no-go after an experiment: read the campaign so far + the open gaps and
-        decide whether another experiment is worthwhile — and what it should test.
-        This is the campaign's re-ideation step. Returns
-        {"continue": bool, "next_hypothesis": {...}, "rationale": str}."""
-        await self._status("deciding", "choosing the next experiment")
+        """Experiment-search planner: propose several TYPED candidate next experiments,
+        each tied to a named open question + an expected-information-gain (EIG) estimate,
+        then deterministically pick the highest-EIG candidate that clears the floor — or
+        stop when the program has converged. Returns
+        {"continue": bool, "next_hypothesis": {...}, "rationale": str, "candidates": [...]}.
+        """
+        await self._status("planning", "planning the next experiment")
         trajectory = "\n".join(
-            f"- round {o['round']}: '{o['hypothesis']}' -> {o.get('headline_metric')} "
-            f"{o.get('headline')} [{o.get('model')}], verdict {o.get('verdict')}"
+            f"- round {o['round']} [{o.get('experiment_type') or '?'}]: '{o['hypothesis']}' -> "
+            f"{o.get('headline_metric')} {o.get('headline')} [{o.get('model')}], verdict {o.get('verdict')}"
             for o in outcomes
         )
         gaps = ("OPEN GAPS:\n- " + "\n- ".join(self.survey_gaps) + "\n\n") if self.survey_gaps else ""
-        eig = float(self._last_scores.get("expected_information_gain", 1.0))
+        budget_line = ""
+        if self.budget is not None:
+            budget_line = (
+                f"BUDGET: ${self.budget.spent_usd:.2f} of ${self.budget.cap_usd:.2f} used. "
+            )
+        types = ", ".join(self.EXPERIMENT_TYPES)
         prompt = (
-            f"You are steering a research campaign (objective: {plan.get('objective', '')}). "
-            f"{round_idx} of at most {max_exps} experiments have run:\n{trajectory}\n\n{gaps}"
-            f"The last hypothesis scored expected_information_gain={eig:.2f} (0..1). "
-            "Decide whether one MORE experiment would be informative (a new angle, an ablation that would "
-            "explain the result, or a gap still worth closing) — or whether the program has converged. "
-            "If continuing, propose the next testable hypothesis, DISTINCT from the rounds above and still "
-            "novel vs the literature. Return ONLY JSON: "
-            '{"continue": true|false, "rationale": "...", "next_hypothesis": '
-            '{"statement": "...", "rationale": "...", "prediction": "...", "novelty_note": "..."}}.'
+            f"You are PLANNING the next experiment in a research campaign (objective: "
+            f"{plan.get('objective', '')}). {round_idx} of at most {max_exps} have run:\n{trajectory}\n\n"
+            f"{gaps}{budget_line}\n"
+            "Propose 2-3 candidate NEXT experiments. Each must answer a NAMED open question, be a "
+            f"distinct angle from the rounds above, and have a type from: {types}. Estimate each "
+            "candidate's expected_information_gain (0..1) honestly — an experiment that would barely "
+            "change our beliefs scores low. Return ONLY JSON: "
+            '{"candidates": [{"experiment_type": "...", "open_question": "...", '
+            '"expected_information_gain": 0.0, "rationale": "...", "hypothesis": '
+            '{"statement": "...", "rationale": "...", "prediction": "...", "novelty_note": "..."}}, ...]}.'
         )
         text = await reason_stage(
             self.run_id, "campaign", prompt, dry_run=self.dry_run,
-            dry_text=json.dumps({
-                "continue": True,
-                "rationale": "an ablation / extension would sharpen the result",
-                "next_hypothesis": self.profile.dry_next_hypothesis if self.profile else {},
-            }),
+            dry_text=json.dumps({"candidates": [{
+                "experiment_type": "ablation",
+                "open_question": "which features drive the headline result?",
+                "expected_information_gain": 0.7,
+                "rationale": "an ablation would explain the result",
+                "hypothesis": self.profile.dry_next_hypothesis if self.profile else {},
+            }]}),
         )
-        decision = _parse_json(text, _JSON, {"continue": False})
-        # deterministic stop: when the last hypothesis's expected information gain is
-        # below the floor, the program has converged — don't spend compute on another
-        # round regardless of the LLM's enthusiasm.
+        parsed = _parse_json(text, _JSON, {"candidates": []})
+        candidates = [c for c in (parsed.get("candidates") or []) if isinstance(c, dict)]
         floor = get_settings().campaign_min_eig
-        if decision.get("continue") and eig < floor:
-            decision["continue"] = False
-            decision["rationale"] = (
-                f"expected information gain {eig:.2f} below floor {floor}; program converged"
+        # deterministic selection: the best candidate that clears the EIG floor wins;
+        # if none does, the program has converged. Also honor the backward-looking
+        # floor on the just-run hypothesis (a low-gain last round signals convergence).
+        viable = [c for c in candidates if float(c.get("expected_information_gain", 0.0) or 0.0) >= floor]
+        last_eig = float(self._last_scores.get("expected_information_gain", 1.0))
+        if not viable or last_eig < floor:
+            reason = (
+                f"no proposed experiment clears the EIG floor {floor}"
+                if not viable else
+                f"last experiment's expected information gain {last_eig:.2f} below floor {floor}"
             )
+            decision = {"continue": False, "rationale": f"{reason}; program converged", "candidates": candidates}
+        else:
+            best = max(viable, key=lambda c: float(c.get("expected_information_gain", 0.0) or 0.0))
+            nxt = dict(best.get("hypothesis") or {})
+            nxt["experiment_type"] = best.get("experiment_type")
+            nxt["open_question"] = best.get("open_question")
+            decision = {
+                "continue": True,
+                "rationale": (
+                    f"chose a {best.get('experiment_type')} (EIG "
+                    f"{float(best.get('expected_information_gain', 0.0)):.2f}) to answer: "
+                    f"{best.get('open_question')}"
+                ),
+                "next_hypothesis": nxt,
+                "candidates": candidates,
+                "chosen": best,
+            }
+        await get_bus().publish(
+            make_event("campaign_plan", run_id=self.run_id, payload={
+                "round": round_idx, "continue": decision["continue"],
+                "rationale": decision.get("rationale", ""),
+                "candidates": [
+                    {"experiment_type": c.get("experiment_type"), "open_question": c.get("open_question"),
+                     "eig": c.get("expected_information_gain")}
+                    for c in candidates
+                ],
+            })
+        )
         await self._index(
             "design_rationale",
-            f"campaign go/no-go after round {round_idx}: continue={decision.get('continue')} — "
+            f"campaign plan after round {round_idx}: continue={decision['continue']} — "
             f"{decision.get('rationale', '')}",
             outcomes[-1]["exp_id"],
         )
@@ -1186,7 +1237,9 @@ class ExperimentDriver:
         units = self.profile.units if self.profile else ""
         usfx = f" {units}" if units else ""
         rows = "\n".join(
-            f"- round {o['round']} ({o.get('model')}): '{o['hypothesis']}' -> {hk} "
+            f"- round {o['round']} [{o.get('experiment_type') or '?'}"
+            + (f", Q: {o.get('open_question')}" if o.get("open_question") else "")
+            + f"] ({o.get('model')}): '{o['hypothesis']}' -> {hk} "
             f"{o.get('headline')}, verdict {o.get('verdict')}"
             for o in outcomes
         )

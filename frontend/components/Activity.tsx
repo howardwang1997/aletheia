@@ -42,6 +42,8 @@ function statusLabel(status: { state: string; detail?: string }): string {
       return "analyzing results…";
     case "optimizing":
       return "optimizing…";
+    case "planning":
+      return "planning the next experiment…";
     case "writing":
       return "writing report…";
     case "archived":
@@ -105,6 +107,11 @@ function line(e: LabEvent): string {
       return `🧪 experiment ${p.round ?? ""}${p.of ? `/${p.of}` : ""}`;
     case "campaign":
       return `🧭 campaign: ${p.decision ?? ""}${p.rationale ? ` — ${p.rationale}` : ""}`;
+    case "campaign_plan": {
+      const cands = (p.candidates ?? []) as { experiment_type?: string; eig?: number }[];
+      const summary = cands.map((c) => `${c.experiment_type}·EIG ${Number(c.eig ?? 0).toFixed(2)}`).join(", ");
+      return `🗺 plan: ${p.continue ? "continue" : "stop"}${summary ? ` — ${summary}` : ""}${p.rationale ? ` (${p.rationale})` : ""}`;
+    }
     case "campaign_finished":
       return `🏁 campaign done — best LCSO ${p.best_mae_lcso ?? "?"} (round ${p.best_round ?? "?"}, ${p.experiments ?? "?"} exps)`;
     case "stage":
