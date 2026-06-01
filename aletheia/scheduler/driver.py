@@ -140,20 +140,36 @@ class ExperimentDriver:
             return "speculative"  # no structured literature/novelty check in v1
         return "weak"
 
+    def _maximize(self) -> bool:
+        """Does a BETTER headline mean a HIGHER value (F1/recall) vs lower (MAE/RMSE)?"""
+        return (self.profile.headline_goal if self.profile else "min") == "max"
+
+    def _is_better(self, new: float | None, cur: float | None) -> bool:
+        """Is ``new`` a better headline than ``cur`` under the domain's goal?"""
+        if new is None:
+            return False
+        if cur is None:
+            return True
+        return new > cur if self._maximize() else new < cur
+
+    def _worst(self) -> float:
+        """The 'no score yet' sentinel under the domain's goal."""
+        return float("-inf") if self._maximize() else float("inf")
+
     def _compare_to_sota(
         self, headline_metric: str, headline_value: float | None
     ) -> tuple[dict | None, list[dict], bool]:
         """Compare the headline against the structured SOTA rows on the same metric
-        FAMILY (mae/rmse → lower is better; r2 → higher). Returns
-        (best_comparable_row, all_comparable_rows, did_we_beat_it)."""
-        fam = headline_metric.split("_")[0].lower()  # "mae_lcso" -> "mae"
+        FAMILY, honoring the domain's goal (max for f1/recall/r2, min for mae/rmse).
+        Returns (best_comparable_row, all_comparable_rows, did_we_beat_it)."""
+        fam = headline_metric.split("_")[0].lower()  # "mae_lcso" -> "mae"; "answer_f1" -> "answer"
         comparable = [
             r for r in self.survey_sota
             if str(r.get("metric", "")).lower().startswith(fam) and r.get("score") is not None
         ]
         if not comparable or headline_value is None:
             return None, comparable, False
-        if fam == "r2":
+        if self._maximize():
             best = max(comparable, key=lambda r: r["score"])
             beat = headline_value > best["score"]
         else:  # error metrics: lower is better
@@ -1048,6 +1064,19 @@ class ExperimentDriver:
             design, data_spec, domain, result, exp_id
         )
 
+        # 3d) FAITHFULNESS (domains that declare quality_via_critics): an independent
+        # CROSS-VENDOR groundedness score — a separate, clearly-labeled metric, never
+        # the headline (the honest deterministic metric stays the headline).
+        if self.profile and self.profile.quality_via_critics:
+            cases = (result.get("info") or {}).get("faithfulness_cases") or []
+            score = await self.gateway.score_faithfulness(cases, run_id=self.run_id, dry_run=self.dry_run)
+            if score is not None:
+                result.setdefault("metrics", {})["faithfulness"] = score
+            await get_bus().publish(
+                make_event("faithfulness", run_id=self.run_id,
+                           payload={"score": score, "n_cases": len(cases), "scorer": "cross-vendor panel"})
+            )
+
         # 4) ANALYSIS
         await self._guard_budget("usd", get_settings().est_stage_cost_usd)
         await record_transition(self.run_id, exp_id, "execution", "analysis", "training complete; analyzing")
@@ -1243,10 +1272,10 @@ class ExperimentDriver:
             f"{o.get('headline')}, verdict {o.get('verdict')}"
             for o in outcomes
         )
-        best = min(
-            (o for o in outcomes if o.get("headline") is not None),
-            key=lambda o: o["headline"],
-            default=outcomes[-1],
+        scored = [o for o in outcomes if o.get("headline") is not None]
+        best = (
+            (max if self._maximize() else min)(scored, key=lambda o: o["headline"])
+            if scored else outcomes[-1]
         )
         prompt = (
             f"Summarize this research campaign (objective: {plan.get('objective', '')}) as a short markdown "
@@ -1525,12 +1554,12 @@ class ExperimentDriver:
         if alt.get("model") == design.get("model"):
             return design, result  # nothing distinct to try
         alt_result = await self._execute(alt, data_spec, domain, exp_id)
-        # compare on the domain's declared headline metric (lower is better for the
-        # error metrics both domains lead with), not always "mae".
+        # compare on the domain's declared headline metric, honoring its goal
+        # (min for error metrics like MAE; max for F1/recall).
         hk = self.profile.headline_metric if self.profile else "mae"
-        cur_score = result.get("metrics", {}).get(hk, float("inf"))
-        alt_score = alt_result.get("metrics", {}).get(hk, float("inf"))
-        if alt_score < cur_score:
+        cur_score = result.get("metrics", {}).get(hk, self._worst())
+        alt_score = alt_result.get("metrics", {}).get(hk, self._worst())
+        if self._is_better(alt_score, cur_score):
             await get_bus().publish(
                 make_event(
                     "optimize", run_id=self.run_id,

@@ -49,6 +49,36 @@ def test_real_gate_without_providers_fails_closed(monkeypatch):
         assert rows[-1].gate_passed is False
 
 
+def test_score_faithfulness_dry_run_is_canned():
+    import asyncio
+
+    gw = CriticGateway()
+    score = asyncio.run(gw.score_faithfulness(
+        [{"question": "q", "context": "c", "answer": "a"}], dry_run=True
+    ))
+    assert score == 0.8  # canned, offline
+
+
+def test_score_faithfulness_averages_vendor_confidences(monkeypatch):
+    import asyncio
+
+    from aletheia.critics.schemas import CriticResponse
+
+    class _Stub:
+        def __init__(self, conf):
+            self._conf = conf
+
+        def review(self, instruction, content):
+            return CriticResponse(verdict="approve", confidence=self._conf, summary="ok", findings=[])
+
+    gw = CriticGateway()
+    monkeypatch.setattr(gw, "_providers", lambda: [_Stub(0.6), _Stub(1.0)])
+    score = asyncio.run(gw.score_faithfulness(
+        [{"question": "q", "context": "c", "answer": "a"}], dry_run=False
+    ))
+    assert abs(score - 0.8) < 1e-9  # mean of 0.6 and 1.0
+
+
 def test_consensus_blocker_fails_gate():
     gw = CriticGateway()
     critiques = [

@@ -41,6 +41,11 @@ class DomainProfile:
 
     task: str  # e.g. "composition→property regression"
     headline_metric: str  # metrics key the loop leads with / optimizes
+    # whether a BETTER headline is lower (error metrics: mae/rmse) or higher (f1/recall):
+    headline_goal: str = "min"  # "min" | "max"
+    # whether the domain scores a subjective quality dimension via the cross-vendor
+    # critic panel (a `faithfulness` metric), in addition to deterministic metrics:
+    quality_via_critics: bool = False
     units: str = ""  # e.g. "eV"; "" for unitless targets
     protocol_desc: str = "grouped cross-validation + holdout + baseline panel"
     feature_desc: str = "a numeric feature matrix"
