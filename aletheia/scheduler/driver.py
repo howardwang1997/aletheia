@@ -25,6 +25,7 @@ from aletheia.events.bus import get_bus, make_event
 from aletheia.iam import policy
 from aletheia.iam.github_app import GitHubBackend, RepoResult, get_github_backend
 from aletheia.memory.service import (
+    create_experiment,
     get_run,
     record_artifacts,
     set_experiment_hypothesis,
@@ -457,23 +458,92 @@ class ExperimentDriver:
         if hypo:
             await self._index("hypothesis", hypo, exp_id, domain=domain)
 
-        # 0) SURVEY (deep research) → IDEATE → novelty/feasibility gate
+        # 0) SURVEY once — the campaign-level literature map
         self.survey_brief, self.survey_gaps = await self._survey(plan, exp_id)
-        await self._ideate(plan, exp_id)
-        if not await self._direction_gate(plan, exp_id):
-            return  # direction rejected past the loop limit -> paused + escalated
 
-        # 1) EXPERIMENT_DESIGN ------------------------------------------------
+        # CAMPAIGN LOOP: one Run -> up to N linked experiments. Each round poses a
+        # hypothesis, runs the full experiment, then a go/no-go step decides whether
+        # the next experiment is worth running (and what it should test).
+        max_exps = max(1, get_settings().max_experiments_per_campaign)
+        outcomes: list[dict[str, Any]] = []
+        cur_exp_id = exp_id
+        next_hint: dict[str, Any] | None = None
+        round_idx = 1
+        while True:
+            # per-round guard isolation so design/direction revision counters don't
+            # bleed across experiments
+            self.guard = LoopGuard(get_settings().critics.consensus.max_design_iterations)
+            await get_bus().publish(
+                make_event("experiment", run_id=self.run_id,
+                           payload={"round": round_idx, "exp_id": cur_exp_id, "of": max_exps})
+            )
+            # IDEATE this round's hypothesis: round 1 from the survey; later rounds
+            # adopt the go/no-go step's proposed next hypothesis.
+            if round_idx == 1:
+                await self._ideate(plan, cur_exp_id)
+            else:
+                await self._adopt_hypothesis(next_hint or {}, cur_exp_id)
+            if not await self._direction_gate(plan, cur_exp_id):
+                return  # direction rejected past the loop limit -> paused + escalated
+
+            outcome = await self._run_experiment(plan, data_spec, plugin, domain, cur_exp_id, round_idx)
+            if outcome is None:
+                return  # a gate rejected past the loop limit -> paused + escalated
+            outcomes.append(outcome)
+
+            if round_idx >= max_exps:
+                break
+            decision = await self._campaign_step(plan, outcomes, round_idx, max_exps)
+            if not decision.get("continue"):
+                await get_bus().publish(
+                    make_event("campaign", run_id=self.run_id,
+                               payload={"decision": "stop", "rationale": decision.get("rationale", "")})
+                )
+                break
+            next_hint = decision.get("next_hypothesis") or {}
+            cur_exp_id = await asyncio.to_thread(
+                create_experiment, self.run_id, plan, parent_experiment_id=cur_exp_id
+            )
+            round_idx += 1
+
+        # campaign-level synthesis across the experiments (only when >1 ran)
+        if len(outcomes) > 1:
+            await self._campaign_synthesis(plan, outcomes, exp_id)
+
+        # ARCHIVE -------------------------------------------------------------
+        last_exp_id = outcomes[-1]["exp_id"] if outcomes else cur_exp_id
+        await record_transition(self.run_id, last_exp_id, "write_up", "archive", "campaign complete")
+        await asyncio.to_thread(set_run_status, self.run_id, "completed")
+        await get_bus().publish(
+            make_event(
+                "run_finished",
+                run_id=self.run_id,
+                payload={
+                    "status": "completed",
+                    "experiments": len(outcomes),
+                    "metrics": outcomes[-1].get("metrics") if outcomes else None,
+                },
+            )
+        )
+        await self._status("archived", f"campaign complete ({len(outcomes)} experiment(s))")
+
+    async def _run_experiment(
+        self, plan, data_spec, plugin, domain, exp_id, round_idx
+    ) -> dict[str, Any] | None:
+        """Run ONE experiment end-to-end (DESIGN → WRITE_UP) for the given experiment
+        id. Returns a compact outcome for the campaign, or None if a hard gate
+        rejected past its loop limit (the run is already paused + escalated)."""
+        # 1) EXPERIMENT_DESIGN
         await self._guard_budget("usd", get_settings().est_stage_cost_usd)
         await self._status("designing")
         design = await self._design(plan, data_spec, plugin, exp_id)
 
-        # 2) critique_design gate (with bounded revision loop) ----------------
+        # 2) critique_design gate (with bounded revision loop)
         design = await self._design_gate(design, plan, plugin, exp_id)
         if design is None:
-            return  # rejected past the loop limit -> paused + escalated
+            return None  # rejected past the loop limit -> paused + escalated
 
-        # design approved -> set up the project repo + experiment branch (IAM)
+        # design approved -> set up (or reuse) the project repo + this experiment's branch
         await self._iam_setup(plan, domain, exp_id)
 
         # 2b) CODE: the coder authors the model (gated); falls back to the design model
@@ -481,18 +551,18 @@ class ExperimentDriver:
         if solution_code:
             design["solution_code"] = solution_code
 
-        # 3) EXECUTION --------------------------------------------------------
+        # 3) EXECUTION
         await record_transition(self.run_id, exp_id, "experiment_design", "execution", "design approved; running")
         await self._status("executing")
         result = await self._execute(design, data_spec, domain, exp_id)
 
-        # 4) ANALYSIS ---------------------------------------------------------
+        # 4) ANALYSIS
         await self._guard_budget("usd", get_settings().est_stage_cost_usd)
         await record_transition(self.run_id, exp_id, "execution", "analysis", "training complete; analyzing")
         await self._status("analyzing")
         analysis = await self._analyze(design, result, exp_id)
 
-        # 5) review_results gate ---------------------------------------------
+        # 5) review_results gate
         rpanel = await self.gateway.review(
             "results",
             {
@@ -514,27 +584,133 @@ class ExperimentDriver:
             actor="critic",
         )
 
-        # 6) OPTIMIZE (<=1 iteration) ----------------------------------------
+        # 6) OPTIMIZE (<=1 iteration)
         await self._status("optimizing")
         best_design, best_result = await self._optimize(design, result, data_spec, domain, exp_id, plugin)
 
-        # 7) WRITE_UP --------------------------------------------------------
+        # 7) WRITE_UP
         await self._guard_budget("usd", get_settings().est_stage_cost_usd)
         await record_transition(self.run_id, exp_id, "optimize", "write_up", "writing report")
         await self._status("writing")
         await self._write_up(plan, best_design, best_result, analysis, rpanel, exp_id)
 
-        # 8) ARCHIVE ---------------------------------------------------------
-        await record_transition(self.run_id, exp_id, "write_up", "archive", "run complete")
-        await asyncio.to_thread(set_run_status, self.run_id, "completed")
-        await get_bus().publish(
-            make_event(
-                "run_finished",
-                run_id=self.run_id,
-                payload={"status": "completed", "metrics": best_result.get("metrics")},
-            )
+        metrics = best_result.get("metrics", {})
+        return {
+            "round": round_idx,
+            "exp_id": exp_id,
+            "model": best_design.get("model"),
+            "metrics": metrics,
+            "mae_lcso": metrics.get("mae_lcso"),
+            "analysis": analysis,
+            "verdict": rpanel.consensus_verdict,
+            "hypothesis": str(self.hypothesis.get("statement", "")).strip(),
+        }
+
+    async def _adopt_hypothesis(self, hypo: dict[str, Any], exp_id: str | None) -> None:
+        """Adopt the next hypothesis proposed by the campaign go/no-go step for a new
+        experiment round (persist + index), then let the direction gate vet it."""
+        if hypo:
+            self.hypothesis = hypo
+        statement = str(self.hypothesis.get("statement", "")).strip()
+        if statement and exp_id:
+            await asyncio.to_thread(set_experiment_hypothesis, exp_id, statement)
+        await self._index("hypothesis", statement, exp_id)
+        await record_transition(
+            self.run_id, exp_id, None, "ideate", f"campaign round hypothesis: {statement[:80]}"
         )
-        await self._status("archived", "run complete")
+
+    async def _campaign_step(
+        self, plan: dict, outcomes: list[dict], round_idx: int, max_exps: int
+    ) -> dict[str, Any]:
+        """Go/no-go after an experiment: read the campaign so far + the open gaps and
+        decide whether another experiment is worthwhile — and what it should test.
+        This is the campaign's re-ideation step. Returns
+        {"continue": bool, "next_hypothesis": {...}, "rationale": str}."""
+        await self._status("deciding", "choosing the next experiment")
+        trajectory = "\n".join(
+            f"- round {o['round']}: '{o['hypothesis']}' -> LCSO MAE {o.get('mae_lcso')} "
+            f"[{o.get('model')}], verdict {o.get('verdict')}"
+            for o in outcomes
+        )
+        gaps = ("OPEN GAPS:\n- " + "\n- ".join(self.survey_gaps) + "\n\n") if self.survey_gaps else ""
+        prompt = (
+            f"You are steering a research campaign (objective: {plan.get('objective', '')}). "
+            f"{round_idx} of at most {max_exps} experiments have run:\n{trajectory}\n\n{gaps}"
+            "Decide whether one MORE experiment would be informative (a new angle, an ablation that would "
+            "explain the result, or a gap still worth closing) — or whether the program has converged. "
+            "If continuing, propose the next testable hypothesis, DISTINCT from the rounds above and still "
+            "novel vs the literature. Return ONLY JSON: "
+            '{"continue": true|false, "rationale": "...", "next_hypothesis": '
+            '{"statement": "...", "rationale": "...", "prediction": "...", "novelty_note": "..."}}.'
+        )
+        text = await reason_stage(
+            self.run_id, "campaign", prompt, dry_run=self.dry_run,
+            dry_text=(
+                '{"continue": true, "rationale": "an ablation on the feature set would explain the gap", '
+                '"next_hypothesis": {"statement": "Adding oxidation-state features improves LCSO band-gap '
+                'accuracy over composition-only Magpie features", "rationale": "valence governs gap size", '
+                '"prediction": "lower LCSO MAE than round 1", "novelty_note": "rarely tested under LCSO"}}'
+            ),
+        )
+        decision = _parse_json(text, _JSON, {"continue": False})
+        await self._index(
+            "design_rationale",
+            f"campaign go/no-go after round {round_idx}: continue={decision.get('continue')} — "
+            f"{decision.get('rationale', '')}",
+            outcomes[-1]["exp_id"],
+        )
+        return decision
+
+    async def _campaign_synthesis(self, plan: dict, outcomes: list[dict], first_exp_id: str | None) -> None:
+        """Write a campaign-level summary tying the experiments together: the
+        trajectory, which experiment won, what the program learned, open gaps."""
+        await self._status("synthesizing", "summarizing the campaign")
+        rows = "\n".join(
+            f"- round {o['round']} ({o.get('model')}): '{o['hypothesis']}' -> LCSO MAE "
+            f"{o.get('mae_lcso')}, verdict {o.get('verdict')}"
+            for o in outcomes
+        )
+        best = min(
+            (o for o in outcomes if o.get("mae_lcso") is not None),
+            key=lambda o: o["mae_lcso"],
+            default=outcomes[-1],
+        )
+        prompt = (
+            f"Summarize this research campaign (objective: {plan.get('objective', '')}) as a short markdown "
+            f"brief. Experiments:\n{rows}\n\nThe best LCSO MAE was {best.get('mae_lcso')} in round "
+            f"{best.get('round')}. Write: the trajectory (how each experiment informed the next), which "
+            "experiment won and why, what the program learned, and the most important still-open gap. "
+            "Ground every claim in the LCSO numbers above; do not invent results."
+        )
+        summary = await reason_stage(
+            self.run_id, "campaign", prompt, dry_run=self.dry_run,
+            dry_text=(
+                f"# Campaign Summary\n\n**Objective:** {plan.get('objective', 'n/a')}\n\n"
+                f"## Trajectory\n\n{rows}\n\n"
+                f"## Outcome\n\nThe best leave-chemical-system-out MAE was {best.get('mae_lcso')} eV in "
+                f"round {best.get('round')} ({best.get('model')}). Across {len(outcomes)} experiments the "
+                f"program refined its hypothesis from the survey gaps toward the most informative test.\n\n"
+                f"## Open gaps\n\n- " + "\n- ".join(self.survey_gaps or ["(none recorded)"])
+            ),
+        )
+        path = run_artifacts_dir(self.run_id) / "campaign.md"
+        path.write_text(summary)
+        if first_exp_id:
+            await asyncio.to_thread(
+                record_artifacts, first_exp_id, [{"kind": "campaign", "uri": str(path)}]
+            )
+        await self._index(
+            "conclusion",
+            f"campaign ({len(outcomes)} experiments) best LCSO MAE {best.get('mae_lcso')} "
+            f"in round {best.get('round')} ({best.get('model')}).",
+            first_exp_id, mae_lcso=best.get("mae_lcso"), experiments=len(outcomes),
+        )
+        await get_bus().publish(
+            make_event("campaign_finished", run_id=self.run_id, payload={
+                "uri": str(path), "experiments": len(outcomes),
+                "best_round": best.get("round"), "best_mae_lcso": best.get("mae_lcso"),
+            })
+        )
 
     # --- stage implementations ---
     async def _design(self, plan, data_spec, plugin, exp_id) -> dict[str, Any]:

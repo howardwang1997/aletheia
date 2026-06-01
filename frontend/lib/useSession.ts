@@ -36,6 +36,9 @@ const ACTIVITY_TYPES = new Set([
   "data_requested",
   "data_registered",
   "run_started",
+  "experiment",
+  "campaign",
+  "campaign_finished",
   "stage",
   "compute_submitted",
   "compute_status",
@@ -219,6 +222,15 @@ export function useSession() {
     [events],
   );
 
+  // campaign: one Run -> several linked experiments (round markers)
+  const experiments = useMemo(
+    () =>
+      events
+        .filter((e) => e.type === "experiment")
+        .map((e) => e.payload as { round?: number; exp_id?: string; of?: number }),
+    [events],
+  );
+
   const report = useMemo(() => {
     const last = [...events].reverse().find((e) => e.type === "report");
     return (last?.payload as any) ?? null;
@@ -251,6 +263,7 @@ export function useSession() {
     datasets,
     launched,
     stageHistory,
+    experiments,
     critiques,
     report,
     finalMetrics,

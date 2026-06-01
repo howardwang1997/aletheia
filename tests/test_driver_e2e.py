@@ -14,12 +14,16 @@ from aletheia.data.registry import register_dataset
 from aletheia.db import create_all, session_scope
 from aletheia.memory.ledger import CritiquePanel as CritiquePanelRow
 from aletheia.memory.ledger import Run
+from aletheia.config import get_settings
 from aletheia.memory.service import create_run, finalize_plan, list_artifacts, list_metrics
 from aletheia.scheduler.driver import ExperimentDriver
 
 
 @pytest.mark.asyncio
-async def test_full_dry_run_loop():
+async def test_full_dry_run_loop(monkeypatch):
+    # pin to a single experiment so the single-loop assertions stay precise;
+    # the multi-experiment campaign path is proven in test_campaign.py
+    monkeypatch.setattr(get_settings(), "max_experiments_per_campaign", 1)
     create_all()
     run_id = create_run("dry-run e2e", domain="materials", status="scoping")
     # a ready dataset (benchmark) — satisfies the readiness gate

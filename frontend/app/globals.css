@@ -91,6 +91,7 @@ button:hover { border-color: var(--accent); }
 .act-head .cost { color: var(--green); font-family: ui-monospace, monospace; }
 
 .pill { margin: 12px; padding: 7px 12px; border-radius: 20px; text-align: center; font-size: 12px; border: 1px solid var(--border); background: var(--panel2); color: var(--muted); }
+.campaign-bar { margin: 0 12px 4px; padding: 6px 12px; border-radius: 8px; text-align: center; font-size: 12px; border: 1px solid var(--accent); background: rgba(88,166,255,0.10); color: var(--accent); }
 .pill.s-thinking { color: var(--yellow); border-color: var(--yellow); }
 .pill.s-using_tool { color: var(--accent); border-color: var(--accent); }
 .pill.s-awaiting_user { color: var(--green); border-color: var(--green); }

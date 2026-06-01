@@ -128,6 +128,7 @@ class Settings(BaseSettings):
     max_concurrent_jobs: int = 2
     wall_clock_hours: float = 24.0
     est_stage_cost_usd: float = 0.10  # estimated cost charged per Opus reasoning stage
+    max_experiments_per_campaign: int = 3  # one Run -> up to N linked experiments (go/no-go decides)
 
     # --- vendor keys (read without the ALETHEIA_ prefix) ---
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
