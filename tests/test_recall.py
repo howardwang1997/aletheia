@@ -87,7 +87,10 @@ def test_memory_recall_tool_returns_hits():
     from aletheia.orchestrator.tools import build_recall_tool
 
     create_all()
-    index_chunk("hypothesis", "tool-test unique recall phrase alpha", run_id="tool-run", dry_run=True)
+    # index in the SAME embedding space the tool recalls in (the tool uses the real
+    # backend, dry_run=False) so the exact-text query matches its own chunk (~1.0)
+    # regardless of what else is in the store.
+    index_chunk("hypothesis", "tool-test unique recall phrase alpha", run_id="tool-run", dry_run=False)
     tool = build_recall_tool("tool-run")
     out = asyncio.run(tool.handler({"query": "tool-test unique recall phrase alpha"}))
     text = out["content"][0]["text"]
