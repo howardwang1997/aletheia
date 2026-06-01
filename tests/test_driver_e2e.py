@@ -63,6 +63,8 @@ async def test_full_dry_run_loop(monkeypatch):
     arts = list_artifacts(exp_id)
     assert any(a["kind"] == "report" for a in arts)
     assert any(a["kind"] == "bibliography" for a in arts)
+    # the SURVEY recorded its result each run: a survey.md artifact + frontier methods
+    assert any(a["kind"] == "survey" for a in arts)
     from aletheia.paths import run_artifacts_dir
 
     report = (run_artifacts_dir(run_id) / "report.md").read_text()
@@ -78,6 +80,10 @@ async def test_full_dry_run_loop(monkeypatch):
             for d in s.query(Decision).filter(Decision.run_id == run_id).all()
         }
         assert {"survey", "ideate", "experiment_design"} <= stages
+        methods = s.query(MemoryChunk).filter(
+            MemoryChunk.run_id == run_id, MemoryChunk.kind == "method"
+        ).count()
+        assert methods >= 1  # frontier methods discovered + indexed by the SURVEY
         lit = s.query(MemoryChunk).filter(
             MemoryChunk.run_id == run_id, MemoryChunk.kind == "literature"
         ).count()

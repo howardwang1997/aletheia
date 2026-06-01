@@ -42,6 +42,7 @@ MEMORY_KINDS = (
     "conclusion",
     "note",
     "literature",  # external prior work (arXiv/OpenAlex), ingested by the SURVEY stage
+    "method",  # a frontier method the SURVEY found the field using (name + why + source)
 )
 
 

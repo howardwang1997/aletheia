@@ -193,6 +193,14 @@ class MaterialsBandGapPlugin(DomainPlugin):
                 "Few works report a fair leave-chemical-system-out baseline.",
                 "Composition-only vs structure-aware features are rarely compared honestly.",
             ],
+            dry_frontier_methods=[
+                {"name": "structure GNNs (CGCNN / MEGNet / M3GNet)",
+                 "why": "structure-aware message passing sets the Matbench SOTA for band gaps",
+                 "source": "Matbench leaderboard"},
+                {"name": "gradient boosting on composition descriptors (Magpie + XGBoost/LightGBM)",
+                 "why": "strong composition-only baseline when structure is unavailable",
+                 "source": "surveyed prior work"},
+            ],
             dry_hypothesis={
                 "statement": (
                     "Magpie features + gradient boosting beat a leakage-aware LCSO baseline for "
