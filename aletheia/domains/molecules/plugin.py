@@ -161,6 +161,20 @@ class MoleculePropertyPlugin(DomainPlugin):
             sota_reference=(
                 "MoleculeNet ESOL test RMSE: ≈0.55 (D-MPNN/GNN), ≈0.99 (RF on ECFP); scaffold split"
             ),
+            sota_rows=[
+                {"method": "D-MPNN (Chemprop)", "dataset": "MoleculeNet ESOL", "metric": "rmse",
+                 "score": 0.55, "split_policy": "scaffold", "source": "MoleculeNet / Chemprop"},
+                {"method": "Random forest on ECFP", "dataset": "MoleculeNet ESOL", "metric": "rmse",
+                 "score": 0.99, "split_policy": "scaffold", "source": "MoleculeNet"},
+            ],
+            dry_literature_findings=[
+                {"paper_id": "10.0000/ecfp-gbm", "method": "ECFP + gradient boosting", "dataset": "ESOL",
+                 "metric": "rmse", "result": "≈0.9 scaffold split", "limitation": "below GNN SOTA",
+                 "gap": "fair scaffold-split fingerprint baseline under-reported", "relevance": "direct baseline"},
+                {"paper_id": "10.0000/scaffold", "method": "scaffold split", "dataset": "molecular benchmarks",
+                 "metric": "rmse", "result": "scaffold > random RMSE", "limitation": "harder generalization",
+                 "gap": "split not standardized across papers", "relevance": "evaluation protocol"},
+            ],
             dry_papers=[
                 Paper(
                     title="Molecular fingerprints + gradient boosting for solubility prediction",
