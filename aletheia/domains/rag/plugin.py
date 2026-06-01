@@ -194,10 +194,10 @@ class RagEvalPlugin(DomainPlugin):
                 "novelty_note": "few baselines report the recall/F1/cost trade-off together",
             },
             dry_next_hypothesis={
-                "statement": "an extractive answerer over the top passage beats returning the whole passage",
-                "rationale": "tighter spans raise token-F1",
-                "prediction": "higher answer-F1 than the full-passage baseline",
-                "novelty_note": "rarely ablated on the same eval set",
+                "statement": "dense (semantic) retrieval beats the lexical baseline on recall@k and answer-F1",
+                "rationale": "embeddings bridge paraphrase/vocabulary mismatch that token-overlap misses",
+                "prediction": "higher recall@k + answer-F1 under dense retrieval (answerer held fixed)",
+                "novelty_note": "rarely ablated head-to-head on the same eval set",
             },
             dry_metrics={
                 "answer_f1": 0.33, "recall_at_k": 1.0, "exact_match": 0.0,

@@ -873,7 +873,7 @@ class ExperimentDriver:
 
     async def _finalize_claims(
         self, protocol_status: str | None, rpanel, reproduction: dict | None = None,
-        exp_id: str | None = None,
+        exp_id: str | None = None, ablation: dict | None = None,
     ) -> None:
         """After the results gate, set the final strength + status of the proposed
         metric/mechanism claims from the (harness-owned) evidence rule, and record a
@@ -917,6 +917,31 @@ class ExperimentDriver:
                 evidence=[
                     {"evidence_kind": "reproduction", "evidence_ref": repro.get("mode", "rerun"),
                      "note": f"original={repro.get('original')} reproduced={repro.get('repro')}"}
+                ],
+            )
+        # a comparison claim from a controlled retriever ablation (dense vs lexical)
+        if ablation:
+            d = ablation.get("delta", {})
+            df1 = float(d.get("answer_f1", 0.0) or 0.0)
+            drec = float(d.get("recall_at_k", 0.0) or 0.0)
+            beats = df1 > 0 or drec > 0
+            reproduced = bool(repro.get("reproduced")) if repro.get("attempted") else None
+            strength = ("strong" if (beats and reproduced) else "moderate") if beats else "weak"
+            await asyncio.to_thread(
+                create_claim, self.run_id,
+                claim_text=(
+                    f"Retriever ablation (answerer fixed): dense "
+                    f"{'beats' if beats else 'does not beat'} lexical "
+                    f"(Δrecall@k {drec:+.3f}, ΔF1 {df1:+.3f})."
+                ),
+                claim_type="comparison",
+                strength=strength,
+                status="supported" if beats else "refuted",
+                experiment_id=exp_id, created_by="ablation", stage="analysis",
+                evidence=[
+                    {"evidence_kind": "metric", "evidence_ref": "recall_at_k_delta", "note": f"{drec:+.3f}"},
+                    {"evidence_kind": "metric", "evidence_ref": "answer_f1_delta", "note": f"{df1:+.3f}"},
+                    {"evidence_kind": "artifact", "evidence_ref": "ablation.json", "note": "controlled comparison"},
                 ],
             )
 
@@ -1172,7 +1197,8 @@ class ExperimentDriver:
         # strength: a metric claim only reaches `strong` with grouped CV + a clean
         # approve + a CONFIRMED reproduction).
         await self._finalize_claims(
-            info.get("protocol_status"), rpanel, info.get("reproduction") or {}, exp_id
+            info.get("protocol_status"), rpanel, info.get("reproduction") or {}, exp_id,
+            ablation=info.get("ablation"),
         )
 
         # 6) OPTIMIZE (<=1 iteration)
@@ -1480,6 +1506,9 @@ class ExperimentDriver:
         declare it, else the compute-backend sandbox. Scoring stays the fixed harness
         either way."""
         if self.profile and self.profile.host_side_run:
+            # a planner-proposed ablation round runs the CONTROLLED retriever comparison
+            if str(self.hypothesis.get("experiment_type", "")).lower() in ("ablation", "method_comparison"):
+                return await self._rag_ablation(design, data_spec, domain, exp_id)
             return await self._rag_eval_hostside(design, data_spec, domain, exp_id)
         return await self._execute(design, data_spec, domain, exp_id)
 
@@ -1571,6 +1600,59 @@ class ExperimentDriver:
         )
         return {"job_id": "host-side", "metrics": result.metrics,
                 "artifacts": result.artifacts, "info": result.info}
+
+    async def _rag_ablation(self, design, data_spec, domain, exp_id) -> dict[str, Any]:
+        """A CONTROLLED retriever ablation: run the eval with the lexical AND the dense
+        retriever, holding the answerer fixed (extractive) so the ONLY variable is the
+        retriever. Embeddings are free + offline, so this runs even in dry-run (it
+        degrades to the random hash stub only if sentence-transformers is absent).
+        Headline = the dense retriever's F1; the deltas vs lexical drive a comparison
+        claim."""
+        from aletheia.domains.rag.compare import compare_retrievers
+        from aletheia.memory.embedder import get_embedder
+
+        await self._status("executing", "retriever ablation (lexical vs dense)")
+        if not self.dry_run:
+            await self._guard_budget("usd", get_settings().est_stage_cost_usd)
+        plugin = self.plugin or get_domain_plugin(domain)
+        data = await asyncio.to_thread(plugin.load_data, data_spec)
+        corpus, cases = data["corpus"], data["cases"]
+        k = int(design.get("k", 3))
+        embed = get_embedder(dry_run=False).embed  # embeddings are free + offline
+        cmp = await asyncio.to_thread(
+            compare_retrievers, corpus, cases, k,
+            embed=embed, workdir=run_artifacts_dir(self.run_id) / "rag_ablation",
+        )
+        lex, dense, delta = cmp["lexical"], cmp["dense"], cmp["delta"]
+        metrics = {
+            "answer_f1": dense["answer_f1"],  # HEADLINE (the candidate method)
+            "recall_at_k": dense["recall_at_k"],
+            "answer_f1_dense": dense["answer_f1"], "recall_at_k_dense": dense["recall_at_k"],
+            "answer_f1_lexical": lex["answer_f1"], "recall_at_k_lexical": lex["recall_at_k"],
+            "answer_f1_delta": delta["answer_f1"], "recall_at_k_delta": delta["recall_at_k"],
+            "exact_match": dense["exact_match"], "latency_ms": dense["latency_ms"], "cost_usd": 0.0,
+        }
+        path = run_artifacts_dir(self.run_id) / "ablation.json"
+        path.write_text(json.dumps(cmp, indent=2))
+        eval_summary = (
+            f"Retriever ablation (answerer fixed) on {cmp['n']} cases, k={k}: "
+            f"answer-F1 lexical {lex['answer_f1']:.3f} -> dense {dense['answer_f1']:.3f} "
+            f"({delta['answer_f1']:+.3f}); recall@{k} {lex['recall_at_k']:.3f} -> "
+            f"{dense['recall_at_k']:.3f} ({delta['recall_at_k']:+.3f})"
+        )
+        artifacts = [{"kind": "eval", "uri": str(path)}]
+        if exp_id:
+            await asyncio.to_thread(record_metrics, exp_id, metrics, "test")
+            await asyncio.to_thread(record_artifacts, exp_id, artifacts)
+        await get_bus().publish(
+            make_event("compute_status", run_id=self.run_id,
+                       payload={"job_id": "ablation", "status": "done", "metrics": metrics})
+        )
+        return {"job_id": "ablation", "metrics": metrics, "artifacts": artifacts,
+                "info": {"n_eval": cmp["n"], "model": "retriever ablation",
+                         "model_impl": "retriever ablation (lexical vs dense)",
+                         "protocol_status": "eval_set", "eval_summary": eval_summary,
+                         "ablation": cmp}}
 
     async def _execute(self, design, data_spec, domain, exp_id) -> dict[str, Any]:
         spec = JobSpec(
