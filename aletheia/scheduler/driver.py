@@ -667,10 +667,12 @@ class ExperimentDriver:
         prompt = (
             "Design the GENERATION STRATEGY for a retrieval-augmented QA system. A fixed harness retrieves "
             "passages and scores answers against gold (recall@k + token-F1 + exact-match) — you do NOT score. "
-            "Choose a concise answer PROMPT (it MUST use the placeholders {context} and {question}) that yields "
-            "short, grounded answers, and a retrieval depth k (1-10).\n\n"
+            "Choose: a RETRIEVER ('dense' = semantic embeddings, stronger on paraphrase; or 'lexical' = "
+            "token-overlap baseline); a retrieval depth k (1-10); and a concise answer PROMPT (it MUST use the "
+            "placeholders {context} and {question}) that yields short, grounded answers.\n\n"
             f"PLAN/DESIGN: {json.dumps(design)}\nSURVEYED METHODS:\n{methods}\n\n"
-            'Return ONLY JSON: {"answer_prompt": "...{context}...{question}...", "k": <int 1-10>}.'
+            'Return ONLY JSON: {"retriever": "dense"|"lexical", "k": <int 1-10>, '
+            '"answer_prompt": "...{context}...{question}..."}.'
         )
         text = await run_worker(
             self.run_id, "coder", prompt,
@@ -688,14 +690,18 @@ class ExperimentDriver:
             design["k"] = max(1, min(10, kk))
         except (TypeError, ValueError):
             pass
+        rtype = str(strategy.get("retriever", "")).lower()
+        design["retriever"] = rtype if rtype in ("dense", "lexical") else design.get("retriever", "lexical")
         await get_bus().publish(
             make_event("code", run_id=self.run_id, payload={
                 "accepted": accepted, "kind": "rag_strategy", "k": design.get("k"),
+                "retriever": design.get("retriever"),
                 "reasons": [] if accepted else ["invalid/missing answer_prompt; using default"]})
         )
         await self._index(
             "design_rationale",
-            f"RAG generation strategy: k={design.get('k')}, prompt={'custom' if accepted else 'default'}",
+            f"RAG generation strategy: retriever={design.get('retriever')}, k={design.get('k')}, "
+            f"prompt={'custom' if accepted else 'default'}",
             exp_id,
         )
 
@@ -1500,11 +1506,25 @@ class ExperimentDriver:
         # a degraded worker (API hiccup) falls back to the offline answerer, never crashes the eval
         return extractive_answerer(question, contexts) if is_degraded(text) else text.strip()
 
+    def _make_retriever(self, design: dict) -> tuple[Any, str]:
+        """Resolve the retriever the design selected. ``dense`` → a real embedding
+        retriever (host-side, trusted, offline once the model is cached); anything else
+        — and ANY dry-run (the hash-stub embedder is random, so dense is meaningless
+        offline) — → the deterministic lexical baseline."""
+        from aletheia.domains.rag.retriever import dense_retrieve, retrieve
+
+        if str(design.get("retriever", "lexical")).lower() == "dense" and not self.dry_run:
+            from aletheia.memory.embedder import get_embedder
+
+            embed = get_embedder(dry_run=False).embed
+            return (lambda corpus, q, k: dense_retrieve(corpus, q, k, embed=embed)), "dense (embeddings)"
+        return retrieve, "lexical token-overlap"
+
     async def _rag_eval_hostside(self, design, data_spec, domain, exp_id) -> dict[str, Any]:
-        """Run the RAG eval host-side: retrieve (offline, deterministic) → generate
-        (host-side LLM) → score (fixed deterministic harness). The LLM authors only the
+        """Run the RAG eval host-side: retrieve → generate (host-side LLM) → score (fixed
+        deterministic harness). The retriever + the LLM author only retrieval order +
         answer text; recall@k / F1 / EM are computed by the harness."""
-        from aletheia.domains.rag.retriever import extractive_answerer, retrieve
+        from aletheia.domains.rag.retriever import extractive_answerer
 
         await self._status("executing", "host-side RAG generation + scoring")
         plugin = self.plugin or get_domain_plugin(domain)
@@ -1513,6 +1533,13 @@ class ExperimentDriver:
         k = int(design.get("k", 5))
         prompt = str(design.get("answer_prompt") or self._DEFAULT_RAG_PROMPT)
         model = get_settings().claude_model
+        retriever_fn, retriever_label = self._make_retriever(design)
+        requested_dense = str(design.get("retriever", "lexical")).lower() == "dense"
+        await get_bus().publish(
+            make_event("retriever", run_id=self.run_id, payload={
+                "requested": "dense" if requested_dense else "lexical", "used": retriever_label,
+                "fallback": requested_dense and retriever_label.startswith("lexical")})
+        )
 
         if not self.dry_run:
             await self._guard_budget("usd", get_settings().est_stage_cost_usd)
@@ -1521,7 +1548,7 @@ class ExperimentDriver:
         answers: dict[str, str] = {}
         for case in cases:
             q = str(case.get("question", ""))
-            contexts = [r["text"] for r in retrieve(corpus, q, k)]
+            contexts = [r["text"] for r in retriever_fn(corpus, q, k)]
             answers[q] = await self._rag_generate(q, contexts, prompt)
 
         def _answerer(q: str, contexts: list[str]) -> str:
@@ -1531,7 +1558,8 @@ class ExperimentDriver:
         per_call_cost = 0.0 if self.dry_run else 0.001  # estimate; trued up later
         result = await asyncio.to_thread(
             plugin.evaluate, corpus, cases, k,
-            answerer=_answerer, workdir=run_artifacts_dir(self.run_id) / "rag_eval",
+            answerer=_answerer, retriever=retriever_fn, retriever_label=retriever_label,
+            workdir=run_artifacts_dir(self.run_id) / "rag_eval",
             design=design, answerer_label=label, cost_per_answer=per_call_cost,
         )
         if exp_id:  # mirror the compute backend's ledger recording (skip for reproduction)

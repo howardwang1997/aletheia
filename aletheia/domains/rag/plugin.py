@@ -61,15 +61,18 @@ class RagEvalPlugin(DomainPlugin):
         answerer: Any,
         workdir: Path,
         design: dict[str, Any] | None = None,
+        retriever: Any = None,
         answerer_label: str = "extractive top-sentence",
+        retriever_label: str = "lexical token-overlap",
         cost_per_answer: float = 0.0,
         latency_per_answer_ms: float | None = None,
     ) -> ExperimentResult:
-        """Deterministic RAG scoring with an INJECTED ``answerer(question, contexts) ->
-        str``. Retrieval + every metric is the fixed harness (the answerer never grades
-        itself); only the answer text comes from the (offline or host-side LLM) answerer.
-        ``contexts`` is the list of retrieved passage texts."""
+        """Deterministic RAG scoring with an INJECTED ``retriever(corpus, question, k)``
+        + ``answerer(question, contexts) -> str``. Every metric is the fixed harness
+        (neither the retriever nor the answerer grades itself); only retrieval order +
+        the answer text are pluggable. ``retriever`` defaults to the lexical baseline."""
         design = design or {}
+        retriever = retriever or retrieve
         workdir = Path(workdir)
         workdir.mkdir(parents=True, exist_ok=True)
 
@@ -79,7 +82,7 @@ class RagEvalPlugin(DomainPlugin):
         for case in cases:
             q = case.get("question", "")
             gold = case.get("gold_answer", "")
-            retrieved = retrieve(corpus, q, k)
+            retrieved = retriever(corpus, q, k)
             contexts = [r["text"] for r in retrieved]
             answer = str(answerer(q, contexts) or "")
             rows.append({
@@ -110,7 +113,7 @@ class RagEvalPlugin(DomainPlugin):
         }
         eval_payload = {
             "protocol": {"headline_metric": "answer_f1", "k": k, "n_eval": len(rows),
-                         "retrieval": "lexical token-overlap", "answerer": answerer_label},
+                         "retrieval": retriever_label, "answerer": answerer_label},
             "per_case": rows,
         }
         eval_path = workdir / "eval.json"
@@ -118,7 +121,7 @@ class RagEvalPlugin(DomainPlugin):
         eval_summary = (
             f"RAG eval on {len(rows)} QA cases (k={k}): answer-F1 {answer_f1:.3f} (HEADLINE), "
             f"recall@{k} {recall_at_k:.3f}, EM {exact_match:.3f}, "
-            f"{latency_ms:.1f} ms/query, ${cost_usd:.4f} — lexical retrieval + {answerer_label}"
+            f"{latency_ms:.1f} ms/query, ${cost_usd:.4f} — {retriever_label} + {answerer_label}"
         )
         return ExperimentResult(
             metrics=metrics,
@@ -126,7 +129,7 @@ class RagEvalPlugin(DomainPlugin):
             info={
                 "n_eval": len(rows),
                 "model": design.get("model", f"lexical_k{k}"),
-                "model_impl": f"lexical retrieval + {answerer_label}",
+                "model_impl": f"{retriever_label} + {answerer_label}",
                 "protocol_status": "eval_set",  # not a grouped-CV protocol; not degraded either
                 "eval_summary": eval_summary,
                 "faithfulness_cases": faithfulness_cases,  # the driver scores these via the critic panel

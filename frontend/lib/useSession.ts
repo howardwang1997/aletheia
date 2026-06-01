@@ -43,6 +43,7 @@ const ACTIVITY_TYPES = new Set([
   "scorecard",
   "reproduction",
   "faithfulness",
+  "retriever",
   "experiment",
   "campaign",
   "campaign_plan",
