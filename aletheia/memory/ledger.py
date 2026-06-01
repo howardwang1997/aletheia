@@ -62,6 +62,35 @@ STAGES = (
     "write_up",
     "archive",
 )
+# --- evidence-ledger vocab (claims ↔ evidence; the anti-overclaiming layer) ---
+# what a claim asserts:
+CLAIM_TYPES = (
+    "novelty",
+    "sota",
+    "metric",
+    "mechanism",
+    "limitation",
+    "reproducibility",
+    "cost",
+    "safety",
+)
+# how strongly the evidence backs it (a deterministic harness rule sets this, never
+# the LLM's self-assessment):
+CLAIM_STRENGTHS = ("speculative", "weak", "moderate", "strong")
+# where the claim stands relative to the evidence:
+CLAIM_STATUSES = ("proposed", "supported", "refuted", "unverified")
+# the kind of artifact a piece of evidence points at:
+EVIDENCE_KINDS = (
+    "paper",
+    "metric",
+    "artifact",
+    "critique_panel",
+    "experiment",
+    "dataset",
+    "code",
+    "reproduction",
+)
+
 # how a dataset is connected:
 #   benchmark  - a named public dataset (matminer/matbench), auto-downloaded
 #   upload     - a single file the human uploaded
@@ -158,6 +187,43 @@ class CritiquePanel(Base):
     gate_passed: Mapped[bool | None] = mapped_column()
     raw_json: Mapped[dict | None] = mapped_column(JSONB)
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Claim(Base):
+    """A scientific assertion the lab makes (novelty / SOTA / metric / mechanism / …),
+    with a strength + status set by the harness from the evidence — so a report can
+    never imply stronger evidence than the ledger holds. Each claim links to the
+    artifacts that back it via ``ClaimEvidence``."""
+
+    __tablename__ = "claims"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    experiment_id: Mapped[str | None] = mapped_column(ForeignKey("experiments.id"), index=True)
+    claim_text: Mapped[str] = mapped_column(Text)
+    claim_type: Mapped[str] = mapped_column(String(32))  # CLAIM_TYPES
+    strength: Mapped[str] = mapped_column(String(16))  # CLAIM_STRENGTHS
+    status: Mapped[str] = mapped_column(String(16), default="proposed")  # CLAIM_STATUSES
+    created_by: Mapped[str | None] = mapped_column(String(64))  # stage / actor
+    stage: Mapped[str | None] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    evidence: Mapped[list["ClaimEvidence"]] = relationship(back_populates="claim")
+
+
+class ClaimEvidence(Base):
+    """A pointer from a claim to the concrete evidence that supports it (an eval
+    metric key, an artifact uri, a critique-panel id, a paper ref, …)."""
+
+    __tablename__ = "claim_evidence"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    claim_id: Mapped[str] = mapped_column(ForeignKey("claims.id"), index=True)
+    evidence_kind: Mapped[str] = mapped_column(String(32))  # EVIDENCE_KINDS
+    evidence_ref: Mapped[str] = mapped_column(Text)  # metric key | uri | ledger id | doi
+    note: Mapped[str | None] = mapped_column(Text)
+
+    claim: Mapped[Claim] = relationship(back_populates="evidence")
 
 
 class BudgetEvent(Base):

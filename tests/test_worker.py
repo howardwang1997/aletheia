@@ -92,9 +92,16 @@ def test_analysis_excludes_degraded_subchecks(monkeypatch):
         return f"{label}: fine"
 
     monkeypatch.setattr(drv, "run_worker", fake_worker)
-    driver = drv.ExperimentDriver("run-an", dry_run=False)
+    # a real run/experiment so the analysis-stage claim rows satisfy their FK
+    from aletheia.db import create_all
+    from aletheia.memory.service import create_run, finalize_plan
+
+    create_all()
+    run_id = create_run("worker analysis test", domain="materials", status="planned")
+    exp_id = finalize_plan(run_id, {"objective": "predict band gap", "domain": "materials"})
+    driver = drv.ExperimentDriver(run_id, dry_run=False)
     result = {"metrics": {"mae_lcso": 0.4, "mae_holdout": 0.4}, "info": {"eval_summary": "s"}}
-    out = asyncio.run(driver._analyze({"model": "rf"}, result, "exp-an"))
+    out = asyncio.run(driver._analyze({"model": "rf"}, result, exp_id))
     assert out == "synthesis"
     # synthesis prompt saw the healthy sub-checks but NOT the degraded leakage text
     assert "worker-unavailable" not in captured["prompt"]

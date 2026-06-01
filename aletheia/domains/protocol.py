@@ -33,15 +33,21 @@ def _grouped_scores(estimator_factory: Callable[[], Any], X: Any, y: Any, groups
     if groups is not None and n_groups >= 2:
         cv = GroupKFold(n_splits=n_splits)
         oof = cross_val_predict(estimator_factory(), X, y, cv=cv, groups=groups, n_jobs=1)
+        protocol_status = "grouped"
     else:
+        # No usable grouping: the headline is a plain-KFold number, which can be
+        # optimistic (interpolation within groups). Mark it so the run never
+        # presents a degraded headline as the honest grouped result.
         cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
         oof = cross_val_predict(estimator_factory(), X, y, cv=cv, n_jobs=1)
+        protocol_status = "degraded_kfold"
     return {
         "mae": float(mean_absolute_error(y, oof)),
         "r2": float(r2_score(y, oof)),
         "rmse": float(mean_squared_error(y, oof) ** 0.5),
         "n_groups": n_groups,
         "n_splits": n_splits,
+        "protocol_status": protocol_status,
     }
 
 
@@ -115,6 +121,7 @@ def grouped_regression_eval(
     # 2. grouped out-of-fold CV -> HEADLINE
     grouped = _grouped_scores(model_factory, X, y_arr, groups)
     mae_g, r2_g, rmse_g = grouped["mae"], grouped["r2"], grouped["rmse"]
+    protocol_status = grouped["protocol_status"]  # "grouped" | "degraded_kfold"
 
     # 3. single random holdout -> comparison + parity plot + stratification source
     X_tr, X_te, y_tr, y_te = train_test_split(
@@ -158,7 +165,9 @@ def grouped_regression_eval(
                 "strategy": group_strategy_desc,
                 "n_splits": grouped["n_splits"],
                 "n_groups": int(grouped["n_groups"]),
+                "status": protocol_status,
             },
+            "status": protocol_status,
             "holdout": {"test_size": test_size, "random_state": random_state},
         },
         "headline": {"metric": f"mae_{grouped_key}", "value": mae_g},
@@ -217,6 +226,9 @@ def grouped_regression_eval(
             # a fallback like RandomForestRegressor when the requested method is not
             # implementable on these features).
             "model_impl": type(final).__name__,
+            # whether the HEADLINE used real grouped CV or fell back to plain KFold;
+            # the driver gates a strong headline claim on this.
+            "protocol_status": protocol_status,
             "eval_summary": eval_summary,
         },
     )

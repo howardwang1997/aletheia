@@ -130,7 +130,7 @@ class CriticGateway:
     # --- consensus (config-driven rule over the FINAL round) ---
     def _consensus(self, critiques: list[Critique]) -> tuple[str, bool]:
         if not critiques:
-            return "approve", True
+            return "reject", False
         has_blocker = any(
             cq.verdict == "reject" or any(f.severity == "blocker" for f in cq.findings)
             for cq in critiques
@@ -185,13 +185,46 @@ class CriticGateway:
             consensus_verdict=consensus, gate_passed=gate,
         )
 
+    def _blocked_panel(self, target: str, target_ref: str, reason: str) -> CritiquePanel:
+        """Fail-closed panel for real runs when peer review cannot actually run."""
+        critiques = [
+            Critique(
+                critic_id="system",
+                stance="adversarial",
+                verdict="reject",
+                confidence=1.0,
+                summary=reason,
+                findings=[
+                    CriticFinding(
+                        severity="blocker",
+                        category="reproducibility",
+                        claim="The peer-review gate could not run with a real reviewer panel.",
+                        evidence=reason,
+                        suggestion="Configure at least one real critic provider or run explicitly in dry-run mode.",
+                    )
+                ],
+            )
+        ]
+        consensus, gate = self._consensus(critiques)
+        return CritiquePanel(
+            target=target,
+            target_ref=target_ref,
+            critiques=critiques,
+            consensus_verdict=consensus,
+            gate_passed=gate,
+        )
+
     def review_sync(
         self, target: str, content_obj: dict[str, Any], target_ref: str, dry_run: bool = False
     ) -> CritiquePanel:
         """Single-round peer review (sync). The async ``review`` adds rebuttal rounds."""
         providers = [] if dry_run else self._providers()
         if not providers:
-            panel = self._canned_panel(target, target_ref)
+            panel = (
+                self._canned_panel(target, target_ref)
+                if dry_run
+                else self._blocked_panel(target, target_ref, "no real critic providers are available")
+            )
         else:
             content = json.dumps(content_obj, indent=2, default=str)
             critiques = self._run_round_sync(target, content, policy.assign_stances(providers))
@@ -248,7 +281,11 @@ class CriticGateway:
         rebuttals: list[str] = []
 
         if not providers:
-            panel = self._canned_panel(target, target_ref)
+            panel = (
+                self._canned_panel(target, target_ref)
+                if dry_run
+                else self._blocked_panel(target, target_ref, "no real critic providers are available")
+            )
             rounds = [panel.critiques]
         else:
             assignments = policy.assign_stances(providers)

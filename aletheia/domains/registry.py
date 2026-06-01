@@ -30,12 +30,19 @@ _LOADERS: dict[str, Callable[[], DomainPlugin]] = {
 DEFAULT_DOMAIN = "materials"
 
 
-def get_domain_plugin(domain: str | None) -> DomainPlugin:
+def get_domain_plugin(domain: str | None, *, strict: bool = False) -> DomainPlugin:
     """Resolve a domain string to its plugin. Unknown / blank domains fall back to
-    the default (materials), logged so the choice is visible."""
+    the default (materials), logged so the choice is visible.
+
+    ``strict=True`` is for real autonomous runs: an unknown non-empty domain is a
+    blocked research setup, not a safe fallback to unrelated science.
+    """
     key = (domain or "").strip().lower()
     loader = _LOADERS.get(key)
     if loader is None:
+        if strict and key:
+            supported = ", ".join(sorted(_LOADERS))
+            raise ValueError(f"unsupported domain {domain!r}; supported domains: {supported}")
         if key:
             print(f"[domains] unknown domain {domain!r}; using {DEFAULT_DOMAIN}", file=sys.stderr)
         loader = _LOADERS[DEFAULT_DOMAIN]

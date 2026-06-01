@@ -54,6 +54,7 @@ def test_grouped_regression_eval_returns_full_panel(tmp_path):
     assert "grouped CV" in result.info["eval_summary"]
     assert result.info["n_test"] >= 1
     assert result.info["model_impl"] == "Ridge"  # records what ACTUALLY ran
+    assert result.info["protocol_status"] == "grouped"  # real groups -> honest headline
 
 
 def test_protocol_falls_back_to_kfold_without_groups(tmp_path):
@@ -68,3 +69,4 @@ def test_protocol_falls_back_to_kfold_without_groups(tmp_path):
         X=X, y=y, groups=None, design={}, workdir=tmp_path, model_name="ridge",
     )
     assert "mae_grouped" in result.metrics  # KFold fallback still produces the headline
+    assert result.info["protocol_status"] == "degraded_kfold"  # no groups -> degraded, marked
