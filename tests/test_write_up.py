@@ -73,7 +73,10 @@ def test_write_up_dry_produces_cited_paper():
             "mae": 0.47, "r2": 0.6, "mae_lcso": 0.47, "r2_lcso": 0.6, "mae_cv_mean": 0.45,
             "mae_cv_std": 0.03, "mae_holdout": 0.40, "rmse_holdout": 0.7,
         },
-        "info": {"eval_summary": "LCSO GroupKFold + RepeatedKFold 5x5 + baselines"},
+        "info": {
+            "eval_summary": "LCSO GroupKFold + RepeatedKFold 5x5 + baselines",
+            "model_impl": "RandomForestRegressor",  # what actually ran
+        },
     }
     rpanel = types.SimpleNamespace(consensus_verdict="approve", gate_passed=True)
     asyncio.run(d._write_up(
@@ -89,6 +92,7 @@ def test_write_up_dry_produces_cited_paper():
     assert "[1]" in report  # cites a real surveyed reference inline
     assert "figures/parity.png" in report
     assert "0.47" in report  # leads with the LCSO headline
+    assert "RandomForestRegressor" in report  # states the model that ACTUALLY ran
 
     bib = (adir / "references.bib").read_text()
     assert "@article{" in bib

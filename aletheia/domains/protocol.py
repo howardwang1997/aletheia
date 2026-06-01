@@ -212,6 +212,11 @@ def grouped_regression_eval(
             "n_train": int(len(X_tr)),
             "n_test": int(len(y_te)),
             "model": model_name,
+            # the estimator class ACTUALLY fit + scored — so the write-up reports what
+            # ran, not merely what the design requested (a coder-authored Pipeline, or
+            # a fallback like RandomForestRegressor when the requested method is not
+            # implementable on these features).
+            "model_impl": type(final).__name__,
             "eval_summary": eval_summary,
         },
     )

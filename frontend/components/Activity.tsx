@@ -80,6 +80,8 @@ function line(e: LabEvent): string {
       return `📦 data ${p.status ?? ""}: ${p.source ?? ""} ${p.ref ?? ""}`;
     case "run_started":
       return `▶ run started (${p.mode ?? ""})`;
+    case "domain_fallback":
+      return `⚠ domain '${p.requested}' unsupported — ran '${p.ran}'`;
     case "experiment":
       return `🧪 experiment ${p.round ?? ""}${p.of ? `/${p.of}` : ""}`;
     case "campaign":
@@ -101,7 +103,7 @@ function line(e: LabEvent): string {
     case "critique_round":
       return `🔁 ${p.target} round ${p.round}/${p.max_rounds} — disagreement ${p.disagreement}`;
     case "optimize":
-      return `🔧 kept ${p.kept} (MAE ${p.mae})`;
+      return `🔧 kept ${p.kept} (${p.metric ?? "mae"} ${p.score ?? p.mae})`;
     case "iam_repo_created":
       return `📁 repo ${p.repo ?? ""}`;
     case "iam_pr_opened":

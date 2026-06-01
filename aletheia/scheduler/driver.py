@@ -493,6 +493,13 @@ class ExperimentDriver:
         exp_id = run.get("plan_experiment_id")
         domain = run.get("domain") or "materials"
         plugin = get_domain_plugin(domain)
+        # surface a domain we don't have a plugin for (it silently ran the default) so
+        # the operator sees the run is NOT the science they asked for — not stderr-only.
+        if plugin.name != (domain or "").strip().lower():
+            await get_bus().publish(
+                make_event("domain_fallback", run_id=self.run_id,
+                           payload={"requested": domain, "ran": plugin.name})
+            )
         self.profile = plugin.profile()  # the domain's vocabulary for every stage
         data_spec = resolve_data_spec(self.run_id)
         self.budget = await asyncio.to_thread(BudgetTracker, self.run_id)
@@ -980,27 +987,33 @@ class ExperimentDriver:
         if alt.get("model") == design.get("model"):
             return design, result  # nothing distinct to try
         alt_result = await self._execute(alt, data_spec, domain, exp_id)
-        cur_mae = result.get("metrics", {}).get("mae", float("inf"))
-        alt_mae = alt_result.get("metrics", {}).get("mae", float("inf"))
-        if alt_mae < cur_mae:
+        # compare on the domain's declared headline metric (lower is better for the
+        # error metrics both domains lead with), not always "mae".
+        hk = self.profile.headline_metric if self.profile else "mae"
+        cur_score = result.get("metrics", {}).get(hk, float("inf"))
+        alt_score = alt_result.get("metrics", {}).get(hk, float("inf"))
+        if alt_score < cur_score:
             await get_bus().publish(
                 make_event(
                     "optimize", run_id=self.run_id,
-                    payload={"kept": alt.get("model"), "mae": alt_mae, "previous_mae": cur_mae},
+                    payload={"kept": alt.get("model"), "metric": hk, "score": alt_score, "previous": cur_score},
                 )
             )
             return alt, alt_result
         await get_bus().publish(
             make_event(
                 "optimize", run_id=self.run_id,
-                payload={"kept": design.get("model"), "mae": cur_mae, "alt_mae": alt_mae},
+                payload={"kept": design.get("model"), "metric": hk, "score": cur_score, "alt": alt_score},
             )
         )
         return design, result
 
     async def _write_up(self, plan, design, result, analysis, rpanel, exp_id) -> None:
         metrics = result.get("metrics", {})
-        eval_summary = (result.get("info") or {}).get("eval_summary", "")
+        info = result.get("info") or {}
+        eval_summary = info.get("eval_summary", "")
+        impl = info.get("model_impl", "")  # the estimator class actually fit + scored
+        requested = str(design.get("model", "")).strip()
         hk = self.profile.headline_metric if self.profile else "mae"
         units = self.profile.units if self.profile else ""
         usfx = f" {units}" if units else ""
@@ -1029,9 +1042,12 @@ class ExperimentDriver:
             f"## 5. Discussion & Limitations — the hypothesis verdict, the comparison to known SOTA ({sota}), "
             "and honest limitations, taken from the analysis.\n\n"
             "Cite ONLY using the [n] keys under CITABLE REFERENCES; never invent a reference or a published "
-            "number. Do NOT write a References section — it is appended automatically.\n\n"
+            "number. Do NOT write a References section — it is appended automatically.\n"
+            "In the Method, state the model that ACTUALLY ran (EXECUTED IMPLEMENTATION below); if it differs "
+            "from the requested method, say so plainly — never claim a method that was not executed.\n\n"
             f"HYPOTHESIS: {json.dumps(self.hypothesis)}\n"
             f"PLAN: {json.dumps(plan)}\nDESIGN: {json.dumps(design)}\nMETRICS: {json.dumps(metrics)}\n"
+            f"REQUESTED METHOD: {requested or 'n/a'}\nEXECUTED IMPLEMENTATION: {impl or 'n/a'}\n"
             f"EVAL PROTOCOL SUMMARY: {eval_summary}\nKNOWN SOTA: {sota}\n"
             f"ANALYSIS: {analysis}\nCRITIC VERDICT: {rpanel.consensus_verdict}\n\n"
             f"CITABLE REFERENCES (cite inline as [n]):\n{cite_list or '(none retrieved)'}"
@@ -1058,7 +1074,9 @@ class ExperimentDriver:
                 f"splits overstate accuracy; a fair grouped-CV comparison remains under-reported — the gap "
                 f"this study targets.\n\n"
                 f"## 3. Method\n\n"
-                f"{feat} feed a {design.get('model')}. Evaluation: {protocol}.\n\n"
+                f"{feat} feed a {design.get('model')}"
+                + (f" (executed implementation: {impl})" if impl else "")
+                + f". Evaluation: {protocol}.\n\n"
                 f"## 4. Results\n\n"
                 f"The headline {hk} is {hv}{usfx} (R²={metrics.get('r2')}); RepeatedKFold "
                 f"MAE={metrics.get('mae_cv_mean')}±{metrics.get('mae_cv_std')}; holdout "

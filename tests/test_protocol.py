@@ -53,6 +53,7 @@ def test_grouped_regression_eval_returns_full_panel(tmp_path):
     assert (tmp_path / "eval.json").exists()
     assert "grouped CV" in result.info["eval_summary"]
     assert result.info["n_test"] >= 1
+    assert result.info["model_impl"] == "Ridge"  # records what ACTUALLY ran
 
 
 def test_protocol_falls_back_to_kfold_without_groups(tmp_path):
