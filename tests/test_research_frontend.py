@@ -6,8 +6,11 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
+from aletheia.data.registry import register_dataset
 from aletheia.db import create_all, session_scope
-from aletheia.memory.ledger import CritiquePanel, Experiment, MemoryChunk
+from aletheia.memory.ledger import CritiquePanel, Decision, Experiment, MemoryChunk, Run
 from aletheia.memory.service import create_run, finalize_plan
 from aletheia.scheduler.driver import ExperimentDriver
 
@@ -85,7 +88,7 @@ def test_analysis_is_scientific(monkeypatch):
     in the hypothesis + surveyed literature (verdict, claims, ablation, SOTA)."""
     import aletheia.scheduler.driver as drv
 
-    create_all()
+    run_id, exp_id = _setup()  # real run/experiment so claim rows satisfy their FK
     seen = {"labels": [], "synth_prompt": ""}
 
     async def fake_worker(run_id, label, prompt, **kw):
@@ -96,12 +99,12 @@ def test_analysis_is_scientific(monkeypatch):
         return f"{label}: fine"
 
     monkeypatch.setattr(drv, "run_worker", fake_worker)
-    d = drv.ExperimentDriver("an-sci", dry_run=False)  # workers are faked
+    d = drv.ExperimentDriver(run_id, dry_run=False)  # workers are faked
     d.survey_brief = "Prior work: GBM reaches ~0.4 eV on band-gap regression."
     d.hypothesis = {"statement": "GBM beats RF on LCSO", "prediction": "lower LCSO MAE"}
     result = {"metrics": {"mae_lcso": 0.4, "mae_holdout": 0.4}, "info": {"eval_summary": "s"}}
 
-    out = asyncio.run(d._analyze({"model": "gbm"}, result, "an-sci"))
+    out = asyncio.run(d._analyze({"model": "gbm"}, result, exp_id))
     assert out == "synthesis"
     assert "analysis:sota" in seen["labels"]  # the SOTA/prior-work sub-check ran
     p = seen["synth_prompt"]
@@ -121,3 +124,55 @@ def test_direction_gate_dry_passes_and_records_panel():
             CritiquePanel.target == "direction", CritiquePanel.target_ref == exp_id
         ).first()
         assert panel is not None and panel.gate_passed is True
+
+
+@pytest.mark.asyncio
+async def test_real_run_blocks_when_survey_has_no_citable_grounding(monkeypatch):
+    create_all()
+    run_id = create_run("real blocked survey", domain="materials", status="scoping")
+    register_dataset(run_id, "benchmark", ref="matbench_expt_gap", status="ready")
+    exp_id = finalize_plan(
+        run_id,
+        {"objective": "predict band gap", "domain": "materials", "direction": "composition ML"},
+    )
+
+    async def empty_survey(self, plan, exp):
+        self.survey_papers = []
+        self.survey_methods = []
+        return "", []
+
+    monkeypatch.setattr(ExperimentDriver, "_survey", empty_survey)
+
+    await ExperimentDriver(run_id, dry_run=False).run()
+
+    with session_scope() as s:
+        assert s.get(Run, run_id).status == "paused"
+        decision = (
+            s.query(Decision)
+            .filter(Decision.run_id == run_id, Decision.stage_to == "paused")
+            .one()
+        )
+        assert "citable grounding" in decision.rationale
+        assert decision.experiment_id == exp_id
+
+
+@pytest.mark.asyncio
+async def test_real_run_blocks_unknown_domain():
+    create_all()
+    run_id = create_run("unknown domain", domain="astrophysics", status="scoping")
+    exp_id = finalize_plan(
+        run_id,
+        {"objective": "model stars", "domain": "astrophysics", "direction": "stellar ML"},
+    )
+
+    await ExperimentDriver(run_id, dry_run=False).run()
+
+    with session_scope() as s:
+        assert s.get(Run, run_id).status == "paused"
+        decision = (
+            s.query(Decision)
+            .filter(Decision.run_id == run_id, Decision.stage_to == "paused")
+            .one()
+        )
+        assert "unsupported domain" in decision.rationale
+        assert decision.experiment_id == exp_id

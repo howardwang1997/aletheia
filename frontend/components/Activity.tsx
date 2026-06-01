@@ -42,6 +42,8 @@ function statusLabel(status: { state: string; detail?: string }): string {
       return "writing report…";
     case "archived":
       return "run complete ✓";
+    case "degraded":
+      return `degraded — ${status.detail ?? ""}`;
     case "paused":
       return `paused — ${status.detail ?? ""}`;
     case "failed":
@@ -82,6 +84,10 @@ function line(e: LabEvent): string {
       return `▶ run started (${p.mode ?? ""})`;
     case "domain_fallback":
       return `⚠ domain '${p.requested}' unsupported — ran '${p.ran}'`;
+    case "research_blocked":
+      return `🛑 run blocked — ${p.reason ?? ""}`;
+    case "research_degraded":
+      return `⚠ degraded — ${p.reason ?? ""}`;
     case "experiment":
       return `🧪 experiment ${p.round ?? ""}${p.of ? `/${p.of}` : ""}`;
     case "campaign":

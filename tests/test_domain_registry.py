@@ -20,6 +20,14 @@ def test_registry_unknown_falls_back_to_materials():
     assert isinstance(get_domain_plugin(""), MaterialsBandGapPlugin)
 
 
+def test_registry_strict_rejects_unknown_nonblank_domain():
+    import pytest
+
+    with pytest.raises(ValueError, match="unsupported domain"):
+        get_domain_plugin("astrophysics", strict=True)
+    assert isinstance(get_domain_plugin(None, strict=True), MaterialsBandGapPlugin)
+
+
 def test_every_plugin_exposes_a_profile():
     for d in ("materials", "molecules"):
         prof = get_domain_plugin(d).profile()

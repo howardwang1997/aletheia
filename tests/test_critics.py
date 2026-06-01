@@ -28,6 +28,27 @@ def test_dry_run_panel_persists_and_passes_gate():
         assert rows[-1].gate_passed is True
 
 
+def test_real_gate_without_providers_fails_closed(monkeypatch):
+    create_all()
+    gw = CriticGateway()
+    monkeypatch.setattr(gw, "_providers", lambda: [])
+
+    panel = gw.review_sync("design", {"model": "random_forest"}, "exp-no-critics", dry_run=False)
+
+    assert panel.consensus_verdict == "reject"
+    assert panel.gate_passed is False
+    assert panel.critiques[0].critic_id == "system"
+    assert panel.critiques[0].findings[0].severity == "blocker"
+    with session_scope() as s:
+        rows = (
+            s.query(CritiquePanelRow)
+            .filter(CritiquePanelRow.target_ref == "exp-no-critics")
+            .all()
+        )
+        assert len(rows) >= 1
+        assert rows[-1].gate_passed is False
+
+
 def test_consensus_blocker_fails_gate():
     gw = CriticGateway()
     critiques = [

@@ -26,12 +26,15 @@ from aletheia.events.bus import get_bus, make_event
 from aletheia.iam import policy
 from aletheia.iam.github_app import GitHubBackend, RepoResult, get_github_backend
 from aletheia.memory.service import (
+    create_claim,
     create_experiment,
     get_run,
+    list_claims,
     record_artifacts,
     set_experiment_hypothesis,
     set_experiment_repo,
     set_run_status,
+    update_claim,
 )
 from aletheia.memory.vector import format_briefing, index_chunk, recall
 from aletheia.orchestrator.gate import build_tool_gate
@@ -91,6 +94,37 @@ class ExperimentDriver:
         self.survey_papers: list[literature.Paper] = []  # citable refs for WRITE_UP
         self.hypothesis: dict[str, Any] = {}  # the hypothesis chosen by IDEATE
         self.profile: DomainProfile | None = None  # the domain's vocabulary (set in _run)
+        self._claim_ids: dict[str, str] = {}  # role -> claim id, reset per experiment round
+
+    @staticmethod
+    def _claim_strength(
+        kind: str,
+        *,
+        protocol_status: str | None = None,
+        gate_passed: bool | None = None,
+        gate_verdict: str | None = None,
+        has_sota: bool = False,
+        method_match: bool = True,
+    ) -> str:
+        """Deterministic, harness-owned claim strength — never the LLM's self-rating.
+        Keeps a report from implying stronger evidence than the ledger holds."""
+        if kind == "metric":
+            if protocol_status == "degraded_kfold" or not method_match:
+                return "weak"  # headline rests on a degraded protocol / a fallback method
+            if gate_passed is None:
+                return "moderate"  # pre-gate: a grouped number, not yet peer-reviewed
+            if gate_passed and gate_verdict == "approve":
+                return "strong"
+            if gate_passed:  # approve_with_changes
+                return "moderate"
+            return "weak"  # gate did not pass
+        if kind == "sota":
+            return "moderate" if has_sota else "weak"  # curated string, no structured row yet (Phase H)
+        if kind == "mechanism":
+            return "moderate" if gate_passed else "weak"
+        if kind == "novelty":
+            return "speculative"  # no structured literature/novelty check in v1
+        return "weak"
 
     async def _index(self, kind: str, text: str, exp_id: str | None, **meta: Any) -> None:
         """Best-effort: embed a reasoning fragment into the recall store (off-thread)."""
@@ -126,7 +160,16 @@ class ExperimentDriver:
                 subqs = await self._decompose(topic)
                 findings = await asyncio.gather(*[self._librarian(topic, sq) for sq in subqs])
                 findings = [f for f in findings if f and not is_degraded(f)]
-                briefing, gaps, methods = await self._synthesize(topic, findings)
+                if findings:
+                    briefing, gaps, methods = await self._synthesize(topic, findings)
+                else:
+                    await get_bus().publish(
+                        make_event(
+                            "literature",
+                            run_id=self.run_id,
+                            payload={"error": "no usable literature findings returned"},
+                        )
+                    )
                 # The librarians ingested papers into the recall store; pull them back
                 # as structured, citable references for the WRITE_UP stage.
                 self.survey_papers = await asyncio.to_thread(self._recall_papers, topic)
@@ -291,6 +334,18 @@ class ExperimentDriver:
         if statement and exp_id:
             await asyncio.to_thread(set_experiment_hypothesis, exp_id, statement)
         await self._index("hypothesis", statement, exp_id)
+        # evidence-ledger: a novelty claim per hypothesis. In v1 there is no structured
+        # literature/novelty check, so it stays speculative + unverified — never stated
+        # as established novelty in the write-up.
+        note = str(self.hypothesis.get("novelty_note", "")).strip()
+        self._claim_ids["novelty"] = await asyncio.to_thread(
+            create_claim, self.run_id,
+            claim_text=f"This direction is novel: {note or statement}",
+            claim_type="novelty", strength=self._claim_strength("novelty"),
+            status="unverified", experiment_id=exp_id, created_by="ideate", stage="ideate",
+            evidence=[{"evidence_kind": "experiment", "evidence_ref": exp_id or self.run_id,
+                       "note": "surveyed gaps; no structured novelty check (Phase H)"}],
+        )
         await record_transition(self.run_id, exp_id, "survey", "ideate", f"hypothesis: {statement[:80]}")
         return self.hypothesis
 
@@ -447,6 +502,72 @@ class ExperimentDriver:
             make_event("status", run_id=self.run_id, payload={"state": state, "detail": detail})
         )
 
+    async def _block_run(self, exp_id: str | None, reason: str) -> None:
+        """Pause a real run when required scientific grounding is missing."""
+        await get_bus().publish(
+            make_event("research_blocked", run_id=self.run_id, payload={"reason": reason})
+        )
+        await record_transition(self.run_id, exp_id, None, "paused", reason)
+        await asyncio.to_thread(set_run_status, self.run_id, "paused")
+        await self._status("paused", reason)
+
+    async def _post_execution_guards(self, result: dict[str, Any], exp_id: str | None) -> bool:
+        """Fail-closed checks after EXECUTION (real runs only). Returns True to
+        continue, False if the run was blocked (paused). Dry runs always continue.
+
+        - Artifact completeness: the honest harness must have produced the eval
+          record + the fitted model; a result missing them is unverifiable.
+        - Protocol degradation: a `degraded_kfold` headline (no usable grouping) is
+          surfaced as a `research_degraded` state, not hidden — the claim-strength
+          rule then caps any metric claim resting on it (it does NOT pause).
+        """
+        if self.dry_run:
+            return True
+        info = result.get("info") or {}
+        kinds = {a.get("kind") for a in (result.get("artifacts") or [])}
+        missing = {"eval", "model"} - kinds
+        if missing or not result.get("metrics"):
+            await self._block_run(
+                exp_id,
+                f"execution did not produce verifiable artifacts (missing: "
+                f"{', '.join(sorted(missing)) or 'metrics'}); pausing before analysis",
+            )
+            return False
+        if info.get("protocol_status") == "degraded_kfold":
+            await get_bus().publish(
+                make_event(
+                    "research_degraded",
+                    run_id=self.run_id,
+                    payload={
+                        "reason": "headline used plain KFold (no usable grouping); "
+                        "grouped-CV claim downgraded",
+                    },
+                )
+            )
+            await self._status("degraded", "headline protocol degraded to KFold")
+        return True
+
+    async def _finalize_claims(self, protocol_status: str | None, rpanel) -> None:
+        """After the results gate, set the final strength + status of the proposed
+        metric/mechanism claims from the (harness-owned) evidence rule."""
+        verdict = rpanel.consensus_verdict
+        passed = bool(rpanel.gate_passed)
+        status = "supported" if passed else ("refuted" if verdict == "reject" else "unverified")
+        if self._claim_ids.get("metric"):
+            await asyncio.to_thread(
+                update_claim, self._claim_ids["metric"],
+                strength=self._claim_strength(
+                    "metric", protocol_status=protocol_status, gate_passed=passed, gate_verdict=verdict
+                ),
+                status=status,
+            )
+        if self._claim_ids.get("mechanism"):
+            await asyncio.to_thread(
+                update_claim, self._claim_ids["mechanism"],
+                strength=self._claim_strength("mechanism", gate_passed=passed),
+                status=status,
+            )
+
     async def _guard_budget(self, kind: str, amount: float) -> None:
         """Charge an estimated cost and auto-pause + notify if a cap is breached."""
         if self.budget is None:
@@ -492,7 +613,11 @@ class ExperimentDriver:
         plan = run.get("plan") or {}
         exp_id = run.get("plan_experiment_id")
         domain = run.get("domain") or "materials"
-        plugin = get_domain_plugin(domain)
+        try:
+            plugin = get_domain_plugin(domain, strict=not self.dry_run)
+        except ValueError as exc:
+            await self._block_run(exp_id, str(exc))
+            return
         # surface a domain we don't have a plugin for (it silently ran the default) so
         # the operator sees the run is NOT the science they asked for — not stderr-only.
         if plugin.name != (domain or "").strip().lower():
@@ -519,6 +644,12 @@ class ExperimentDriver:
 
         # 0) SURVEY once — the campaign-level literature map
         self.survey_brief, self.survey_gaps = await self._survey(plan, exp_id)
+        if not self.dry_run and (not self.survey_brief or not self.survey_papers):
+            await self._block_run(
+                exp_id,
+                "literature survey did not produce citable grounding; pausing before ideation",
+            )
+            return
 
         # CAMPAIGN LOOP: one Run -> up to N linked experiments. Each round poses a
         # hypothesis, runs the full experiment, then a go/no-go step decides whether
@@ -592,6 +723,7 @@ class ExperimentDriver:
         """Run ONE experiment end-to-end (DESIGN → WRITE_UP) for the given experiment
         id. Returns a compact outcome for the campaign, or None if a hard gate
         rejected past its loop limit (the run is already paused + escalated)."""
+        self._claim_ids = {}  # fresh claim set per experiment round
         # 1) EXPERIMENT_DESIGN
         await self._guard_budget("usd", get_settings().est_stage_cost_usd)
         await self._status("designing")
@@ -615,19 +747,29 @@ class ExperimentDriver:
         await self._status("executing")
         result = await self._execute(design, data_spec, domain, exp_id)
 
+        # 3b) fail-closed: a real run must produce verifiable artifacts; a degraded
+        # (KFold-fallback) headline is surfaced, not hidden.
+        if not await self._post_execution_guards(result, exp_id):
+            return None
+
         # 4) ANALYSIS
         await self._guard_budget("usd", get_settings().est_stage_cost_usd)
         await record_transition(self.run_id, exp_id, "execution", "analysis", "training complete; analyzing")
         await self._status("analyzing")
         analysis = await self._analyze(design, result, exp_id)
 
-        # 5) review_results gate
+        # 5) review_results gate — the critics see the CLAIMS + evidence (proposed in
+        # analysis) + the protocol status, so they review evidence, not just prose.
+        info = result.get("info") or {}
         rpanel = await self.gateway.review(
             "results",
             {
                 "design": design,
                 "metrics": result.get("metrics"),
-                "eval_summary": (result.get("info") or {}).get("eval_summary", ""),
+                "eval_summary": info.get("eval_summary", ""),
+                "protocol_status": info.get("protocol_status"),
+                "degraded": info.get("protocol_status") == "degraded_kfold",
+                "claims": await asyncio.to_thread(list_claims, self.run_id, exp_id),
                 "analysis": analysis,
                 # the coder's actual model code, so an adversarial reviewer can check
                 # for leakage / metric-gaming, not just trust the reported numbers
@@ -642,6 +784,9 @@ class ExperimentDriver:
             f"results reviewed: {rpanel.consensus_verdict} (gate_passed={rpanel.gate_passed})",
             actor="critic",
         )
+        # finalize the proposed claims now that the gate has spoken (harness-owned
+        # strength: a metric claim only reaches `strong` with grouped CV + a clean approve).
+        await self._finalize_claims(info.get("protocol_status"), rpanel)
 
         # 6) OPTIMIZE (<=1 iteration)
         await self._status("optimizing")
@@ -975,6 +1120,35 @@ class ExperimentDriver:
                 f"Sub-checks: {sub_text}"
             ),
         )
+        # evidence-ledger: a metric claim (the headline result) + a mechanism claim
+        # (the hypothesis verdict). Created PROPOSED here so the results gate reviews
+        # them; finalized after the gate in _run_experiment. Strength is pre-gate.
+        info = result.get("info") or {}
+        protocol_status = info.get("protocol_status")
+        eval_uri = next(
+            (a.get("uri") for a in (result.get("artifacts") or []) if a.get("kind") == "eval"), ""
+        )
+        units = self.profile.units if self.profile else ""
+        usfx = f" {units}" if units else ""
+        self._claim_ids["metric"] = await asyncio.to_thread(
+            create_claim, self.run_id,
+            claim_text=f"Under grouped CV, {design.get('model')} attains {hm}={hv}{usfx}.",
+            claim_type="metric",
+            strength=self._claim_strength("metric", protocol_status=protocol_status, gate_passed=None),
+            status="proposed", experiment_id=exp_id, created_by="analysis", stage="analysis",
+            evidence=[
+                {"evidence_kind": "metric", "evidence_ref": hm, "note": f"value={hv}"},
+                *([{"evidence_kind": "artifact", "evidence_ref": eval_uri, "note": "eval.json"}] if eval_uri else []),
+            ],
+        )
+        self._claim_ids["mechanism"] = await asyncio.to_thread(
+            create_claim, self.run_id,
+            claim_text=f"Hypothesis verdict (per analysis): {str(self.hypothesis.get('statement', '')).strip()}",
+            claim_type="mechanism",
+            strength=self._claim_strength("mechanism", gate_passed=None),
+            status="proposed", experiment_id=exp_id, created_by="analysis", stage="analysis",
+            evidence=[{"evidence_kind": "experiment", "evidence_ref": exp_id or self.run_id, "note": "analysis synthesis"}],
+        )
         return synthesis
 
     async def _optimize(self, design, result, data_spec, domain, exp_id, plugin):
@@ -1027,6 +1201,55 @@ class ExperimentDriver:
         cite_list = "\n".join(
             f"[{i}] {p.title}{f' ({p.year})' if p.year else ''}" for i, p in enumerate(refs, start=1)
         )
+        # evidence-ledger: finalize this experiment's claims before the writer sees them.
+        protocol_status = info.get("protocol_status")
+        has_sota = bool(sota) and "no comparable" not in sota.lower()
+        await asyncio.to_thread(
+            create_claim, self.run_id,
+            claim_text=f"The headline {hk} ({hv}{usfx}) is competitive with known SOTA: {sota}.",
+            claim_type="sota",
+            strength=self._claim_strength("sota", has_sota=has_sota),
+            status="unverified", experiment_id=exp_id, created_by="write_up", stage="write_up",
+            evidence=[{"evidence_kind": "metric", "evidence_ref": hk, "note": f"curated SOTA string: {sota}"}],
+        )
+        # method-provenance: if the executed estimator is the RF fallback while a
+        # different method was requested, record it as a limitation (and the metric
+        # claim about THAT method is only weakly supported).
+        fallback_ran = (
+            impl == "RandomForestRegressor"
+            and "random" not in requested.lower()
+            and "forest" not in requested.lower()
+            and bool(requested)
+        )
+        if fallback_ran:
+            await asyncio.to_thread(
+                create_claim, self.run_id,
+                claim_text=f"The requested method ({requested}) was not executed; a {impl} fallback ran instead.",
+                claim_type="limitation", strength="moderate", status="supported",
+                experiment_id=exp_id, created_by="write_up", stage="write_up",
+                evidence=[{"evidence_kind": "code", "evidence_ref": impl, "note": "executed implementation"}],
+            )
+            if self._claim_ids.get("metric"):
+                await asyncio.to_thread(update_claim, self._claim_ids["metric"], strength="weak")
+        # refresh the metric claim to the headline actually reported (OPTIMIZE may have
+        # swapped in the alternate result).
+        if self._claim_ids.get("metric"):
+            await asyncio.to_thread(
+                update_claim, self._claim_ids["metric"],
+                claim_text=f"Under grouped CV, {design.get('model')} attains {hk}={hv}{usfx}.",
+            )
+        # the claim table the writer must obey (only supported & ≥moderate claims may
+        # be stated strongly; speculative / unverified / weak ones must be labeled).
+        claims = await asyncio.to_thread(list_claims, self.run_id, exp_id)
+        claim_table = "\n".join(
+            f"- [{c['claim_type']}] strength={c['strength']} status={c['status']}: {c['claim_text']}"
+            for c in claims
+        ) or "- (no claims recorded)"
+        degraded_note = (
+            "The headline rests on a DEGRADED (plain-KFold) protocol — do NOT state the grouped-CV "
+            "result as a strong/headline generalization claim; describe it as preliminary.\n"
+            if protocol_status == "degraded_kfold" else ""
+        )
         prompt = (
             "Write a structured scientific paper in markdown (IMRAD), grounded ONLY in the numbers and "
             "the literature below. Use flowing prose (no bullet points outside the method/baseline list). "
@@ -1045,6 +1268,13 @@ class ExperimentDriver:
             "number. Do NOT write a References section — it is appended automatically.\n"
             "In the Method, state the model that ACTUALLY ran (EXECUTED IMPLEMENTATION below); if it differs "
             "from the requested method, say so plainly — never claim a method that was not executed.\n\n"
+            "CLAIM RULES (obey strictly — the report must not imply more than the evidence): only claims with "
+            "status=supported AND strength in {moderate, strong} may be stated as findings; mark weak claims as "
+            "preliminary, and speculative/unverified claims (e.g. novelty) explicitly as such (e.g. 'we did not "
+            "verify novelty against a structured literature search'). Do not assert SOTA superiority beyond the "
+            "curated KNOWN SOTA string.\n"
+            f"{degraded_note}"
+            f"CLAIM TABLE:\n{claim_table}\n\n"
             f"HYPOTHESIS: {json.dumps(self.hypothesis)}\n"
             f"PLAN: {json.dumps(plan)}\nDESIGN: {json.dumps(design)}\nMETRICS: {json.dumps(metrics)}\n"
             f"REQUESTED METHOD: {requested or 'n/a'}\nEXECUTED IMPLEMENTATION: {impl or 'n/a'}\n"

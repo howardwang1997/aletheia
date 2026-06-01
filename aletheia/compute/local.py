@@ -70,7 +70,12 @@ def _dry_result(domain: str | None) -> tuple[dict, dict]:
 
         prof = get_domain_plugin(domain).profile()
         metrics = dict(prof.dry_metrics) or dict(DRY_RUN_METRICS)
-        info = {"dry_run": True, "eval_summary": prof.dry_eval_summary or DRY_RUN_INFO["eval_summary"]}
+        info = {
+            "dry_run": True,
+            "eval_summary": prof.dry_eval_summary or DRY_RUN_INFO["eval_summary"],
+            # a healthy synthesized run represents the grouped (non-degraded) protocol
+            "protocol_status": "grouped",
+        }
         return metrics, info
     except Exception:  # noqa: BLE001 - dry-run must never fail the loop
         return dict(DRY_RUN_METRICS), dict(DRY_RUN_INFO)

@@ -9,6 +9,8 @@ from aletheia.db import session_scope
 from aletheia.memory.ledger import (
     Artifact,
     BudgetEvent,
+    Claim,
+    ClaimEvidence,
     ComputeJob,
     CritiquePanel,
     Decision,
@@ -325,3 +327,107 @@ def record_critique_panel(
         s.add(panel)
         s.flush()
         return panel.id
+
+
+# --- evidence ledger: claims ↔ evidence (Phase G) -------------------------
+
+
+def create_claim(
+    run_id: str,
+    *,
+    claim_text: str,
+    claim_type: str,
+    strength: str,
+    status: str = "proposed",
+    experiment_id: str | None = None,
+    created_by: str | None = None,
+    stage: str | None = None,
+    evidence: list[dict[str, Any]] | None = None,
+) -> str:
+    """Record a scientific claim + (optionally) attach its evidence in one call.
+    ``evidence`` items: {evidence_kind, evidence_ref, note?}."""
+    with session_scope() as s:
+        claim = Claim(
+            run_id=run_id,
+            experiment_id=experiment_id,
+            claim_text=claim_text,
+            claim_type=claim_type,
+            strength=strength,
+            status=status,
+            created_by=created_by,
+            stage=stage,
+        )
+        s.add(claim)
+        s.flush()
+        for e in evidence or []:
+            s.add(
+                ClaimEvidence(
+                    claim_id=claim.id,
+                    evidence_kind=e.get("evidence_kind", "artifact"),
+                    evidence_ref=str(e.get("evidence_ref", "")),
+                    note=e.get("note"),
+                )
+            )
+        return claim.id
+
+
+def update_claim(
+    claim_id: str,
+    *,
+    strength: str | None = None,
+    status: str | None = None,
+    claim_text: str | None = None,
+) -> None:
+    """Finalize a claim once more evidence is in (e.g. after the results gate)."""
+    with session_scope() as s:
+        claim = s.get(Claim, claim_id)
+        if claim is None:
+            return
+        if strength is not None:
+            claim.strength = strength
+        if status is not None:
+            claim.status = status
+        if claim_text is not None:
+            claim.claim_text = claim_text
+
+
+def attach_claim_evidence(
+    claim_id: str, evidence_kind: str, evidence_ref: str, note: str | None = None
+) -> None:
+    with session_scope() as s:
+        s.add(
+            ClaimEvidence(
+                claim_id=claim_id,
+                evidence_kind=evidence_kind,
+                evidence_ref=str(evidence_ref),
+                note=note,
+            )
+        )
+
+
+def list_claims(run_id: str, experiment_id: str | None = None) -> list[dict[str, Any]]:
+    with session_scope() as s:
+        q = s.query(Claim).filter(Claim.run_id == run_id)
+        if experiment_id is not None:
+            q = q.filter(Claim.experiment_id == experiment_id)
+        rows = q.order_by(Claim.created_at).all()
+        out: list[dict[str, Any]] = []
+        for c in rows:
+            ev = s.query(ClaimEvidence).filter(ClaimEvidence.claim_id == c.id).all()
+            out.append(
+                {
+                    "id": c.id,
+                    "claim_text": c.claim_text,
+                    "claim_type": c.claim_type,
+                    "strength": c.strength,
+                    "status": c.status,
+                    "created_by": c.created_by,
+                    "stage": c.stage,
+                    "experiment_id": c.experiment_id,
+                    "evidence": [
+                        {"evidence_kind": e.evidence_kind, "evidence_ref": e.evidence_ref, "note": e.note}
+                        for e in ev
+                    ],
+                }
+            )
+        return out

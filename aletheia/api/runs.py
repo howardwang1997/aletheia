@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from aletheia.data.registry import all_ready, pending_datasets
 from aletheia.events.store import list_events
-from aletheia.memory.service import create_run, get_run, list_runs
+from aletheia.memory.service import create_run, get_run, list_claims, list_runs
 from aletheia.orchestrator.client import run_task
 from aletheia.orchestrator.session import auto_dry_run
 from aletheia.scheduler.driver import launch_driver
@@ -53,6 +53,13 @@ async def get_runs() -> list[dict]:
 @router.get("/{run_id}/events")
 async def get_run_events(run_id: str, limit: int = 500) -> list[dict]:
     return await asyncio.to_thread(list_events, run_id, limit)
+
+
+@router.get("/{run_id}/claims")
+async def get_run_claims(run_id: str, experiment_id: str | None = None) -> list[dict]:
+    """The evidence ledger: every claim this run made + its strength/status + evidence
+    refs — so a reviewer can see what is supported vs speculative."""
+    return await asyncio.to_thread(list_claims, run_id, experiment_id)
 
 
 class LaunchRequest(BaseModel):
