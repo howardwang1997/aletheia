@@ -35,6 +35,7 @@ from aletheia.memory.vector import format_briefing, index_chunk, recall
 from aletheia.orchestrator.gate import build_tool_gate
 from aletheia.orchestrator.tools import build_search_literature_tool
 from aletheia.research import literature
+from aletheia.research.citations import numbered_references, to_bibtex
 from aletheia.notify.feishu import notify_feishu
 from aletheia.orchestrator.reasoner import reason_stage
 from aletheia.orchestrator.worker import is_degraded, run_worker
@@ -84,6 +85,7 @@ class ExperimentDriver:
         self.branch: str | None = None  # this experiment's branch
         self.survey_brief: str = ""  # literature briefing from the SURVEY stage
         self.survey_gaps: list[str] = []  # research gaps surfaced by SURVEY
+        self.survey_papers: list[literature.Paper] = []  # citable refs for WRITE_UP
         self.hypothesis: dict[str, Any] = {}  # the hypothesis chosen by IDEATE
 
     async def _index(self, kind: str, text: str, exp_id: str | None, **meta: Any) -> None:
@@ -124,11 +126,15 @@ class ExperimentDriver:
                     "Few works report a fair leave-chemical-system-out baseline.",
                     "Composition-only vs structure-aware features are rarely compared honestly.",
                 ]
+                self.survey_papers = papers
             else:
                 subqs = await self._decompose(topic)
                 findings = await asyncio.gather(*[self._librarian(topic, sq) for sq in subqs])
                 findings = [f for f in findings if f and not is_degraded(f)]
                 briefing, gaps = await self._synthesize(topic, findings)
+                # The librarians ingested papers into the recall store; pull them back
+                # as structured, citable references for the WRITE_UP stage.
+                self.survey_papers = await asyncio.to_thread(self._recall_papers, topic)
         except Exception as exc:  # noqa: BLE001 - survey is best-effort
             await get_bus().publish(
                 make_event("literature", run_id=self.run_id, payload={"error": str(exc)})
@@ -178,6 +184,36 @@ class ExperimentDriver:
         obj = _parse_json(text, _JSON, {})
         gaps = [str(g).strip() for g in (obj.get("gaps") or []) if str(g).strip()][:6]
         return str(obj.get("briefing", "")).strip(), gaps
+
+    def _recall_papers(self, topic: str, k: int = 12) -> list[literature.Paper]:
+        """Reconstruct citable Papers from the literature chunks ingested by the
+        survey librarians (chunk text = 'title\\n\\nabstract'; meta carries
+        doi/year/venue/citations/authors). Best-effort — [] on any failure."""
+        papers: list[literature.Paper] = []
+        try:
+            chunks = recall(topic, k=k, kinds=["literature"], run_id=self.run_id, dry_run=self.dry_run)
+        except Exception:  # noqa: BLE001 - recall is best-effort
+            return []
+        for c in chunks:
+            text = (c.get("text") or "").strip()
+            if not text:
+                continue
+            title, _, abstract = text.partition("\n\n")
+            meta = c.get("meta") or {}
+            papers.append(
+                literature.Paper(
+                    title=title.strip(),
+                    authors=list(meta.get("authors") or []),
+                    year=meta.get("year"),
+                    doi=meta.get("doi"),
+                    venue=meta.get("venue"),
+                    abstract=abstract.strip(),
+                    url=meta.get("url"),
+                    citations=meta.get("citations"),
+                    source=str(meta.get("source") or ""),
+                )
+            )
+        return papers
 
     async def _ideate(self, plan: dict, exp_id: str | None) -> dict:
         """IDEATE: from the survey + gaps, generate testable hypotheses and pick the
@@ -320,21 +356,25 @@ class ExperimentDriver:
                 make_event("iam", run_id=self.run_id, payload={"op": "error", "error": str(exc)})
             )
 
-    async def _iam_finalize(self, report: str, rpanel, exp_id: str | None) -> None:
-        """Commit the experiment report to its branch and open a PR carrying the
-        critic verdict (PR-per-experiment). Best-effort."""
+    async def _iam_finalize(self, report: str, bib: str, rpanel, exp_id: str | None) -> None:
+        """Commit the cited paper (+ bibliography) to its branch and open a PR carrying
+        the critic verdict (PR-per-experiment). Best-effort."""
         if not (self.repo and self.branch and exp_id):
             return
         try:
-            await asyncio.to_thread(
-                self.gh.put_file, self.repo.full_name, "report.md", report,
-                message=f"experiment {exp_id}: report", branch=self.branch,
-            )
+            files = {"report.md": report}
+            if bib:
+                files["references.bib"] = bib
+            for fname, content in files.items():
+                await asyncio.to_thread(
+                    self.gh.put_file, self.repo.full_name, fname, content,
+                    message=f"experiment {exp_id}: {fname}", branch=self.branch,
+                )
             body = (
                 f"Autonomous experiment `{exp_id}`.\n\n"
                 f"**Critic consensus:** {rpanel.consensus_verdict} "
                 f"(gate {'passed' if rpanel.gate_passed else 'failed'}).\n\n"
-                "Report committed on this branch."
+                f"Cited paper (`report.md`{', `references.bib`' if bib else ''}) committed on this branch."
             )
             pr = await asyncio.to_thread(
                 self.gh.open_pr, self.repo.full_name,
@@ -701,36 +741,83 @@ class ExperimentDriver:
     async def _write_up(self, plan, design, result, analysis, rpanel, exp_id) -> None:
         metrics = result.get("metrics", {})
         eval_summary = (result.get("info") or {}).get("eval_summary", "")
+        # Real references retrieved by the SURVEY — the writer may cite ONLY these.
+        refs, references_md = numbered_references(self.survey_papers)
+        cite_list = "\n".join(
+            f"[{i}] {p.title}{f' ({p.year})' if p.year else ''}" for i, p in enumerate(refs, start=1)
+        )
         prompt = (
-            "Write a concise (≤300 words) experiment report in markdown with sections "
-            "Objective, Method, Results, Critic Review, Conclusion. In Results, lead "
-            "with the leave-chemical-system-out MAE (the honest headline), then give the "
-            "RepeatedKFold mean±std and the baseline comparison, and note the gap-range "
-            "error breakdown. Do not present the random-holdout number as the headline.\n\n"
+            "Write a structured scientific paper in markdown (IMRAD), grounded ONLY in the numbers and "
+            "the literature below. Use flowing prose (no bullet points outside the method/baseline list). "
+            "Sections, in order:\n"
+            "# <concise, specific title>\n"
+            "## Abstract — one flowing paragraph (~150 words), no labels.\n"
+            "## 1. Introduction — motivation and the research question; cite prior work as [n].\n"
+            "## 2. Related Work — summarize the surveyed literature and the gap this study targets; cite [n].\n"
+            "## 3. Method — features, model, and the leakage-aware protocol (leave-chemical-system-out "
+            "GroupKFold headline + RepeatedKFold 5x5 + a baseline panel + gap-range stratification).\n"
+            "## 4. Results — LEAD with the leave-chemical-system-out (LCSO) MAE (the honest headline), then "
+            "the RepeatedKFold mean±std, the baseline comparison, and the gap-range error breakdown; refer "
+            "to the parity plot at `figures/parity.png`. Do NOT present the random-holdout number as the "
+            "headline.\n"
+            "## 5. Discussion & Limitations — the hypothesis verdict, comparison to published work, and "
+            "honest limitations, taken from the analysis.\n\n"
+            "Cite ONLY using the [n] keys under CITABLE REFERENCES; never invent a reference or a published "
+            "number. Do NOT write a References section — it is appended automatically.\n\n"
+            f"HYPOTHESIS: {json.dumps(self.hypothesis)}\n"
             f"PLAN: {json.dumps(plan)}\nDESIGN: {json.dumps(design)}\nMETRICS: {json.dumps(metrics)}\n"
             f"EVAL PROTOCOL SUMMARY: {eval_summary}\n"
-            f"ANALYSIS: {analysis}\nCRITIC: {rpanel.consensus_verdict}"
+            f"ANALYSIS: {analysis}\nCRITIC VERDICT: {rpanel.consensus_verdict}\n\n"
+            f"CITABLE REFERENCES (cite inline as [n]):\n{cite_list or '(none retrieved)'}"
         )
-        report = await reason_stage(
+        cite_a = "[1]" if refs else ""
+        cite_b = "[2]" if len(refs) > 1 else cite_a
+        body = await reason_stage(
             self.run_id, "write_up", prompt,
             dry_run=self.dry_run,
             dry_text=(
-                f"# Experiment Report (dry-run)\n\n"
-                f"**Objective:** {plan.get('objective', 'n/a')}\n\n"
-                f"**Method:** {design.get('model')} on Magpie composition features; "
-                f"leave-chemical-system-out GroupKFold (headline) + RepeatedKFold 5x5 + baselines.\n\n"
-                f"**Results:** LCSO MAE={metrics.get('mae_lcso')} eV, R²={metrics.get('r2_lcso')} "
-                f"(headline); RepeatedKFold MAE={metrics.get('mae_cv_mean')}±{metrics.get('mae_cv_std')}; "
-                f"holdout MAE={metrics.get('mae_holdout')}, RMSE={metrics.get('rmse_holdout')}.\n\n"
-                f"**Eval protocol:** {eval_summary}\n\n"
-                f"**Critic Review:** {rpanel.consensus_verdict}.\n\n"
-                f"**Conclusion:** Pipeline ran end-to-end under a leakage-aware protocol; see metrics."
+                f"# Leakage-aware composition-only prediction of experimental band gaps\n\n"
+                f"## Abstract\n\n"
+                f"We study {plan.get('objective', 'experimental band-gap regression')} using composition-only "
+                f"Magpie descriptors and a {design.get('model')} model, evaluated under a leakage-aware "
+                f"protocol. Prior work {cite_a} reports strong composition baselines, but few studies "
+                f"{cite_b} report a fair leave-chemical-system-out (LCSO) number. Under LCSO GroupKFold the "
+                f"model attains MAE={metrics.get('mae_lcso')} eV (R²={metrics.get('r2_lcso')}), with "
+                f"RepeatedKFold MAE={metrics.get('mae_cv_mean')}±{metrics.get('mae_cv_std')}; the random "
+                f"holdout (MAE={metrics.get('mae_holdout')}) is optimistic by comparison. The critic panel "
+                f"returned {rpanel.consensus_verdict}.\n\n"
+                f"## 1. Introduction\n\n"
+                f"Predicting band gaps from composition alone is attractive because it needs no crystal "
+                f"structure. Prior work {cite_a} establishes composition descriptors as strong baselines.\n\n"
+                f"## 2. Related Work\n\n"
+                f"The surveyed literature {cite_a}{(' ' + cite_b) if cite_b != cite_a else ''} shows random "
+                f"splits overstate accuracy; a fair LCSO comparison remains under-reported — the gap this "
+                f"study targets.\n\n"
+                f"## 3. Method\n\n"
+                f"Magpie composition features feed a {design.get('model')}. Evaluation: leave-chemical-"
+                f"system-out GroupKFold (headline) + RepeatedKFold 5x5 + a Dummy/Ridge/KNN/GBM baseline "
+                f"panel + gap-range error stratification.\n\n"
+                f"## 4. Results\n\n"
+                f"The LCSO MAE is {metrics.get('mae_lcso')} eV (R²={metrics.get('r2_lcso')}); RepeatedKFold "
+                f"MAE={metrics.get('mae_cv_mean')}±{metrics.get('mae_cv_std')}; holdout "
+                f"MAE={metrics.get('mae_holdout')}, RMSE={metrics.get('rmse_holdout')}. See "
+                f"`figures/parity.png`. Protocol: {eval_summary}\n\n"
+                f"## 5. Discussion & Limitations\n\n"
+                f"{analysis or 'The pipeline ran end-to-end under a leakage-aware protocol.'}"
             ),
         )
-        path = run_artifacts_dir(self.run_id) / "report.md"
+        report = body.rstrip() + (("\n\n" + references_md) if references_md else "")
+        adir = run_artifacts_dir(self.run_id)
+        path = adir / "report.md"
         path.write_text(report)
+        artifacts: list[dict[str, str]] = [{"kind": "report", "uri": str(path)}]
+        bib = to_bibtex(self.survey_papers)
+        if bib:
+            bib_path = adir / "references.bib"
+            bib_path.write_text(bib)
+            artifacts.append({"kind": "bibliography", "uri": str(bib_path)})
         if exp_id:
-            await asyncio.to_thread(record_artifacts, exp_id, [{"kind": "report", "uri": str(path)}])
+            await asyncio.to_thread(record_artifacts, exp_id, artifacts)
         await get_bus().publish(
             make_event("report", run_id=self.run_id, payload={"uri": str(path), "preview": report[:400]})
         )
@@ -742,8 +829,8 @@ class ExperimentDriver:
             f"{rpanel.consensus_verdict}.",
             exp_id, mae_lcso=metrics.get("mae_lcso"), model=design.get("model"),
         )
-        # commit the report to the experiment branch + open the PR (IAM)
-        await self._iam_finalize(report, rpanel, exp_id)
+        # commit the paper + bibliography to the experiment branch + open the PR (IAM)
+        await self._iam_finalize(report, bib, rpanel, exp_id)
 
 
 # --- launch / task tracking ---

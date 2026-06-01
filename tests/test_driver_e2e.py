@@ -53,8 +53,16 @@ async def test_full_dry_run_loop():
         run = s.get(Run, run_id)
         assert run.status == "completed"
 
-    # a report artifact was written
-    assert any(a["kind"] == "report" for a in list_artifacts(exp_id))
+    # a report artifact was written — now a structured, cited paper (Phase C):
+    # it carries a References section + an inline citation, and a references.bib
+    # bibliography artifact sits alongside it.
+    arts = list_artifacts(exp_id)
+    assert any(a["kind"] == "report" for a in arts)
+    assert any(a["kind"] == "bibliography" for a in arts)
+    from aletheia.paths import run_artifacts_dir
+
+    report = (run_artifacts_dir(run_id) / "report.md").read_text()
+    assert "## References" in report and "[1]" in report
 
     # research front-end ran before design: survey → ideate transitions, a chosen
     # hypothesis persisted, a direction (novelty) gate, and ≥1 ingested literature chunk
