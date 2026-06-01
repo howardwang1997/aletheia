@@ -42,6 +42,13 @@ def extractive_answer(question: str, top_doc_text: str) -> str:
     return max(sentences, key=lambda s: _overlap(q, s))
 
 
+def extractive_answerer(question: str, contexts: list[str]) -> str:
+    """An ``answerer(question, contexts)`` adapter (the eval contract) over
+    ``extractive_answer`` — answers from the top retrieved passage. Offline, no LLM;
+    the default + dry-run/fallback answerer."""
+    return extractive_answer(question, contexts[0] if contexts else "")
+
+
 def token_f1(pred: str, gold: str) -> float:
     """Token-level F1 between a predicted and a gold answer (SQuAD-style)."""
     p, g = tokenize(pred), tokenize(gold)

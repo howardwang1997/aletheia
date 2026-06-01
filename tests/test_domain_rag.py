@@ -38,7 +38,7 @@ def test_run_experiment_returns_quality_metrics(tmp_path):
     assert (tmp_path / "eval.json").exists()
     kinds = {a["kind"] for a in result.artifacts}
     assert "eval" in kinds
-    assert result.info["model_impl"] == "LexicalExtractiveRAG"
+    assert "lexical retrieval" in result.info["model_impl"]  # retriever + answerer described
     assert result.info["protocol_status"] == "eval_set"
     # the per-case faithfulness inputs are returned for the driver's cross-vendor pass
     cases = result.info["faithfulness_cases"]

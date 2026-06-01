@@ -13,7 +13,7 @@ from typing import Any
 from aletheia.domains.base import DomainPlugin, DomainProfile, ExperimentResult
 from aletheia.domains.rag.dataset import load_qa
 from aletheia.domains.rag.retriever import (
-    extractive_answer,
+    extractive_answerer,
     gold_in_topk,
     normalized_exact_match,
     retrieve,
@@ -44,9 +44,32 @@ class RagEvalPlugin(DomainPlugin):
     def run_experiment(
         self, design: dict[str, Any], data_spec: dict[str, Any], workdir: Path
     ) -> ExperimentResult:
+        """Compute-path / dry entry: evaluate with the OFFLINE extractive answerer.
+        Host-side LLM generation is driven by the scheduler via ``evaluate`` instead."""
         data = self.load_data(data_spec)
-        corpus, cases = data["corpus"], data["cases"]
-        k = int(design.get("k", 5))
+        return self.evaluate(
+            data["corpus"], data["cases"], int(design.get("k", 5)),
+            answerer=extractive_answerer, workdir=workdir, design=design,
+        )
+
+    def evaluate(
+        self,
+        corpus: list[dict],
+        cases: list[dict],
+        k: int,
+        *,
+        answerer: Any,
+        workdir: Path,
+        design: dict[str, Any] | None = None,
+        answerer_label: str = "extractive top-sentence",
+        cost_per_answer: float = 0.0,
+        latency_per_answer_ms: float | None = None,
+    ) -> ExperimentResult:
+        """Deterministic RAG scoring with an INJECTED ``answerer(question, contexts) ->
+        str``. Retrieval + every metric is the fixed harness (the answerer never grades
+        itself); only the answer text comes from the (offline or host-side LLM) answerer.
+        ``contexts`` is the list of retrieved passage texts."""
+        design = design or {}
         workdir = Path(workdir)
         workdir.mkdir(parents=True, exist_ok=True)
 
@@ -57,8 +80,8 @@ class RagEvalPlugin(DomainPlugin):
             q = case.get("question", "")
             gold = case.get("gold_answer", "")
             retrieved = retrieve(corpus, q, k)
-            top_text = retrieved[0]["text"] if retrieved else ""
-            answer = extractive_answer(q, top_text)
+            contexts = [r["text"] for r in retrieved]
+            answer = str(answerer(q, contexts) or "")
             rows.append({
                 "question": q,
                 "retrieved": [r["doc_id"] for r in retrieved],
@@ -68,19 +91,15 @@ class RagEvalPlugin(DomainPlugin):
                 "f1": token_f1(answer, gold),
                 "exact_match": normalized_exact_match(answer, gold),
             })
-            faithfulness_cases.append({
-                "question": q,
-                "context": " ".join(r["text"] for r in retrieved),
-                "answer": answer,
-            })
+            faithfulness_cases.append({"question": q, "context": " ".join(contexts), "answer": answer})
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
         n = max(1, len(rows))
         recall_at_k = sum(1 for r in rows if r["recall_hit"]) / n
         answer_f1 = sum(r["f1"] for r in rows) / n
         exact_match = sum(r["exact_match"] for r in rows) / n
-        latency_ms = elapsed_ms / n  # per-query
-        cost_usd = 0.0  # lexical retrieve + extractive answer: no paid API calls
+        latency_ms = latency_per_answer_ms if latency_per_answer_ms is not None else elapsed_ms / n
+        cost_usd = cost_per_answer * len(rows)
 
         metrics = {
             "answer_f1": answer_f1,  # HEADLINE (goal=max)
@@ -91,7 +110,7 @@ class RagEvalPlugin(DomainPlugin):
         }
         eval_payload = {
             "protocol": {"headline_metric": "answer_f1", "k": k, "n_eval": len(rows),
-                         "retrieval": "lexical token-overlap", "answerer": "extractive top-sentence"},
+                         "retrieval": "lexical token-overlap", "answerer": answerer_label},
             "per_case": rows,
         }
         eval_path = workdir / "eval.json"
@@ -99,7 +118,7 @@ class RagEvalPlugin(DomainPlugin):
         eval_summary = (
             f"RAG eval on {len(rows)} QA cases (k={k}): answer-F1 {answer_f1:.3f} (HEADLINE), "
             f"recall@{k} {recall_at_k:.3f}, EM {exact_match:.3f}, "
-            f"{latency_ms:.1f} ms/query, ${cost_usd:.4f} — lexical retriever + extractive answerer"
+            f"{latency_ms:.1f} ms/query, ${cost_usd:.4f} — lexical retrieval + {answerer_label}"
         )
         return ExperimentResult(
             metrics=metrics,
@@ -107,7 +126,7 @@ class RagEvalPlugin(DomainPlugin):
             info={
                 "n_eval": len(rows),
                 "model": design.get("model", f"lexical_k{k}"),
-                "model_impl": "LexicalExtractiveRAG",
+                "model_impl": f"lexical retrieval + {answerer_label}",
                 "protocol_status": "eval_set",  # not a grouped-CV protocol; not degraded either
                 "eval_summary": eval_summary,
                 "faithfulness_cases": faithfulness_cases,  # the driver scores these via the critic panel
@@ -128,6 +147,7 @@ class RagEvalPlugin(DomainPlugin):
             headline_metric="answer_f1",
             headline_goal="max",  # higher F1 is better — surfaces the lower-is-better assumptions
             quality_via_critics=True,  # add a cross-vendor faithfulness metric in the driver
+            host_side_run=True,  # the answerer is a real host-side LLM (trusted); scoring stays deterministic
             units="",
             protocol_desc=(
                 "held-out QA eval set: deterministic recall@k + answer token-F1 + exact-match + "
