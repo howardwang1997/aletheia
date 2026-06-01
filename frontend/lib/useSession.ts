@@ -42,6 +42,7 @@ const ACTIVITY_TYPES = new Set([
   "research_degraded",
   "scorecard",
   "reproduction",
+  "faithfulness",
   "experiment",
   "campaign",
   "campaign_plan",

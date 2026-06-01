@@ -99,6 +99,8 @@ function line(e: LabEvent): string {
       return p.error
         ? `🔁 reproduction failed: ${p.error}`
         : `🔁 reproduction ${p.reproduced ? "confirmed ✓" : "NOT confirmed ✗"} (${p.metric ?? ""}: ${p.original ?? "?"} → ${p.repro ?? "?"})`;
+    case "faithfulness":
+      return `🧷 faithfulness ${p.score != null ? Number(p.score).toFixed(2) : "n/a"} (${p.n_cases ?? 0} cases, ${p.scorer ?? "panel"})`;
     case "research_blocked":
       return `🛑 run blocked — ${p.reason ?? ""}`;
     case "research_degraded":

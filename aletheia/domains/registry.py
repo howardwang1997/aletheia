@@ -22,9 +22,16 @@ def _molecules() -> DomainPlugin:
     return MoleculePropertyPlugin()
 
 
+def _rag() -> DomainPlugin:
+    from aletheia.domains.rag.plugin import RagEvalPlugin
+
+    return RagEvalPlugin()
+
+
 _LOADERS: dict[str, Callable[[], DomainPlugin]] = {
     "materials": _materials,
     "molecules": _molecules,
+    "rag": _rag,
 }
 
 DEFAULT_DOMAIN = "materials"

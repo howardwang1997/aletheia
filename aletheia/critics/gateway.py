@@ -240,6 +240,44 @@ class CriticGateway:
         )
         return panel
 
+    async def score_faithfulness(
+        self, cases: list[dict[str, Any]], run_id: str | None = None, dry_run: bool = False
+    ) -> float | None:
+        """Score answer FAITHFULNESS (groundedness in the retrieved context) with the
+        cross-vendor panel — each enabled vendor rates the fraction of answers fully
+        grounded in their context, and the per-vendor scores are AVERAGED (multi-model,
+        never a single judge). Returns 0..1, or None when no scorer is available.
+
+        Dry-run / no providers → a canned 0.8 (offline, no spend)."""
+        if dry_run:
+            return 0.8  # canned (offline); the dry result carries no real cases
+        providers = self._providers()
+        if not cases or not providers:
+            return None
+        sample = cases[:10]
+        content = json.dumps(sample, indent=2, default=str)
+        instruction = (
+            "You audit the FAITHFULNESS of RAG answers. For each item you are given a "
+            "question, the retrieved CONTEXT, and the ANSWER. An answer is FAITHFUL only if "
+            "it is fully supported by its context (no unsupported or invented claims). "
+            "Return the standard review JSON, but set `confidence` to the FRACTION (0..1) of "
+            "answers that are fully faithful, and `verdict` to approve if most are faithful "
+            "else reject. Keep findings short."
+        )
+
+        def _one(prov: CriticProvider) -> float | None:
+            try:
+                resp = prov.review(instruction, content)
+                return max(0.0, min(1.0, float(resp.confidence)))
+            except Exception:  # noqa: BLE001 - a vendor hiccup drops that scorer
+                return None
+
+        scores = await asyncio.gather(
+            *[asyncio.to_thread(_one, p) for p in providers], return_exceptions=True
+        )
+        vals = [s for s in scores if isinstance(s, float)]
+        return (sum(vals) / len(vals)) if vals else None
+
     async def _author_rebuttal(
         self, target: str, content_obj: dict[str, Any], critiques: list[Critique],
         run_id: str | None, dry_run: bool,
