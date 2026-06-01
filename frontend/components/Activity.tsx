@@ -30,6 +30,8 @@ function statusLabel(status: { state: string; detail?: string }): string {
       return "forming a hypothesis…";
     case "scoring":
       return "scoring the hypothesis…";
+    case "reproducing":
+      return "reproducing the result…";
     case "designing":
       return "designing experiment…";
     case "coding":
@@ -91,6 +93,10 @@ function line(e: LabEvent): string {
       const nov = sc.novelty != null ? ` (novelty ${Number(sc.novelty).toFixed(2)}, EIG ${Number(sc.expected_information_gain ?? 0).toFixed(2)})` : "";
       return `🎯 scorecard: ${p.decision ?? ""}${nov}${p.reason ? ` — ${p.reason}` : ""}`;
     }
+    case "reproduction":
+      return p.error
+        ? `🔁 reproduction failed: ${p.error}`
+        : `🔁 reproduction ${p.reproduced ? "confirmed ✓" : "NOT confirmed ✗"} (${p.metric ?? ""}: ${p.original ?? "?"} → ${p.repro ?? "?"})`;
     case "research_blocked":
       return `🛑 run blocked — ${p.reason ?? ""}`;
     case "research_degraded":

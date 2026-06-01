@@ -137,6 +137,10 @@ class Settings(BaseSettings):
     hypothesis_min_eval_clarity: float = 0.4
     campaign_min_eig: float = 0.3  # stop the campaign when expected information gain drops below this
 
+    # --- reproduction pass (a metric claim earns `strong` only when re-run confirms it) ---
+    reproduction_enabled: bool = True
+    reproduction_rel_tol: float = 0.05  # relative tolerance on the headline metric
+
     # --- vendor keys (read without the ALETHEIA_ prefix) ---
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     claude_code_oauth_token: str | None = Field(default=None, alias="CLAUDE_CODE_OAUTH_TOKEN")
