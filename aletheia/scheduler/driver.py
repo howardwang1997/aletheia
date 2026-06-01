@@ -20,6 +20,7 @@ from aletheia.compute.factory import get_compute_backend
 from aletheia.compute.mcp_tools import resolve_data_spec
 from aletheia.config import get_settings
 from aletheia.critics.gateway import CriticGateway
+from aletheia.domains.base import DomainProfile
 from aletheia.domains.registry import get_domain_plugin
 from aletheia.events.bus import get_bus, make_event
 from aletheia.iam import policy
@@ -88,6 +89,7 @@ class ExperimentDriver:
         self.survey_gaps: list[str] = []  # research gaps surfaced by SURVEY
         self.survey_papers: list[literature.Paper] = []  # citable refs for WRITE_UP
         self.hypothesis: dict[str, Any] = {}  # the hypothesis chosen by IDEATE
+        self.profile: DomainProfile | None = None  # the domain's vocabulary (set in _run)
 
     async def _index(self, kind: str, text: str, exp_id: str | None, **meta: Any) -> None:
         """Best-effort: embed a reasoning fragment into the recall store (off-thread)."""
@@ -102,6 +104,9 @@ class ExperimentDriver:
         then synthesize a thematic briefing + explicit research gaps. Mirrors the
         literature-review workflow. Returns (briefing, gaps). Best-effort — any failure
         yields an empty briefing, never breaks the loop."""
+        if self.profile is None:  # standalone call (tests); _run sets it before SURVEY
+            run = await asyncio.to_thread(get_run, self.run_id)
+            self.profile = get_domain_plugin((run or {}).get("domain")).profile()
         await self._status("surveying", "researching the literature")
         topic = " ".join(
             str(plan.get(k, "")).strip() for k in ("objective", "direction", "hypothesis")
@@ -109,24 +114,10 @@ class ExperimentDriver:
         briefing, gaps = "", []
         try:
             if self.dry_run:
-                papers = [
-                    literature.Paper(
-                        title="Magpie composition features for band-gap regression",
-                        abstract="Composition-only descriptors predict band gaps; tree models are strong baselines.",
-                        year=2024, source="arxiv",
-                    ),
-                    literature.Paper(
-                        title="Leakage-aware evaluation for materials ML",
-                        abstract="Random splits overstate performance; leave-chemical-system-out is the honest metric.",
-                        year=2023, citations=31, source="openalex",
-                    ),
-                ]
+                papers = list(self.profile.dry_papers) if self.profile else []
                 await asyncio.to_thread(literature.ingest, papers, self.run_id, True)
                 briefing = literature.briefing(papers)
-                gaps = [
-                    "Few works report a fair leave-chemical-system-out baseline.",
-                    "Composition-only vs structure-aware features are rarely compared honestly.",
-                ]
+                gaps = list(self.profile.dry_gaps) if self.profile else []
                 self.survey_papers = papers
             else:
                 subqs = await self._decompose(topic)
@@ -232,12 +223,7 @@ class ExperimentDriver:
         )
         text = await reason_stage(
             self.run_id, "ideate", prompt, dry_run=self.dry_run,
-            dry_text=(
-                '{"statement": "Magpie features + gradient boosting beat a leakage-aware LCSO '
-                'baseline for experimental band-gap regression", "rationale": "GBM captures nonlinear '
-                'composition-property relations", "prediction": "LCSO MAE below the random-forest baseline", '
-                '"novelty_note": "Few prior works report a fair LCSO comparison"}'
-            ),
+            dry_text=json.dumps(self.profile.dry_hypothesis if self.profile else {}),
         )
         hypo = _parse_json(text, _JSON, {})
         statement = str(
@@ -298,7 +284,13 @@ class ExperimentDriver:
             return None
         await self._status("coding", "authoring model code")
         text = await run_worker(
-            self.run_id, "coder", coder_prompt(design, data_spec),
+            self.run_id, "coder",
+            coder_prompt(
+                design, data_spec,
+                feature_desc=self.profile.feature_desc if self.profile else "a dense numeric feature matrix",
+                protocol=self.profile.protocol_desc if self.profile
+                else "grouped cross-validation (headline) + RepeatedKFold + a baseline panel",
+            ),
             system=CODER_SYSTEM, dry_run=self.dry_run, dry_value=CANNED_SOLUTION,
         )
         if is_degraded(text):
@@ -442,6 +434,7 @@ class ExperimentDriver:
         exp_id = run.get("plan_experiment_id")
         domain = run.get("domain") or "materials"
         plugin = get_domain_plugin(domain)
+        self.profile = plugin.profile()  # the domain's vocabulary for every stage
         data_spec = resolve_data_spec(self.run_id)
         self.budget = await asyncio.to_thread(BudgetTracker, self.run_id)
 
@@ -595,12 +588,15 @@ class ExperimentDriver:
         await self._write_up(plan, best_design, best_result, analysis, rpanel, exp_id)
 
         metrics = best_result.get("metrics", {})
+        hk = self.profile.headline_metric if self.profile else "mae"
         return {
             "round": round_idx,
             "exp_id": exp_id,
             "model": best_design.get("model"),
             "metrics": metrics,
-            "mae_lcso": metrics.get("mae_lcso"),
+            "headline_metric": hk,
+            "headline": metrics.get(hk),
+            "units": self.profile.units if self.profile else "",
             "analysis": analysis,
             "verdict": rpanel.consensus_verdict,
             "hypothesis": str(self.hypothesis.get("statement", "")).strip(),
@@ -628,8 +624,8 @@ class ExperimentDriver:
         {"continue": bool, "next_hypothesis": {...}, "rationale": str}."""
         await self._status("deciding", "choosing the next experiment")
         trajectory = "\n".join(
-            f"- round {o['round']}: '{o['hypothesis']}' -> LCSO MAE {o.get('mae_lcso')} "
-            f"[{o.get('model')}], verdict {o.get('verdict')}"
+            f"- round {o['round']}: '{o['hypothesis']}' -> {o.get('headline_metric')} "
+            f"{o.get('headline')} [{o.get('model')}], verdict {o.get('verdict')}"
             for o in outcomes
         )
         gaps = ("OPEN GAPS:\n- " + "\n- ".join(self.survey_gaps) + "\n\n") if self.survey_gaps else ""
@@ -645,12 +641,11 @@ class ExperimentDriver:
         )
         text = await reason_stage(
             self.run_id, "campaign", prompt, dry_run=self.dry_run,
-            dry_text=(
-                '{"continue": true, "rationale": "an ablation on the feature set would explain the gap", '
-                '"next_hypothesis": {"statement": "Adding oxidation-state features improves LCSO band-gap '
-                'accuracy over composition-only Magpie features", "rationale": "valence governs gap size", '
-                '"prediction": "lower LCSO MAE than round 1", "novelty_note": "rarely tested under LCSO"}}'
-            ),
+            dry_text=json.dumps({
+                "continue": True,
+                "rationale": "an ablation / extension would sharpen the result",
+                "next_hypothesis": self.profile.dry_next_hypothesis if self.profile else {},
+            }),
         )
         decision = _parse_json(text, _JSON, {"continue": False})
         await self._index(
@@ -665,29 +660,32 @@ class ExperimentDriver:
         """Write a campaign-level summary tying the experiments together: the
         trajectory, which experiment won, what the program learned, open gaps."""
         await self._status("synthesizing", "summarizing the campaign")
+        hk = self.profile.headline_metric if self.profile else "mae"
+        units = self.profile.units if self.profile else ""
+        usfx = f" {units}" if units else ""
         rows = "\n".join(
-            f"- round {o['round']} ({o.get('model')}): '{o['hypothesis']}' -> LCSO MAE "
-            f"{o.get('mae_lcso')}, verdict {o.get('verdict')}"
+            f"- round {o['round']} ({o.get('model')}): '{o['hypothesis']}' -> {hk} "
+            f"{o.get('headline')}, verdict {o.get('verdict')}"
             for o in outcomes
         )
         best = min(
-            (o for o in outcomes if o.get("mae_lcso") is not None),
-            key=lambda o: o["mae_lcso"],
+            (o for o in outcomes if o.get("headline") is not None),
+            key=lambda o: o["headline"],
             default=outcomes[-1],
         )
         prompt = (
             f"Summarize this research campaign (objective: {plan.get('objective', '')}) as a short markdown "
-            f"brief. Experiments:\n{rows}\n\nThe best LCSO MAE was {best.get('mae_lcso')} in round "
+            f"brief. Experiments:\n{rows}\n\nThe best {hk} was {best.get('headline')} in round "
             f"{best.get('round')}. Write: the trajectory (how each experiment informed the next), which "
             "experiment won and why, what the program learned, and the most important still-open gap. "
-            "Ground every claim in the LCSO numbers above; do not invent results."
+            f"Ground every claim in the {hk} numbers above; do not invent results."
         )
         summary = await reason_stage(
             self.run_id, "campaign", prompt, dry_run=self.dry_run,
             dry_text=(
                 f"# Campaign Summary\n\n**Objective:** {plan.get('objective', 'n/a')}\n\n"
                 f"## Trajectory\n\n{rows}\n\n"
-                f"## Outcome\n\nThe best leave-chemical-system-out MAE was {best.get('mae_lcso')} eV in "
+                f"## Outcome\n\nThe best {hk} was {best.get('headline')}{usfx} in "
                 f"round {best.get('round')} ({best.get('model')}). Across {len(outcomes)} experiments the "
                 f"program refined its hypothesis from the survey gaps toward the most informative test.\n\n"
                 f"## Open gaps\n\n- " + "\n- ".join(self.survey_gaps or ["(none recorded)"])
@@ -701,14 +699,14 @@ class ExperimentDriver:
             )
         await self._index(
             "conclusion",
-            f"campaign ({len(outcomes)} experiments) best LCSO MAE {best.get('mae_lcso')} "
+            f"campaign ({len(outcomes)} experiments) best {hk} {best.get('headline')} "
             f"in round {best.get('round')} ({best.get('model')}).",
-            first_exp_id, mae_lcso=best.get("mae_lcso"), experiments=len(outcomes),
+            first_exp_id, headline=best.get("headline"), experiments=len(outcomes),
         )
         await get_bus().publish(
             make_event("campaign_finished", run_id=self.run_id, payload={
                 "uri": str(path), "experiments": len(outcomes),
-                "best_round": best.get("round"), "best_mae_lcso": best.get("mae_lcso"),
+                "best_round": best.get("round"), "best_headline": best.get("headline"),
             })
         )
 
@@ -728,9 +726,11 @@ class ExperimentDriver:
             recall, query, run_id=None, exclude_run_id=self.run_id, dry_run=self.dry_run
         )
         briefing = format_briefing(prior)
+        task = self.profile.task if self.profile else "property regression"
+        feature_desc = self.profile.feature_desc if self.profile else "a numeric feature matrix"
         prompt = (
-            "Turn this research plan into a concrete experiment design for a "
-            "composition->property regression.\n\n"
+            f"Turn this research plan into a concrete experiment design for a {task} on "
+            f"{feature_desc}.\n\n"
             f"PLAN:\n{json.dumps(plan, indent=2)}\n\nDATA:\n{json.dumps(data_spec, indent=2)}\n\n"
             + (self.survey_brief + "\n\n" if self.survey_brief else "")
             + (briefing + "\n\n" if briefing else "")
@@ -740,7 +740,7 @@ class ExperimentDriver:
         text = await reason_stage(
             self.run_id, "experiment_design", prompt,
             dry_run=self.dry_run,
-            dry_text=f"[dry-run] Design: {fallback['model']} on Magpie features, 80/20 split.",
+            dry_text=f"[dry-run] Design: {fallback['model']} on {feature_desc}, 80/20 split.",
         )
         design = _parse_design(text, fallback)
         await record_transition(
@@ -826,25 +826,30 @@ class ExperimentDriver:
         limitations. The main loop keeps only the merged text, never the sub-turns."""
         metrics = result.get("metrics", {})
         eval_summary = (result.get("info") or {}).get("eval_summary", "")
+        hm = self.profile.headline_metric if self.profile else "mae"
+        hv = metrics.get(hm)
+        protocol = self.profile.protocol_desc if self.profile else "grouped CV + holdout + baselines"
+        sota = self.profile.sota_reference if self.profile else "no comparable published benchmark"
         lit = f"LITERATURE (prior work):\n{self.survey_brief}\n" if self.survey_brief else ""
         evidence = (
             f"HYPOTHESIS: {json.dumps(self.hypothesis) if self.hypothesis else 'n/a'}\n"
             f"DESIGN: {json.dumps(design)}\nMETRICS: {json.dumps(metrics)}\n"
-            f"EVAL PROTOCOL SUMMARY: {eval_summary}\n{lit}"
+            f"EVAL PROTOCOL SUMMARY: {eval_summary}\n"
+            f"KNOWN SOTA: {sota}\n{lit}"
         )
         # one focused, isolated sub-check per concern — independent, so parallel
         subchecks = {
             "leakage": "Assess DATA LEAKAGE risk only (train/test contamination, grouped split adequacy).",
-            "overfit": "Assess OVERFITTING only (holdout vs LCSO vs RepeatedKFold spread; CV std).",
+            "overfit": "Assess OVERFITTING only (holdout vs grouped CV vs RepeatedKFold spread; CV std).",
             "baseline": "Assess BASELINE ADEQUACY only (does the model beat dummy/ridge/knn/gbm meaningfully?).",
-            "stats": "Assess STATISTICAL VALIDITY only (CI width, error stratification by gap range, sample sizes).",
-            "sota": "Assess PRIOR WORK / SOTA only: is the headline LCSO result competitive with the "
-                    "literature above, and does it support or refute the hypothesis? If no comparable "
-                    "published number is available, say so explicitly — do not invent one.",
+            "stats": "Assess STATISTICAL VALIDITY only (CI width, error stratification by range, sample sizes).",
+            "sota": "Assess PRIOR WORK / SOTA only: is the headline grouped-CV result competitive with the "
+                    "literature above / the KNOWN SOTA, and does it support or refute the hypothesis? If no "
+                    "comparable published number is available, say so explicitly — do not invent one.",
         }
         header = (
-            "Interpret these regression results. The HEADLINE metric is "
-            "leave-chemical-system-out MAE (GroupKFold); the random holdout is optimistic. "
+            f"Interpret these regression results. The HEADLINE metric is the grouped-CV score "
+            f"({protocol}); the random holdout is optimistic. "
         )
         findings = await asyncio.gather(
             *[
@@ -852,7 +857,7 @@ class ExperimentDriver:
                     self.run_id, f"analysis:{name}",
                     f"{header}{focus}\nBe concise (2-3 sentences).\n\n{evidence}",
                     dry_run=self.dry_run,
-                    dry_value=f"[dry-run] {name}: nominal; LCSO MAE={metrics.get('mae_lcso')}.",
+                    dry_value=f"[dry-run] {name}: nominal; headline {hm}={hv}.",
                 )
                 for name, focus in subchecks.items()
             ]
@@ -870,17 +875,18 @@ class ExperimentDriver:
             "the metrics + literature (do not overclaim). Produce:\n"
             "1) HYPOTHESIS VERDICT — supported or refuted, judged against its prediction.\n"
             "2) CLAIMS — 1-2, each as finding -> mechanism -> implication.\n"
-            "3) ABLATION READING — what the baseline panel + gap-range stratification reveal.\n"
-            "4) SOTA COMPARISON — how the LCSO headline sits vs the prior work (or 'no comparable number').\n"
-            "5) LIMITATIONS. Lead with the LCSO headline.\n\n"
+            "3) ABLATION READING — what the baseline panel + error stratification reveal.\n"
+            "4) SOTA COMPARISON — how the grouped-CV headline sits vs the prior work / known SOTA "
+            "(or 'no comparable number').\n"
+            "5) LIMITATIONS. Lead with the grouped-CV headline.\n\n"
             f"HYPOTHESIS: {json.dumps(self.hypothesis) if self.hypothesis else 'n/a'}\n"
-            f"SUB-REVIEWS:\n{sub_text}\n\nMETRICS: {json.dumps(metrics)}\n{lit}",
+            f"SUB-REVIEWS:\n{sub_text}\n\nMETRICS: {json.dumps(metrics)}\nKNOWN SOTA: {sota}\n{lit}",
             dry_run=self.dry_run,
             dry_value=(
-                f"[dry-run] Analysis — Hypothesis verdict: supported (LCSO MAE={metrics.get('mae_lcso')} "
-                f"< baselines). Claim: composition features carry band-gap signal -> tree model captures "
-                f"it -> usable screen. Ablation: beats dummy/ridge/knn/gbm; worst on wide-gap bin. "
-                f"SOTA: comparable to prior work in the briefing. Limitations: composition-only, one dataset. "
+                f"[dry-run] Analysis — Hypothesis verdict: supported (headline {hm}={hv} < baselines). "
+                f"Claim: the chosen features carry signal for {self.profile.task if self.profile else 'the task'} "
+                f"-> the model captures it -> a usable predictor. Ablation: beats dummy/ridge/knn/gbm. "
+                f"SOTA: {sota}. Limitations: one dataset, single split family. "
                 f"Sub-checks: {sub_text}"
             ),
         )
@@ -917,6 +923,14 @@ class ExperimentDriver:
     async def _write_up(self, plan, design, result, analysis, rpanel, exp_id) -> None:
         metrics = result.get("metrics", {})
         eval_summary = (result.get("info") or {}).get("eval_summary", "")
+        hk = self.profile.headline_metric if self.profile else "mae"
+        units = self.profile.units if self.profile else ""
+        usfx = f" {units}" if units else ""
+        task = self.profile.task if self.profile else "property regression"
+        protocol = self.profile.protocol_desc if self.profile else "grouped CV + holdout + baselines"
+        feat = self.profile.feature_desc if self.profile else "a numeric feature matrix"
+        sota = self.profile.sota_reference if self.profile else "no comparable published benchmark"
+        hv = metrics.get(hk)
         # Real references retrieved by the SURVEY — the writer may cite ONLY these.
         refs, references_md = numbered_references(self.survey_papers)
         cite_list = "\n".join(
@@ -930,19 +944,17 @@ class ExperimentDriver:
             "## Abstract — one flowing paragraph (~150 words), no labels.\n"
             "## 1. Introduction — motivation and the research question; cite prior work as [n].\n"
             "## 2. Related Work — summarize the surveyed literature and the gap this study targets; cite [n].\n"
-            "## 3. Method — features, model, and the leakage-aware protocol (leave-chemical-system-out "
-            "GroupKFold headline + RepeatedKFold 5x5 + a baseline panel + gap-range stratification).\n"
-            "## 4. Results — LEAD with the leave-chemical-system-out (LCSO) MAE (the honest headline), then "
-            "the RepeatedKFold mean±std, the baseline comparison, and the gap-range error breakdown; refer "
-            "to the parity plot at `figures/parity.png`. Do NOT present the random-holdout number as the "
-            "headline.\n"
-            "## 5. Discussion & Limitations — the hypothesis verdict, comparison to published work, and "
-            "honest limitations, taken from the analysis.\n\n"
+            f"## 3. Method — the {task} on {feat}, and the leakage-aware protocol ({protocol}).\n"
+            f"## 4. Results — LEAD with the headline grouped-CV metric ({hk}), then the RepeatedKFold "
+            "mean±std, the baseline comparison, and the error breakdown; refer to the parity plot at "
+            "`figures/parity.png`. Do NOT present the random-holdout number as the headline.\n"
+            f"## 5. Discussion & Limitations — the hypothesis verdict, the comparison to known SOTA ({sota}), "
+            "and honest limitations, taken from the analysis.\n\n"
             "Cite ONLY using the [n] keys under CITABLE REFERENCES; never invent a reference or a published "
             "number. Do NOT write a References section — it is appended automatically.\n\n"
             f"HYPOTHESIS: {json.dumps(self.hypothesis)}\n"
             f"PLAN: {json.dumps(plan)}\nDESIGN: {json.dumps(design)}\nMETRICS: {json.dumps(metrics)}\n"
-            f"EVAL PROTOCOL SUMMARY: {eval_summary}\n"
+            f"EVAL PROTOCOL SUMMARY: {eval_summary}\nKNOWN SOTA: {sota}\n"
             f"ANALYSIS: {analysis}\nCRITIC VERDICT: {rpanel.consensus_verdict}\n\n"
             f"CITABLE REFERENCES (cite inline as [n]):\n{cite_list or '(none retrieved)'}"
         )
@@ -952,34 +964,30 @@ class ExperimentDriver:
             self.run_id, "write_up", prompt,
             dry_run=self.dry_run,
             dry_text=(
-                f"# Leakage-aware composition-only prediction of experimental band gaps\n\n"
+                f"# A leakage-aware study of {task}\n\n"
                 f"## Abstract\n\n"
-                f"We study {plan.get('objective', 'experimental band-gap regression')} using composition-only "
-                f"Magpie descriptors and a {design.get('model')} model, evaluated under a leakage-aware "
-                f"protocol. Prior work {cite_a} reports strong composition baselines, but few studies "
-                f"{cite_b} report a fair leave-chemical-system-out (LCSO) number. Under LCSO GroupKFold the "
-                f"model attains MAE={metrics.get('mae_lcso')} eV (R²={metrics.get('r2_lcso')}), with "
-                f"RepeatedKFold MAE={metrics.get('mae_cv_mean')}±{metrics.get('mae_cv_std')}; the random "
-                f"holdout (MAE={metrics.get('mae_holdout')}) is optimistic by comparison. The critic panel "
-                f"returned {rpanel.consensus_verdict}.\n\n"
+                f"We study {plan.get('objective', task)} using {feat} and a {design.get('model')} model, "
+                f"evaluated under a leakage-aware protocol. Prior work {cite_a} reports strong baselines, but "
+                f"few studies {cite_b} report a fair grouped-CV number. Under grouped cross-validation the "
+                f"model attains {hk}={hv}{usfx} (R²={metrics.get('r2')}), with RepeatedKFold "
+                f"MAE={metrics.get('mae_cv_mean')}±{metrics.get('mae_cv_std')}; the random holdout "
+                f"(MAE={metrics.get('mae_holdout')}) is optimistic by comparison. Known SOTA: {sota}. The "
+                f"critic panel returned {rpanel.consensus_verdict}.\n\n"
                 f"## 1. Introduction\n\n"
-                f"Predicting band gaps from composition alone is attractive because it needs no crystal "
-                f"structure. Prior work {cite_a} establishes composition descriptors as strong baselines.\n\n"
+                f"This study targets {task}. Prior work {cite_a} establishes strong baselines we build on.\n\n"
                 f"## 2. Related Work\n\n"
                 f"The surveyed literature {cite_a}{(' ' + cite_b) if cite_b != cite_a else ''} shows random "
-                f"splits overstate accuracy; a fair LCSO comparison remains under-reported — the gap this "
-                f"study targets.\n\n"
+                f"splits overstate accuracy; a fair grouped-CV comparison remains under-reported — the gap "
+                f"this study targets.\n\n"
                 f"## 3. Method\n\n"
-                f"Magpie composition features feed a {design.get('model')}. Evaluation: leave-chemical-"
-                f"system-out GroupKFold (headline) + RepeatedKFold 5x5 + a Dummy/Ridge/KNN/GBM baseline "
-                f"panel + gap-range error stratification.\n\n"
+                f"{feat} feed a {design.get('model')}. Evaluation: {protocol}.\n\n"
                 f"## 4. Results\n\n"
-                f"The LCSO MAE is {metrics.get('mae_lcso')} eV (R²={metrics.get('r2_lcso')}); RepeatedKFold "
+                f"The headline {hk} is {hv}{usfx} (R²={metrics.get('r2')}); RepeatedKFold "
                 f"MAE={metrics.get('mae_cv_mean')}±{metrics.get('mae_cv_std')}; holdout "
                 f"MAE={metrics.get('mae_holdout')}, RMSE={metrics.get('rmse_holdout')}. See "
                 f"`figures/parity.png`. Protocol: {eval_summary}\n\n"
                 f"## 5. Discussion & Limitations\n\n"
-                f"{analysis or 'The pipeline ran end-to-end under a leakage-aware protocol.'}"
+                f"{analysis or 'The pipeline ran end-to-end under a leakage-aware protocol.'} Known SOTA: {sota}."
             ),
         )
         report = body.rstrip() + (("\n\n" + references_md) if references_md else "")
@@ -1000,10 +1008,10 @@ class ExperimentDriver:
         # index the headline result so future runs recall what this campaign found
         await self._index(
             "conclusion",
-            f"{plan.get('objective', '')}: {design.get('model')} -> LCSO MAE "
-            f"{metrics.get('mae_lcso')} eV, R² {metrics.get('r2_lcso')}; verdict "
+            f"{plan.get('objective', '')}: {design.get('model')} -> {hk} "
+            f"{hv}{usfx}, R² {metrics.get('r2')}; verdict "
             f"{rpanel.consensus_verdict}.",
-            exp_id, mae_lcso=metrics.get("mae_lcso"), model=design.get("model"),
+            exp_id, headline=hv, model=design.get("model"),
         )
         # commit the paper + bibliography to the experiment branch + open the PR (IAM)
         await self._iam_finalize(report, bib, rpanel, exp_id)

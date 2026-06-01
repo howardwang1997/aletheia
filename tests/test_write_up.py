@@ -64,12 +64,14 @@ def test_write_up_dry_produces_cited_paper():
     exp_id = finalize_plan(run_id, {"objective": "predict band gap", "domain": "materials"})
 
     d = ExperimentDriver(run_id, dry_run=True)
+    from aletheia.domains.registry import get_domain_plugin
+    d.profile = get_domain_plugin("materials").profile()  # _run sets this before WRITE_UP
     d.survey_papers = _papers()
     d.hypothesis = {"statement": "GBM beats an LCSO baseline", "prediction": "lower LCSO MAE"}
     result = {
         "metrics": {
-            "mae_lcso": 0.47, "r2_lcso": 0.6, "mae_cv_mean": 0.45, "mae_cv_std": 0.03,
-            "mae_holdout": 0.40, "rmse_holdout": 0.7,
+            "mae": 0.47, "r2": 0.6, "mae_lcso": 0.47, "r2_lcso": 0.6, "mae_cv_mean": 0.45,
+            "mae_cv_std": 0.03, "mae_holdout": 0.40, "rmse_holdout": 0.7,
         },
         "info": {"eval_summary": "LCSO GroupKFold + RepeatedKFold 5x5 + baselines"},
     }

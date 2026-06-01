@@ -16,6 +16,7 @@ dependencies:
   - matminer                # Magpie composition featurizer + expt_gap dataset loader
   - xgboost                 # SOTA gradient boosting (coder may use it; harness still evaluates)
   - lightgbm                # SOTA gradient boosting
+  - rdkit                   # molecules domain: SMILES -> ECFP fingerprints + Bemis-Murcko scaffolds (host-side)
   - pip:
       # --- agent runtime ---
       - claude-agent-sdk

@@ -27,6 +27,32 @@ class ExperimentResult:
         return {"metrics": self.metrics, "artifacts": self.artifacts, "info": self.info}
 
 
+@dataclass
+class DomainProfile:
+    """Everything the (domain-agnostic) reasoning loop needs to phrase a run in a
+    domain's own terms — so the driver, compute dry-run, and coder contract carry NO
+    materials-specific literals. Each plugin returns one via ``DomainPlugin.profile``.
+
+    ``headline_metric`` is the metrics-dict key the loop optimizes + reports (e.g.
+    ``mae_lcso`` for materials, ``rmse_scaffold`` for molecules). ``sota_reference``
+    is the field's published benchmark number — it makes "beat the SOTA" concrete in
+    the analysis + write-up. The ``dry_*`` fields are the canned, offline content the
+    dry-run path uses (no network, no spend)."""
+
+    task: str  # e.g. "composition→property regression"
+    headline_metric: str  # metrics key the loop leads with / optimizes
+    units: str = ""  # e.g. "eV"; "" for unitless targets
+    protocol_desc: str = "grouped cross-validation + holdout + baseline panel"
+    feature_desc: str = "a numeric feature matrix"
+    sota_reference: str = "no comparable published benchmark"
+    dry_papers: list[Any] = field(default_factory=list)  # list[research.literature.Paper]
+    dry_gaps: list[str] = field(default_factory=list)
+    dry_hypothesis: dict[str, Any] = field(default_factory=dict)
+    dry_next_hypothesis: dict[str, Any] = field(default_factory=dict)
+    dry_metrics: dict[str, float] = field(default_factory=dict)
+    dry_eval_summary: str = ""
+
+
 class DomainPlugin(ABC):
     """Contract every domain implements. Steps are separable so they can be unit
     tested offline (featurize/train on a tiny in-memory frame) and also composed by
@@ -57,6 +83,10 @@ class DomainPlugin(ABC):
     @abstractmethod
     def baselines(self) -> list[dict[str, Any]]:
         """Candidate model/feature specs the agent can choose among / compare."""
+
+    @abstractmethod
+    def profile(self) -> DomainProfile:
+        """Domain vocabulary + canned dry-run content for the reasoning loop."""
 
     def run_experiment(
         self, design: dict[str, Any], data_spec: dict[str, Any], workdir: Path

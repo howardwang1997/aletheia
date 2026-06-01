@@ -47,9 +47,10 @@ design = dict(payload["design"])
 if (here / "solution.py").exists():
     design["solution_path"] = str(here / "solution.py")
 
-from aletheia.domains.materials.matbench_task import MaterialsBandGapPlugin
+from aletheia.domains.registry import get_domain_plugin
 
-result = MaterialsBandGapPlugin().train_evaluate(X, y, design, here, groups=groups)
+plugin = get_domain_plugin(payload.get("domain"))
+result = plugin.train_evaluate(X, y, design, here, groups=groups)
 (here / "metrics.json").write_text(json.dumps(result.to_dict()))
 print("ALETHEIA_JOB_OK")
 '''
