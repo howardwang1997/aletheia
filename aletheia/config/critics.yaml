@@ -25,10 +25,13 @@ panel:
     model: deepseek-chat      # latest DeepSeek (OpenAI-compatible API)
     base_url: https://api.deepseek.com
   - id: zhipu
-    enabled: false            # available spare (key present); flip on for a 4th model
+    enabled: true             # GLM Coding Plan — a reliable 2nd model so a Codex hiccup
+                              # never empties a round. Key is read from OpenCode's config.
     transport: api
-    model: glm-latest         # latest Zhipu GLM
-    base_url: https://open.bigmodel.cn/api/paas/v4
+    model: glm-4.6            # the GLM Coding Plan coding model (matches OpenCode)
+    # IMPORTANT: the Coding Plan subscription is served ONLY by the /coding/ endpoint;
+    # the standard /api/paas/v4 returns 1113 "余额不足" (no pay-as-you-go balance).
+    base_url: https://open.bigmodel.cn/api/coding/paas/v4
 
 # Gate policy: how the per-model verdicts combine into CritiquePanel.gate_passed.
 consensus:

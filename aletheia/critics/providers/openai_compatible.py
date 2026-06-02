@@ -11,6 +11,8 @@ endpoint supports.
 
 from __future__ import annotations
 
+import time
+
 from aletheia.config import get_settings
 from aletheia.critics.providers.base import CriticProvider
 from aletheia.critics.schemas import CriticResponse
@@ -37,19 +39,38 @@ class OpenAICompatibleProvider(CriticProvider):
                 f"base_url is required for OpenAI-compatible vendor '{self.critic_id}' "
                 f"(set it in critics.yaml or {self.critic_id.upper()}_BASE_URL)."
             )
-        client = OpenAI(api_key=key, base_url=base_url)
+        client = OpenAI(api_key=key, base_url=base_url, max_retries=0)
         # JSON mode is the portable structured-output path across OpenAI-compatible
         # endpoints; the instruction already asks for the JSON schema by field.
-        resp = client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": instruction},
-                {"role": "user", "content": content},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.3,
-        )
-        return self._parse(resp.choices[0].message.content or "")
+        # Retry transient rate-limit / server errors with backoff — subscription coding
+        # plans (e.g. GLM) rate-limit bursts (HTTP 429 code 1113), and the panel fans out
+        # concurrently; without this a transient 429 would silently drop this reviewer.
+        from openai import APIStatusError, APITimeoutError, RateLimitError
+
+        delay = 2.0
+        last_exc: Exception | None = None
+        for attempt in range(4):
+            try:
+                resp = client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": instruction},
+                        {"role": "user", "content": content},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.3,
+                )
+                return self._parse(resp.choices[0].message.content or "")
+            except (RateLimitError, APITimeoutError) as exc:
+                last_exc = exc
+            except APIStatusError as exc:
+                if exc.status_code < 500:  # non-transient client error -> don't retry
+                    raise
+                last_exc = exc
+            if attempt < 3:
+                time.sleep(delay)
+                delay = min(delay * 2, 16.0)
+        raise last_exc  # type: ignore[misc]
 
 
 class DeepSeekAPIProvider(OpenAICompatibleProvider):
@@ -57,4 +78,6 @@ class DeepSeekAPIProvider(OpenAICompatibleProvider):
 
 
 class ZhipuAPIProvider(OpenAICompatibleProvider):
-    """Zhipu/GLM (latest), OpenAI-compatible at the bigmodel.cn paas endpoint."""
+    """Zhipu/GLM via the GLM Coding Plan, OpenAI-compatible at the bigmodel.cn
+    ``/api/coding/paas/v4`` endpoint (the Coding Plan subscription is NOT served by the
+    standard ``/api/paas/v4``). The key is read from OpenCode's config (see settings)."""

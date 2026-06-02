@@ -92,13 +92,17 @@ def test_openai_compatible_builds_client_with_key_and_base_url(monkeypatch):
             return types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)])
 
     class _FakeClient:
-        def __init__(self, api_key, base_url):
+        def __init__(self, api_key, base_url, **kwargs):
             seen["api_key"], seen["base_url"] = api_key, base_url
             self.chat = types.SimpleNamespace(completions=_FakeCompletions())
 
-    # inject a fake `openai` module so `from openai import OpenAI` resolves
+    # inject a fake `openai` module so `from openai import OpenAI` (+ the retryable
+    # exception classes) resolves
     fake_openai = types.ModuleType("openai")
     fake_openai.OpenAI = _FakeClient
+    fake_openai.RateLimitError = type("RateLimitError", (Exception,), {})
+    fake_openai.APITimeoutError = type("APITimeoutError", (Exception,), {})
+    fake_openai.APIStatusError = type("APIStatusError", (Exception,), {"status_code": 500})
     monkeypatch.setitem(sys.modules, "openai", fake_openai)
     fake_settings = types.SimpleNamespace(
         vendor_key=lambda _id: "sk-zhipu", vendor_base_url=lambda _id: None
