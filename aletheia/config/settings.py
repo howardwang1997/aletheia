@@ -239,7 +239,9 @@ class Settings(BaseSettings):
             "openai": self.openai_api_key,
             "gemini": self.google_api_key,
             "deepseek": self.deepseek_api_key,
-            "zhipu": self.zhipu_api_key,
+            # GLM: explicit ZHIPU_API_KEY wins; otherwise reuse the GLM Coding Plan key
+            # already configured in OpenCode (no second place to keep the secret).
+            "zhipu": self.zhipu_api_key or _opencode_glm_key(),
         }.get(vendor_id)
 
     def vendor_base_url(self, vendor_id: str) -> str | None:
@@ -249,6 +251,26 @@ class Settings(BaseSettings):
             "zhipu": self.zhipu_base_url,
             "deepseek": self.deepseek_base_url,
         }.get(vendor_id)
+
+
+@functools.lru_cache
+def _opencode_glm_key() -> str | None:
+    """Read the GLM Coding Plan API key from OpenCode's config so the critic panel can
+    reuse it without duplicating the secret. Looks for the ``zhipuai-coding-plan``
+    provider in ``~/.config/opencode/opencode.json``. Best-effort: any error -> None."""
+    import json as _json
+    import os as _os
+    from pathlib import Path as _Path
+
+    base = _os.environ.get("XDG_CONFIG_HOME") or _Path.home() / ".config"
+    path = _Path(base) / "opencode" / "opencode.json"
+    try:
+        data = _json.loads(path.read_text())
+        opts = (data.get("provider", {}).get("zhipuai-coding-plan", {}) or {}).get("options", {})
+        key = opts.get("apiKey")
+        return str(key) if key else None
+    except Exception:
+        return None
 
 
 @functools.lru_cache

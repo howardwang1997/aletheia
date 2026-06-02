@@ -14,11 +14,22 @@ from __future__ import annotations
 import json
 import subprocess
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 from aletheia.config import get_settings
 from aletheia.critics.providers.base import CriticProvider
 from aletheia.critics.schemas import CriticResponse
+
+# Serialize all `codex exec` calls process-wide. The critic panel fans out concurrently
+# (e.g. one model running both an adversarial AND a supportive stance), but every codex
+# process shares ONE ~/.codex/auth.json holding a SINGLE-USE, rotating OAuth refresh
+# token. When the access token has expired, two concurrent processes both try to refresh
+# with the same refresh token; the server honors the first and invalidates it, failing the
+# loser with "refresh token was already used" — and a stale write can burn the token on
+# disk. Serializing means the first call refreshes once; the rest reuse the fresh token.
+_CODEX_LOCK = threading.Lock()
 
 # JSON Schema keywords OpenAI's strict structured-output mode rejects.
 _UNSUPPORTED = (
@@ -55,13 +66,26 @@ class OpenAICodexProvider(CriticProvider):
     transport = "cli"
 
     def review(self, instruction: str, content: str) -> CriticResponse:
-        settings = get_settings()
-        codex = settings.codex_command
         schema = strict_schema(CriticResponse)
         prompt = (
             f"{instruction}\n\n--- CONTENT TO REVIEW ---\n{content}\n\n"
             "Respond ONLY with a JSON object conforming to the provided schema."
         )
+        # one retry: under the lock the first call refreshes the OAuth token, so a
+        # transient refresh-race loser (or a just-rotated token) succeeds on retry.
+        last_exc: Exception | None = None
+        for attempt in range(2):
+            try:
+                return self._exec_codex(schema, prompt)
+            except RuntimeError as exc:
+                last_exc = exc
+                if attempt == 0:
+                    time.sleep(1.5)
+        raise last_exc  # type: ignore[misc]
+
+    def _exec_codex(self, schema: dict, prompt: str) -> CriticResponse:
+        settings = get_settings()
+        codex = settings.codex_command
         with tempfile.TemporaryDirectory() as td:
             tdp = Path(td)
             schema_path = tdp / "schema.json"
@@ -89,13 +113,16 @@ class OpenAICodexProvider(CriticProvider):
             cmd.append(prompt)
             # stdin=DEVNULL is essential: `codex exec` otherwise blocks reading stdin
             # for EOF when stdin is a pipe (e.g. under uvicorn / a background task).
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                stdin=subprocess.DEVNULL,
-                timeout=settings.codex_timeout_s,
-            )
+            # Serialized: concurrent codex processes race the single-use OAuth refresh
+            # token (see _CODEX_LOCK above).
+            with _CODEX_LOCK:
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    stdin=subprocess.DEVNULL,
+                    timeout=settings.codex_timeout_s,
+                )
             if out_path.exists() and out_path.read_text().strip():
                 return self._parse(out_path.read_text())
             # fall back to stdout, else surface the error
