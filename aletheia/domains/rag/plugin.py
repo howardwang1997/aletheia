@@ -151,6 +151,9 @@ class RagEvalPlugin(DomainPlugin):
             headline_goal="max",  # higher F1 is better — surfaces the lower-is-better assumptions
             quality_via_critics=True,  # add a cross-vendor faithfulness metric in the driver
             host_side_run=True,  # the answerer is a real host-side LLM (trusted); scoring stays deterministic
+            # RAG evaluates a retrieval/answer config; it does not fit + persist a model,
+            # so a real run is verifiable with just the eval record (no `model` artifact).
+            required_artifacts=("eval",),
             units="",
             protocol_desc=(
                 "held-out QA eval set: deterministic recall@k + answer token-F1 + exact-match + "

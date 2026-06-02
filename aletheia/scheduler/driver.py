@@ -847,7 +847,8 @@ class ExperimentDriver:
             return True
         info = result.get("info") or {}
         kinds = {a.get("kind") for a in (result.get("artifacts") or [])}
-        missing = {"eval", "model"} - kinds
+        required = set(self.profile.required_artifacts) if self.profile else {"eval", "model"}
+        missing = required - kinds
         if missing or not result.get("metrics"):
             await self._block_run(
                 exp_id,
@@ -913,6 +914,30 @@ class ExperimentDriver:
             f"{'confirmed' if reproduced else 'NOT confirmed'} (rel Δ {delta})",
         )
         return payload
+
+    @staticmethod
+    def _results_review_payload(design: dict, result: dict, analysis: Any, claims: Any) -> dict:
+        """The evidence package the critic panel reviews at the results gate. Includes
+        the harness's own ``method_drift`` finding (+ requested/executed method) so the
+        critic evaluates plan↔execution drift directly, not by inferring it from code."""
+        info = result.get("info") or {}
+        return {
+            "design": design,
+            "metrics": result.get("metrics"),
+            "eval_summary": info.get("eval_summary", ""),
+            "protocol_status": info.get("protocol_status"),
+            "degraded": info.get("protocol_status") == "degraded_kfold",
+            "method_drift": bool(info.get("method_drift")),
+            "method_drift_msg": info.get("method_drift_msg", ""),
+            "requested_method": info.get("requested_method") or design.get("model", ""),
+            "executed_impl": info.get("model_impl", ""),
+            "reproduction": info.get("reproduction"),
+            "claims": claims,
+            "analysis": analysis,
+            # the coder's actual model code, so an adversarial reviewer can check
+            # for leakage / metric-gaming, not just trust the reported numbers
+            "solution_code": design.get("solution_code", ""),
+        }
 
     async def _finalize_claims(
         self, protocol_status: str | None, rpanel, reproduction: dict | None = None,
@@ -1217,6 +1242,14 @@ class ExperimentDriver:
         drift, drift_msg = detect_method_drift(
             hypo_text, str(design.get("model", "")), str(_info.get("model_impl", ""))
         )
+        if _info.get("dense_fallback"):
+            # a requested dense retriever that fell back to lexical is also a
+            # not-instantiated mechanism (the family detector doesn't model retrievers).
+            drift = True
+            drift_msg = drift_msg or (
+                "requested dense retrieval but no real embedder available; evaluated with "
+                "the lexical baseline — mechanism not instantiated"
+            )
         _info["method_drift"] = drift
         _info["method_drift_msg"] = drift_msg
         if drift:
@@ -1253,21 +1286,10 @@ class ExperimentDriver:
         # 5) review_results gate — the critics see the CLAIMS + evidence (proposed in
         # analysis) + the protocol status + the reproduction, so they review evidence.
         info = result.get("info") or {}
+        claims = await asyncio.to_thread(list_claims, self.run_id, exp_id)
         rpanel = await self.gateway.review(
             "results",
-            {
-                "design": design,
-                "metrics": result.get("metrics"),
-                "eval_summary": info.get("eval_summary", ""),
-                "protocol_status": info.get("protocol_status"),
-                "degraded": info.get("protocol_status") == "degraded_kfold",
-                "reproduction": info.get("reproduction"),
-                "claims": await asyncio.to_thread(list_claims, self.run_id, exp_id),
-                "analysis": analysis,
-                # the coder's actual model code, so an adversarial reviewer can check
-                # for leakage / metric-gaming, not just trust the reported numbers
-                "solution_code": design.get("solution_code", ""),
-            },
+            self._results_review_payload(design, result, analysis, claims),
             exp_id or self.run_id,
             run_id=self.run_id,
             dry_run=self.dry_run,
@@ -1660,10 +1682,11 @@ class ExperimentDriver:
         model = get_settings().claude_model
         retriever_fn, retriever_label = self._make_retriever(design)
         requested_dense = str(design.get("retriever", "lexical")).lower() == "dense"
+        dense_fellback = requested_dense and retriever_label.startswith("lexical")
         await get_bus().publish(
             make_event("retriever", run_id=self.run_id, payload={
                 "requested": "dense" if requested_dense else "lexical", "used": retriever_label,
-                "fallback": requested_dense and retriever_label.startswith("lexical")})
+                "fallback": dense_fellback})
         )
 
         if not self.dry_run:
@@ -1694,8 +1717,15 @@ class ExperimentDriver:
             make_event("compute_status", run_id=self.run_id,
                        payload={"job_id": "host-side", "status": "done", "metrics": result.metrics})
         )
+        info = dict(result.info)
+        if dense_fellback:
+            # the requested scientific method (dense retrieval) was NOT instantiated;
+            # the eval ran on the lexical baseline. Flag it so the mechanism claim is
+            # finalized as `not_evaluated` (reuses the method-drift machinery downstream).
+            info["dense_fallback"] = True
+            info["requested_method"] = "dense (embeddings)"
         return {"job_id": "host-side", "metrics": result.metrics,
-                "artifacts": result.artifacts, "info": result.info}
+                "artifacts": result.artifacts, "info": info}
 
     async def _rag_ablation(self, design, data_spec, domain, exp_id) -> dict[str, Any]:
         """A CONTROLLED retriever ablation: run the eval with the lexical AND the dense
