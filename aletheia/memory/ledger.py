@@ -79,7 +79,10 @@ CLAIM_TYPES = (
 # the LLM's self-assessment):
 CLAIM_STRENGTHS = ("speculative", "weak", "moderate", "strong")
 # where the claim stands relative to the evidence:
-CLAIM_STATUSES = ("proposed", "supported", "refuted", "unverified")
+# "not_evaluated" = the claim's mechanism was never instantiated (e.g. the executed
+# model did not match the hypothesized one), so it is untested — distinct from
+# "refuted", which means it was tested and contradicted.
+CLAIM_STATUSES = ("proposed", "supported", "refuted", "unverified", "not_evaluated")
 # the kind of artifact a piece of evidence points at:
 EVIDENCE_KINDS = (
     "paper",
@@ -111,7 +114,8 @@ class Run(Base):
     domain: Mapped[str | None] = mapped_column(String(128))
     direction: Mapped[str | None] = mapped_column(Text)
     goal: Mapped[str | None] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(16), default="active")
+    # e.g. active | scoping | completed | results_rejected | paused | failed
+    status: Mapped[str] = mapped_column(String(32), default="active")
     human_owner: Mapped[str | None] = mapped_column(String(128))
     budget_cap_usd: Mapped[float | None] = mapped_column(Float)
     gpu_hours_cap: Mapped[float | None] = mapped_column(Float)

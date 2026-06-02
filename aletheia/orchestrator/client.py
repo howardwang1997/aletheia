@@ -1,6 +1,6 @@
 """One-shot orchestrator runtime (Phase 0).
 
-A ``ClaudeSDKClient`` (Opus 4.7) that runs a single task and streams every message
+A ``ClaudeSDKClient`` (Opus 4.8) that runs a single task and streams every message
 to the event bus, exposing a ``memory_log`` MCP tool. The multi-turn scoping
 conversation lives in :mod:`aletheia.orchestrator.session`.
 

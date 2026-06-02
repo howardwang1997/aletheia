@@ -97,7 +97,7 @@ class Settings(BaseSettings):
 
     # --- Claude runtime ---
     claude_auth_mode: Literal["subscription", "api_key"] = "subscription"
-    claude_model: str = "claude-opus-4-7"
+    claude_model: str = "claude-opus-4-8"
 
     # --- Codex CLI (critic transport "cli": GPT-5.5 on the OpenAI Coding Plan) ---
     codex_command: str = "codex"

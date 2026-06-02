@@ -75,6 +75,44 @@ def test_make_retriever_real_run_uses_dense(monkeypatch):
     assert fn(_CORPUS, "q", 1)  # the dense closure runs without a real model
 
 
+# --- fail-closed: a real run never silently ranks with the random hash stub ----
+def test_get_embedder_require_real_raises_on_hash_backend(monkeypatch):
+    """require_real must refuse the hash stub instead of returning random vectors."""
+    import aletheia.memory.embedder as emb
+
+    s = emb.get_settings()
+    monkeypatch.setattr(s, "embedding_backend", "hash", raising=False)
+    monkeypatch.setattr(emb, "get_settings", lambda: s)
+    # silent path still degrades; require_real fails closed
+    assert isinstance(emb.get_embedder(require_real=False), emb.HashEmbedder)
+    with __import__("pytest").raises(emb.EmbedderUnavailableError):
+        emb.get_embedder(require_real=True)
+
+
+def test_make_retriever_real_run_falls_back_when_embedder_unavailable(monkeypatch):
+    """Real run requests dense but the real backend is unavailable -> honest lexical
+    label (NOT a 'dense' label backed by random vectors)."""
+    create_all()
+    run_id = create_run("dense unavailable", domain="rag", status="planned")
+    import aletheia.memory.embedder as emb
+
+    def _boom(**kw):
+        if kw.get("require_real"):
+            raise emb.EmbedderUnavailableError("no model")
+        return _E()  # noqa: F821 — defined below at call time
+
+    class _E:
+        def embed(self, texts):
+            return [[1.0, 0.0] for _ in texts]
+
+    monkeypatch.setattr(emb, "get_embedder", _boom)
+    d = ExperimentDriver(run_id, dry_run=False)
+    d.profile = get_domain_plugin("rag").profile()
+    _fn, label = d._make_retriever({"retriever": "dense"})
+    assert label.startswith("lexical")
+    assert "unavailable" in label
+
+
 # --- the RAG coder may select the retriever -------------------------------
 def test_code_rag_selects_retriever(monkeypatch):
     import json
