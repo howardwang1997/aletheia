@@ -57,6 +57,38 @@ def test_grouped_regression_eval_returns_full_panel(tmp_path):
     assert result.info["protocol_status"] == "grouped"  # real groups -> honest headline
 
 
+def test_persist_model_survives_unpicklable_custom_estimator(tmp_path):
+    """A real-run bug (molecules e2e): the coder authored a custom estimator class in
+    the dynamically-loaded solution module; joblib pickles classes BY REFERENCE, so the
+    model save raised and sank the whole job before metrics were written. The eval must
+    now stay durable and a `model` artifact must still be produced (cloudpickle by value
+    or a source note). A class defined inside this function reproduces the by-reference
+    failure (its __qualname__ contains "<locals>", which joblib/pickle cannot resolve)."""
+    from sklearn.base import BaseEstimator, RegressorMixin
+
+    class _LocalMeanRegressor(BaseEstimator, RegressorMixin):
+        def fit(self, X, y):
+            self.mean_ = float(np.mean(y))
+            return self
+
+        def predict(self, X):
+            return np.full(len(X), getattr(self, "mean_", 0.0))
+
+    rng = np.random.default_rng(2)
+    X = rng.standard_normal((30, 3))
+    y = X[:, 0] + rng.standard_normal(30) * 0.1
+    result = grouped_regression_eval(
+        model_factory=lambda: _LocalMeanRegressor(),
+        baseline_models={"mean": _LocalMeanRegressor()},
+        X=X, y=y, groups=None, design={}, workdir=tmp_path, model_name="local",
+    )
+    # metrics survived AND the artifact contract is satisfied despite the custom class
+    assert "mae_grouped" in result.metrics
+    kinds = {a["kind"] for a in result.artifacts}
+    assert {"model", "eval"} <= kinds
+    assert (tmp_path / "eval.json").exists()
+
+
 def test_protocol_falls_back_to_kfold_without_groups(tmp_path):
     from sklearn.linear_model import Ridge
 
