@@ -468,9 +468,14 @@ class ExperimentDriver:
             "representation, or evaluation metric — where beating the incumbent benchmark is NOT the "
             "point. Choose this ONLY if you can name a concrete discriminating demonstration the new "
             "frame would make (a case the incumbent provably cannot handle/distinguish).\n"
+            "If (and ONLY if) paradigm, also give a \"demonstration\": "
+            '{"form": "discriminating_instance | enablement | unification | impossibility", '
+            '"claim": "the concrete, checkable case the incumbent frame provably cannot '
+            'handle/distinguish"}. A paradigm hypothesis WITHOUT a concrete demonstration will be '
+            "treated as a performance contribution.\n"
             "Return ONLY JSON for the chosen one: "
             '{"statement": "...", "rationale": "...", "prediction": "...", "novelty_note": "...", '
-            '"contribution_type": "performance" | "paradigm"}.'
+            '"contribution_type": "performance" | "paradigm", "demonstration": {"form": "...", "claim": "..."}}.'
         )
         text = await reason_stage(
             self.run_id, "ideate", prompt, dry_run=self.dry_run,
@@ -510,22 +515,41 @@ class ExperimentDriver:
         # reproducible discriminating demonstration grounds it (see PARADIGM_MODE_DESIGN.md);
         # this is the honest vocabulary so the contribution is not flattened into a metric.
         if self._contribution_type() == "paradigm":
+            demo = self._paradigm_demonstration() or {}
+            form_evidence = evidence + [{
+                "evidence_kind": "demonstration",
+                "evidence_ref": str(demo.get("form", "discriminating")),
+                "note": str(demo.get("claim", "")),
+            }]
             self._claim_ids["formulation"] = await asyncio.to_thread(
                 create_claim, self.run_id,
-                claim_text=f"New formulation proposed: {note or statement}",
+                claim_text=f"New formulation proposed ({demo.get('form', 'discriminating')}): {note or statement}",
                 claim_type="formulation", strength="speculative",
                 status="proposed", experiment_id=exp_id, created_by="ideate", stage="ideate",
-                evidence=evidence,
+                evidence=form_evidence,
             )
         await record_transition(self.run_id, exp_id, "survey", "ideate", f"hypothesis: {statement[:80]}")
         return self.hypothesis
 
     def _contribution_type(self) -> str:
-        """`performance` (beat a benchmark) or `paradigm` (change the question). Drives
-        honest write-up labeling now; will select the results-gate mode in a later phase
-        (see docs/PARADIGM_MODE_DESIGN.md). Defaults to the conservative `performance`."""
+        """`performance` (beat a benchmark) or `paradigm` (change the question). Selects
+        the results-gate review STANDARD and the write-up framing (see
+        docs/PARADIGM_MODE_DESIGN.md). A `paradigm` claim is honored ONLY if it names a
+        concrete discriminating demonstration — the fakeability guardrail; otherwise it
+        falls back to the conservative `performance`."""
         ct = str(self.hypothesis.get("contribution_type", "")).strip().lower()
-        return "paradigm" if ct == "paradigm" else "performance"
+        if ct == "paradigm" and self._paradigm_demonstration() is not None:
+            return "paradigm"
+        return "performance"
+
+    def _paradigm_demonstration(self) -> dict | None:
+        """The discriminating demonstration a paradigm hypothesis must name: a concrete
+        case the incumbent frame provably cannot handle/distinguish. Returns the dict
+        (``{form, claim}``) only when a non-empty ``claim`` is present, else None."""
+        d = self.hypothesis.get("demonstration")
+        if isinstance(d, dict) and str(d.get("claim", "")).strip():
+            return d
+        return None
 
     async def _direction_gate(self, plan: dict, exp_id: str | None) -> bool:
         """Novelty + feasibility gate on the chosen hypothesis (cross-model peer review,
@@ -943,10 +967,15 @@ class ExperimentDriver:
         return payload
 
     @staticmethod
-    def _results_review_payload(design: dict, result: dict, analysis: Any, claims: Any) -> dict:
+    def _results_review_payload(
+        design: dict, result: dict, analysis: Any, claims: Any,
+        contribution_type: str = "performance", demonstration: dict | None = None,
+    ) -> dict:
         """The evidence package the critic panel reviews at the results gate. Includes
         the harness's own ``method_drift`` finding (+ requested/executed method) so the
-        critic evaluates plan↔execution drift directly, not by inferring it from code."""
+        critic evaluates plan↔execution drift directly, not by inferring it from code.
+        For a ``paradigm`` contribution it also carries the discriminating demonstration
+        the critic must judge (SOTA-delta is irrelevant in that mode)."""
         info = result.get("info") or {}
         return {
             "design": design,
@@ -959,6 +988,8 @@ class ExperimentDriver:
             "requested_method": info.get("requested_method") or design.get("model", ""),
             "executed_impl": info.get("model_impl", ""),
             "reproduction": info.get("reproduction"),
+            "contribution_type": contribution_type,
+            "demonstration": demonstration,
             "claims": claims,
             "analysis": analysis,
             # the coder's actual model code, so an adversarial reviewer can check
@@ -1314,12 +1345,17 @@ class ExperimentDriver:
         # analysis) + the protocol status + the reproduction, so they review evidence.
         info = result.get("info") or {}
         claims = await asyncio.to_thread(list_claims, self.run_id, exp_id)
+        contribution_type = self._contribution_type()
         rpanel = await self.gateway.review(
             "results",
-            self._results_review_payload(design, result, analysis, claims),
+            self._results_review_payload(
+                design, result, analysis, claims,
+                contribution_type=contribution_type, demonstration=self._paradigm_demonstration(),
+            ),
             exp_id or self.run_id,
             run_id=self.run_id,
             dry_run=self.dry_run,
+            mode=contribution_type,  # paradigm work is judged on the right axes, not SOTA-delta
         )
         await record_transition(
             self.run_id, exp_id, "analysis", "optimize",
