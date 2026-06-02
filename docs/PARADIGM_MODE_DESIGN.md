@@ -131,10 +131,25 @@ All four are concrete artifacts the harness can re-run — so they plug into the
   demonstration requirement is enforced deterministically — `_contribution_type()` returns
   `paradigm` ONLY when a concrete `demonstration` is named (else falls back to performance);
   no demonstration → no formulation claim (the fakeability guardrail).
-- **P3 — demonstration-as-evidence + reproduction (next):** wire the discriminating
-  demonstration into the evidence ledger as a first-class artifact and run the reproduction
-  pass over *it* (not a metric), so a `formulation` claim can reach >speculative. Then a real
-  e2e paradigm run end-to-end.
+- **P3 — demonstration-as-evidence + reproduction: GROUNDING DONE (PR #34).** The
+  `formulation` claim is now grounded by a REPRODUCIBLE discriminating demonstration, never an
+  LLM assertion and never SOTA-delta:
+  - `_claim_strength("formulation", …, demonstration_holds=…)` — no demonstration executed →
+    `speculative`; held but gate failed / didn't hold → `weak`; held + approved → `moderate`;
+    held + clean approve + **reproduced** → `strong`.
+  - `_reproduce` reproduces the DEMONSTRATION (not a metric): stable only if it `holds` on both
+    runs and its `statistic` is within tolerance → `reproduction.demonstration_reproduced`.
+  - `_finalize_claims` finalizes the formulation claim: `not_evaluated` (no demonstration),
+    `supported` (held + approved), `refuted` (gate reject / didn't hold). Write-up records a
+    `limitation` when a paradigm run produced no demonstration (the formulation stays a PROPOSAL).
+  - Contract: execution surfaces `info["demonstration"] = {form, holds, statistic, detail}`.
+
+  **Remaining (P4) — the demonstration EXECUTOR.** Nothing produces `info["demonstration"]` yet,
+  so on a real run the formulation claim is honestly capped at `speculative`/`not_evaluated`.
+  Producing it requires a domain to *compute* the discriminating statistic (e.g. a
+  `run_demonstration` hook running coder-authored code in the sandbox, like `build_pipeline`).
+  This must stay deterministic + sandboxed (no host-side LLM "holds" assertion) to preserve the
+  fakeability guardrail. A real e2e paradigm run that reaches `strong` depends on P4.
 
 ## What this is NOT
 

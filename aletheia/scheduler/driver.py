@@ -158,13 +158,20 @@ class ExperimentDriver:
         has_sota: bool = False,
         method_match: bool = True,
         reproduced: bool | None = None,
+        demonstration_holds: bool | None = None,
     ) -> str:
         """Deterministic, harness-owned claim strength — never the LLM's self-rating.
         Keeps a report from implying stronger evidence than the ledger holds.
 
         ``reproduced``: True = an independent re-run confirmed the headline; False =
         it contradicted it; None = not attempted. A metric claim reaches `strong` ONLY
-        when a reproduction confirmed it."""
+        when a reproduction confirmed it.
+
+        ``demonstration_holds`` (paradigm contributions): True = the discriminating
+        demonstration was executed and held; False = executed and did not hold; None =
+        not executed. A `formulation` claim is grounded by this — NOT by SOTA-delta — and
+        reaches `strong` only when the demonstration held AND reproduced under a clean
+        approve. No demonstration executed → `speculative` (it stays a proposal)."""
         if kind == "metric":
             if protocol_status == "degraded_kfold" or not method_match:
                 return "weak"  # headline rests on a degraded protocol / a fallback method
@@ -183,6 +190,14 @@ class ExperimentDriver:
             return "moderate" if gate_passed else "weak"
         if kind == "novelty":
             return "speculative"  # no structured literature/novelty check in v1
+        if kind == "formulation":
+            if demonstration_holds is None:
+                return "speculative"  # no discriminating demonstration executed -> a proposal
+            if not demonstration_holds or gate_passed is False:
+                return "weak"  # demonstration did not hold, or the gate did not pass
+            if reproduced and gate_verdict == "approve":
+                return "strong"  # held + clean approve + STABLE across an independent re-run
+            return "moderate"  # held + approved (approve_with_changes, or not reproduced)
         return "weak"
 
     def _maximize(self) -> bool:
@@ -958,6 +973,19 @@ class ExperimentDriver:
         reproduced, delta = self._repro_match(original, repro_v, get_settings().reproduction_rel_tol)
         payload = {"attempted": True, "reproduced": reproduced, "mode": "locked-code reseed",
                    "metric": hk, "original": original, "repro": repro_v, "delta": delta}
+        # paradigm contributions: reproduce the DISCRIMINATING DEMONSTRATION, not a metric —
+        # it is reproduced only if it held on BOTH runs and its statistic is stable.
+        orig_demo = (result.get("info") or {}).get("demonstration")
+        repro_demo = (repro_result.get("info") or {}).get("demonstration")
+        if isinstance(orig_demo, dict):
+            demo_repro = bool(orig_demo.get("holds")) and bool((repro_demo or {}).get("holds"))
+            if demo_repro and orig_demo.get("statistic") is not None:
+                stat_stable, _ = self._repro_match(
+                    orig_demo.get("statistic"), (repro_demo or {}).get("statistic"),
+                    get_settings().reproduction_rel_tol,
+                )
+                demo_repro = stat_stable
+            payload["demonstration_reproduced"] = demo_repro
         await get_bus().publish(make_event("reproduction", run_id=self.run_id, payload=payload))
         await record_transition(
             self.run_id, exp_id, "analysis", "analysis",
@@ -1000,7 +1028,7 @@ class ExperimentDriver:
     async def _finalize_claims(
         self, protocol_status: str | None, rpanel, reproduction: dict | None = None,
         exp_id: str | None = None, ablation: dict | None = None,
-        method_not_instantiated: bool = False,
+        method_not_instantiated: bool = False, demonstration: dict | None = None,
     ) -> None:
         """After the results gate, set the final strength + status of the proposed
         metric/mechanism claims from the (harness-owned) evidence rule, and record a
@@ -1031,6 +1059,29 @@ class ExperimentDriver:
                 update_claim, self._claim_ids["mechanism"],
                 strength="weak" if method_not_instantiated else self._claim_strength("mechanism", gate_passed=passed),
                 status=mech_status,
+            )
+        # a PARADIGM contribution's formulation claim is grounded by its reproducible
+        # discriminating demonstration (NOT by SOTA-delta). No demonstration executed ->
+        # `not_evaluated`/`speculative` (it stays an honest proposal, never a finding).
+        if self._claim_ids.get("formulation"):
+            demo = demonstration if isinstance(demonstration, dict) else {}
+            holds = demo.get("holds")  # True | False | None(not executed)
+            demo_repro = repro.get("demonstration_reproduced") if repro.get("attempted") else None
+            if holds is None:
+                form_status = "not_evaluated"
+            elif holds and passed:
+                form_status = "supported"
+            elif verdict == "reject" or holds is False:
+                form_status = "refuted"
+            else:
+                form_status = "unverified"
+            await asyncio.to_thread(
+                update_claim, self._claim_ids["formulation"],
+                strength=self._claim_strength(
+                    "formulation", gate_passed=passed, gate_verdict=verdict,
+                    reproduced=demo_repro, demonstration_holds=holds,
+                ),
+                status=form_status,
             )
         # a reproducibility claim: did an independent re-run confirm the headline?
         if repro.get("attempted"):
@@ -1369,6 +1420,7 @@ class ExperimentDriver:
             info.get("protocol_status"), rpanel, info.get("reproduction") or {}, exp_id,
             ablation=info.get("ablation"),
             method_not_instantiated=bool(info.get("method_drift")),
+            demonstration=info.get("demonstration"),
         )
 
         # 6) OPTIMIZE (<=1 iteration) — skipped when the results gate rejected, since
@@ -2103,6 +2155,20 @@ class ExperimentDriver:
                 experiment_id=exp_id, created_by="write_up", stage="write_up",
                 evidence=[{"evidence_kind": "code", "evidence_ref": impl or requested,
                            "note": "executed implementation differs from the hypothesized method"}],
+            )
+        # paradigm contribution whose discriminating demonstration was never executed:
+        # record it as a limitation so the report states the formulation is a PROPOSAL
+        # (the formulation claim is already not_evaluated/speculative in _finalize_claims).
+        if self._contribution_type() == "paradigm" and not info.get("demonstration"):
+            await asyncio.to_thread(
+                create_claim, self.run_id,
+                claim_text=("The proposed new formulation's discriminating demonstration was not "
+                            "executed; the formulation remains a PROPOSAL (not evaluated), not a finding."),
+                claim_type="limitation", strength="moderate", status="supported",
+                experiment_id=exp_id, created_by="write_up", stage="write_up",
+                evidence=[{"evidence_kind": "demonstration",
+                           "evidence_ref": str((self._paradigm_demonstration() or {}).get("form", "n/a")),
+                           "note": "no demonstration result produced by execution"}],
             )
         # refresh the metric claim to the headline actually reported (OPTIMIZE may have
         # swapped in the alternate result).
