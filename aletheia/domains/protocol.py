@@ -70,6 +70,36 @@ def _parity_plot(y_true: Any, y_pred: Any, path: Path) -> None:
     plt.close(fig)
 
 
+def _persist_model(model: Any, workdir: Path) -> dict[str, Any]:
+    """Persist the fitted model as a provenance artifact — best-effort and robust to
+    coder-authored custom estimator classes. ``joblib`` pickles classes BY REFERENCE,
+    which fails for a class defined in the dynamically-loaded solution module
+    (``Can't pickle <class 'aletheia_solution._Foo'>``); fall back to ``cloudpickle``
+    (BY VALUE) and finally to a text note. The model file is provenance only — nothing
+    in the loop reloads it — so a serialization hiccup must NEVER sink valid metrics."""
+    import joblib
+
+    model_path = workdir / "model.joblib"
+    try:
+        joblib.dump(model, model_path)
+        return {"kind": "model", "uri": str(model_path)}
+    except Exception as exc_joblib:
+        try:
+            import cloudpickle
+
+            with open(model_path, "wb") as fh:
+                cloudpickle.dump(model, fh)
+            return {"kind": "model", "uri": str(model_path), "serializer": "cloudpickle"}
+        except Exception as exc_cp:
+            note_path = workdir / "model.txt"
+            note_path.write_text(
+                f"fitted model ({type(model).__name__}) could not be serialized "
+                f"(joblib: {exc_joblib!r}; cloudpickle: {exc_cp!r}). The model code is "
+                f"retained as the solution source; metrics are unaffected."
+            )
+            return {"kind": "model", "uri": str(note_path), "note": "unpicklable; source retained"}
+
+
 def grouped_regression_eval(
     *,
     model_factory: Callable[[], Any],
@@ -96,7 +126,6 @@ def grouped_regression_eval(
     ``{mae,r2,rmse}_holdout``. ``model_factory`` is called for every fit (a fresh
     estimator each time) so folds never leak a fitted model.
     """
-    import joblib
     import numpy as np
     from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
     from sklearn.model_selection import RepeatedKFold, cross_validate, train_test_split
@@ -144,12 +173,11 @@ def grouped_regression_eval(
     # 5. error stratified by a domain-supplied binning (on holdout predictions)
     error_by_range = stratifier(y_te, pred) if stratifier else []
 
-    # final model fit on ALL data + artifacts
+    # final model fit on ALL data (persisted as a provenance artifact AFTER the eval
+    # record is durable, so a model-serialization issue can never lose valid metrics)
     final = model_factory()
     final.fit(X, y_arr)
-    model_path = workdir / "model.joblib"
-    joblib.dump(final, model_path)
-    artifacts: list[dict[str, Any]] = [{"kind": "model", "uri": str(model_path)}]
+    artifacts: list[dict[str, Any]] = []
     try:
         plot_path = workdir / "parity.png"
         _parity_plot(y_te, pred, plot_path)
@@ -182,6 +210,8 @@ def grouped_regression_eval(
     eval_path = workdir / "eval.json"
     eval_path.write_text(json.dumps(eval_payload, indent=2))
     artifacts.append({"kind": "eval", "uri": str(eval_path)})
+    # model persistence is best-effort + robust to custom estimator classes (see helper)
+    artifacts.append(_persist_model(final, workdir))
 
     bl_str = ", ".join(f"{k} {v:.3f}" for k, v in baselines_grouped.items())
     gap_str = "; ".join(
