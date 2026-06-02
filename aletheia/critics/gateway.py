@@ -43,28 +43,46 @@ _PROVIDERS: dict[str, dict[str, type[CriticProvider]]] = {
 _STANCES = ("supportive", "adversarial")
 
 
-def _instruction(target: str, stance: str) -> str:
+def _instruction(target: str, stance: str, mode: str = "performance") -> str:
     role = (
         "You are an expert, rigorous peer reviewer of machine-learning experiments "
         "in materials science."
     )
-    focus = {
-        "design": (
-            "Review the proposed EXPERIMENT DESIGN before it runs. Scrutinize: data "
-            "leakage between train/test, the appropriateness of the model & features, "
-            "whether baselines are adequate, the metric choice, statistical validity, "
-            "and reproducibility."
-        ),
-        "results": (
-            "Review the experiment RESULTS. Scrutinize: data leakage, overfitting, "
-            "whether the metrics actually support the claims, baseline comparisons, and "
-            "whether conclusions are over-stated."
-        ),
-        "direction": (
-            "Review the research DIRECTION at a high level: novelty, scope, and whether "
-            "it is worth pursuing."
-        ),
-    }[target]
+    # a PARADIGM contribution (new question / formulation / representation / metric) is
+    # judged on different axes than a PERFORMANCE one — beating the benchmark is NOT the
+    # bar (see docs/PARADIGM_MODE_DESIGN.md). The bar is arguably HIGHER, not softer.
+    if target == "results" and mode == "paradigm":
+        focus = (
+            "Review the RESULTS of a PARADIGM contribution — a new problem formulation, "
+            "representation, or evaluation metric. Beating the incumbent benchmark is "
+            "EXPLICITLY NOT the bar: do NOT reward OR penalize how the headline metric "
+            "compares to SOTA. Judge ONLY: (1) is the claimed novelty real or merely "
+            "repackaged — attack it using the cited literature; (2) is the new frame "
+            "well-posed and precisely defined (not vague or circular); (3) does the "
+            "DISCRIMINATING DEMONSTRATION actually hold — i.e. does it show a concrete "
+            "case the incumbent frame provably cannot handle or distinguish; (4) is that "
+            "demonstration reproducible and free of leakage. Reserve 'reject'/'blocker' "
+            "for a frame that is not novel, not well-posed, or a demonstration that does "
+            "not hold."
+        )
+    else:
+        focus = {
+            "design": (
+                "Review the proposed EXPERIMENT DESIGN before it runs. Scrutinize: data "
+                "leakage between train/test, the appropriateness of the model & features, "
+                "whether baselines are adequate, the metric choice, statistical validity, "
+                "and reproducibility."
+            ),
+            "results": (
+                "Review the experiment RESULTS. Scrutinize: data leakage, overfitting, "
+                "whether the metrics actually support the claims, baseline comparisons, and "
+                "whether conclusions are over-stated."
+            ),
+            "direction": (
+                "Review the research DIRECTION at a high level: novelty, scope, and whether "
+                "it is worth pursuing."
+            ),
+        }[target]
     stance_text = {
         "supportive": (
             "Take a SUPPORTIVE stance: assume good faith, identify strengths, and give "
@@ -150,14 +168,17 @@ class CriticGateway:
         return "approve", True
 
     # --- one round of independent reviews ---
-    def _review_one(self, prov: CriticProvider, target: str, stance: str, content: str) -> Critique:
-        resp = prov.review(_instruction(target, stance), content)
+    def _review_one(
+        self, prov: CriticProvider, target: str, stance: str, content: str, mode: str = "performance"
+    ) -> Critique:
+        resp = prov.review(_instruction(target, stance, mode), content)
         return Critique(critic_id=prov.critic_id, stance=stance, **resp.model_dump())
 
     def _run_round_sync(
-        self, target: str, content: str, assignments: list[tuple[CriticProvider, str]]
+        self, target: str, content: str, assignments: list[tuple[CriticProvider, str]],
+        mode: str = "performance",
     ) -> list[Critique]:
-        return [self._review_one(p, target, st, content) for p, st in assignments]
+        return [self._review_one(p, target, st, content, mode) for p, st in assignments]
 
     # --- dry-run canned panel (two distinct models, gate passes) ---
     def _canned_panel(self, target: str, target_ref: str) -> CritiquePanel:
@@ -215,7 +236,8 @@ class CriticGateway:
         )
 
     def review_sync(
-        self, target: str, content_obj: dict[str, Any], target_ref: str, dry_run: bool = False
+        self, target: str, content_obj: dict[str, Any], target_ref: str, dry_run: bool = False,
+        mode: str = "performance",
     ) -> CritiquePanel:
         """Single-round peer review (sync). The async ``review`` adds rebuttal rounds."""
         providers = [] if dry_run else self._providers()
@@ -227,7 +249,7 @@ class CriticGateway:
             )
         else:
             content = json.dumps(content_obj, indent=2, default=str)
-            critiques = self._run_round_sync(target, content, policy.assign_stances(providers))
+            critiques = self._run_round_sync(target, content, policy.assign_stances(providers), mode)
             consensus, gate = self._consensus(critiques)
             panel = CritiquePanel(
                 target=target, target_ref=target_ref, critiques=critiques,
@@ -299,10 +321,11 @@ class CriticGateway:
         )
 
     async def _run_round_async(
-        self, target: str, content: str, assignments: list[tuple[CriticProvider, str]]
+        self, target: str, content: str, assignments: list[tuple[CriticProvider, str]],
+        mode: str = "performance",
     ) -> list[Critique]:
         results = await asyncio.gather(
-            *[asyncio.to_thread(self._review_one, p, target, st, content) for p, st in assignments],
+            *[asyncio.to_thread(self._review_one, p, target, st, content, mode) for p, st in assignments],
             return_exceptions=True,
         )
         # a reviewer that errored (vendor API hiccup) is dropped, not fatal to the gate
@@ -310,10 +333,14 @@ class CriticGateway:
 
     async def review(
         self, target: str, content_obj: dict[str, Any], target_ref: str,
-        run_id: str | None = None, dry_run: bool = False,
+        run_id: str | None = None, dry_run: bool = False, mode: str = "performance",
     ) -> CritiquePanel:
         """Cross-model peer review with dynamic rebuttal rounds. Streams a
-        ``critique_panel`` event per round and persists the full transcript."""
+        ``critique_panel`` event per round and persists the full transcript.
+
+        ``mode`` selects the review STANDARD for a results review: ``performance``
+        (beat/match SOTA, today's default) or ``paradigm`` (judge a new formulation on
+        novelty/well-posedness/discriminating-demonstration; SOTA-delta irrelevant)."""
         providers = [] if dry_run else self._providers()
         rounds: list[list[Critique]] = []
         rebuttals: list[str] = []
@@ -334,7 +361,7 @@ class CriticGateway:
             r = 0
             while True:
                 r += 1
-                critiques = await self._run_round_async(target, base_content + extra, assignments)
+                critiques = await self._run_round_async(target, base_content + extra, assignments, mode)
                 rounds.append(critiques)
                 await self._emit_round(target, target_ref, critiques, r, max_rounds, run_id)
                 if not policy.should_continue(

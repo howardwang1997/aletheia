@@ -36,7 +36,9 @@ def test_paradigm_hypothesis_creates_formulation_claim(monkeypatch):
     run_id, d = _run_ideate(
         monkeypatch,
         '{"statement": "reframe solubility prediction as a ranking problem", "rationale": "r", '
-        '"prediction": "p", "novelty_note": "n", "contribution_type": "paradigm"}',
+        '"prediction": "p", "novelty_note": "n", "contribution_type": "paradigm", '
+        '"demonstration": {"form": "discriminating_instance", "claim": "two molecules RMSE rates '
+        'equal but a chemist ranks differently"}}',
     )
     assert d._contribution_type() == "paradigm"
     claims = list_claims(run_id)

@@ -120,14 +120,20 @@ All four are concrete artifacts the harness can re-run — so they plug into the
 
 ## Phasing
 
-- **P1 — vocabulary + honesty (small, safe):** add `formulation` claim type + `contribution_type`
-  threading + write-up labeling. No behavior change to the gate yet; just stop *flattening*
-  paradigm attempts into performance language. Offline-testable.
-- **P2 — paradigm-mode instruction + scorecard demand:** the branched critic prompt + the
-  ideation requirement to name a discriminating-demonstration form. The gate now judges
-  paradigm work on the right axes. Verify on a dry-run paradigm hypothesis.
-- **P3 — demonstration-as-evidence + reproduction:** wire the discriminating demonstration
-  into the evidence ledger and run the reproduction pass over *it* (not a metric). Then a real
+- **P1 — vocabulary + honesty (small, safe): DONE (PR #32).** `formulation` claim type +
+  `contribution_type` threading + write-up labeling. No gate change; just stop *flattening*
+  paradigm attempts into performance language.
+- **P2 — paradigm-mode instruction + scorecard demand: DONE (PR #33).** The results-gate
+  critic instruction branches on `mode` (`gateway._instruction`, threaded through
+  `review`/`review_sync`): paradigm mode judges novelty / well-posedness / the discriminating
+  demonstration and explicitly does NOT reward or penalize SOTA-delta. The driver passes
+  `mode=contribution_type` and carries the demonstration in the results payload. The
+  demonstration requirement is enforced deterministically — `_contribution_type()` returns
+  `paradigm` ONLY when a concrete `demonstration` is named (else falls back to performance);
+  no demonstration → no formulation claim (the fakeability guardrail).
+- **P3 — demonstration-as-evidence + reproduction (next):** wire the discriminating
+  demonstration into the evidence ledger as a first-class artifact and run the reproduction
+  pass over *it* (not a metric), so a `formulation` claim can reach >speculative. Then a real
   e2e paradigm run end-to-end.
 
 ## What this is NOT
