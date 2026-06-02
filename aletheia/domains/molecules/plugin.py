@@ -136,6 +136,54 @@ class MoleculePropertyPlugin(DomainPlugin):
             stratify_label="solubility range",
         )
 
+    def run_demonstration(
+        self, demonstration: dict[str, Any], data_spec: dict[str, Any], workdir: Path
+    ) -> dict[str, Any] | None:
+        """A DETERMINISTIC discriminating demonstration (harness-owned, no LLM): the
+        incumbent random-split metric is BLIND to scaffold generalization. We fit the
+        SAME model and measure RMSE two ways — a random holdout (the metric most ESOL
+        papers report) and a scaffold-grouped split (leave-whole-scaffold-out). If the
+        scaffold RMSE is materially worse, the random-split number provably cannot certify
+        generalization to novel chemistry: it rates as 'good' a model that fails on unseen
+        scaffolds. ``holds`` iff that gap is real; ``statistic`` = scaffold/random RMSE
+        ratio. Reproducible (a fresh seed yields a stable ratio)."""
+        import numpy as np
+        from sklearn.metrics import mean_squared_error
+        from sklearn.model_selection import train_test_split
+
+        from aletheia.domains.protocol import _grouped_scores
+
+        rs = int(demonstration.get("random_state") or data_spec.get("random_state") or 42)
+        margin = float(demonstration.get("margin", 0.10))  # gap must exceed 10% to "hold"
+        design = {"random_state": rs}
+        df = self.load_data(data_spec)
+        sample_n = demonstration.get("sample_n") or data_spec.get("sample_n")
+        if sample_n:
+            df = df.head(int(sample_n))
+            df.attrs["data_spec"] = data_spec  # featurize reads the spec off attrs
+        X, y, _names, groups = self.featurize(df, design)
+        y = np.asarray(y, dtype=float)
+        # incumbent frame: a single random holdout RMSE
+        X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=rs)
+        m = self._make_model(design)
+        m.fit(X_tr, y_tr)
+        random_rmse = float(mean_squared_error(y_te, m.predict(X_te)) ** 0.5)
+        # new frame: scaffold-grouped (leave-whole-scaffold-out) RMSE
+        grouped = _grouped_scores(lambda: self._make_model(design), X, y, groups)
+        scaffold_rmse = float(grouped["rmse"])
+        ratio = scaffold_rmse / random_rmse if random_rmse > 0 else float("inf")
+        holds = bool(grouped["protocol_status"] == "grouped" and ratio > 1.0 + margin)
+        return {
+            "form": "impossibility",  # the incumbent metric has a structural blind spot
+            "holds": holds,
+            "statistic": round(ratio, 4),
+            "detail": (
+                f"random-split RMSE={random_rmse:.3f} vs scaffold-grouped RMSE={scaffold_rmse:.3f} "
+                f"(ratio {ratio:.2f}, {grouped['n_groups']} scaffolds). The random-split metric "
+                f"{'cannot' if holds else 'does not clearly'} certify generalization to novel scaffolds."
+            ),
+        }
+
     def baselines(self) -> list[dict[str, Any]]:
         return [
             {"model": "random_forest", "model_params": {"n_estimators": 200}, "featurizer": "ecfp"},

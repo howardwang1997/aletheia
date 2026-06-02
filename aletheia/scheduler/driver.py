@@ -1226,6 +1226,9 @@ class ExperimentDriver:
             # per-round guard isolation so design/direction revision counters don't
             # bleed across experiments
             self.guard = LoopGuard(get_settings().critics.consensus.max_design_iterations)
+            # fresh claim set per round — reset HERE (before IDEATE) so the novelty +
+            # formulation claims ideate creates survive into _finalize_claims.
+            self._claim_ids = {}
             await get_bus().publish(
                 make_event("experiment", run_id=self.run_id,
                            payload={"round": round_idx, "exp_id": cur_exp_id, "of": max_exps})
@@ -1303,7 +1306,8 @@ class ExperimentDriver:
         """Run ONE experiment end-to-end (DESIGN → WRITE_UP) for the given experiment
         id. Returns a compact outcome for the campaign, or None if a hard gate
         rejected past its loop limit (the run is already paused + escalated)."""
-        self._claim_ids = {}  # fresh claim set per experiment round
+        # NB: _claim_ids is reset at the campaign-loop top (before IDEATE), NOT here —
+        # ideate's novelty + formulation claim ids must survive into _finalize_claims.
         # 1) EXPERIMENT_DESIGN
         await self._guard_budget("usd", get_settings().est_stage_cost_usd)
         await self._status("designing")
@@ -1729,13 +1733,50 @@ class ExperimentDriver:
     async def _run_eval(self, design, data_spec, domain, exp_id) -> dict[str, Any]:
         """Dispatch the evaluation: host-side (trusted, real LLM step) for domains that
         declare it, else the compute-backend sandbox. Scoring stays the fixed harness
-        either way."""
+        either way. For a PARADIGM contribution, also compute the domain's discriminating
+        demonstration (deterministic, harness-owned) into ``info["demonstration"]`` — done
+        here so the reproduction re-run (which re-enters this method) recomputes it too."""
+        result = await self._dispatch_eval(design, data_spec, domain, exp_id)
+        if not result.get("blocked") and self._contribution_type() == "paradigm":
+            demo = await self._compute_demonstration(design, data_spec, domain)
+            if demo is not None:
+                result.setdefault("info", {})["demonstration"] = demo
+        return result
+
+    async def _dispatch_eval(self, design, data_spec, domain, exp_id) -> dict[str, Any]:
         if self.profile and self.profile.host_side_run:
             # a planner-proposed ablation round runs the CONTROLLED retriever comparison
             if str(self.hypothesis.get("experiment_type", "")).lower() in ("ablation", "method_comparison"):
                 return await self._rag_ablation(design, data_spec, domain, exp_id)
             return await self._rag_eval_hostside(design, data_spec, domain, exp_id)
         return await self._execute(design, data_spec, domain, exp_id)
+
+    async def _compute_demonstration(self, design, data_spec, domain) -> dict[str, Any] | None:
+        """Run the domain's deterministic discriminating demonstration for a paradigm
+        contribution. Best-effort + dry-run-skipped (it needs real featurization/data);
+        a domain without one returns None, leaving the formulation claim a proposal."""
+        if self.dry_run:
+            return None
+        plugin = self.plugin or get_domain_plugin(domain)
+        spec = dict(self._paradigm_demonstration() or {})
+        try:
+            demo = await asyncio.to_thread(
+                plugin.run_demonstration, spec, data_spec,
+                run_artifacts_dir(self.run_id) / "demonstration",
+            )
+        except Exception as exc:  # noqa: BLE001 - demonstration is best-effort
+            await get_bus().publish(
+                make_event("demonstration", run_id=self.run_id,
+                           payload={"computed": False, "error": str(exc)})
+            )
+            return None
+        if demo is not None:
+            await get_bus().publish(
+                make_event("demonstration", run_id=self.run_id,
+                           payload={"computed": True, "form": demo.get("form"),
+                                    "holds": demo.get("holds"), "statistic": demo.get("statistic")})
+            )
+        return demo
 
     _DEFAULT_RAG_PROMPT = (
         "Answer the question using ONLY the context. Be concise (a short phrase). "

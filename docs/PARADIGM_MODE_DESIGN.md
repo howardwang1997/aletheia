@@ -144,12 +144,26 @@ All four are concrete artifacts the harness can re-run — so they plug into the
     `limitation` when a paradigm run produced no demonstration (the formulation stays a PROPOSAL).
   - Contract: execution surfaces `info["demonstration"] = {form, holds, statistic, detail}`.
 
-  **Remaining (P4) — the demonstration EXECUTOR.** Nothing produces `info["demonstration"]` yet,
-  so on a real run the formulation claim is honestly capped at `speculative`/`not_evaluated`.
-  Producing it requires a domain to *compute* the discriminating statistic (e.g. a
-  `run_demonstration` hook running coder-authored code in the sandbox, like `build_pipeline`).
-  This must stay deterministic + sandboxed (no host-side LLM "holds" assertion) to preserve the
-  fakeability guardrail. A real e2e paradigm run that reaches `strong` depends on P4.
+- **P4 — the demonstration EXECUTOR: DONE (PR #35).** A `DomainPlugin.run_demonstration(spec,
+  data_spec, workdir) -> {form, holds, statistic, detail} | None` hook (default `None`) computes
+  the discriminating statistic DETERMINISTICALLY (harness-owned, no LLM "holds" assertion). The
+  **molecules** domain implements it on real MoleculeNet ESOL: it fits the same model and measures
+  RMSE under a random holdout (the incumbent metric) vs a scaffold-grouped split, and `holds` iff
+  the scaffold RMSE is materially worse — proving the random-split metric is blind to the
+  scaffold-generalization gap. (Measured live: random 1.18 vs scaffold 1.95, **ratio 1.65**.) The
+  driver runs it in `_run_eval` for paradigm runs (dry-run-skipped; reproduction re-enters
+  `_run_eval` so the demonstration is recomputed + checked stable → P3 grounding).
+
+  Two real-run bugs surfaced + fixed by the first paradigm e2e: (a) the per-round `_claim_ids`
+  reset wiped IDEATE's `formulation` id before `_finalize_claims` — moved the reset to the
+  campaign-loop top; (b) a round where every critic provider errored returned empty critiques →
+  `_consensus([])` silently rejected — now it falls back to the last non-empty round, else fails
+  closed as a "peer review could not run" block (honest, not a fake reject).
+
+  Live status: the executor computes + reproduces the demonstration on real data end-to-end. A
+  full real e2e grounding the formulation to `moderate`/`strong` is gated on the (currently
+  intermittently-erroring) OpenAI Codex critic being available — the fail-closed fix correctly
+  PAUSES such a run rather than fabricating an approval.
 
 ## What this is NOT
 

@@ -375,12 +375,24 @@ class CriticGateway:
                 rebuttals.append(rebuttal)
                 extra = _round_context(critiques, rebuttal)
 
-            final = rounds[-1]
-            consensus, gate = self._consensus(final)
-            panel = CritiquePanel(
-                target=target, target_ref=target_ref, critiques=final,
-                consensus_verdict=consensus, gate_passed=gate,
-            )
+            # the final round may be empty if every provider errored on it (a transient
+            # API failure). Fall back to the last round that DID produce reviews; if none
+            # ever did, peer review could not run — fail closed HONESTLY (a "could not
+            # review" block) rather than silently reporting an empty round as a substantive
+            # reject verdict.
+            final = next((rd for rd in reversed(rounds) if rd), [])
+            if not final:
+                panel = self._blocked_panel(
+                    target, target_ref,
+                    "peer review produced no usable reviews (all providers errored on every round)",
+                )
+                rounds.append(panel.critiques)
+            else:
+                consensus, gate = self._consensus(final)
+                panel = CritiquePanel(
+                    target=target, target_ref=target_ref, critiques=final,
+                    consensus_verdict=consensus, gate_passed=gate,
+                )
 
         raw = panel.model_dump()
         raw["rounds"] = [[c.model_dump() for c in rd] for rd in rounds]
