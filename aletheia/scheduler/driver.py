@@ -461,8 +461,16 @@ class ExperimentDriver:
             + ("RESEARCH GAPS:\n- " + "\n- ".join(self.survey_gaps) + "\n\n" if self.survey_gaps else "")
             + "Propose 2-3 TESTABLE hypotheses for this direction (each: statement, one-line rationale, "
             "concrete prediction). Then pick the ONE that is most NOVEL given the literature/gaps above "
-            "and feasible on CPU within budget. Return ONLY JSON for the chosen one: "
-            '{"statement": "...", "rationale": "...", "prediction": "...", "novelty_note": "..."}.'
+            "and feasible on CPU within budget.\n"
+            "Also classify the CONTRIBUTION TYPE of the chosen hypothesis:\n"
+            "- \"performance\": the goal is to beat/match a benchmark on an established metric.\n"
+            "- \"paradigm\": the goal is to change the QUESTION — a new problem formulation, "
+            "representation, or evaluation metric — where beating the incumbent benchmark is NOT the "
+            "point. Choose this ONLY if you can name a concrete discriminating demonstration the new "
+            "frame would make (a case the incumbent provably cannot handle/distinguish).\n"
+            "Return ONLY JSON for the chosen one: "
+            '{"statement": "...", "rationale": "...", "prediction": "...", "novelty_note": "...", '
+            '"contribution_type": "performance" | "paradigm"}.'
         )
         text = await reason_stage(
             self.run_id, "ideate", prompt, dry_run=self.dry_run,
@@ -497,8 +505,27 @@ class ExperimentDriver:
             status="unverified", experiment_id=exp_id, created_by="ideate", stage="ideate",
             evidence=evidence,
         )
+        # a PARADIGM hypothesis gets a first-class `formulation` claim (the contribution is
+        # the new frame, not a benchmark number). It stays `proposed`/`speculative` until a
+        # reproducible discriminating demonstration grounds it (see PARADIGM_MODE_DESIGN.md);
+        # this is the honest vocabulary so the contribution is not flattened into a metric.
+        if self._contribution_type() == "paradigm":
+            self._claim_ids["formulation"] = await asyncio.to_thread(
+                create_claim, self.run_id,
+                claim_text=f"New formulation proposed: {note or statement}",
+                claim_type="formulation", strength="speculative",
+                status="proposed", experiment_id=exp_id, created_by="ideate", stage="ideate",
+                evidence=evidence,
+            )
         await record_transition(self.run_id, exp_id, "survey", "ideate", f"hypothesis: {statement[:80]}")
         return self.hypothesis
+
+    def _contribution_type(self) -> str:
+        """`performance` (beat a benchmark) or `paradigm` (change the question). Drives
+        honest write-up labeling now; will select the results-gate mode in a later phase
+        (see docs/PARADIGM_MODE_DESIGN.md). Defaults to the conservative `performance`."""
+        ct = str(self.hypothesis.get("contribution_type", "")).strip().lower()
+        return "paradigm" if ct == "paradigm" else "performance"
 
     async def _direction_gate(self, plan: dict, exp_id: str | None) -> bool:
         """Novelty + feasibility gate on the chosen hypothesis (cross-model peer review,
@@ -2076,6 +2103,15 @@ class ExperimentDriver:
             "tested-and-failed.\n"
             if info.get("method_drift") else ""
         )
+        paradigm_note = (
+            "CONTRIBUTION TYPE = PARADIGM: this study's contribution is a NEW FORMULATION "
+            "(a new question / representation / metric), NOT beating a benchmark. Frame the "
+            "Results & Discussion around what the new frame reveals or enables; report the SOTA "
+            "comparison as CONTEXT only — do NOT present trailing the incumbent benchmark as "
+            "failure, and do NOT claim a performance win. The contribution stands on the "
+            "formulation claim and its demonstration, not on the headline metric delta.\n"
+            if self._contribution_type() == "paradigm" else ""
+        )
         prompt = (
             "Write a structured scientific paper in markdown (IMRAD), grounded ONLY in the numbers and "
             "the literature below. Use flowing prose (no bullet points outside the method/baseline list). "
@@ -2100,7 +2136,7 @@ class ExperimentDriver:
             "verify novelty against a structured literature search'). Do not assert SOTA superiority beyond the "
             "curated KNOWN SOTA string. A claim with status=not_evaluated must be reported as not evaluated, "
             "never as a finding or a refutation.\n"
-            f"{degraded_note}{repro_note}{drift_note}"
+            f"{degraded_note}{repro_note}{drift_note}{paradigm_note}"
             f"CLAIM TABLE:\n{claim_table}\n\n"
             f"HYPOTHESIS: {json.dumps(self.hypothesis)}\n"
             f"PLAN: {json.dumps(plan)}\nDESIGN: {json.dumps(design)}\nMETRICS: {json.dumps(metrics)}\n"

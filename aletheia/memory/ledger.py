@@ -74,6 +74,11 @@ CLAIM_TYPES = (
     "comparison",  # a controlled ablation: method/config A vs B on the same eval
     "cost",
     "safety",
+    # the load-bearing claim of a PARADIGM contribution (a new question / problem
+    # formulation / representation / metric), as `metric`/`sota` are for a PERFORMANCE
+    # contribution. Reaches >speculative only with a reproducible discriminating
+    # demonstration (see docs/PARADIGM_MODE_DESIGN.md); SOTA-delta is irrelevant to it.
+    "formulation",
 )
 # how strongly the evidence backs it (a deterministic harness rule sets this, never
 # the LLM's self-assessment):
