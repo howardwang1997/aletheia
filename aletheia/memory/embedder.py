@@ -8,7 +8,10 @@ Two backends behind one interface:
 
 ``get_embedder`` resolves the configured backend, degrading gracefully to the
 hash backend when the model can't be loaded (e.g. sentence-transformers not yet
-installed) so a missing optional dep never breaks the loop.
+installed) so a missing optional dep never breaks the loop — EXCEPT when a caller
+passes ``require_real=True`` (a real scientific metric depends on real semantics),
+in which case it raises ``EmbedderUnavailableError`` rather than silently
+substituting random vectors. Fail-closed beats reporting a meaningless number.
 """
 
 from __future__ import annotations
@@ -19,6 +22,12 @@ from typing import Protocol
 import numpy as np
 
 from aletheia.config import get_settings
+
+
+class EmbedderUnavailableError(RuntimeError):
+    """A real embedding backend was required but could not be loaded. Raised instead
+    of silently degrading to the random hash stub, so a real run fails closed rather
+    than reporting embedding-based metrics computed on meaningless vectors."""
 
 
 class Embedder(Protocol):
@@ -81,21 +90,39 @@ class SentenceTransformerEmbedder:
 _cached: Embedder | None = None
 
 
-def get_embedder(*, dry_run: bool = False) -> Embedder:
+def get_embedder(*, dry_run: bool = False, require_real: bool = False) -> Embedder:
     """Resolve the configured embedder (cached). dry_run → always the hash stub.
     A "local" backend that fails to load degrades to the hash stub so a missing
-    optional dependency never breaks indexing/recall."""
+    optional dependency never breaks indexing/recall.
+
+    ``require_real=True`` (a real scientific metric depends on real semantics, e.g.
+    dense retrieval in a real run) disables the silent degrade: if the configured
+    backend is the hash stub, or the real model cannot be loaded, it raises
+    ``EmbedderUnavailableError`` instead of returning random vectors."""
     global _cached
     s = get_settings()
     if dry_run or s.embedding_backend == "hash":
+        if require_real:
+            backend = "dry-run" if dry_run else repr(s.embedding_backend)
+            raise EmbedderUnavailableError(
+                f"a real embedding backend is required but the active backend is {backend} "
+                f"(random hash stub); refusing to compute embedding metrics on it"
+            )
         # don't cache the dry-run/hash path under the same slot as production
         return HashEmbedder(s.embedding_dim)
-    if _cached is not None:
+    # reuse a cached REAL backend; never let a cached hash-fallback satisfy a
+    # require_real caller (deps may have since been installed) — retry the load.
+    if _cached is not None and not isinstance(_cached, HashEmbedder):
         return _cached
     try:
         emb: Embedder = SentenceTransformerEmbedder(s.embedding_model, s.embedding_dim)
-        emb.embed(["warmup"])  # force the model load now so failures degrade here
-    except Exception:
+        emb.embed(["warmup"])  # force the model load now so failures surface here
+    except Exception as exc:
+        if require_real:
+            raise EmbedderUnavailableError(
+                f"the real embedding backend {s.embedding_model!r} could not be loaded "
+                f"({type(exc).__name__}: {exc}); refusing to fall back to the random hash stub"
+            ) from exc
         emb = HashEmbedder(s.embedding_dim)
     _cached = emb
     return emb

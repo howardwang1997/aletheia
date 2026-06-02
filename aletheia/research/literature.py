@@ -11,12 +11,71 @@ designer can recall world knowledge, not just the lab's own past runs.
 from __future__ import annotations
 
 import sys
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
 ARXIV_API = "https://export.arxiv.org/api/query"
 OPENALEX_API = "https://api.openalex.org/works"
 _TIMEOUT = 20.0
+
+# arXiv asks for <= 1 request / 3s and a descriptive User-Agent; bursting the survey's
+# ~10 queries is exactly what triggered HTTP 429 + read timeouts. We pace arXiv calls
+# (process-wide) and retry with backoff that honors Retry-After. OpenAlex joins the
+# "polite pool" via a mailto, which gives it its own, more forgiving rate limits.
+_UA = "Aletheia-AI-Scientist/1.0 (autonomous research agent; +https://github.com/howardwang1997/aletheia)"
+_HEADERS = {"User-Agent": _UA}
+_ARXIV_MIN_INTERVAL = 3.0
+_arxiv_lock = threading.Lock()
+_arxiv_last = 0.0
+
+
+def _pace_arxiv() -> None:
+    """Block until >= _ARXIV_MIN_INTERVAL has elapsed since the last arXiv call
+    (process-wide), so the survey's burst of queries does not trip arXiv's rate limit."""
+    global _arxiv_last
+    with _arxiv_lock:
+        wait = _ARXIV_MIN_INTERVAL - (time.monotonic() - _arxiv_last)
+        if wait > 0:
+            time.sleep(wait)
+        _arxiv_last = time.monotonic()
+
+
+def _get_with_retry(client: Any, url: str, params: dict, *, retries: int = 4) -> Any:
+    """GET with exponential backoff on 429 / 5xx / timeout, honoring a Retry-After
+    header when present. Raises the last error if all attempts fail.
+
+    Exception classes are resolved defensively via ``getattr`` so a stubbed httpx
+    (used in tests) without these attributes still works."""
+    import httpx
+
+    retry_excs = tuple(
+        e for e in (getattr(httpx, "TimeoutException", None), getattr(httpx, "TransportError", None))
+        if isinstance(e, type)
+    )
+    delay = 2.0
+    last_exc: Exception | None = None
+    for _attempt in range(retries):
+        try:
+            r = client.get(url, params=params)
+            status = getattr(r, "status_code", 200)
+            if status == 429 or status >= 500:
+                retry_after = (getattr(r, "headers", {}) or {}).get("Retry-After")
+                sleep_s = float(retry_after) if (retry_after or "").isdigit() else delay
+                time.sleep(min(sleep_s, 30.0))
+                delay = min(delay * 2, 30.0)
+                last_exc = RuntimeError(f"HTTP {status} from {url}")
+                continue
+            r.raise_for_status()
+            return r
+        except retry_excs as exc:  # network/timeout — retry with backoff
+            last_exc = exc
+            time.sleep(delay)
+            delay = min(delay * 2, 30.0)
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("request failed without an exception")  # pragma: no cover
 
 
 @dataclass
@@ -49,9 +108,9 @@ def _arxiv(query: str, k: int) -> list[Paper]:
 
     ns = {"a": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
     params = {"search_query": f"all:{query}", "start": 0, "max_results": k}
-    with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as c:
-        r = c.get(ARXIV_API, params=params)
-        r.raise_for_status()
+    _pace_arxiv()  # respect arXiv's ~1-req/3s limit before issuing the call
+    with httpx.Client(timeout=_TIMEOUT, follow_redirects=True, headers=_HEADERS) as c:
+        r = _get_with_retry(c, ARXIV_API, params)
         root = ET.fromstring(r.text)
     papers: list[Paper] = []
     for e in root.findall("a:entry", ns):
@@ -92,10 +151,10 @@ def _reconstruct_abstract(inverted: dict[str, list[int]] | None) -> str:
 def _openalex(query: str, k: int) -> list[Paper]:
     import httpx
 
-    params = {"search": query, "per_page": k}
-    with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as c:
-        r = c.get(OPENALEX_API, params=params)
-        r.raise_for_status()
+    # mailto puts us in OpenAlex's "polite pool" (its own, more forgiving rate limit).
+    params = {"search": query, "per_page": k, "mailto": "aletheia-agent@users.noreply.github.com"}
+    with httpx.Client(timeout=_TIMEOUT, follow_redirects=True, headers=_HEADERS) as c:
+        r = _get_with_retry(c, OPENALEX_API, params)
         data = r.json()
     papers: list[Paper] = []
     for w in data.get("results", []):

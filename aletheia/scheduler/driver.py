@@ -80,6 +80,49 @@ def _parse_design(text: str, fallback: dict[str, Any]) -> dict[str, Any]:
     return design
 
 
+# Model families for plan↔execution drift detection: if the hypothesis explicitly
+# names one family but a DIFFERENT family was executed, the hypothesis mechanism was
+# never instantiated and cannot be tested (it is "not evaluated", not "refuted").
+_METHOD_FAMILIES: dict[str, tuple[str, ...]] = {
+    "random forest": ("random forest", "randomforest", "random-forest"),
+    "gradient boosting": ("gradient boost", "gradient-boost", "xgboost", "xgbregressor",
+                          "lightgbm", "lgbm", "histgradientboosting", "gradientboosting",
+                          "gbm", "gbt", "gbrt", "boosted tree"),
+    "neural network": ("neural network", "mlp", "deep learning", "transformer", "cnn",
+                       "rnn", "lstm", "perceptron"),
+    "linear model": ("linear regression", "ridge", "lasso", "elasticnet", "logistic regression"),
+    "support vector": ("support vector", "svm", "svr"),
+    "nearest neighbor": ("nearest neighbor", "nearest-neighbor", "knn", "k-nn"),
+    "gaussian process": ("gaussian process", "gpr", "kriging"),
+}
+
+
+def _method_family(text: str) -> str | None:
+    """The model family named in a free-text string, or None if none is recognized.
+    First match wins (longest, most-specific keywords are listed per family)."""
+    t = (text or "").lower()
+    for family, keywords in _METHOD_FAMILIES.items():
+        if any(kw in t for kw in keywords):
+            return family
+    return None
+
+
+def detect_method_drift(hypothesis_text: str, requested: str, executed_impl: str) -> tuple[bool, str]:
+    """True + a message when the hypothesis names a model family that differs from the
+    one actually executed (so the hypothesis mechanism was never instantiated). Returns
+    (False, "") when the hypothesis names no family, or the families agree, or the
+    executed family is unknown — i.e. only flag a CONFIDENT mismatch."""
+    hypo_fam = _method_family(hypothesis_text)
+    exec_fam = _method_family(executed_impl) or _method_family(requested)
+    if hypo_fam and exec_fam and hypo_fam != exec_fam:
+        return True, (
+            f"the hypothesis names a {hypo_fam} but the executed model was a {exec_fam} "
+            f"({executed_impl or requested}); the hypothesis mechanism was not instantiated "
+            f"and could not be tested"
+        )
+    return False, ""
+
+
 class ExperimentDriver:
     def __init__(self, run_id: str, dry_run: bool = False) -> None:
         self.run_id = run_id
@@ -874,10 +917,16 @@ class ExperimentDriver:
     async def _finalize_claims(
         self, protocol_status: str | None, rpanel, reproduction: dict | None = None,
         exp_id: str | None = None, ablation: dict | None = None,
+        method_not_instantiated: bool = False,
     ) -> None:
         """After the results gate, set the final strength + status of the proposed
         metric/mechanism claims from the (harness-owned) evidence rule, and record a
-        reproducibility claim from the independent re-run."""
+        reproducibility claim from the independent re-run.
+
+        ``method_not_instantiated``: the executed model did not match the family the
+        hypothesis names, so the mechanism was never tested — its claim is marked
+        ``not_evaluated`` (NOT ``refuted``: refuted would wrongly imply it was tried
+        and failed)."""
         verdict = rpanel.consensus_verdict
         passed = bool(rpanel.gate_passed)
         status = "supported" if passed else ("refuted" if verdict == "reject" else "unverified")
@@ -894,10 +943,11 @@ class ExperimentDriver:
                 status=status,
             )
         if self._claim_ids.get("mechanism"):
+            mech_status = "not_evaluated" if method_not_instantiated else status
             await asyncio.to_thread(
                 update_claim, self._claim_ids["mechanism"],
-                strength=self._claim_strength("mechanism", gate_passed=passed),
-                status=status,
+                strength="weak" if method_not_instantiated else self._claim_strength("mechanism", gate_passed=passed),
+                status=mech_status,
             )
         # a reproducibility claim: did an independent re-run confirm the headline?
         if repro.get("attempted"):
@@ -1086,21 +1136,32 @@ class ExperimentDriver:
             await self._campaign_synthesis(plan, outcomes, exp_id)
 
         # ARCHIVE -------------------------------------------------------------
+        # A run whose concluding experiment's results gate REJECTED is distinguished
+        # from a clean completion: it ran to the end and is archived, but peer review
+        # did not endorse the result. The claims already carry the refutation; this
+        # makes the run-level outcome legible too.
         last_exp_id = outcomes[-1]["exp_id"] if outcomes else cur_exp_id
+        results_rejected = bool(outcomes) and outcomes[-1].get("verdict") == "reject"
+        final_status = "results_rejected" if results_rejected else "completed"
         await record_transition(self.run_id, last_exp_id, "write_up", "archive", "campaign complete")
-        await asyncio.to_thread(set_run_status, self.run_id, "completed")
+        await asyncio.to_thread(set_run_status, self.run_id, final_status)
         await get_bus().publish(
             make_event(
                 "run_finished",
                 run_id=self.run_id,
                 payload={
-                    "status": "completed",
+                    "status": final_status,
+                    "results_gate": "rejected" if results_rejected else "passed",
                     "experiments": len(outcomes),
                     "metrics": outcomes[-1].get("metrics") if outcomes else None,
                 },
             )
         )
-        await self._status("archived", f"campaign complete ({len(outcomes)} experiment(s))")
+        detail = (
+            f"campaign complete ({len(outcomes)} experiment(s)) — results rejected by peer review"
+            if results_rejected else f"campaign complete ({len(outcomes)} experiment(s))"
+        )
+        await self._status("archived", detail)
 
     async def _run_experiment(
         self, plan, data_spec, plugin, domain, exp_id, round_idx
@@ -1136,10 +1197,33 @@ class ExperimentDriver:
         await self._status("executing")
         result = await self._run_eval(design, data_spec, domain, exp_id)
 
+        # the eval itself may fail closed (e.g. an ablation with no real embedder); the
+        # run is already paused, so abort this experiment.
+        if result.get("blocked"):
+            return None
+
         # 3b) fail-closed: a real run must produce verifiable artifacts; a degraded
         # (KFold-fallback) headline is surfaced, not hidden.
         if not await self._post_execution_guards(result, exp_id):
             return None
+
+        # plan↔execution drift: did the executed model match the family the hypothesis
+        # names? If not, the hypothesis mechanism was never instantiated (so its claim
+        # is "not evaluated", not "refuted"). Computed once, consumed by claims + write-up.
+        _info = result.setdefault("info", {})
+        hypo_text = " ".join(
+            str(self.hypothesis.get(k, "")) for k in ("statement", "prediction", "rationale")
+        )
+        drift, drift_msg = detect_method_drift(
+            hypo_text, str(design.get("model", "")), str(_info.get("model_impl", ""))
+        )
+        _info["method_drift"] = drift
+        _info["method_drift_msg"] = drift_msg
+        if drift:
+            await get_bus().publish(
+                make_event("method_drift", run_id=self.run_id,
+                           payload={"detail": drift_msg, "exp_id": exp_id})
+            )
 
         # 3c) REPRODUCTION: an independent re-run (locked code, new seed) — a metric
         # claim can only reach `strong` if this confirms the headline within tolerance.
@@ -1199,11 +1283,15 @@ class ExperimentDriver:
         await self._finalize_claims(
             info.get("protocol_status"), rpanel, info.get("reproduction") or {}, exp_id,
             ablation=info.get("ablation"),
+            method_not_instantiated=bool(info.get("method_drift")),
         )
 
-        # 6) OPTIMIZE (<=1 iteration)
+        # 6) OPTIMIZE (<=1 iteration) — skipped when the results gate rejected, since
+        # tuning a baseline cannot answer a critique-level rejection (and wastes a stage).
         await self._status("optimizing")
-        best_design, best_result = await self._optimize(design, result, data_spec, domain, exp_id, plugin)
+        best_design, best_result = await self._optimize(
+            design, result, data_spec, domain, exp_id, plugin, gate_passed=bool(rpanel.gate_passed)
+        )
 
         # 7) WRITE_UP
         await self._guard_budget("usd", get_settings().est_stage_cost_usd)
@@ -1539,13 +1627,21 @@ class ExperimentDriver:
         """Resolve the retriever the design selected. ``dense`` → a real embedding
         retriever (host-side, trusted, offline once the model is cached); anything else
         — and ANY dry-run (the hash-stub embedder is random, so dense is meaningless
-        offline) — → the deterministic lexical baseline."""
+        offline) — → the deterministic lexical baseline.
+
+        If a real run requests ``dense`` but the real embedding backend is unavailable,
+        we DO NOT silently rank with random hash vectors and call it "dense"; we fall
+        back to the honest lexical baseline and label it as such (the caller's
+        ``retriever`` event then reports ``fallback: true``)."""
         from aletheia.domains.rag.retriever import dense_retrieve, retrieve
 
         if str(design.get("retriever", "lexical")).lower() == "dense" and not self.dry_run:
-            from aletheia.memory.embedder import get_embedder
+            from aletheia.memory.embedder import EmbedderUnavailableError, get_embedder
 
-            embed = get_embedder(dry_run=False).embed
+            try:
+                embed = get_embedder(dry_run=False, require_real=True).embed
+            except EmbedderUnavailableError:
+                return retrieve, "lexical token-overlap (dense embedder unavailable)"
             return (lambda corpus, q, k: dense_retrieve(corpus, q, k, embed=embed)), "dense (embeddings)"
         return retrieve, "lexical token-overlap"
 
@@ -1607,9 +1703,13 @@ class ExperimentDriver:
         retriever. Embeddings are free + offline, so this runs even in dry-run (it
         degrades to the random hash stub only if sentence-transformers is absent).
         Headline = the dense retriever's F1; the deltas vs lexical drive a comparison
-        claim."""
+        claim.
+
+        Fail-closed: a dense-vs-lexical comparison whose "dense" arm is the random hash
+        stub is meaningless. A real run therefore REQUIRES a real embedding backend and
+        pauses if one is unavailable, rather than reporting a random-vector ablation."""
         from aletheia.domains.rag.compare import compare_retrievers
-        from aletheia.memory.embedder import get_embedder
+        from aletheia.memory.embedder import EmbedderUnavailableError, get_embedder
 
         await self._status("executing", "retriever ablation (lexical vs dense)")
         if not self.dry_run:
@@ -1618,7 +1718,17 @@ class ExperimentDriver:
         data = await asyncio.to_thread(plugin.load_data, data_spec)
         corpus, cases = data["corpus"], data["cases"]
         k = int(design.get("k", 3))
-        embed = get_embedder(dry_run=False).embed  # embeddings are free + offline
+        # dry-run: keep the offline hash stub (plumbing test). real run: require the
+        # real backend — never report a random-vector "dense beats lexical" result.
+        try:
+            embed = get_embedder(dry_run=False, require_real=not self.dry_run).embed
+        except EmbedderUnavailableError as exc:
+            await self._block_run(
+                exp_id,
+                f"dense-vs-lexical ablation needs a real embedding backend, but it is "
+                f"unavailable ({exc}); pausing rather than reporting a random-vector comparison",
+            )
+            return {"job_id": "ablation", "blocked": True, "metrics": {}, "artifacts": [], "info": {}}
         cmp = await asyncio.to_thread(
             compare_retrievers, corpus, cases, k,
             embed=embed, workdir=run_artifacts_dir(self.run_id) / "rag_ablation",
@@ -1781,7 +1891,15 @@ class ExperimentDriver:
         )
         return synthesis
 
-    async def _optimize(self, design, result, data_spec, domain, exp_id, plugin):
+    async def _optimize(self, design, result, data_spec, domain, exp_id, plugin, *, gate_passed: bool = True):
+        # the results gate rejected: optimizing the metric won't address the critique,
+        # so skip the extra training stage and keep the reviewed result as-is.
+        if not gate_passed:
+            await get_bus().publish(
+                make_event("optimize", run_id=self.run_id,
+                           payload={"skipped": True, "reason": "results gate rejected; tuning will not address the critique"})
+            )
+            return design, result
         # try the alternate baseline model once; keep whichever has lower MAE
         alt = dict(plugin.baselines()[-1])
         alt.setdefault("test_size", design.get("test_size", 0.2))
@@ -1881,6 +1999,18 @@ class ExperimentDriver:
             )
             if self._claim_ids.get("metric"):
                 await asyncio.to_thread(update_claim, self._claim_ids["metric"], strength="weak")
+        # plan↔execution drift: the hypothesis named a model family that was not the one
+        # executed, so its mechanism was never instantiated — record it as a limitation
+        # (the mechanism claim is already marked not_evaluated in _finalize_claims).
+        if info.get("method_drift"):
+            await asyncio.to_thread(
+                create_claim, self.run_id,
+                claim_text=f"Hypothesis not evaluated: {info.get('method_drift_msg', 'executed method differs from the hypothesis')}.",
+                claim_type="limitation", strength="moderate", status="supported",
+                experiment_id=exp_id, created_by="write_up", stage="write_up",
+                evidence=[{"evidence_kind": "code", "evidence_ref": impl or requested,
+                           "note": "executed implementation differs from the hypothesized method"}],
+            )
         # refresh the metric claim to the headline actually reported (OPTIMIZE may have
         # swapped in the alternate result).
         if self._claim_ids.get("metric"):
@@ -1910,6 +2040,12 @@ class ExperimentDriver:
             )
         else:
             repro_note = "REPRODUCTION: not attempted — do not call the result reproduced.\n"
+        drift_note = (
+            f"HYPOTHESIS NOT EVALUATED: {info.get('method_drift_msg')}. State the verdict as "
+            "'not evaluated' (NOT refuted) and explain why; do not present the hypothesis as "
+            "tested-and-failed.\n"
+            if info.get("method_drift") else ""
+        )
         prompt = (
             "Write a structured scientific paper in markdown (IMRAD), grounded ONLY in the numbers and "
             "the literature below. Use flowing prose (no bullet points outside the method/baseline list). "
@@ -1932,8 +2068,9 @@ class ExperimentDriver:
             "status=supported AND strength in {moderate, strong} may be stated as findings; mark weak claims as "
             "preliminary, and speculative/unverified claims (e.g. novelty) explicitly as such (e.g. 'we did not "
             "verify novelty against a structured literature search'). Do not assert SOTA superiority beyond the "
-            "curated KNOWN SOTA string.\n"
-            f"{degraded_note}{repro_note}"
+            "curated KNOWN SOTA string. A claim with status=not_evaluated must be reported as not evaluated, "
+            "never as a finding or a refutation.\n"
+            f"{degraded_note}{repro_note}{drift_note}"
             f"CLAIM TABLE:\n{claim_table}\n\n"
             f"HYPOTHESIS: {json.dumps(self.hypothesis)}\n"
             f"PLAN: {json.dumps(plan)}\nDESIGN: {json.dumps(design)}\nMETRICS: {json.dumps(metrics)}\n"

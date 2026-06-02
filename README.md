@@ -3,7 +3,7 @@
 Autonomous researcher — a personal, lights-out AI Scientist. All you need is deploy and make dataset.
 
 Aletheia plans research directions, designs & runs experiments, analyzes & optimizes,
-and writes up results — autonomously, within budget guardrails. A **Claude Opus 4.7**
+and writes up results — autonomously, within budget guardrails. A **Claude Opus 4.8**
 orchestrator (on the Claude Agent SDK) coordinates Claude worker subagents and a
 **cross-vendor critic panel** (GPT-5.5 · latest Gemini · latest DeepSeek · latest Zhipu GLM)
 that reviews designs/results from supportive and adversarial angles. A Postgres
@@ -31,7 +31,7 @@ it moves Aletheia toward that. See the roadmap in the approved plan and `docs/AR
 
 ## Architecture (one-liner)
 
-`Next.js dashboard ⇄ FastAPI ⇄ {orchestrator (Opus 4.7), critic gateway, memory/ledger,
+`Next.js dashboard ⇄ FastAPI ⇄ {orchestrator (Opus 4.8), critic gateway, memory/ledger,
 scheduler, compute, IAM}`, with every message flowing through an **event bus → SSE**.
 
 ## Quickstart (Phase 0 — walking skeleton)
@@ -56,14 +56,22 @@ conda run -n aletheia uvicorn aletheia.api.main:app --reload --port 8000
 cd frontend && npm install && npm run dev    # http://localhost:3000
 ```
 
-Open http://localhost:3000, type a goal, click **Start run**. With no Claude
-credentials set, runs execute in **dry-run** mode (full DB → event-bus → SSE path,
-no model calls). To run for real, set auth in `.env`:
+Open http://localhost:3000, type a goal, click **Start run**.
+
+**On a machine already logged into Claude Code, real runs fire automatically** — the
+orchestrator inherits your existing subscription login (macOS Keychain / `claude`
+CLI), and the OpenAI critic likewise reuses your `codex login`. No keys or tokens in
+`.env` are needed; one distinct-vendor critic (OpenAI via Codex) already satisfies the
+peer-review gate. Runs fall back to **dry-run** (full DB → event-bus → SSE path, no
+model calls) only when *no* Claude login is detected at all.
+
+To point at different auth (e.g. a remote/headless box with no machine login, or to
+force an API key):
 
 ```bash
-# subscription (cheaper, default): paste the token from `claude setup-token`
+# subscription (default, cheaper): only needed headless — run `claude setup-token`
 ALETHEIA_CLAUDE_AUTH_MODE=subscription
-CLAUDE_CODE_OAUTH_TOKEN=...
+CLAUDE_CODE_OAUTH_TOKEN=...            # leave BLANK to inherit the machine login
 # or API key:
 # ALETHEIA_CLAUDE_AUTH_MODE=api_key
 # ANTHROPIC_API_KEY=...
@@ -77,6 +85,14 @@ conda run -n aletheia python -m pytest        # Phase 0 skeleton tests (needs Po
 
 ## Status
 
-Phase 0 (walking skeleton) complete: ledger schema, event bus + SSE, orchestrator
-(real + dry-run), FastAPI, dashboard shell. Next: Phase 1 Materials thin-slice MVP
-(Matbench band-gap regression) running one full research loop end-to-end.
+The full deterministic research lifecycle runs end-to-end in **dry-run** (DB → event-bus
+→ SSE, no model calls) and is exercised by the test suite. Built out through Phases G–P:
+fail-closed guardrails, an evidence/claims ledger, structured literature + SOTA tables,
+hypothesis scorecards, a reproduction pass, an EIG-ranked experiment planner, and the first
+AI-application domain (RAG: lexical & dense retrieval, host-side LLM generation,
+cross-vendor faithfulness) alongside the materials and molecules regression domains.
+
+**Honest caveat:** this is breadth of *machinery*, not yet depth of *result*. Every domain
+has so far been exercised on small / synthetic data; a substantive real run (real models,
+real dataset, confronting real failure) is the next milestone — not more breadth. See
+`docs/PROJECT_REVIEW.md` and `docs/AUTONOMOUS_RESEARCH_ROADMAP.md`.
