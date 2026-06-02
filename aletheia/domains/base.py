@@ -49,6 +49,10 @@ class DomainProfile:
     # whether the eval runs HOST-SIDE in the driver (trusted: keys + network for a real
     # LLM step) rather than in the compute-backend sandbox. Scoring stays deterministic.
     host_side_run: bool = False
+    # the artifact kinds a REAL run must emit to be verifiable; the post-execution guard
+    # pauses a real run missing any of them. Regression domains fit + score a model
+    # (model + eval); host-side eval-only domains (e.g. RAG) emit just eval.
+    required_artifacts: tuple[str, ...] = ("eval", "model")
     units: str = ""  # e.g. "eV"; "" for unitless targets
     protocol_desc: str = "grouped cross-validation + holdout + baseline panel"
     feature_desc: str = "a numeric feature matrix"

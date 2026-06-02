@@ -151,7 +151,9 @@ function line(e: LabEvent): string {
     case "report":
       return `📄 report written`;
     case "run_finished":
-      return `✓ run ${p.status ?? ""}`;
+      return p.results_gate === "rejected" || p.status === "results_rejected"
+        ? `⚠ run finished — results rejected by peer review`
+        : `✓ run ${p.status ?? ""}`;
     case "result":
       return `result · $${p.cost_usd ?? 0}`;
     case "error":
