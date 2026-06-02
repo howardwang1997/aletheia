@@ -119,3 +119,13 @@ class DomainPlugin(ABC):
         result.info.setdefault("feature_count", len(feature_names))
         result.info.setdefault("n_rows", int(getattr(df, "shape", [0])[0]))
         return result
+
+    def run_demonstration(
+        self, demonstration: dict[str, Any], data_spec: dict[str, Any], workdir: Path
+    ) -> dict[str, Any] | None:
+        """Compute a PARADIGM contribution's discriminating demonstration DETERMINISTICALLY
+        (harness-owned — never an LLM 'holds' assertion): does the new frame reveal/measure
+        something the incumbent provably cannot? Return
+        ``{form, holds: bool, statistic: float|None, detail: str}`` or ``None`` if the
+        domain has no computable demonstration. Default: no demonstration available."""
+        return None
