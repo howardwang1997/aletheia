@@ -1101,14 +1101,17 @@ class ExperimentDriver:
             demo = demonstration if isinstance(demonstration, dict) else {}
             holds = demo.get("holds")  # True | False | None(not executed)
             demo_repro = repro.get("demonstration_reproduced") if repro.get("attempted") else None
+            # `refuted` is reserved for a demonstration that was TESTED and did NOT hold —
+            # NOT for one that held but the gate didn't endorse (that is `unverified`),
+            # mirroring the not_evaluated/refuted distinction elsewhere.
             if holds is None:
                 form_status = "not_evaluated"
-            elif holds and passed:
+            elif holds is False:
+                form_status = "refuted"  # the discriminating demonstration was contradicted
+            elif passed:
                 form_status = "supported"
-            elif verdict == "reject" or holds is False:
-                form_status = "refuted"
             else:
-                form_status = "unverified"
+                form_status = "unverified"  # demonstration held, but peer review didn't endorse it
             await asyncio.to_thread(
                 update_claim, self._claim_ids["formulation"],
                 strength=self._claim_strength(

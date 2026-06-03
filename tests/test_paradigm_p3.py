@@ -75,12 +75,24 @@ def test_finalize_supported_strong_when_demo_holds_and_reproduced():
     assert f["status"] == "supported" and f["strength"] == "strong"
 
 
-def test_finalize_refuted_when_gate_rejects():
+def test_finalize_unverified_when_demo_holds_but_gate_rejects():
+    # the demonstration HELD (objectively true), but peer review didn't endorse the
+    # broader contribution -> unverified, NOT refuted (refuted == demonstration failed).
     create_all()
     run_id = create_run("p3 reject", domain="materials", status="planned")
     f = _finalize(
         run_id, verdict="reject", passed=False,
         demonstration={"form": "enablement", "holds": True, "statistic": 0.1},
+    )
+    assert f["status"] == "unverified" and f["strength"] == "weak"
+
+
+def test_finalize_refuted_only_when_demo_did_not_hold():
+    create_all()
+    run_id = create_run("p3 refuted", domain="materials", status="planned")
+    f = _finalize(
+        run_id, verdict="reject", passed=False,
+        demonstration={"form": "enablement", "holds": False, "statistic": 1.0},
     )
     assert f["status"] == "refuted" and f["strength"] == "weak"
 
