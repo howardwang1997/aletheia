@@ -11,11 +11,34 @@ endpoint supports.
 
 from __future__ import annotations
 
+import threading
 import time
 
 from aletheia.config import get_settings
 from aletheia.critics.providers.base import CriticProvider
 from aletheia.critics.schemas import CriticResponse
+
+# Per-vendor THROTTLE: a subscription coding plan (e.g. GLM) is slow AND rate-limits
+# bursts, while the panel fans out concurrently (≥2 stances) over several rounds. We
+# serialize each vendor's calls (one in flight at a time, process-wide) and space them
+# out by a minimum interval, so we never trip the vendor's rate/concurrency limit.
+_VENDOR_GATES: dict[str, threading.Lock] = {}
+_VENDOR_LAST: dict[str, float] = {}
+_GATES_GUARD = threading.Lock()
+
+
+def _vendor_gate(vendor_id: str) -> threading.Lock:
+    with _GATES_GUARD:
+        return _VENDOR_GATES.setdefault(vendor_id, threading.Lock())
+
+
+def _is_quota_exhausted(exc: Exception) -> bool:
+    """A vendor's quota/balance is used up for this window (e.g. GLM Coding Plan 429
+    code 1113 余额不足/无可用资源包). Retrying is futile and just burns the rate window —
+    fail fast and let the OTHER vendor carry the round."""
+    code = str(getattr(exc, "code", "") or "")
+    blob = f"{code} {getattr(exc, 'message', '') or ''} {exc}"
+    return "1113" in blob or "余额不足" in blob or "无可用资源包" in blob
 
 
 class OpenAICompatibleProvider(CriticProvider):
@@ -40,16 +63,28 @@ class OpenAICompatibleProvider(CriticProvider):
                 f"(set it in critics.yaml or {self.critic_id.upper()}_BASE_URL)."
             )
         client = OpenAI(api_key=key, base_url=base_url, max_retries=0)
+        # throttle this vendor (serialize + min-interval), then run with backoff retry.
+        gate = _vendor_gate(self.critic_id)
+        min_interval = float(settings.critic_vendor_min_interval_s)
+        with gate:
+            wait = min_interval - (time.monotonic() - _VENDOR_LAST.get(self.critic_id, 0.0))
+            if wait > 0:
+                time.sleep(wait)
+            try:
+                return self._complete(client, instruction, content)
+            finally:
+                _VENDOR_LAST[self.critic_id] = time.monotonic()
+
+    def _complete(self, client, instruction: str, content: str) -> CriticResponse:
         # JSON mode is the portable structured-output path across OpenAI-compatible
-        # endpoints; the instruction already asks for the JSON schema by field.
-        # Retry transient rate-limit / server errors with backoff — subscription coding
-        # plans (e.g. GLM) rate-limit bursts (HTTP 429 code 1113), and the panel fans out
-        # concurrently; without this a transient 429 would silently drop this reviewer.
+        # endpoints; the instruction already asks for the JSON schema by field. Retry
+        # transient rate-limit / server errors with backoff — EXCEPT a quota-exhausted
+        # 429 (e.g. GLM 1113), which won't recover in-window, so fail fast.
         from openai import APIStatusError, APITimeoutError, RateLimitError
 
         delay = 2.0
         last_exc: Exception | None = None
-        for attempt in range(4):
+        for attempt in range(3):
             try:
                 resp = client.chat.completions.create(
                     model=self.model,
@@ -61,13 +96,17 @@ class OpenAICompatibleProvider(CriticProvider):
                     temperature=0.3,
                 )
                 return self._parse(resp.choices[0].message.content or "")
-            except (RateLimitError, APITimeoutError) as exc:
+            except RateLimitError as exc:
+                if _is_quota_exhausted(exc):  # 1113: futile to retry, don't burn the window
+                    raise
+                last_exc = exc
+            except APITimeoutError as exc:
                 last_exc = exc
             except APIStatusError as exc:
                 if exc.status_code < 500:  # non-transient client error -> don't retry
                     raise
                 last_exc = exc
-            if attempt < 3:
+            if attempt < 2:
                 time.sleep(delay)
                 delay = min(delay * 2, 16.0)
         raise last_exc  # type: ignore[misc]
