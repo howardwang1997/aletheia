@@ -103,6 +103,10 @@ class Settings(BaseSettings):
     codex_command: str = "codex"
     codex_timeout_s: float = 240.0
 
+    # min seconds between calls to one OpenAI-compatible critic vendor (serialized).
+    # GLM's Coding Plan is slow + rate-limits bursts, so we space its calls out.
+    critic_vendor_min_interval_s: float = 3.0
+
     # --- coder sandbox (executing AI-authored model code) ---
     # NB: the AST allowlist + rlimits are a guardrail against runaway/accidental
     # code, NOT a hard boundary against truly adversarial code (Docker is the

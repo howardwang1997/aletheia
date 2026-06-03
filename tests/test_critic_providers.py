@@ -105,7 +105,8 @@ def test_openai_compatible_builds_client_with_key_and_base_url(monkeypatch):
     fake_openai.APIStatusError = type("APIStatusError", (Exception,), {"status_code": 500})
     monkeypatch.setitem(sys.modules, "openai", fake_openai)
     fake_settings = types.SimpleNamespace(
-        vendor_key=lambda _id: "sk-zhipu", vendor_base_url=lambda _id: None
+        vendor_key=lambda _id: "sk-zhipu", vendor_base_url=lambda _id: None,
+        critic_vendor_min_interval_s=0.0,
     )
     monkeypatch.setattr(mod, "get_settings", lambda: fake_settings)
 

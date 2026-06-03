@@ -5,6 +5,8 @@ retried so concurrent stances don't race the single-use OAuth refresh token. Off
 from __future__ import annotations
 
 import json
+import sys
+import types
 
 import aletheia.config.settings as st
 from aletheia.config.settings import CriticConfig, _opencode_glm_key
@@ -71,3 +73,83 @@ def test_codex_serialized_and_retries(monkeypatch):
     monkeypatch.setattr(openai_cli.time, "sleep", lambda *_: None)  # no real delay
     r = p.review("instruction", "content")
     assert r.verdict == "approve" and calls["n"] == 2  # retried once after the transient fail
+
+
+# --- GLM throttle: serialize per vendor, fast-fail on quota (1113) --------------
+def test_is_quota_exhausted_detects_1113():
+    from aletheia.critics.providers.openai_compatible import _is_quota_exhausted
+
+    e1 = type("E", (Exception,), {"code": "1113"})()
+    assert _is_quota_exhausted(e1) is True
+    assert _is_quota_exhausted(Exception("Error code: 429 - 余额不足或无可用资源包")) is True
+    assert _is_quota_exhausted(Exception("Error code: 429 - too many requests")) is False
+
+
+def test_vendor_gate_is_stable_per_vendor():
+    from aletheia.critics.providers.openai_compatible import _vendor_gate
+
+    assert _vendor_gate("zhipu") is _vendor_gate("zhipu")
+    assert _vendor_gate("zhipu") is not _vendor_gate("deepseek")
+
+
+def _fake_openai(create_fn):
+    m = types.ModuleType("openai")
+    m.RateLimitError = type("RateLimitError", (Exception,), {})
+    m.APITimeoutError = type("APITimeoutError", (Exception,), {})
+    m.APIStatusError = type("APIStatusError", (Exception,), {"status_code": 500})
+    counter = {"n": 0}
+
+    class _Client:
+        def __init__(self, **kw):
+            self.chat = types.SimpleNamespace(
+                completions=types.SimpleNamespace(create=lambda **kw: create_fn(counter, m))
+            )
+
+    m.OpenAI = _Client
+    return m, counter
+
+
+def test_glm_quota_1113_fails_fast_no_retry(monkeypatch):
+    from aletheia.critics.providers.openai_compatible import ZhipuAPIProvider
+
+    def create(counter, m):
+        counter["n"] += 1
+        exc = m.RateLimitError("Error code: 429 - 余额不足")
+        exc.code = "1113"
+        raise exc
+
+    fake, counter = _fake_openai(create)
+    monkeypatch.setitem(sys.modules, "openai", fake)
+    monkeypatch.setattr("aletheia.critics.providers.openai_compatible.get_settings",
+                        lambda: types.SimpleNamespace(vendor_key=lambda _: "k",
+                                                      vendor_base_url=lambda _: "http://x",
+                                                      critic_vendor_min_interval_s=0.0))
+    prov = ZhipuAPIProvider(CriticConfig(id="zhipu", model="glm-4.6", base_url="http://x"))
+    try:
+        prov.review("i", "c")
+        raise AssertionError("expected the 1113 error to propagate")
+    except Exception:
+        pass
+    assert counter["n"] == 1  # fast-fail: NOT retried (would have burned the quota window)
+
+
+def test_glm_transient_429_is_retried(monkeypatch):
+    from aletheia.critics.providers.openai_compatible import ZhipuAPIProvider
+
+    def create(counter, m):
+        counter["n"] += 1
+        raise m.RateLimitError("Error code: 429 - rate limited, slow down")  # not 1113
+
+    fake, counter = _fake_openai(create)
+    monkeypatch.setitem(sys.modules, "openai", fake)
+    monkeypatch.setattr("aletheia.critics.providers.openai_compatible.time.sleep", lambda *_: None)
+    monkeypatch.setattr("aletheia.critics.providers.openai_compatible.get_settings",
+                        lambda: types.SimpleNamespace(vendor_key=lambda _: "k",
+                                                      vendor_base_url=lambda _: "http://x",
+                                                      critic_vendor_min_interval_s=0.0))
+    prov = ZhipuAPIProvider(CriticConfig(id="zhipu", model="glm-4.6", base_url="http://x"))
+    try:
+        prov.review("i", "c")
+    except Exception:
+        pass
+    assert counter["n"] == 3  # transient 429 retried up to 3 attempts
