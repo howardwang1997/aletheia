@@ -18,6 +18,7 @@ from typing import Any
 
 ARXIV_API = "https://export.arxiv.org/api/query"
 OPENALEX_API = "https://api.openalex.org/works"
+SEMANTIC_SCHOLAR_API = "https://api.semanticscholar.org/graph/v1/paper/search"
 _TIMEOUT = 20.0
 
 # arXiv asks for <= 1 request / 3s and a descriptive User-Agent; bursting the survey's
@@ -29,6 +30,10 @@ _HEADERS = {"User-Agent": _UA}
 _ARXIV_MIN_INTERVAL = 3.0
 _arxiv_lock = threading.Lock()
 _arxiv_last = 0.0
+# Semantic Scholar's unauthenticated pool is ~1 req/s and 429s on bursts; pace it too.
+_S2_MIN_INTERVAL = 1.1
+_s2_lock = threading.Lock()
+_s2_last = 0.0
 
 
 def _pace_arxiv() -> None:
@@ -40,6 +45,16 @@ def _pace_arxiv() -> None:
         if wait > 0:
             time.sleep(wait)
         _arxiv_last = time.monotonic()
+
+
+def _pace_s2() -> None:
+    """Process-wide pacing for Semantic Scholar's unauthenticated rate limit."""
+    global _s2_last
+    with _s2_lock:
+        wait = _S2_MIN_INTERVAL - (time.monotonic() - _s2_last)
+        if wait > 0:
+            time.sleep(wait)
+        _s2_last = time.monotonic()
 
 
 def _get_with_retry(client: Any, url: str, params: dict, *, retries: int = 4) -> Any:
@@ -179,16 +194,57 @@ def _openalex(query: str, k: int) -> list[Paper]:
     return papers
 
 
+def _semantic_scholar(query: str, k: int) -> list[Paper]:
+    """Semantic Scholar Graph API — RELEVANCE-ranked search (its own algorithm +
+    SPECTER2), the strongest keyless source for scientific relevance. Keyless (the
+    shared pool is rate-limited; we pace + retry)."""
+    import httpx
+
+    params = {
+        "query": query, "limit": min(max(k, 1), 100),
+        "fields": "title,abstract,year,externalIds,venue,authors,citationCount,url",
+    }
+    _pace_s2()
+    with httpx.Client(timeout=_TIMEOUT, follow_redirects=True, headers=_HEADERS) as c:
+        r = _get_with_retry(c, SEMANTIC_SCHOLAR_API, params)
+        data = r.json()
+    papers: list[Paper] = []
+    for w in data.get("data", []) or []:
+        title = (w.get("title") or "").strip()
+        if not title:
+            continue
+        ext = w.get("externalIds") or {}
+        authors = [(a.get("name") or "").strip() for a in (w.get("authors") or [])]
+        papers.append(
+            Paper(
+                title=title,
+                authors=[a for a in authors if a],
+                year=w.get("year"),
+                doi=ext.get("DOI"),
+                venue=w.get("venue"),
+                abstract=(w.get("abstract") or "").strip(),
+                url=w.get("url") or (f"https://doi.org/{ext.get('DOI')}" if ext.get("DOI") else None),
+                citations=w.get("citationCount"),
+                source="semanticscholar",
+            )
+        )
+    return papers
+
+
 def search(query: str, k: int = 8) -> list[Paper]:
-    """Search arXiv + OpenAlex, merge + dedupe. Best-effort: a failing source is
-    skipped, not raised. Returns up to ``k`` papers."""
+    """Search Semantic Scholar + arXiv + OpenAlex, merge + dedupe, then RERANK the pooled
+    candidates by genuine query relevance (cross-encoder) and drop off-topic hits — so
+    keyword recall is filtered to what actually matters. Best-effort: a failing source is
+    skipped; if the reranker can't load, the merge order is kept. Returns up to ``k``."""
     query = (query or "").strip()
     if not query:
         return []
+    # over-fetch per source so the reranker has a real pool to choose from
+    per_source = max(k, 15)
     found: list[Paper] = []
-    for fn in (_arxiv, _openalex):
+    for fn in (_semantic_scholar, _arxiv, _openalex):  # S2 first: best relevance for dedupe
         try:
-            found.extend(fn(query, k))
+            found.extend(fn(query, per_source))
         except Exception as exc:  # pragma: no cover - network/parse, defensive
             print(f"[literature] {fn.__name__} failed: {exc}", file=sys.stderr)
     seen: set[str] = set()
@@ -199,7 +255,9 @@ def search(query: str, k: int = 8) -> list[Paper]:
             continue
         seen.add(kk)
         merged.append(p)
-    return merged[:k] if k else merged
+    from aletheia.research.rerank import rerank_papers
+
+    return rerank_papers(query, merged, top_k=k)
 
 
 def ingest(papers: list[Paper], run_id: str | None = None, dry_run: bool = False) -> int:

@@ -7,8 +7,22 @@ from __future__ import annotations
 import sys
 import types
 
+import pytest
+
 from aletheia.research import literature
 from aletheia.research.literature import Paper, search
+
+
+@pytest.fixture(autouse=True)
+def _passthrough_rerank(monkeypatch):
+    """These tests cover SOURCE parsing/dedupe, not ranking — keep them fully offline by
+    stubbing the cross-encoder rerank to a passthrough (no model download)."""
+    import aletheia.research.rerank as rr
+
+    monkeypatch.setattr(
+        rr, "rerank_papers",
+        lambda q, papers, **kw: list(papers)[: (kw.get("top_k") or len(papers))],
+    )
 
 _ARXIV_XML = """<?xml version="1.0"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
@@ -36,7 +50,7 @@ _OPENALEX_JSON = {
 }
 
 
-def _fake_httpx(*, arxiv_text=_ARXIV_XML, openalex_json=_OPENALEX_JSON, raise_on=None):
+def _fake_httpx(*, arxiv_text=_ARXIV_XML, openalex_json=_OPENALEX_JSON, s2_json=None, raise_on=None):
     class _Resp:
         def __init__(self, text="", data=None):
             self._text, self._data = text, data
@@ -66,6 +80,8 @@ def _fake_httpx(*, arxiv_text=_ARXIV_XML, openalex_json=_OPENALEX_JSON, raise_on
                 raise RuntimeError("boom")
             if "arxiv" in url:
                 return _Resp(text=arxiv_text)
+            if "semanticscholar" in url:
+                return _Resp(data=s2_json or {"data": []})  # default: S2 contributes nothing
             return _Resp(data=openalex_json)
 
     mod = types.ModuleType("httpx")
@@ -83,6 +99,22 @@ def test_search_parses_both_sources(monkeypatch):
     oa = by_src["openalex"]
     assert oa.year == 2023 and oa.citations == 42 and oa.venue == "Nature"
     assert oa.abstract == "Graph networks predict"  # inverted index reconstructed in order
+
+
+def test_semantic_scholar_parsed(monkeypatch):
+    s2 = {"data": [
+        {"title": "Dense passage retrieval for QA", "abstract": "We propose DPR.",
+         "year": 2020, "externalIds": {"DOI": "10.9/dpr"}, "venue": "EMNLP",
+         "authors": [{"name": "V. Karpukhin"}], "citationCount": 1234,
+         "url": "https://www.semanticscholar.org/paper/abc"},
+        {"title": "", "abstract": "skip me"},  # titleless -> skipped
+    ]}
+    monkeypatch.setitem(sys.modules, "httpx", _fake_httpx(s2_json=s2, arxiv_text="<feed/>"))
+    papers = search("retrieval", k=8)
+    s2p = [p for p in papers if p.source == "semanticscholar"]
+    assert len(s2p) == 1
+    assert s2p[0].year == 2020 and s2p[0].citations == 1234 and s2p[0].doi == "10.9/dpr"
+    assert s2p[0].venue == "EMNLP"
 
 
 def test_dedupe_across_sources_by_doi(monkeypatch):
