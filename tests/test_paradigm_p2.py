@@ -71,6 +71,45 @@ def test_paradigm_with_demonstration_is_honored(monkeypatch):
     assert d._paradigm_demonstration()["form"] == "discriminating_instance"
 
 
+# --- re-ideation must NOT drop the paradigm framing (real-run bug) --------------
+def test_reideation_preserves_contribution_type_and_demonstration(monkeypatch):
+    """A direction-gate rejection re-ideates; if the revision omits contribution_type /
+    demonstration, a paradigm contribution must NOT silently revert to performance (which
+    would skip its discriminating demonstration entirely)."""
+    from aletheia.critics.schemas import Critique, CritiquePanel
+    from aletheia.scheduler.statemachine import LoopGuard
+
+    create_all()
+    run_id = create_run("reideate paradigm", domain="materials", status="planned")
+    d = ExperimentDriver(run_id, dry_run=True)
+    d.guard = LoopGuard(5)
+    d.survey_gaps, d.survey_brief = [], ""
+    d.hypothesis = {"statement": "orig", "contribution_type": "paradigm",
+                    "demonstration": {"form": "impossibility", "claim": "incumbent is blind"}}
+
+    calls = {"n": 0}
+
+    async def fake_review(target, content, ref, **kw):
+        calls["n"] += 1
+        passed = calls["n"] >= 2  # reject once, then approve
+        return CritiquePanel(
+            target=target, target_ref=ref,
+            critiques=[Critique(critic_id="x", stance="adversarial",
+                                verdict="approve" if passed else "reject",
+                                confidence=1.0, summary="", findings=[])],
+            consensus_verdict="approve" if passed else "reject", gate_passed=passed,
+        )
+
+    async def fake_reason(run_id, stage, prompt, **kw):  # revision DROPS the paradigm fields
+        return '{"statement": "revised", "rationale": "r", "prediction": "p", "novelty_note": "n"}'
+
+    monkeypatch.setattr(d.gateway, "review", fake_review)
+    monkeypatch.setattr(drv, "reason_stage", fake_reason)
+    assert asyncio.run(d._direction_gate({"objective": "x"}, None)) is True
+    assert d._contribution_type() == "paradigm"  # framing survived the re-ideation
+    assert d._paradigm_demonstration()["form"] == "impossibility"
+
+
 # --- the demonstration + mode reach the results-review payload ------------------
 def test_payload_carries_contribution_type_and_demonstration():
     demo = {"form": "enablement", "claim": "measures calibration the incumbent cannot"}

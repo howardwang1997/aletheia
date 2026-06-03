@@ -595,13 +595,22 @@ class ExperimentDriver:
             prompt = (
                 f"The critic REJECTED this research direction (revision {n}):\n{json.dumps(self.hypothesis)}\n\n"
                 "Findings:\n" + "\n".join(findings) + "\n\nPropose a revised, more novel/feasible "
-                'hypothesis. Return ONLY JSON: {"statement","rationale","prediction","novelty_note"}.'
+                'hypothesis. Return ONLY JSON: {"statement","rationale","prediction","novelty_note",'
+                '"contribution_type","demonstration"}. KEEP the contribution_type and (if paradigm) the '
+                "demonstration unless your revision deliberately changes the framing."
             )
             text = await reason_stage(
                 self.run_id, "ideate", prompt, dry_run=self.dry_run,
                 dry_text='{"statement": "revised hypothesis", "rationale": "r", "prediction": "p", "novelty_note": "n"}',
             )
-            self.hypothesis = _parse_json(text, _JSON, self.hypothesis)
+            revised = _parse_json(text, _JSON, self.hypothesis)
+            # preserve the paradigm framing across re-ideation: a revision that omits
+            # contribution_type/demonstration must NOT silently revert a paradigm
+            # contribution to performance (which would skip its demonstration entirely).
+            for k in ("contribution_type", "demonstration"):
+                if not revised.get(k) and self.hypothesis.get(k):
+                    revised[k] = self.hypothesis[k]
+            self.hypothesis = revised
             stmt = str(self.hypothesis.get("statement", "")).strip()
             if stmt and exp_id:
                 await asyncio.to_thread(set_experiment_hypothesis, exp_id, stmt)
