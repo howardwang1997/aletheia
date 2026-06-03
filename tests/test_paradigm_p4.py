@@ -54,6 +54,56 @@ def test_run_demonstration_dispatches_to_scaffold():
     assert "scaffold-grouped RMSE" in demo["detail"]
 
 
+# --- paradigm runs are gated on the DEMONSTRATION, not a fitted model ----------
+def test_paradigm_guard_passes_on_demonstration_without_model():
+    from aletheia.db import create_all
+    from aletheia.memory.service import create_run
+
+    create_all()
+    run_id = create_run("paradigm guard", domain="molecules", status="planned")
+    d = ExperimentDriver(run_id, dry_run=False)
+    d.profile = get_domain_plugin("molecules").profile()
+    d.hypothesis = {"contribution_type": "paradigm",
+                    "demonstration": {"form": "impossibility", "claim": "cliff"}}
+    # performance eval FAILED: no eval/model artifacts, no metrics — but demonstration present
+    result = {"metrics": {}, "artifacts": [{"kind": "demonstration"}],
+              "info": {"demonstration": {"holds": True}, "eval_error": "sandbox timeout"}}
+    assert asyncio.run(d._post_execution_guards(result, "exp1")) is True
+
+
+def test_paradigm_guard_blocks_without_demonstration():
+    from aletheia.db import create_all
+    from aletheia.memory.service import create_run
+
+    create_all()
+    run_id = create_run("paradigm noguard", domain="molecules", status="planned")
+    d = ExperimentDriver(run_id, dry_run=False)
+    d.profile = get_domain_plugin("molecules").profile()
+    d.hypothesis = {"contribution_type": "paradigm",
+                    "demonstration": {"form": "x", "claim": "c"}}
+    result = {"metrics": {}, "artifacts": [], "info": {}}  # demonstration never computed
+    assert asyncio.run(d._post_execution_guards(result, None)) is False
+
+
+def test_run_eval_computes_demonstration_when_perf_eval_fails(monkeypatch):
+    d = ExperimentDriver("rid-eval-fail", dry_run=False)
+    d.hypothesis = {"contribution_type": "paradigm",
+                    "demonstration": {"form": "impossibility", "claim": "cliff Lipschitz"}}
+
+    async def boom(design, data_spec, domain, exp_id):
+        raise RuntimeError("sandbox timeout")
+
+    async def fake_demo(design, data_spec, domain):
+        return {"form": "impossibility", "holds": True, "statistic": 9.0, "detail": "d"}
+
+    monkeypatch.setattr(d, "_dispatch_eval", boom)
+    monkeypatch.setattr(d, "_compute_demonstration", fake_demo)
+    result = asyncio.run(d._run_eval({}, {}, "molecules", None))
+    assert result["info"]["demonstration"]["holds"] is True  # demo computed despite eval failure
+    assert result["info"]["eval_error"] == "sandbox timeout"
+    assert any(a["kind"] == "demonstration" for a in result["artifacts"])
+
+
 # --- driver wiring: demonstration runs for paradigm runs, skipped in dry-run ----
 def test_compute_demonstration_skipped_in_dry_run():
     d = ExperimentDriver("rid-dry", dry_run=True)
