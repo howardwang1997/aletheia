@@ -170,6 +170,8 @@ class Settings(BaseSettings):
     deepseek_api_key: str | None = Field(default=None, alias="DEEPSEEK_API_KEY")
     zhipu_api_key: str | None = Field(default=None, alias="ZHIPU_API_KEY")
     grok_api_key: str | None = Field(default=None, alias="GROK_API_KEY")
+    # optional: a free Semantic Scholar key removes the unauthenticated 429s (keyless works too)
+    semantic_scholar_api_key: str | None = Field(default=None, alias="S2_API_KEY")
     feishu_webhook_url: str | None = Field(default=None, alias="FEISHU_WEBHOOK_URL")
     mp_api_key: str | None = Field(default=None, alias="MP_API_KEY")
 
