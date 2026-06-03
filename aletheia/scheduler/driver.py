@@ -1009,15 +1009,26 @@ class ExperimentDriver:
             return True
         info = result.get("info") or {}
         kinds = {a.get("kind") for a in (result.get("artifacts") or [])}
-        required = set(self.profile.required_artifacts) if self.profile else {"eval", "model"}
-        missing = required - kinds
-        if missing or not result.get("metrics"):
-            await self._block_run(
-                exp_id,
-                f"execution did not produce verifiable artifacts (missing: "
-                f"{', '.join(sorted(missing)) or 'metrics'}); pausing before analysis",
-            )
-            return False
+        # a PARADIGM run is verifiable through its discriminating DEMONSTRATION, not a
+        # fitted model — gate on the demonstration; a failed/timed-out performance eval is
+        # a limitation (recorded in write-up), NOT a blocker.
+        if self._contribution_type() == "paradigm":
+            if not info.get("demonstration"):
+                await self._block_run(
+                    exp_id, "paradigm run produced no discriminating demonstration; "
+                    "pausing before analysis",
+                )
+                return False
+        else:
+            required = set(self.profile.required_artifacts) if self.profile else {"eval", "model"}
+            missing = required - kinds
+            if missing or not result.get("metrics"):
+                await self._block_run(
+                    exp_id,
+                    f"execution did not produce verifiable artifacts (missing: "
+                    f"{', '.join(sorted(missing)) or 'metrics'}); pausing before analysis",
+                )
+                return False
         if info.get("protocol_status") == "degraded_kfold":
             await get_bus().publish(
                 make_event(
@@ -1834,12 +1845,30 @@ class ExperimentDriver:
         declare it, else the compute-backend sandbox. Scoring stays the fixed harness
         either way. For a PARADIGM contribution, also compute the domain's discriminating
         demonstration (deterministic, harness-owned) into ``info["demonstration"]`` — done
-        here so the reproduction re-run (which re-enters this method) recomputes it too."""
-        result = await self._dispatch_eval(design, data_spec, domain, exp_id)
-        if not result.get("blocked") and self._contribution_type() == "paradigm":
+        here so the reproduction re-run (which re-enters this method) recomputes it too.
+
+        The paradigm demonstration IS the contribution, so it is computed even when the
+        (secondary) performance eval fails/times out — a failed performance model must not
+        sink a paradigm run."""
+        paradigm = self._contribution_type() == "paradigm"
+        try:
+            result = await self._dispatch_eval(design, data_spec, domain, exp_id)
+        except Exception as exc:
+            if not paradigm:
+                raise
+            await get_bus().publish(make_event(
+                "compute_status", run_id=self.run_id,
+                payload={"job_id": "eval-failed", "status": "failed", "error": str(exc),
+                         "note": "performance eval failed; paradigm demonstration still computed"}))
+            result = {"job_id": "eval-failed", "metrics": {}, "artifacts": [],
+                      "info": {"eval_error": str(exc)}}
+        if paradigm and not result.get("blocked"):
             demo = await self._compute_demonstration(design, data_spec, domain)
             if demo is not None:
                 result.setdefault("info", {})["demonstration"] = demo
+                # a first-class artifact so the run has a verifiable record of its contribution
+                result.setdefault("artifacts", []).append(
+                    {"kind": "demonstration", "uri": f"demonstration:{demo.get('form', 'discriminating')}"})
         return result
 
     async def _dispatch_eval(self, design, data_spec, domain, exp_id) -> dict[str, Any]:
@@ -2155,17 +2184,21 @@ class ExperimentDriver:
         )
         units = self.profile.units if self.profile else ""
         usfx = f" {units}" if units else ""
-        self._claim_ids["metric"] = await asyncio.to_thread(
-            create_claim, self.run_id,
-            claim_text=f"Under grouped CV, {design.get('model')} attains {hm}={hv}{usfx}.",
-            claim_type="metric",
-            strength=self._claim_strength("metric", protocol_status=protocol_status, gate_passed=None),
-            status="proposed", experiment_id=exp_id, created_by="analysis", stage="analysis",
-            evidence=[
-                {"evidence_kind": "metric", "evidence_ref": hm, "note": f"value={hv}"},
-                *([{"evidence_kind": "artifact", "evidence_ref": eval_uri, "note": "eval.json"}] if eval_uri else []),
-            ],
-        )
+        # only assert a metric claim if the performance eval actually produced a headline
+        # value (a paradigm run whose performance eval failed/timed-out has none — its
+        # contribution rests on the demonstration, not a metric).
+        if hv is not None:
+            self._claim_ids["metric"] = await asyncio.to_thread(
+                create_claim, self.run_id,
+                claim_text=f"Under grouped CV, {design.get('model')} attains {hm}={hv}{usfx}.",
+                claim_type="metric",
+                strength=self._claim_strength("metric", protocol_status=protocol_status, gate_passed=None),
+                status="proposed", experiment_id=exp_id, created_by="analysis", stage="analysis",
+                evidence=[
+                    {"evidence_kind": "metric", "evidence_ref": hm, "note": f"value={hv}"},
+                    *([{"evidence_kind": "artifact", "evidence_ref": eval_uri, "note": "eval.json"}] if eval_uri else []),
+                ],
+            )
         self._claim_ids["mechanism"] = await asyncio.to_thread(
             create_claim, self.run_id,
             claim_text=f"Hypothesis verdict (per analysis): {str(self.hypothesis.get('statement', '')).strip()}",
@@ -2309,6 +2342,18 @@ class ExperimentDriver:
                 evidence=[{"evidence_kind": "demonstration",
                            "evidence_ref": str((self._paradigm_demonstration() or {}).get("form", "n/a")),
                            "note": "no demonstration result produced by execution"}],
+            )
+        # a paradigm run whose (secondary) performance eval failed/timed-out: record it as
+        # a limitation — the contribution rests on the demonstration, not the model.
+        if info.get("eval_error"):
+            await asyncio.to_thread(
+                create_claim, self.run_id,
+                claim_text=("The performance eval did not complete (the contribution rests on the "
+                            "discriminating demonstration, not a fitted model)."),
+                claim_type="limitation", strength="moderate", status="supported",
+                experiment_id=exp_id, created_by="write_up", stage="write_up",
+                evidence=[{"evidence_kind": "code", "evidence_ref": "performance-eval",
+                           "note": str(info.get("eval_error"))[:200]}],
             )
         # refresh the metric claim to the headline actually reported (OPTIMIZE may have
         # swapped in the alternate result).
