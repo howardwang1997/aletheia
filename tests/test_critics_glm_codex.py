@@ -49,7 +49,7 @@ def test_glm_critic_active_on_coding_endpoint():
     zhipu = next((c for c in get_settings().critics.active if c.id == "zhipu"), None)
     assert zhipu is not None, "GLM (zhipu) must be an active critic"
     assert "/coding/" in (zhipu.base_url or ""), "must use the GLM Coding Plan endpoint"
-    assert zhipu.model == "glm-4.6"
+    assert zhipu.model == "glm-5.1"
 
 
 # --- Codex provider: serialized + retried --------------------------------------
@@ -85,6 +85,7 @@ def test_claude_cli_provider_registered_and_credentialed():
     from aletheia.config import get_settings
     anthropic = next((c for c in get_settings().critics.active if c.id == "anthropic"), None)
     assert anthropic is not None and anthropic.transport == "cli"
+    assert anthropic.model == "claude-opus-4-8"
 
 
 def test_claude_cli_parses_json_envelope(monkeypatch):
