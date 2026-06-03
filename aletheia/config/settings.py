@@ -103,6 +103,11 @@ class Settings(BaseSettings):
     codex_command: str = "codex"
     codex_timeout_s: float = 240.0
 
+    # --- Claude CLI (critic transport "cli": Claude on the machine's Coding Plan login,
+    # the same subscription the orchestrator uses — the most reliable critic credential) ---
+    claude_command: str = "claude"
+    claude_cli_timeout_s: float = 240.0
+
     # min seconds between calls to one OpenAI-compatible critic vendor (serialized).
     # GLM's Coding Plan is slow + rate-limits bursts, so we space its calls out.
     critic_vendor_min_interval_s: float = 3.0

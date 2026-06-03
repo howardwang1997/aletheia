@@ -15,6 +15,11 @@ panel:
     enabled: true
     transport: cli            # Codex CLI on the Coding Plan (api = OPENAI_API_KEY)
     model: gpt-5.5            # latest OpenAI
+  - id: anthropic
+    enabled: true             # Claude CLI on the machine's Coding Plan login (no key) —
+    transport: cli            # the most reliable critic credential (same login as the
+    model: claude-sonnet-4-6  # orchestrator). Sonnet critic vs the Opus author = less
+                              # same-model self-review; cross-vendor (GPT/GLM) stays primary.
   - id: gemini
     enabled: true
     transport: api
