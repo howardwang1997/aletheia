@@ -26,7 +26,11 @@ from aletheia.critics.providers.base import CriticProvider
 from aletheia.critics.providers.gemini_api import GeminiAPIProvider
 from aletheia.critics.providers.openai_api import OpenAIAPIProvider
 from aletheia.critics.providers.openai_cli import OpenAICodexProvider
-from aletheia.critics.providers.openai_compatible import DeepSeekAPIProvider, ZhipuAPIProvider
+from aletheia.critics.providers.openai_compatible import (
+    DeepSeekAPIProvider,
+    GrokAPIProvider,
+    ZhipuAPIProvider,
+)
 from aletheia.critics.schemas import CriticFinding, Critique, CritiquePanel
 from aletheia.events.bus import get_bus, make_event
 from aletheia.memory.service import record_critique_panel
@@ -40,6 +44,7 @@ _PROVIDERS: dict[str, dict[str, type[CriticProvider]]] = {
     "gemini": {"api": GeminiAPIProvider},
     "deepseek": {"api": DeepSeekAPIProvider},
     "zhipu": {"api": ZhipuAPIProvider},
+    "grok": {"api": GrokAPIProvider},  # xAI, OpenAI-compatible (key from sciminer/.env)
 }
 
 _STANCES = ("supportive", "adversarial")

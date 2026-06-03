@@ -38,9 +38,14 @@ panel:
                               # (1113). Key is read from OpenCode's config.
     transport: api
     model: glm-5.1            # latest GLM on the Coding Plan
-    # IMPORTANT: the Coding Plan subscription is served ONLY by the /coding/ endpoint;
-    # the standard /api/paas/v4 returns 1113 "余额不足" (no pay-as-you-go balance).
+    # the Coding Plan is served ONLY by the /coding/ endpoint; the standard
+    # /api/paas/v4 returns 1113 "余额不足" (no pay-as-you-go balance).
     base_url: https://open.bigmodel.cn/api/coding/paas/v4
+  - id: grok
+    enabled: true             # xAI Grok — independent 3rd-party vendor; restores genuine
+    transport: api            # cross-vendor review alongside Claude while Codex/GLM are
+    model: grok-4.3           # down. Key read from ../sciminer/.env (GROK_API_KEY).
+    base_url: https://api.x.ai/v1
 
 # Gate policy: how the per-model verdicts combine into CritiquePanel.gate_passed.
 consensus:

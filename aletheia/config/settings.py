@@ -157,6 +157,7 @@ class Settings(BaseSettings):
     google_api_key: str | None = Field(default=None, alias="GOOGLE_API_KEY")
     deepseek_api_key: str | None = Field(default=None, alias="DEEPSEEK_API_KEY")
     zhipu_api_key: str | None = Field(default=None, alias="ZHIPU_API_KEY")
+    grok_api_key: str | None = Field(default=None, alias="GROK_API_KEY")
     feishu_webhook_url: str | None = Field(default=None, alias="FEISHU_WEBHOOK_URL")
     mp_api_key: str | None = Field(default=None, alias="MP_API_KEY")
 
@@ -251,6 +252,9 @@ class Settings(BaseSettings):
             # GLM: explicit ZHIPU_API_KEY wins; otherwise reuse the GLM Coding Plan key
             # already configured in OpenCode (no second place to keep the secret).
             "zhipu": self.zhipu_api_key or _opencode_glm_key(),
+            # Grok/xAI: explicit GROK_API_KEY wins; else read it from the sibling sciminer
+            # project's .env (where it's already configured).
+            "grok": self.grok_api_key or _sciminer_grok_key(),
         }.get(vendor_id)
 
     def vendor_base_url(self, vendor_id: str) -> str | None:
@@ -278,6 +282,26 @@ def _opencode_glm_key() -> str | None:
         opts = (data.get("provider", {}).get("zhipuai-coding-plan", {}) or {}).get("options", {})
         key = opts.get("apiKey")
         return str(key) if key else None
+    except Exception:
+        return None
+
+
+@functools.lru_cache
+def _sciminer_grok_key() -> str | None:
+    """Read GROK_API_KEY from the sibling sciminer project's .env (``../sciminer/.env``)
+    so the xAI/Grok key lives in one place. Override the path with SCIMINER_ENV.
+    Best-effort: any error -> None."""
+    import os as _os
+    import re as _re
+    from pathlib import Path as _Path
+
+    override = _os.environ.get("SCIMINER_ENV")
+    # settings.py -> .../aletheia/aletheia/config/settings.py; parents[3] = the dir that
+    # holds both the aletheia repo and its sibling sciminer.
+    path = _Path(override) if override else _Path(__file__).resolve().parents[3] / "sciminer" / ".env"
+    try:
+        m = _re.search(r"^GROK_API_KEY=(.+)$", _Path(path).read_text(), _re.M)
+        return m.group(1).strip().strip('"').strip("'") if m else None
     except Exception:
         return None
 

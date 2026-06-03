@@ -77,6 +77,40 @@ def test_codex_serialized_and_retries(monkeypatch):
     assert r.verdict == "approve" and calls["n"] == 2  # retried once after the transient fail
 
 
+# --- Grok (xAI) critic: key from sciminer, OpenAI-compatible at x.ai -------------
+def test_grok_critic_registered_and_active():
+    from aletheia.config import get_settings
+    from aletheia.critics.gateway import _PROVIDERS
+    from aletheia.critics.providers.openai_compatible import GrokAPIProvider
+
+    assert _PROVIDERS["grok"]["api"] is GrokAPIProvider
+    grok = next((c for c in get_settings().critics.active if c.id == "grok"), None)
+    assert grok is not None and grok.model == "grok-4.3"
+    assert "x.ai" in (grok.base_url or "")  # xAI OpenAI-compatible endpoint
+
+
+def test_sciminer_grok_key_read(tmp_path, monkeypatch):
+    from aletheia.config.settings import _sciminer_grok_key
+
+    env = tmp_path / ".env"
+    env.write_text("FOO=bar\nGROK_API_KEY=xai-test-123\nGROK_BASE_URL=https://api.x.ai/v1\n")
+    monkeypatch.setenv("SCIMINER_ENV", str(env))
+    _sciminer_grok_key.cache_clear()
+    assert _sciminer_grok_key() == "xai-test-123"
+
+
+def test_vendor_key_grok_falls_back_to_sciminer(tmp_path, monkeypatch):
+    import aletheia.config.settings as st
+
+    env = tmp_path / ".env"
+    env.write_text("GROK_API_KEY=xai-fallback\n")
+    monkeypatch.setenv("SCIMINER_ENV", str(env))
+    st._sciminer_grok_key.cache_clear()
+    s = st.Settings(_env_file=None)
+    monkeypatch.setattr(s, "grok_api_key", None, raising=False)
+    assert s.vendor_key("grok") == "xai-fallback"
+
+
 # --- Claude critic via the CLI (machine login, no key) -------------------------
 def test_claude_cli_provider_registered_and_credentialed():
     from aletheia.critics.gateway import _PROVIDERS
