@@ -577,6 +577,15 @@ class ExperimentDriver:
             return {"form": "discriminating_instance", "claim": d.strip()}
         return None
 
+    def _carry_framing(self, revised: dict) -> dict:
+        """Preserve the paradigm framing (contribution_type + demonstration) across ANY
+        hypothesis revision that omits them — so a re-ideation (direction gate, scorecard)
+        never silently downgrades a paradigm contribution to performance."""
+        for k in ("contribution_type", "demonstration"):
+            if not revised.get(k) and self.hypothesis.get(k):
+                revised[k] = self.hypothesis[k]
+        return revised
+
     async def _direction_gate(self, plan: dict, exp_id: str | None) -> bool:
         """Novelty + feasibility gate on the chosen hypothesis (cross-model peer review,
         target='direction'). Bounded re-ideation on reject; escalate + pause past the limit."""
@@ -614,14 +623,10 @@ class ExperimentDriver:
                 self.run_id, "ideate", prompt, dry_run=self.dry_run,
                 dry_text='{"statement": "revised hypothesis", "rationale": "r", "prediction": "p", "novelty_note": "n"}',
             )
-            revised = _parse_json(text, _JSON, self.hypothesis)
-            # preserve the paradigm framing across re-ideation: a revision that omits
-            # contribution_type/demonstration must NOT silently revert a paradigm
-            # contribution to performance (which would skip its demonstration entirely).
-            for k in ("contribution_type", "demonstration"):
-                if not revised.get(k) and self.hypothesis.get(k):
-                    revised[k] = self.hypothesis[k]
-            self.hypothesis = revised
+            # preserve the paradigm framing across re-ideation (see _carry_framing): a
+            # revision that omits contribution_type/demonstration must NOT silently revert
+            # a paradigm contribution to performance (skipping its demonstration entirely).
+            self.hypothesis = self._carry_framing(_parse_json(text, _JSON, self.hypothesis))
             stmt = str(self.hypothesis.get("statement", "")).strip()
             if stmt and exp_id:
                 await asyncio.to_thread(set_experiment_hypothesis, exp_id, stmt)
@@ -735,13 +740,15 @@ class ExperimentDriver:
             f"The hypothesis was BLOCKED by the pre-execution scorecard: {reason}.\n"
             f"Current hypothesis: {json.dumps(self.hypothesis)}\n\n"
             "Propose a revised hypothesis that is MORE NOVEL vs the surveyed prior work and has a CLEARER "
-            'evaluation. Return ONLY JSON: {"statement","rationale","prediction","novelty_note"}.'
+            'evaluation. Return ONLY JSON: {"statement","rationale","prediction","novelty_note",'
+            '"contribution_type","demonstration"}. KEEP the contribution_type and (if paradigm) the '
+            "demonstration unless you deliberately change the framing."
         )
         text = await reason_stage(
             self.run_id, "ideate", prompt, dry_run=self.dry_run,
             dry_text='{"statement": "revised, more novel hypothesis", "rationale": "r", "prediction": "p", "novelty_note": "n"}',
         )
-        self.hypothesis = _parse_json(text, _JSON, self.hypothesis)
+        self.hypothesis = self._carry_framing(_parse_json(text, _JSON, self.hypothesis))
         stmt = str(self.hypothesis.get("statement", "")).strip()
         if stmt and exp_id:
             await asyncio.to_thread(set_experiment_hypothesis, exp_id, stmt)
