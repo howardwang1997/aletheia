@@ -112,6 +112,10 @@ class Settings(BaseSettings):
     # GLM's Coding Plan is slow + rate-limits bursts, so we space its calls out.
     critic_vendor_min_interval_s: float = 3.0
 
+    # rounds of adversarial debate (skeptic attacks novelty/rigor -> proposer revises) the
+    # IDEATION stage runs to scrutinize + strengthen a hypothesis before it is committed.
+    ideation_debate_rounds: int = 2
+
     # --- coder sandbox (executing AI-authored model code) ---
     # NB: the AST allowlist + rlimits are a guardrail against runaway/accidental
     # code, NOT a hard boundary against truly adversarial code (Docker is the

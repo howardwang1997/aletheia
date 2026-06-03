@@ -100,6 +100,38 @@ def test_ideate_inherits_paradigm_framing_from_plan(monkeypatch):
     assert any(c["claim_type"] == "formulation" for c in list_claims(run_id))
 
 
+def test_ideation_debate_refines_and_preserves_framing(monkeypatch):
+    """The ideation debate: a skeptic objects -> the proposer revises into a stronger
+    hypothesis, and the paradigm framing survives the revision. Stops when 'solid'."""
+    calls = []
+
+    async def fake_reason(run_id, stage, prompt, **kw):
+        calls.append(prompt)
+        if "SKEPTICAL" in prompt:  # 1st skeptic objects, 2nd finds it solid -> stop
+            n = sum(1 for p in calls if "SKEPTICAL" in p)
+            return ('{"objections":["this is standard scaffold splitting"],"verdict":"revise"}'
+                    if n == 1 else '{"objections":[],"verdict":"solid"}')
+        # the revision drops the paradigm fields -> _carry_framing must restore them
+        return '{"statement":"a stronger, more novel reframing","rationale":"r","prediction":"p","novelty_note":"n"}'
+
+    monkeypatch.setattr(drv, "reason_stage", fake_reason)
+    d = ExperimentDriver("rid", dry_run=False)
+    d.survey_brief = "LITERATURE: scaffold splits are standard."
+    d.hypothesis = {"statement": "weak idea", "contribution_type": "paradigm",
+                    "demonstration": {"form": "impossibility", "claim": "incumbent is blind"}}
+    asyncio.run(d._debate_hypothesis(None))
+    assert d.hypothesis["statement"] == "a stronger, more novel reframing"  # revised
+    assert d._contribution_type() == "paradigm"  # framing survived the revision
+    assert sum(1 for p in calls if "SKEPTICAL" in p) == 2  # objected once, then solid
+
+
+def test_ideation_debate_noops_in_dry_run(monkeypatch):
+    d = ExperimentDriver("rid", dry_run=True)
+    d.hypothesis = {"statement": "orig"}
+    asyncio.run(d._debate_hypothesis(None))  # dry skeptic returns 'solid' -> no change
+    assert d.hypothesis["statement"] == "orig"
+
+
 def test_carry_framing_preserves_paradigm_unless_changed():
     """Shared guard used by BOTH re-ideation paths (direction gate + scorecard): a
     revision that omits contribution_type/demonstration keeps them; one that changes
