@@ -57,9 +57,12 @@ def _pace_s2() -> None:
         _s2_last = time.monotonic()
 
 
-def _get_with_retry(client: Any, url: str, params: dict, *, retries: int = 4) -> Any:
-    """GET with exponential backoff on 429 / 5xx / timeout, honoring a Retry-After
-    header when present. Raises the last error if all attempts fail.
+def _get_with_retry(client: Any, url: str, params: dict, *, retries: int = 2) -> Any:
+    """GET with SHORT exponential backoff on 429 / 5xx / timeout, honoring a Retry-After
+    header when present. Raises the last error if all attempts fail. Backoff is kept small
+    (few attempts, capped) so a throttled source FAILS FAST and the survey proceeds
+    best-effort with whatever the other sources returned, instead of stalling on minutes
+    of 429 backoff across its many sub-queries.
 
     Exception classes are resolved defensively via ``getattr`` so a stubbed httpx
     (used in tests) without these attributes still works."""
@@ -69,7 +72,7 @@ def _get_with_retry(client: Any, url: str, params: dict, *, retries: int = 4) ->
         e for e in (getattr(httpx, "TimeoutException", None), getattr(httpx, "TransportError", None))
         if isinstance(e, type)
     )
-    delay = 2.0
+    delay = 1.5
     last_exc: Exception | None = None
     for _attempt in range(retries):
         try:
@@ -78,8 +81,8 @@ def _get_with_retry(client: Any, url: str, params: dict, *, retries: int = 4) ->
             if status == 429 or status >= 500:
                 retry_after = (getattr(r, "headers", {}) or {}).get("Retry-After")
                 sleep_s = float(retry_after) if (retry_after or "").isdigit() else delay
-                time.sleep(min(sleep_s, 30.0))
-                delay = min(delay * 2, 30.0)
+                time.sleep(min(sleep_s, 8.0))  # capped: fail fast under throttling
+                delay = min(delay * 2, 8.0)
                 last_exc = RuntimeError(f"HTTP {status} from {url}")
                 continue
             r.raise_for_status()
@@ -87,7 +90,7 @@ def _get_with_retry(client: Any, url: str, params: dict, *, retries: int = 4) ->
         except retry_excs as exc:  # network/timeout — retry with backoff
             last_exc = exc
             time.sleep(delay)
-            delay = min(delay * 2, 30.0)
+            delay = min(delay * 2, 8.0)
     if last_exc:
         raise last_exc
     raise RuntimeError("request failed without an exception")  # pragma: no cover
@@ -236,14 +239,26 @@ def _semantic_scholar(query: str, k: int) -> list[Paper]:
     return papers
 
 
+_search_cache: dict[tuple[str, int], list[Paper]] = {}
+_search_cache_lock = threading.Lock()
+
+
 def search(query: str, k: int = 8) -> list[Paper]:
     """Search Semantic Scholar + arXiv + OpenAlex, merge + dedupe, then RERANK the pooled
     candidates by genuine query relevance (cross-encoder) and drop off-topic hits — so
     keyword recall is filtered to what actually matters. Best-effort: a failing source is
-    skipped; if the reranker can't load, the merge order is kept. Returns up to ``k``."""
+    skipped; if the reranker can't load, the merge order is kept. Returns up to ``k``.
+
+    Results are cached process-wide by (query, k): the survey fans out many overlapping
+    sub-queries across parallel librarians, so caching repeats avoids re-hitting (and
+    re-throttling) the rate-limited APIs."""
     query = (query or "").strip()
     if not query:
         return []
+    ckey = (query.lower(), k)
+    with _search_cache_lock:
+        if ckey in _search_cache:
+            return list(_search_cache[ckey])
     # over-fetch per source so the reranker has a real pool to choose from
     per_source = max(k, 15)
     found: list[Paper] = []
@@ -262,7 +277,11 @@ def search(query: str, k: int = 8) -> list[Paper]:
         merged.append(p)
     from aletheia.research.rerank import rerank_papers
 
-    return rerank_papers(query, merged, top_k=k)
+    out = rerank_papers(query, merged, top_k=k)
+    with _search_cache_lock:
+        if len(_search_cache) < 1024:  # simple bound; a survey is far below this
+            _search_cache[ckey] = list(out)
+    return out
 
 
 def ingest(papers: list[Paper], run_id: str | None = None, dry_run: bool = False) -> int:
