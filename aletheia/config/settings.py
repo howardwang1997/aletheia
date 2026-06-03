@@ -116,6 +116,14 @@ class Settings(BaseSettings):
     # IDEATION stage runs to scrutinize + strengthen a hypothesis before it is committed.
     ideation_debate_rounds: int = 2
 
+    # --- literature reranking: reorder the multi-source candidate pool by genuine query
+    # relevance with a CPU cross-encoder + drop off-topic hits. ms-marco-MiniLM is the
+    # fast CPU default; swap to BAAI/bge-reranker-v2-m3 or gte-reranker-modernbert-base
+    # for higher quality. Best-effort: if the model can't load, the merge order is kept.
+    reranker_enabled: bool = True
+    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    reranker_min_relevance: float = 0.05  # sigmoid(score) below this is off-topic -> dropped
+
     # --- coder sandbox (executing AI-authored model code) ---
     # NB: the AST allowlist + rlimits are a guardrail against runaway/accidental
     # code, NOT a hard boundary against truly adversarial code (Docker is the
