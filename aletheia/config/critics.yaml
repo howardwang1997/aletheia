@@ -18,8 +18,8 @@ panel:
   - id: anthropic
     enabled: true             # Claude CLI on the machine's Coding Plan login (no key) —
     transport: cli            # the most reliable critic credential (same login as the
-    model: claude-sonnet-4-6  # orchestrator). Sonnet critic vs the Opus author = less
-                              # same-model self-review; cross-vendor (GPT/GLM) stays primary.
+    model: claude-opus-4-8    # orchestrator). Cross-vendor (GPT/GLM) is the primary
+                              # independent check; Claude is the reliability backstop.
   - id: gemini
     enabled: true
     transport: api
@@ -33,7 +33,7 @@ panel:
     enabled: true             # GLM Coding Plan — a reliable 2nd model so a Codex hiccup
                               # never empties a round. Key is read from OpenCode's config.
     transport: api
-    model: glm-4.6            # the GLM Coding Plan coding model (matches OpenCode)
+    model: glm-5.1            # latest GLM on the Coding Plan
     # IMPORTANT: the Coding Plan subscription is served ONLY by the /coding/ endpoint;
     # the standard /api/paas/v4 returns 1113 "余额不足" (no pay-as-you-go balance).
     base_url: https://open.bigmodel.cn/api/coding/paas/v4
