@@ -125,6 +125,20 @@ def test_ideation_debate_refines_and_preserves_framing(monkeypatch):
     assert sum(1 for p in calls if "SKEPTICAL" in p) == 2  # objected once, then solid
 
 
+def test_ideation_debate_handles_degraded_skeptic(monkeypatch):
+    """If the skeptic reasoning call degrades (orchestrator unavailable), the debate must
+    NOT silently treat the idea as 'solid' — it breaks without touching the hypothesis."""
+    async def fake_reason(run_id, stage, prompt, **kw):
+        return "[worker-unavailable: orchestrator]"  # is_degraded -> True
+
+    monkeypatch.setattr(drv, "reason_stage", fake_reason)
+    d = ExperimentDriver("rid", dry_run=False)
+    d.hypothesis = {"statement": "x", "contribution_type": "paradigm",
+                    "demonstration": {"form": "f", "claim": "c"}}
+    asyncio.run(d._debate_hypothesis(None))
+    assert d.hypothesis["statement"] == "x"  # unchanged; no spurious revision
+
+
 def test_ideation_debate_noops_in_dry_run(monkeypatch):
     d = ExperimentDriver("rid", dry_run=True)
     d.hypothesis = {"statement": "orig"}
