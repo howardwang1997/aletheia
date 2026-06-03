@@ -13,7 +13,7 @@ import json
 import re
 from typing import Any
 
-from aletheia.coder.sandbox import check_code
+from aletheia.coder.sandbox import check_code, smoke_test_solution
 from aletheia.coder.worker import CANNED_SOLUTION, CODER_SYSTEM, coder_prompt, extract_code
 from aletheia.compute.base import JobSpec
 from aletheia.compute.factory import get_compute_backend
@@ -768,6 +768,13 @@ class ExperimentDriver:
             return None  # worker unavailable -> fall back to the fixed model
         code = extract_code(text)
         ok, reasons = check_code(code)
+        if ok:  # the AST gate can't catch a runtime import error (a real symbol from the
+            # WRONG module) or a build error — smoke-test the import + build so a coder
+            # slip falls back to the fixed model instead of crashing the training run.
+            smoke_ok, smoke_err = await asyncio.to_thread(smoke_test_solution, code)
+            if not smoke_ok:
+                ok = False
+                reasons = [*reasons, f"import/build failed: {smoke_err}"]
         await get_bus().publish(
             make_event(
                 "code", run_id=self.run_id,
