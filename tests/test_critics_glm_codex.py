@@ -43,11 +43,13 @@ def test_vendor_key_zhipu_falls_back_to_opencode(tmp_path, monkeypatch):
 
 
 # --- GLM is an active critic on the CODING-PLAN endpoint ------------------------
-def test_glm_critic_active_on_coding_endpoint():
+def test_glm_critic_configured_on_coding_endpoint():
     from aletheia.config import get_settings
 
-    zhipu = next((c for c in get_settings().critics.active if c.id == "zhipu"), None)
-    assert zhipu is not None, "GLM (zhipu) must be an active critic"
+    # validate the GLM config regardless of enabled state (it's a temporary opt-out until
+    # the Coding-Plan quota recovers): whenever it IS used, it must hit the coding endpoint.
+    zhipu = next((c for c in get_settings().critics.panel if c.id == "zhipu"), None)
+    assert zhipu is not None, "GLM (zhipu) must be configured in the panel"
     assert "/coding/" in (zhipu.base_url or ""), "must use the GLM Coding Plan endpoint"
     assert zhipu.model == "glm-5.1"
 
