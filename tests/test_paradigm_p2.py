@@ -71,6 +71,35 @@ def test_paradigm_with_demonstration_is_honored(monkeypatch):
     assert d._paradigm_demonstration()["form"] == "discriminating_instance"
 
 
+# --- robust paradigm framing: string demos + plan-declared intent ---------------
+def test_paradigm_demonstration_accepts_string():
+    d = ExperimentDriver("rid", dry_run=True)
+    d.hypothesis = {"contribution_type": "paradigm",
+                    "demonstration": "the incumbent metric is blind to the scaffold gap"}
+    demo = d._paradigm_demonstration()
+    assert demo and demo["form"] == "discriminating_instance"
+    assert d._contribution_type() == "paradigm"
+
+
+def test_ideate_inherits_paradigm_framing_from_plan(monkeypatch):
+    """An operator can pin a paradigm study in the PLAN; ideation that omits the
+    structured fields must not silently downgrade it to performance."""
+    create_all()
+    run_id = create_run("plan paradigm", domain="materials", status="planned")
+    exp_id = finalize_plan(run_id, {"objective": "x", "domain": "materials"})
+
+    async def fake_reason(run_id, stage, prompt, **kw):  # ideation omits the paradigm fields
+        return '{"statement": "s", "rationale": "r", "prediction": "p", "novelty_note": "n"}'
+
+    monkeypatch.setattr(drv, "reason_stage", fake_reason)
+    d = ExperimentDriver(run_id, dry_run=True)
+    plan = {"objective": "x", "contribution_type": "paradigm",
+            "demonstration": "random-split RMSE is blind to scaffold generalization"}
+    asyncio.run(d._ideate(plan, exp_id))
+    assert d._contribution_type() == "paradigm"  # inherited from the plan
+    assert any(c["claim_type"] == "formulation" for c in list_claims(run_id))
+
+
 # --- re-ideation must NOT drop the paradigm framing (real-run bug) --------------
 def test_reideation_preserves_contribution_type_and_demonstration(monkeypatch):
     """A direction-gate rejection re-ideates; if the revision omits contribution_type /
