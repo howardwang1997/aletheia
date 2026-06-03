@@ -115,3 +115,40 @@ def resource_limits():
             pass  # RLIMIT_AS is unreliable on macOS; CPU + wall-clock still apply
 
     return _apply
+
+
+def smoke_test_solution(source: str, timeout_s: float = 30.0) -> tuple[bool, str]:
+    """Beyond the static AST gate: actually IMPORT the solution + build the pipeline in
+    an isolated subprocess. Catches a runtime import error (e.g. a real symbol imported
+    from the WRONG module — ``VarianceThreshold`` from ``sklearn.preprocessing``) or a
+    build error BEFORE a full training run, so a coder slip degrades to the fixed model
+    instead of crashing the whole experiment. Returns ``(ok, error)``.
+
+    Safe enough: ``source`` already passed ``check_code`` (allowlisted imports, no
+    os/subprocess/open/exec), and ``build_pipeline`` only CONSTRUCTS estimators here."""
+    import subprocess
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as td:
+        sol = Path(td) / "solution.py"
+        sol.write_text(source)
+        probe = (
+            "import importlib.util as u;"
+            f"s=u.spec_from_file_location('sol', r'{sol}');"
+            "m=u.module_from_spec(s);s.loader.exec_module(m);"
+            "p=m.build_pipeline();"
+            "assert hasattr(p,'fit') and hasattr(p,'predict'),'build_pipeline must return an estimator'"
+        )
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-c", probe],
+                capture_output=True, text=True, timeout=timeout_s,
+            )
+        except Exception as exc:  # noqa: BLE001 - smoke test is best-effort
+            return False, f"smoke-test could not run: {exc}"
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout or "non-zero exit").strip()
+            return False, err.splitlines()[-1][:200] if err else "non-zero exit"
+        return True, ""

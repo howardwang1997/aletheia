@@ -143,3 +143,24 @@ def test_code_stage_rejects_bad_solution(monkeypatch):
     driver = drv.ExperimentDriver(run_id, dry_run=True)
     code = asyncio.run(driver._code({"model": "random_forest"}, {}, None))
     assert code is None  # gated out -> driver falls back to the fixed model
+
+
+def test_smoke_test_solution_catches_runtime_import_error():
+    """A real symbol imported from the WRONG module passes the AST gate but fails the
+    import/build smoke-test (the bug a real molecules paradigm run hit)."""
+    from aletheia.coder.sandbox import smoke_test_solution
+
+    bad = (
+        "from sklearn.preprocessing import VarianceThreshold\n"  # wrong module
+        "def build_pipeline():\n    return None\n"
+    )
+    ok, err = smoke_test_solution(bad)
+    assert not ok and "VarianceThreshold" in err
+
+
+def test_smoke_test_solution_accepts_valid_pipeline():
+    from aletheia.coder.sandbox import smoke_test_solution
+
+    good = "from sklearn.linear_model import Ridge\ndef build_pipeline():\n    return Ridge()\n"
+    ok, err = smoke_test_solution(good)
+    assert ok and err == ""
