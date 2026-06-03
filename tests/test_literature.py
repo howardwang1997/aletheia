@@ -16,13 +16,15 @@ from aletheia.research.literature import Paper, search
 @pytest.fixture(autouse=True)
 def _passthrough_rerank(monkeypatch):
     """These tests cover SOURCE parsing/dedupe, not ranking — keep them fully offline by
-    stubbing the cross-encoder rerank to a passthrough (no model download)."""
+    stubbing the cross-encoder rerank to a passthrough (no model download), and clear the
+    process-wide search cache so per-test httpx stubs don't leak across tests."""
     import aletheia.research.rerank as rr
 
     monkeypatch.setattr(
         rr, "rerank_papers",
         lambda q, papers, **kw: list(papers)[: (kw.get("top_k") or len(papers))],
     )
+    literature._search_cache.clear()
 
 _ARXIV_XML = """<?xml version="1.0"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
@@ -115,6 +117,22 @@ def test_semantic_scholar_parsed(monkeypatch):
     assert len(s2p) == 1
     assert s2p[0].year == 2020 and s2p[0].citations == 1234 and s2p[0].doi == "10.9/dpr"
     assert s2p[0].venue == "EMNLP"
+
+
+def test_search_caches_repeated_query(monkeypatch):
+    n = {"arxiv": 0}
+
+    def fake_arxiv(q, k):
+        n["arxiv"] += 1
+        return [Paper(title="cached paper", source="arxiv")]
+
+    monkeypatch.setattr(literature, "_arxiv", fake_arxiv)
+    monkeypatch.setattr(literature, "_semantic_scholar", lambda q, k: [])
+    monkeypatch.setattr(literature, "_openalex", lambda q, k: [])
+    a = search("dup query", k=5)
+    b = search("dup query", k=5)  # second call must hit the cache, not the sources
+    assert n["arxiv"] == 1
+    assert [p.title for p in a] == [p.title for p in b] == ["cached paper"]
 
 
 def test_semantic_scholar_sends_api_key_header(monkeypatch):
