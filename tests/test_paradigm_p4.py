@@ -33,6 +33,27 @@ def test_molecules_demonstration_computes_real_scaffold_gap():
     assert "RMSE" in demo["detail"]
 
 
+# --- molecules dispatches to the demonstration the hypothesis describes ----------
+def test_run_demonstration_dispatches_to_activity_cliff():
+    p = get_domain_plugin("molecules")
+    demo = p.run_demonstration(
+        {"claim": "activity cliffs force a huge local Lipschitz constant", "sample_n": 600},
+        {"source": "benchmark", "ref": "esol"}, "/tmp/cliff_test",
+    )
+    assert demo["form"] == "impossibility"
+    assert "Lipschitz" in demo["detail"]  # the cliff demo, not the scaffold one
+    assert isinstance(demo["holds"], bool) and demo["statistic"] >= 0
+
+
+def test_run_demonstration_dispatches_to_scaffold():
+    p = get_domain_plugin("molecules")
+    demo = p.run_demonstration(
+        {"claim": "random-split RMSE is blind to scaffold generalization", "sample_n": 600},
+        {"source": "benchmark", "ref": "esol"}, "/tmp/scaf_test",
+    )
+    assert "scaffold-grouped RMSE" in demo["detail"]
+
+
 # --- driver wiring: demonstration runs for paradigm runs, skipped in dry-run ----
 def test_compute_demonstration_skipped_in_dry_run():
     d = ExperimentDriver("rid-dry", dry_run=True)
