@@ -585,6 +585,11 @@ class ExperimentDriver:
                 self.run_id, "ideate", skeptic_prompt, dry_run=self.dry_run,
                 dry_text='{"objections": [], "verdict": "solid"}',
             )
+            if is_degraded(raw):  # the skeptic reasoning call failed — surface that
+                await get_bus().publish(make_event(  # honestly, don't imply it was 'solid'
+                    "ideation_debate", run_id=self.run_id,
+                    payload={"round": i + 1, "verdict": "degraded", "objections": []}))
+                break
             crit = _parse_json(raw, _JSON, {})
             objections = [str(o).strip() for o in (crit.get("objections") or []) if str(o).strip()]
             verdict = str(crit.get("verdict", "")).strip().lower()
