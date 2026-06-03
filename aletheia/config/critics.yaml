@@ -11,15 +11,19 @@
 # Default panel = OpenAI + Gemini + DeepSeek (3 distinct models); Zhipu is an
 # available spare. Always pin to the latest generation per vendor.
 panel:
+  # TEMPORARY DEFAULT: Claude-only. Codex's subscription token is burned (needs
+  # `codex login`) and GLM's Coding-Plan quota window is exhausted, so both currently
+  # error every call and only slow the gate down. Run on the reliable machine Claude
+  # login for now; flip `openai`/`zhipu` back to enabled for true cross-vendor review
+  # once their credentials recover (NB: single-vendor = same-model self-review).
   - id: openai
-    enabled: true
+    enabled: false           # re-enable after `codex login`
     transport: cli            # Codex CLI on the Coding Plan (api = OPENAI_API_KEY)
     model: gpt-5.5            # latest OpenAI
   - id: anthropic
     enabled: true             # Claude CLI on the machine's Coding Plan login (no key) —
     transport: cli            # the most reliable critic credential (same login as the
-    model: claude-opus-4-8    # orchestrator). Cross-vendor (GPT/GLM) is the primary
-                              # independent check; Claude is the reliability backstop.
+    model: claude-opus-4-8    # orchestrator). The default reviewer for now.
   - id: gemini
     enabled: true
     transport: api
@@ -30,8 +34,8 @@ panel:
     model: deepseek-chat      # latest DeepSeek (OpenAI-compatible API)
     base_url: https://api.deepseek.com
   - id: zhipu
-    enabled: true             # GLM Coding Plan — a reliable 2nd model so a Codex hiccup
-                              # never empties a round. Key is read from OpenCode's config.
+    enabled: false            # re-enable when the GLM Coding-Plan quota window recovers
+                              # (1113). Key is read from OpenCode's config.
     transport: api
     model: glm-5.1            # latest GLM on the Coding Plan
     # IMPORTANT: the Coding Plan subscription is served ONLY by the /coding/ endpoint;
