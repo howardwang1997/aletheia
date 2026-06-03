@@ -100,6 +100,18 @@ def test_ideate_inherits_paradigm_framing_from_plan(monkeypatch):
     assert any(c["claim_type"] == "formulation" for c in list_claims(run_id))
 
 
+def test_carry_framing_preserves_paradigm_unless_changed():
+    """Shared guard used by BOTH re-ideation paths (direction gate + scorecard): a
+    revision that omits contribution_type/demonstration keeps them; one that changes
+    them is respected."""
+    d = ExperimentDriver("rid", dry_run=True)
+    d.hypothesis = {"contribution_type": "paradigm", "demonstration": {"form": "x", "claim": "c"}}
+    kept = d._carry_framing({"statement": "new"})  # revision dropped the framing
+    assert kept["contribution_type"] == "paradigm" and kept["demonstration"]["claim"] == "c"
+    changed = d._carry_framing({"statement": "n", "contribution_type": "performance"})
+    assert changed["contribution_type"] == "performance"  # deliberate change respected
+
+
 # --- re-ideation must NOT drop the paradigm framing (real-run bug) --------------
 def test_reideation_preserves_contribution_type_and_demonstration(monkeypatch):
     """A direction-gate rejection re-ideates; if the revision omits contribution_type /
