@@ -512,6 +512,10 @@ class ExperimentDriver:
         if statement and exp_id:
             await asyncio.to_thread(set_experiment_hypothesis, exp_id, statement)
         await self._index("hypothesis", statement, exp_id)
+        # scrutinize + REFINE the idea through a bounded adversarial debate BEFORE it is
+        # committed (so a weak/known proposal is strengthened, not just gated later).
+        await self._debate_hypothesis(exp_id)
+        statement = str(self.hypothesis.get("statement", "")).strip() or statement
         # evidence-ledger: a novelty claim per hypothesis, now GROUNDED in concrete
         # prior-work rows (Phase H). The full novelty *judgment* (scorecard) is Phase I,
         # so it stays speculative — but its evidence points at the structured findings
@@ -553,6 +557,59 @@ class ExperimentDriver:
             )
         await record_transition(self.run_id, exp_id, "survey", "ideate", f"hypothesis: {statement[:80]}")
         return self.hypothesis
+
+    async def _debate_hypothesis(self, exp_id: str | None) -> None:
+        """Scrutinize + REFINE the proposed hypothesis through a bounded adversarial debate
+        BEFORE it is committed: a skeptic attacks NOVELTY (vs the surveyed prior work),
+        RIGOR, and well-posedness — and, for a paradigm, whether the demonstration is
+        genuinely discriminating — then the proposer revises. Strengthens the idea and
+        weeds out known/repackaged ones before the (cross-vendor) direction gate sees it.
+        Bounded; stops early once the skeptic has no major objection. Offline-safe: the
+        dry-run skeptic returns 'solid', so this no-ops with no spend."""
+        rounds = int(get_settings().ideation_debate_rounds)
+        brief = (self.survey_brief + "\n\n") if self.survey_brief else ""
+        for i in range(rounds):
+            skeptic_prompt = (
+                f"{brief}PROPOSED HYPOTHESIS:\n{json.dumps(self.hypothesis)}\n\n"
+                "You are a SKEPTICAL, adversarial reviewer of the IDEA itself. Find the STRONGEST "
+                "objections, focusing on:\n"
+                "1) NOVELTY: given the literature above, is this already standard/known (name what)? "
+                "Call out a repackaged commonplace.\n"
+                "2) RIGOR + WELL-POSEDNESS: is the claim precise, testable, not vague or circular?\n"
+                "3) PARADIGM only: is the 'demonstration' genuinely DISCRIMINATING (a case the "
+                "incumbent provably cannot handle), or trivial/known?\n"
+                'Return ONLY JSON: {"objections": ["..."], "verdict": "solid" | "revise"}. '
+                'Use "solid" ONLY if there is no major novelty/rigor objection.'
+            )
+            raw = await reason_stage(
+                self.run_id, "ideate", skeptic_prompt, dry_run=self.dry_run,
+                dry_text='{"objections": [], "verdict": "solid"}',
+            )
+            crit = _parse_json(raw, _JSON, {})
+            objections = [str(o).strip() for o in (crit.get("objections") or []) if str(o).strip()]
+            verdict = str(crit.get("verdict", "")).strip().lower()
+            await get_bus().publish(make_event(
+                "ideation_debate", run_id=self.run_id,
+                payload={"round": i + 1, "verdict": verdict, "objections": objections[:4]}))
+            if verdict == "solid" or not objections:
+                break
+            revise_prompt = (
+                f"{brief}CURRENT HYPOTHESIS:\n{json.dumps(self.hypothesis)}\n\n"
+                "A skeptic raised these objections:\n- " + "\n- ".join(objections) + "\n\n"
+                "Revise into a STRONGER hypothesis that answers them — more genuinely NOVEL vs the "
+                "prior work and more rigorous/well-posed; do NOT retreat to a known commonplace. Keep "
+                "contribution_type and (if paradigm) demonstration unless you deliberately change the "
+                'framing.\nReturn ONLY JSON: {"statement","rationale","prediction","novelty_note",'
+                '"contribution_type","demonstration"}.'
+            )
+            revised = await reason_stage(
+                self.run_id, "ideate", revise_prompt, dry_run=self.dry_run,
+                dry_text=json.dumps(self.hypothesis),
+            )
+            self.hypothesis = self._carry_framing(_parse_json(revised, _JSON, self.hypothesis))
+        stmt = str(self.hypothesis.get("statement", "")).strip()
+        if stmt and exp_id:
+            await asyncio.to_thread(set_experiment_hypothesis, exp_id, stmt)
 
     def _contribution_type(self) -> str:
         """`performance` (beat a benchmark) or `paradigm` (change the question). Selects
