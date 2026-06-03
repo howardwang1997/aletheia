@@ -204,8 +204,13 @@ def _semantic_scholar(query: str, k: int) -> list[Paper]:
         "query": query, "limit": min(max(k, 1), 100),
         "fields": "title,abstract,year,externalIds,venue,authors,citationCount,url",
     }
+    # an optional S2 API key (env S2_API_KEY) lifts the harsh unauthenticated rate limit
+    from aletheia.config import get_settings
+
+    key = get_settings().semantic_scholar_api_key
+    headers = {**_HEADERS, "x-api-key": key} if key else _HEADERS
     _pace_s2()
-    with httpx.Client(timeout=_TIMEOUT, follow_redirects=True, headers=_HEADERS) as c:
+    with httpx.Client(timeout=_TIMEOUT, follow_redirects=True, headers=headers) as c:
         r = _get_with_retry(c, SEMANTIC_SCHOLAR_API, params)
         data = r.json()
     papers: list[Paper] = []

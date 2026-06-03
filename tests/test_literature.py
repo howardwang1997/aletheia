@@ -117,6 +117,41 @@ def test_semantic_scholar_parsed(monkeypatch):
     assert s2p[0].venue == "EMNLP"
 
 
+def test_semantic_scholar_sends_api_key_header(monkeypatch):
+    captured = {}
+
+    class _Resp:
+        status_code = 200
+        headers: dict = {}
+
+        def json(self):
+            return {"data": []}
+
+        def raise_for_status(self):
+            return None
+
+    class _Client:
+        def __init__(self, *a, headers=None, **k):
+            captured["headers"] = headers or {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, url, params=None):
+            return _Resp()
+
+    mod = types.ModuleType("httpx")
+    mod.Client = _Client
+    monkeypatch.setitem(sys.modules, "httpx", mod)
+    import aletheia.config as cfg
+    monkeypatch.setattr(cfg, "get_settings", lambda: types.SimpleNamespace(semantic_scholar_api_key="sk-2"))
+    literature._semantic_scholar("q", 5)
+    assert captured["headers"].get("x-api-key") == "sk-2"
+
+
 def test_dedupe_across_sources_by_doi(monkeypatch):
     # arXiv entry carries the same DOI (raw) as OpenAlex (https://doi.org/...) -> one paper
     arxiv_with_doi = _ARXIV_XML.replace(
