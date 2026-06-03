@@ -120,3 +120,8 @@ class ZhipuAPIProvider(OpenAICompatibleProvider):
     """Zhipu/GLM via the GLM Coding Plan, OpenAI-compatible at the bigmodel.cn
     ``/api/coding/paas/v4`` endpoint (the Coding Plan subscription is NOT served by the
     standard ``/api/paas/v4``). The key is read from OpenCode's config (see settings)."""
+
+
+class GrokAPIProvider(OpenAICompatibleProvider):
+    """xAI Grok, OpenAI-compatible at ``https://api.x.ai/v1``. The key is read from the
+    sibling sciminer project's .env (``GROK_API_KEY``); see settings."""
