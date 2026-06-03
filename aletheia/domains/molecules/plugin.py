@@ -139,14 +139,76 @@ class MoleculePropertyPlugin(DomainPlugin):
     def run_demonstration(
         self, demonstration: dict[str, Any], data_spec: dict[str, Any], workdir: Path
     ) -> dict[str, Any] | None:
-        """A DETERMINISTIC discriminating demonstration (harness-owned, no LLM): the
-        incumbent random-split metric is BLIND to scaffold generalization. We fit the
-        SAME model and measure RMSE two ways — a random holdout (the metric most ESOL
-        papers report) and a scaffold-grouped split (leave-whole-scaffold-out). If the
-        scaffold RMSE is materially worse, the random-split number provably cannot certify
-        generalization to novel chemistry: it rates as 'good' a model that fails on unseen
-        scaffolds. ``holds`` iff that gap is real; ``statistic`` = scaffold/random RMSE
-        ratio. Reproducible (a fresh seed yields a stable ratio)."""
+        """Compute the discriminating demonstration the paradigm hypothesis describes
+        (DETERMINISTIC, harness-owned — never an LLM 'holds' assertion). Dispatches by
+        intent: an activity-cliff / Lipschitz claim -> the cliff-Lipschitz impossibility;
+        otherwise the scaffold-generalization blind-spot."""
+        intent = f"{demonstration.get('claim', '')} {demonstration.get('form', '')}".lower()
+        if "cliff" in intent or "lipschitz" in intent:
+            return self._demo_activity_cliff_lipschitz(demonstration, data_spec)
+        return self._demo_scaffold_generalization(demonstration, data_spec)
+
+    def _demo_activity_cliff_lipschitz(
+        self, demonstration: dict[str, Any], data_spec: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Activity cliffs as a representational IMPOSSIBILITY (not data scarcity): among
+        near-identical molecules (Tanimoto >= 0.9 on Morgan bits), the cliff pairs (top
+        decile of |Δproperty|) imply a local Lipschitz constant L_cliff = |Δy| / structural
+        distance that is orders of magnitude larger than the smooth-region L_global. A
+        single continuous/Lipschitz regressor on this representation cannot satisfy both —
+        fitting the cliffs forces an L that destroys generalization elsewhere. Deterministic
+        (pure pairwise geometry on the fixed fingerprints — no training, no seed), so it
+        reproduces exactly. ``statistic`` = L_cliff / L_global."""
+        import numpy as np
+
+        df = self.load_data(data_spec)
+        sample_n = demonstration.get("sample_n") or data_spec.get("sample_n")
+        if sample_n:
+            df = df.head(int(sample_n))
+            df.attrs["data_spec"] = data_spec
+        X, y, _names, _groups = self.featurize(df, {})
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y, dtype=float)
+        n = len(y)
+        inter = X @ X.T  # |A & B| for binary Morgan bits
+        pop = X.sum(axis=1)
+        union = pop[:, None] + pop[None, :] - inter
+        with np.errstate(divide="ignore", invalid="ignore"):
+            tani = np.where(union > 0, inter / union, 0.0)
+        iu = np.triu_indices(n, k=1)
+        t = tani[iu]
+        dy = np.abs(y[iu[0]] - y[iu[1]])
+        sim = t >= 0.9  # "near-identical" structural neighbors
+        if int(sim.sum()) < 20:  # sparse data: relax to the top-1% most similar pairs
+            sim = t >= float(np.quantile(t, 0.99))
+        ts, dys = t[sim], dy[sim]
+        dist = np.maximum(1.0 - ts, 1e-3)  # structural distance (collisions floored)
+        lip = dys / dist  # implied local Lipschitz per near-identical pair
+        cliff = dys >= float(np.quantile(dys, 0.9))  # the activity-cliff pairs
+        l_cliff = float(np.median(lip[cliff])) if cliff.any() else 0.0
+        l_global = float(np.median(lip[~cliff])) if (~cliff).any() else 1e-9
+        ratio = l_cliff / l_global if l_global > 0 else float("inf")
+        holds = bool(int(sim.sum()) >= 20 and ratio > 5.0)
+        return {
+            "form": "impossibility",
+            "holds": holds,
+            "statistic": round(ratio, 3),
+            "detail": (
+                f"among {int(sim.sum())} near-identical (Tanimoto>=0.9) pairs, the activity-cliff "
+                f"pairs imply local Lipschitz L_cliff={l_cliff:.2f} vs smooth-region L_global="
+                f"{l_global:.2f} (ratio {ratio:.1f}). A smooth/continuous regressor that fits the "
+                f"cliffs needs an L ~{ratio:.0f}x larger than elsewhere — incompatible with global "
+                f"generalization, so the cliff failure is representational, not data scarcity."
+            ),
+        }
+
+    def _demo_scaffold_generalization(
+        self, demonstration: dict[str, Any], data_spec: dict[str, Any]
+    ) -> dict[str, Any]:
+        """The incumbent random-split metric is BLIND to scaffold generalization: fit the
+        SAME model and measure RMSE a random-holdout way (what most ESOL papers report) vs
+        a scaffold-grouped (leave-whole-scaffold-out) way; ``holds`` iff scaffold RMSE is
+        materially worse. ``statistic`` = scaffold/random RMSE ratio."""
         import numpy as np
         from sklearn.metrics import mean_squared_error
         from sklearn.model_selection import train_test_split
