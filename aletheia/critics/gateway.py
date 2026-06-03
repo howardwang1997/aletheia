@@ -21,6 +21,7 @@ from typing import Any
 from aletheia.config import get_settings
 from aletheia.config.settings import CriticsConfig
 from aletheia.critics import policy
+from aletheia.critics.providers.anthropic_cli import ClaudeCLIProvider
 from aletheia.critics.providers.base import CriticProvider
 from aletheia.critics.providers.gemini_api import GeminiAPIProvider
 from aletheia.critics.providers.openai_api import OpenAIAPIProvider
@@ -35,6 +36,7 @@ from aletheia.orchestrator.worker import run_worker
 # vendor id -> {transport: provider class}. Cross-vendor panel (Phase 2).
 _PROVIDERS: dict[str, dict[str, type[CriticProvider]]] = {
     "openai": {"api": OpenAIAPIProvider, "cli": OpenAICodexProvider},
+    "anthropic": {"cli": ClaudeCLIProvider},  # Claude on the machine login (no key)
     "gemini": {"api": GeminiAPIProvider},
     "deepseek": {"api": DeepSeekAPIProvider},
     "zhipu": {"api": ZhipuAPIProvider},
@@ -125,12 +127,16 @@ class CriticGateway:
         self.config = config or get_settings().critics
 
     def _has_credentials(self, c: Any) -> bool:
-        """A vendor is usable only if its credentials are present. OpenAI via the
-        Codex CLI uses the Coding-Plan login (no key); everything else needs a key.
-        This lets enabled-but-unkeyed vendors be skipped gracefully (e.g. run
-        OpenAI-only until Gemini/DeepSeek keys are configured) instead of crashing."""
-        if c.id == "openai" and c.transport == "cli":
+        """A vendor is usable only if its credentials are present. The CLI vendors run on
+        a subscription login (no key): OpenAI via the Codex CLI, Anthropic via the Claude
+        CLI (the machine's Claude login). Everything else needs a key — enabled-but-unkeyed
+        vendors are skipped gracefully (e.g. run without Gemini until its key is set)."""
+        if c.transport == "cli" and c.id == "openai":
             return True
+        if c.transport == "cli" and c.id == "anthropic":
+            from aletheia.orchestrator.auth import machine_has_claude_login
+
+            return bool(get_settings().claude_code_oauth_token) or machine_has_claude_login()
         return bool(get_settings().vendor_key(c.id))
 
     def _providers(self) -> list[CriticProvider]:

@@ -75,6 +75,55 @@ def test_codex_serialized_and_retries(monkeypatch):
     assert r.verdict == "approve" and calls["n"] == 2  # retried once after the transient fail
 
 
+# --- Claude critic via the CLI (machine login, no key) -------------------------
+def test_claude_cli_provider_registered_and_credentialed():
+    from aletheia.critics.gateway import _PROVIDERS
+
+    from aletheia.critics.providers.anthropic_cli import ClaudeCLIProvider
+    assert _PROVIDERS["anthropic"]["cli"] is ClaudeCLIProvider
+    # an enabled `anthropic` CLI critic is on the panel
+    from aletheia.config import get_settings
+    anthropic = next((c for c in get_settings().critics.active if c.id == "anthropic"), None)
+    assert anthropic is not None and anthropic.transport == "cli"
+
+
+def test_claude_cli_parses_json_envelope(monkeypatch):
+    import types
+
+    from aletheia.config.settings import CriticConfig
+    from aletheia.critics.providers import anthropic_cli
+    from aletheia.critics.providers.anthropic_cli import ClaudeCLIProvider
+
+    envelope = json.dumps({
+        "type": "result", "subtype": "success", "is_error": False,
+        "result": '```json\n{"verdict":"reject","confidence":0.8,"summary":"weak baselines",'
+                  '"findings":[]}\n```',
+    })
+    monkeypatch.setattr(anthropic_cli.subprocess, "run",
+                        lambda *a, **k: types.SimpleNamespace(stdout=envelope, stderr="", returncode=0))
+    p = ClaudeCLIProvider(CriticConfig(id="anthropic", transport="cli", model="claude-sonnet-4-6"))
+    r = p.review("instruction", "content")
+    assert r.verdict == "reject" and r.confidence == 0.8
+
+
+def test_claude_cli_raises_on_error_envelope(monkeypatch):
+    import types
+
+    from aletheia.config.settings import CriticConfig
+    from aletheia.critics.providers import anthropic_cli
+    from aletheia.critics.providers.anthropic_cli import ClaudeCLIProvider
+
+    bad = json.dumps({"type": "result", "subtype": "error_max_turns", "is_error": True, "result": "boom"})
+    monkeypatch.setattr(anthropic_cli.subprocess, "run",
+                        lambda *a, **k: types.SimpleNamespace(stdout=bad, stderr="", returncode=0))
+    p = ClaudeCLIProvider(CriticConfig(id="anthropic", transport="cli", model="claude-sonnet-4-6"))
+    try:
+        p.review("i", "c")
+        raise AssertionError("expected an error envelope to raise")
+    except RuntimeError:
+        pass
+
+
 # --- GLM throttle: serialize per vendor, fast-fail on quota (1113) --------------
 def test_is_quota_exhausted_detects_1113():
     from aletheia.critics.providers.openai_compatible import _is_quota_exhausted
