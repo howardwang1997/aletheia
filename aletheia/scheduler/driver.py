@@ -501,6 +501,14 @@ class ExperimentDriver:
             hypo.get("statement") or plan.get("hypothesis") or plan.get("objective") or ""
         ).strip()
         self.hypothesis = hypo if hypo else {"statement": statement}
+        # operator-declared framing: when the PLAN pins a paradigm contribution (+ its
+        # discriminating demonstration), carry it into the hypothesis if ideation didn't
+        # emit it — so a paradigm study is reproducible, not at the mercy of whether the
+        # LLM happened to include the structured fields. (The demonstration is still
+        # COMPUTED by the harness, never asserted, so the fakeability guardrail holds.)
+        for k in ("contribution_type", "demonstration"):
+            if not self.hypothesis.get(k) and plan.get(k):
+                self.hypothesis[k] = plan[k]
         if statement and exp_id:
             await asyncio.to_thread(set_experiment_hypothesis, exp_id, statement)
         await self._index("hypothesis", statement, exp_id)
@@ -559,11 +567,14 @@ class ExperimentDriver:
 
     def _paradigm_demonstration(self) -> dict | None:
         """The discriminating demonstration a paradigm hypothesis must name: a concrete
-        case the incumbent frame provably cannot handle/distinguish. Returns the dict
-        (``{form, claim}``) only when a non-empty ``claim`` is present, else None."""
+        case the incumbent frame provably cannot handle/distinguish. Returns ``{form,
+        claim}`` when present, else None. Accepts a bare string (some ideation outputs /
+        plans give prose) and normalizes it to a discriminating_instance."""
         d = self.hypothesis.get("demonstration")
         if isinstance(d, dict) and str(d.get("claim", "")).strip():
             return d
+        if isinstance(d, str) and d.strip():
+            return {"form": "discriminating_instance", "claim": d.strip()}
         return None
 
     async def _direction_gate(self, plan: dict, exp_id: str | None) -> bool:
