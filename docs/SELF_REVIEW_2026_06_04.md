@@ -31,29 +31,31 @@ scientific research).
    statistic, detail}); the paradigm critic instruction now checks it AND that it measures what
    the formulation claims.
 
+## Also fixed in this self-review (PR #57)
+- **CLI critic arg-length** — `solution_code` (the only unbounded field) is now capped at 20 KB in
+  the results-review payload, so the CLI critics (which pass content as a process arg) never
+  approach ARG_MAX.
+- **Deterministic demonstration ⇒ weak "reproduction"** — the cliff demo now computes on a
+  SEED-perturbed 90% subsample (the design's `random_state` is threaded into the demonstration),
+  so the reproduction re-run is a genuine independent re-computation; `demonstration_reproduced`
+  now means "still holds AND the statistic is order-stable (within ~2×)", not a bit-identical
+  recompute.
+- **`_instruction` role text** is now domain-neutral (materials / molecules / ML methodology).
+
 ## Holes I am FLAGGING (unfixed — please scrutinize)
-- **CLI critic arg-length (real robustness risk).** `claude -p <prompt>` and `codex exec … <prompt>`
-  pass the full review content (solution_code, claims, analysis, demonstration) as a command-line
-  ARG. A large payload can exceed ARG_MAX → the subprocess fails → that reviewer is dropped → a
-  round can go empty. Should pass content via stdin/temp-file.
-- **Demonstration executor is single-domain + keyword-matched.** Only `molecules` implements
-  `run_demonstration`, only two forms (cliff, scaffold), matched by keyword. A claim phrased
-  without the exact keywords won't match; materials/RAG can't ground a paradigm at all. The
-  general "compute an arbitrary AI-proposed demonstration" is unsolved — this is the real
-  coverage limit of paradigm mode.
-- **Deterministic demonstration ⇒ weak "reproduction".** The cliff demo is pure geometry (no
-  seed) so its reseed recompute is identical → `demonstration_reproduced` is near-automatically
-  True, which can push a `formulation` toward `strong` without an independent check. Reproduction
-  is a weak signal for deterministic demonstrations.
+- **Demonstration executor is single-domain + keyword-matched** (the real coverage limit). Only
+  `molecules` implements `run_demonstration`, only two forms (cliff, scaffold), matched by
+  keyword; a claim phrased without the exact keywords fail-closes (returns None), and
+  materials/RAG can't ground a paradigm at all. The general "compute an arbitrary AI-proposed
+  demonstration" is unsolved — a research problem, not a patch.
 - **Rerank cutoff (`reranker_min_relevance=0.05`) is uncalibrated** for ms-marco scores — could
-  over-filter (silently drop relevant papers) or under-filter. No evaluation.
+  over-filter or under-filter. (A "keep-at-least-N" safety was rejected because it would undo the
+  off-topic drop that is the feature's point; left as a tuning concern.)
 - **Survey grounding has no offline fallback.** When all free literature APIs 429 simultaneously,
-  the survey gets 0 papers → fail-closed pause (correct, but blocks). The query cache is
-  exact-key only (the survey's duplication is near-dup); there is no global query budget.
+  the survey gets 0 papers → fail-closed pause (correct, but blocks). Query cache is exact-key
+  only; no global query budget. (An S2 API key — hook in place — removes the dominant 429 source.)
 - **Ideation debate is self-debate** (same model proposes + critiques) — weaker independence than
   the cross-vendor gate; observed to help once (caught a SALI rebrand + a tautology), n=1.
-- **`_instruction` role text is materials-specific** ("peer reviewer … in materials science")
-  even for molecules/RAG/paradigm reviews — minor framing bias.
 - **Secrets live in three places** now (aletheia/.env, sciminer/.env, OpenCode config); all
   gitignored, but the fallback readers remain.
 

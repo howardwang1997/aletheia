@@ -52,8 +52,8 @@ _STANCES = ("supportive", "adversarial")
 
 def _instruction(target: str, stance: str, mode: str = "performance") -> str:
     role = (
-        "You are an expert, rigorous peer reviewer of machine-learning experiments "
-        "in materials science."
+        "You are an expert, rigorous peer reviewer of machine-learning experiments and "
+        "scientific claims (across materials, chemistry/molecules, and ML methodology)."
     )
     # a PARADIGM contribution (new question / formulation / representation / metric) is
     # judged on different axes than a PERFORMANCE one — beating the benchmark is NOT the

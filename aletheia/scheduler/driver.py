@@ -1085,13 +1085,15 @@ class ExperimentDriver:
         orig_demo = (result.get("info") or {}).get("demonstration")
         repro_demo = (repro_result.get("info") or {}).get("demonstration")
         if isinstance(orig_demo, dict):
+            # a demonstration is REPRODUCED iff it still HOLDS on the seed-perturbed re-run
+            # AND its statistic stays the same ORDER of magnitude (within 2x) — the right
+            # check for an impossibility-style ratio (qualitatively robust, not bit-identical;
+            # the strict metric tolerance would wrongly fail an honestly-noisy ratio).
+            s1, s2 = orig_demo.get("statistic"), (repro_demo or {}).get("statistic")
             demo_repro = bool(orig_demo.get("holds")) and bool((repro_demo or {}).get("holds"))
-            if demo_repro and orig_demo.get("statistic") is not None:
-                stat_stable, _ = self._repro_match(
-                    orig_demo.get("statistic"), (repro_demo or {}).get("statistic"),
-                    get_settings().reproduction_rel_tol,
-                )
-                demo_repro = stat_stable
+            if demo_repro and s1 is not None and s2 is not None:
+                lo, hi = sorted((abs(float(s1)), abs(float(s2))))
+                demo_repro = hi <= 1e-9 or (lo / hi) >= 0.5  # within ~2x
             payload["demonstration_reproduced"] = demo_repro
         await get_bus().publish(make_event("reproduction", run_id=self.run_id, payload=payload))
         await record_transition(
@@ -1132,8 +1134,9 @@ class ExperimentDriver:
             "claims": claims,
             "analysis": analysis,
             # the coder's actual model code, so an adversarial reviewer can check
-            # for leakage / metric-gaming, not just trust the reported numbers
-            "solution_code": design.get("solution_code", ""),
+            # for leakage / metric-gaming, not just trust the reported numbers. Capped so
+            # the CLI critics (which pass content as a process arg) never approach ARG_MAX.
+            "solution_code": str(design.get("solution_code", ""))[:20000],
         }
 
     async def _finalize_claims(
@@ -1890,7 +1893,12 @@ class ExperimentDriver:
         if self.dry_run:
             return None
         plugin = self.plugin or get_domain_plugin(domain)
-        spec = dict(self._paradigm_demonstration() or {})
+        # carry the design's random_state into the demonstration so the reproduction
+        # re-run (which reseeds the design) genuinely RE-COMPUTES the demonstration on a
+        # perturbed sample — making `demonstration_reproduced` a real stability check, not
+        # an identical recompute (see _demo_activity_cliff_lipschitz).
+        spec = {**(self._paradigm_demonstration() or {}),
+                "random_state": int(design.get("random_state", 42))}
         try:
             demo = await asyncio.to_thread(
                 plugin.run_demonstration, spec, data_spec,
