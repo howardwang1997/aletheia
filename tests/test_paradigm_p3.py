@@ -50,7 +50,10 @@ def _seed_formulation(run_id):
 def _finalize(run_id, *, verdict, passed, demonstration, demo_reproduced=None):
     d = ExperimentDriver(run_id, dry_run=True)
     d._claim_ids["formulation"] = _seed_formulation(run_id)
-    rpanel = SimpleNamespace(consensus_verdict=verdict, gate_passed=passed)
+    # 2 distinct vendors -> cross-vendor (so we test the formulation logic, not the cap)
+    rpanel = SimpleNamespace(consensus_verdict=verdict, gate_passed=passed,
+                             critiques=[SimpleNamespace(critic_id="anthropic"),
+                                        SimpleNamespace(critic_id="grok")])
     repro = {"attempted": True, "reproduced": True, "demonstration_reproduced": demo_reproduced} \
         if demo_reproduced is not None else {}
     asyncio.run(d._finalize_claims(None, rpanel, repro, None, demonstration=demonstration))
