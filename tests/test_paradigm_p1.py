@@ -48,6 +48,26 @@ def test_paradigm_hypothesis_creates_formulation_claim(monkeypatch):
     assert form[0]["status"] == "proposed" and form[0]["strength"] == "speculative"
 
 
+def test_ideate_records_weak_grounding_limitation(monkeypatch):
+    """Codex #4: too few retrieved papers -> a recorded limitation so 'barely found prior
+    work' is never read as confirmed novelty."""
+    create_all()
+    run_id = create_run("weak grounding", domain="materials", status="planned")
+    exp_id = finalize_plan(run_id, {"objective": "x", "domain": "materials"})
+
+    async def fake_reason(run_id, stage, prompt, **kw):
+        return '{"statement": "s", "rationale": "r", "prediction": "p", "novelty_note": "n"}'
+
+    monkeypatch.setattr(drv, "reason_stage", fake_reason)
+    d = ExperimentDriver(run_id, dry_run=True)
+    d.survey_weak = True
+    d.survey_papers = ["only-one-paper"]
+    asyncio.run(d._ideate({"objective": "x"}, exp_id))
+    claims = list_claims(run_id)
+    assert any(c["claim_type"] == "limitation" and "Novelty is unconfirmed" in (c["claim_text"] or "")
+               for c in claims)
+
+
 def test_performance_hypothesis_creates_no_formulation_claim(monkeypatch):
     run_id, d = _run_ideate(
         monkeypatch,
