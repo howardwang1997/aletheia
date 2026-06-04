@@ -116,6 +116,11 @@ class Settings(BaseSettings):
     # IDEATION stage runs to scrutinize + strengthen a hypothesis before it is committed.
     ideation_debate_rounds: int = 2
 
+    # min DISTINCT critic vendors that must actually review for a gate to count as a real
+    # cross-vendor review; below this, the gate is `degraded_review` and a gate-derived
+    # claim is capped at `weak` (single-vendor / same-vendor self-review is not strong evidence).
+    min_review_vendors: int = 2
+
     # --- literature reranking: reorder the multi-source candidate pool by genuine query
     # relevance with a CPU cross-encoder + drop off-topic hits. ms-marco-MiniLM is the
     # fast CPU default; swap to BAAI/bge-reranker-v2-m3 or gte-reranker-modernbert-base

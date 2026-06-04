@@ -159,6 +159,7 @@ class ExperimentDriver:
         method_match: bool = True,
         reproduced: bool | None = None,
         demonstration_holds: bool | None = None,
+        cross_vendor: bool = True,
     ) -> str:
         """Deterministic, harness-owned claim strength — never the LLM's self-rating.
         Keeps a report from implying stronger evidence than the ledger holds.
@@ -171,34 +172,48 @@ class ExperimentDriver:
         demonstration was executed and held; False = executed and did not hold; None =
         not executed. A `formulation` claim is grounded by this — NOT by SOTA-delta — and
         reaches `strong` only when the demonstration held AND reproduced under a clean
-        approve. No demonstration executed → `speculative` (it stays a proposal)."""
-        if kind == "metric":
-            if protocol_status == "degraded_kfold" or not method_match:
-                return "weak"  # headline rests on a degraded protocol / a fallback method
-            if gate_passed is None:
-                return "moderate"  # pre-gate: a grouped number, not yet peer-reviewed
-            if not gate_passed:
-                return "weak"  # gate did not pass
-            if reproduced is False:
-                return "weak"  # an independent re-run contradicted the headline
-            if reproduced and gate_verdict == "approve":
-                return "strong"  # grouped + clean approve + CONFIRMED reproduction
-            return "moderate"  # approve_with_changes, or reproduction not attempted/confirmed
-        if kind == "sota":
-            return "moderate" if has_sota else "weak"  # curated string, no structured row yet (Phase H)
-        if kind == "mechanism":
-            return "moderate" if gate_passed else "weak"
-        if kind == "novelty":
-            return "speculative"  # no structured literature/novelty check in v1
-        if kind == "formulation":
-            if demonstration_holds is None:
-                return "speculative"  # no discriminating demonstration executed -> a proposal
-            if not demonstration_holds or gate_passed is False:
-                return "weak"  # demonstration did not hold, or the gate did not pass
-            if reproduced and gate_verdict == "approve":
-                return "strong"  # held + clean approve + STABLE across an independent re-run
-            return "moderate"  # held + approved (approve_with_changes, or not reproduced)
-        return "weak"
+        approve. No demonstration executed → `speculative` (it stays a proposal).
+
+        ``cross_vendor``: were >=2 DISTINCT critic vendors actually in the final review? A
+        gate-derived claim cannot exceed `weak` on single-vendor (degraded) review — the
+        cross-vendor adversarial panel is the load-bearing guarantee for moderate/strong,
+        so a gate that survived on one vendor (e.g. same-vendor self-review) must not yield
+        a strong claim."""
+
+        def _s() -> str:
+            if kind == "metric":
+                if protocol_status == "degraded_kfold" or not method_match:
+                    return "weak"  # headline rests on a degraded protocol / a fallback method
+                if gate_passed is None:
+                    return "moderate"  # pre-gate: a grouped number, not yet peer-reviewed
+                if not gate_passed:
+                    return "weak"  # gate did not pass
+                if reproduced is False:
+                    return "weak"  # an independent re-run contradicted the headline
+                if reproduced and gate_verdict == "approve":
+                    return "strong"  # grouped + clean approve + CONFIRMED reproduction
+                return "moderate"  # approve_with_changes, or reproduction not attempted/confirmed
+            if kind == "sota":
+                return "moderate" if has_sota else "weak"  # curated string, no structured row yet
+            if kind == "mechanism":
+                return "moderate" if gate_passed else "weak"
+            if kind == "novelty":
+                return "speculative"  # no structured literature/novelty check in v1
+            if kind == "formulation":
+                if demonstration_holds is None:
+                    return "speculative"  # no discriminating demonstration executed -> a proposal
+                if not demonstration_holds or gate_passed is False:
+                    return "weak"  # demonstration did not hold, or the gate did not pass
+                if reproduced and gate_verdict == "approve":
+                    return "strong"  # held + clean approve + STABLE across an independent re-run
+                return "moderate"  # held + approved (approve_with_changes, or not reproduced)
+            return "weak"
+
+        s = _s()
+        # single-vendor (degraded) review caps any gate-derived claim at `weak`
+        if not cross_vendor and {"speculative": 0, "weak": 1, "moderate": 2, "strong": 3}[s] > 1:
+            return "weak"
+        return s
 
     def _maximize(self) -> bool:
         """Does a BETTER headline mean a HIGHER value (F1/recall) vs lower (MAE/RMSE)?"""
@@ -1158,12 +1173,24 @@ class ExperimentDriver:
         repro = reproduction or {}
         # reproduced: True confirmed / False contradicted / None not attempted
         reproduced = repro.get("reproduced") if repro.get("attempted") else None
+        # cross-vendor review is the load-bearing guarantee: count DISTINCT vendors that
+        # actually reviewed; below the floor the gate is `degraded_review` and gate-derived
+        # claims are capped at `weak` (a gate that survived on one vendor — e.g. same-vendor
+        # self-review — is not strong evidence).
+        n_vendors = len({c.critic_id for c in (getattr(rpanel, "critiques", None) or [])})
+        cross_vendor = n_vendors >= int(get_settings().min_review_vendors)
+        if passed and not cross_vendor:
+            await get_bus().publish(make_event(
+                "degraded_review", run_id=self.run_id,
+                payload={"target": "results", "n_vendors": n_vendors,
+                         "min_vendors": int(get_settings().min_review_vendors),
+                         "reason": "gate passed on single-vendor review; claims capped at weak"}))
         if self._claim_ids.get("metric"):
             await asyncio.to_thread(
                 update_claim, self._claim_ids["metric"],
                 strength=self._claim_strength(
                     "metric", protocol_status=protocol_status, gate_passed=passed,
-                    gate_verdict=verdict, reproduced=reproduced,
+                    gate_verdict=verdict, reproduced=reproduced, cross_vendor=cross_vendor,
                 ),
                 status=status,
             )
@@ -1171,7 +1198,8 @@ class ExperimentDriver:
             mech_status = "not_evaluated" if method_not_instantiated else status
             await asyncio.to_thread(
                 update_claim, self._claim_ids["mechanism"],
-                strength="weak" if method_not_instantiated else self._claim_strength("mechanism", gate_passed=passed),
+                strength="weak" if method_not_instantiated else self._claim_strength(
+                    "mechanism", gate_passed=passed, cross_vendor=cross_vendor),
                 status=mech_status,
             )
         # a PARADIGM contribution's formulation claim is grounded by its reproducible
@@ -1196,7 +1224,7 @@ class ExperimentDriver:
                 update_claim, self._claim_ids["formulation"],
                 strength=self._claim_strength(
                     "formulation", gate_passed=passed, gate_verdict=verdict,
-                    reproduced=demo_repro, demonstration_holds=holds,
+                    reproduced=demo_repro, demonstration_holds=holds, cross_vendor=cross_vendor,
                 ),
                 status=form_status,
             )
@@ -2293,10 +2321,14 @@ class ExperimentDriver:
                 f"The headline {hk} ({hv}{usfx}) {rel} the best comparable published result "
                 f"({best_sota.get('method')} {best_sota.get('score')} on {best_sota.get('dataset')})."
             )
-            # only a grouped + gate-passed WIN earns 'strong'; otherwise comparable -> moderate
+            # only a grouped + gate-passed WIN earns 'strong'; otherwise comparable -> moderate.
+            # single-vendor (degraded) review caps it at weak (see _claim_strength rationale).
+            _xv = len({c.critic_id for c in (rpanel.critiques or [])}) >= int(get_settings().min_review_vendors)
             sota_strength = (
                 "strong" if (beat and protocol_status == "grouped" and rpanel.gate_passed) else "moderate"
             )
+            if not _xv and sota_strength in ("moderate", "strong"):
+                sota_strength = "weak"
         sota_evidence = [
             {"evidence_kind": "paper",
              "evidence_ref": f"{r.get('method')} ({r.get('source')})",
