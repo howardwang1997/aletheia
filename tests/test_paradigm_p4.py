@@ -56,6 +56,26 @@ def test_run_demonstration_dispatches_to_scaffold():
     assert "scaffold-grouped RMSE" in demo["detail"]
 
 
+def test_cliff_demo_is_seed_perturbed_for_real_reproduction():
+    # different seeds -> different 90% subsamples -> different statistic (a genuine
+    # re-computation, so the reproduction check is real, not a bit-identical recompute).
+    p = get_domain_plugin("molecules")
+    a = p.run_demonstration({"claim": "cliff lipschitz", "random_state": 1, "sample_n": 700},
+                            {"source": "benchmark", "ref": "esol"}, "/tmp/c1")
+    b = p.run_demonstration({"claim": "cliff lipschitz", "random_state": 2, "sample_n": 700},
+                            {"source": "benchmark", "ref": "esol"}, "/tmp/c2")
+    assert isinstance(a["holds"], bool) and isinstance(b["holds"], bool)
+    assert a["statistic"] != b["statistic"]  # seed genuinely perturbs the computation
+
+
+def test_results_payload_caps_solution_code():
+    big = "x" * 50000
+    payload = ExperimentDriver._results_review_payload(
+        {"model": "m", "solution_code": big}, {"metrics": {}, "info": {}}, analysis={}, claims=[],
+    )
+    assert len(payload["solution_code"]) == 20000  # capped so CLI critics never hit ARG_MAX
+
+
 def test_run_demonstration_fails_closed_on_unmatched_claim():
     # the domain cannot compute THIS demonstration -> None (don't ground with a mismatched
     # demo). Returns before any data load, so this is fast + offline.

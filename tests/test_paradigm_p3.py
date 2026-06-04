@@ -113,3 +113,27 @@ def test_reproduce_marks_demonstration_reproduced(monkeypatch):
                 "info": {"demonstration": {"holds": True, "statistic": 0.30}}}
     payload = asyncio.run(d._reproduce({"model": "x"}, {}, "materials", original, None))
     assert payload["demonstration_reproduced"] is True
+
+
+def _reproduce_with(monkeypatch, orig_stat, repro_stat, orig_holds=True, repro_holds=True):
+    create_all()
+    run_id = create_run("p3 order", domain="materials", status="planned")
+    d = ExperimentDriver(run_id, dry_run=True)
+    d.budget = None
+
+    async def fake_eval(design, data_spec, domain, exp_id):
+        return {"metrics": {"mae": 1.0},
+                "info": {"demonstration": {"holds": repro_holds, "statistic": repro_stat}}}
+
+    monkeypatch.setattr(d, "_run_eval", fake_eval)
+    original = {"metrics": {"mae": 1.0},
+                "info": {"demonstration": {"holds": orig_holds, "statistic": orig_stat}}}
+    return asyncio.run(d._reproduce({"model": "x"}, {}, "materials", original, None))
+
+
+def test_demonstration_reproduced_is_order_stable_not_bit_exact(monkeypatch):
+    # a seed-perturbed ratio (8.3 -> 9.0) still counts as reproduced (within ~2x);
+    # an order change (8 -> 1) does not; a flip to not-holding does not.
+    assert _reproduce_with(monkeypatch, 8.3, 9.0)["demonstration_reproduced"] is True
+    assert _reproduce_with(monkeypatch, 8.0, 1.0)["demonstration_reproduced"] is False
+    assert _reproduce_with(monkeypatch, 8.0, 8.0, repro_holds=False)["demonstration_reproduced"] is False

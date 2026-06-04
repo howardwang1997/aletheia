@@ -161,16 +161,24 @@ class MoleculePropertyPlugin(DomainPlugin):
         decile of |Δproperty|) imply a local Lipschitz constant L_cliff = |Δy| / structural
         distance that is orders of magnitude larger than the smooth-region L_global. A
         single continuous/Lipschitz regressor on this representation cannot satisfy both —
-        fitting the cliffs forces an L that destroys generalization elsewhere. Deterministic
-        (pure pairwise geometry on the fixed fingerprints — no training, no seed), so it
-        reproduces exactly. ``statistic`` = L_cliff / L_global."""
+        fitting the cliffs forces an L that destroys generalization elsewhere. ``statistic``
+        = L_cliff / L_global. Computed on a SEED-perturbed 90% subsample so the reproduction
+        re-run (a fresh seed) is a genuine independent re-computation — the ratio must be
+        STABLE across subsamples, not a trivially-identical recompute."""
         import numpy as np
 
         df = self.load_data(data_spec)
         sample_n = demonstration.get("sample_n") or data_spec.get("sample_n")
         if sample_n:
             df = df.head(int(sample_n))
-            df.attrs["data_spec"] = data_spec
+        # seed-perturbed 90% subsample: a different seed -> a different sample -> a real
+        # reproduction check on the ratio's stability (not an identical recompute).
+        rs = int(demonstration.get("random_state") or data_spec.get("random_state") or 42)
+        if len(df) > 50:
+            rng = np.random.default_rng(rs)
+            keep = rng.choice(len(df), size=int(len(df) * 0.9), replace=False)
+            df = df.iloc[sorted(keep)]
+        df.attrs["data_spec"] = data_spec  # featurize reads the spec (target/smiles cols) off attrs
         X, y, _names, _groups = self.featurize(df, {})
         X = np.asarray(X, dtype=float)
         y = np.asarray(y, dtype=float)
