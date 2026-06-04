@@ -145,8 +145,10 @@ class MoleculePropertyPlugin(DomainPlugin):
         """The discriminating demonstrations this domain can COMPUTE (Codex #2). IDEATE
         picks one by id; ``run_demonstration`` (base class) dispatches by id, falling back
         to ``_match_capability``'s keyword matcher for untagged specs; an unmatched spec
-        stays unverified (fail-closed)."""
+        stays unverified (fail-closed). Merges the base AI-authored capability (the frontier
+        path) so this domain's hand-built demos and an AI-authored one are both available."""
         return {
+            **super().demonstration_capabilities(),
             "activity_cliff_lipschitz": DemonstrationCapability(
                 id="activity_cliff_lipschitz",
                 description=(
@@ -168,6 +170,20 @@ class MoleculePropertyPlugin(DomainPlugin):
                 ),
                 compute=self._demo_scaffold_generalization,
             ),
+            "leakage_slope_law": DemonstrationCapability(
+                id="leakage_slope_law",
+                description=(
+                    "The similarity-leakage LAW (the predictive frame, not just the premise): across "
+                    "a model grid scored under matched random vs scaffold splits, (1) the two protocols' "
+                    "model RANKINGS disagree (Kendall tau < 1), (2) a random-split-ONLY leakage-"
+                    "sensitivity slope (per-molecule error vs distance-to-training-neighbours) FORECASTS "
+                    "each model's scaffold penalty, and (3) restricting the random split to its most "
+                    "scaffold-like molecules RECONCILES the rankings. Statistic = the slope->penalty "
+                    "correlation rho across the grid (the law's central, falsifiable quantity)."
+                ),
+                compute=self._demo_leakage_slope_law,
+                reproduce_factor=1.5,
+            ),
         }
 
     def _match_capability(
@@ -175,10 +191,14 @@ class MoleculePropertyPlugin(DomainPlugin):
     ) -> DemonstrationCapability | None:
         """Keyword fallback for specs IDEATE didn't tag with an explicit capability id:
         an activity-cliff / Lipschitz claim -> the cliff-Lipschitz impossibility; a
-        scaffold / random-split / generalization claim -> the scaffold blind-spot."""
+        leakage-LAW / slope / ranking claim -> the predictive leakage-slope law (checked
+        BEFORE scaffold, since the law claim necessarily also mentions scaffolds); a plain
+        scaffold / random-split / generalization claim -> the scaffold blind-spot premise."""
         intent = f"{demonstration.get('claim', '')} {demonstration.get('form', '')}".lower()
         if "cliff" in intent or "lipschitz" in intent:
             return caps["activity_cliff_lipschitz"]
+        if any(t in intent for t in ("law", "slope", "leakage", "ranking", "kendall", "forecast")):
+            return caps["leakage_slope_law"]
         if any(t in intent for t in ("scaffold", "random-split", "random split", "generaliz")):
             return caps["scaffold_generalization_gap"]
         return None
@@ -287,6 +307,251 @@ class MoleculePropertyPlugin(DomainPlugin):
                 f"(ratio {ratio:.2f}, {grouped['n_groups']} scaffolds). The random-split metric "
                 f"{'cannot' if holds else 'does not clearly'} certify generalization to novel scaffolds."
             ),
+        }
+
+    # --- leakage-slope LAW (the predictive frame the reviewer demanded we test) ----
+    def _law_grid(self, rs: int) -> dict[str, Any]:
+        """The model grid the law is tested across — five DISTINCT inductive biases (linear,
+        instance-based, two tree ensembles, kernel) so a ranking-disagreement is meaningful.
+        Factories (not instances) because each protocol re-fits a fresh estimator per fold."""
+        from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+        from sklearn.linear_model import Ridge
+        from sklearn.neighbors import KNeighborsRegressor
+        from sklearn.svm import SVR
+
+        return {
+            "ridge": lambda: Ridge(),
+            "knn": lambda: KNeighborsRegressor(),
+            "rf": lambda: RandomForestRegressor(n_estimators=200, random_state=rs, n_jobs=-1),
+            "gbm": lambda: GradientBoostingRegressor(n_estimators=200, max_depth=3, random_state=rs),
+            "svr": lambda: SVR(),
+        }
+
+    @staticmethod
+    def _kendall_tau(a: Any, b: Any) -> float | None:
+        """Kendall rank correlation (tau-a) between two orderings keyed by the value lists
+        ``a``/``b`` — inline (no scipy dep) and fine for the small grid. tau=1 -> identical
+        ranking, <1 -> the two protocols disagree on at least one pair."""
+        import numpy as np
+
+        a = np.asarray(a, dtype=float)
+        b = np.asarray(b, dtype=float)
+        n = len(a)
+        if n < 2:
+            return None
+        c = d = 0
+        for i in range(n):
+            for j in range(i + 1, n):
+                s = np.sign(a[i] - a[j]) * np.sign(b[i] - b[j])
+                if s > 0:
+                    c += 1
+                elif s < 0:
+                    d += 1
+        denom = c + d
+        return float((c - d) / denom) if denom else None
+
+    @staticmethod
+    def _pearson(x: Any, y: Any) -> float:
+        """Pearson r, returning NaN on a degenerate (zero-variance) input rather than raising."""
+        import numpy as np
+
+        x = np.asarray(x, dtype=float)
+        y = np.asarray(y, dtype=float)
+        if len(x) < 2 or np.std(x) < 1e-12 or np.std(y) < 1e-12:
+            return float("nan")
+        return float(np.corrcoef(x, y)[0, 1])
+
+    @staticmethod
+    def _lin_slope(x: Any, y: Any) -> float:
+        """OLS slope of ``y`` on ``x`` (closed form — far cheaper than polyfit in the
+        bootstrap loop). Zero-variance ``x`` -> 0.0 slope."""
+        import numpy as np
+
+        x = np.asarray(x, dtype=float)
+        y = np.asarray(y, dtype=float)
+        vx = float(np.var(x))
+        if vx < 1e-12:
+            return 0.0
+        return float(np.cov(x, y, bias=True)[0, 1] / vx)
+
+    def _max_sim_for_splits(self, X: Any, splits: list[tuple[Any, Any]]) -> Any:
+        """Per-molecule max Tanimoto similarity to its TRAINING fold, over the given CV
+        splits (model-agnostic — depends only on the fold assignment). Gives each held-out
+        molecule's distance to the nearest thing the model could have seen in training; the
+        engine of leakage. Reuses the binary-Morgan jaccard from the cliff demonstration."""
+        import numpy as np
+
+        n = len(X)
+        out = np.zeros(n, dtype=float)
+        pop = X.sum(axis=1)
+        for tr, te in splits:
+            Xtr, Xte = X[tr], X[te]
+            inter = Xte @ Xtr.T  # |A & B| for binary fingerprints
+            union = pop[te][:, None] + pop[tr][None, :] - inter
+            with np.errstate(divide="ignore", invalid="ignore"):
+                tani = np.where(union > 0, inter / union, 0.0)
+            out[te] = tani.max(axis=1) if tani.size else 0.0
+        return out
+
+    def _demo_leakage_slope_law(
+        self, demonstration: dict[str, Any], data_spec: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Test the THREE-PART similarity-leakage LAW (the predictive frame, not just the
+        premise the prior run established). Across a five-model grid scored under matched
+        random vs scaffold CV on real ESOL: (1) do the protocols' model RANKINGS disagree
+        (Kendall tau<1)? (2) does a random-split-ONLY leakage-sensitivity slope — per-molecule
+        |error| regressed on distance-to-training-neighbours — FORECAST each model's scaffold
+        penalty (scaffold-random RMSE)? (3) does restricting the random split to its most
+        scaffold-like molecules RECONCILE the rankings? ``statistic`` = the slope->penalty
+        correlation rho across the grid (the law's central, falsifiable quantity); ``holds``
+        iff its paired-bootstrap CI is strictly positive AND the rankings disagree AND the
+        counterfactual reconciles them. Missing data / a degenerate grid -> ``holds=False``
+        (FAIL CLOSED), never a crash."""
+        import numpy as np
+        from sklearn.metrics import mean_squared_error
+        from sklearn.model_selection import GroupKFold, KFold, cross_val_predict
+
+        rs = int(demonstration.get("random_state") or data_spec.get("random_state") or 42)
+        n_boot = int(demonstration.get("n_boot", 1000))
+        ref = (data_spec.get("ref") or "esol")
+        df = self.load_data(data_spec)
+        sample_n = demonstration.get("sample_n") or data_spec.get("sample_n")
+        if sample_n:
+            df = df.head(int(sample_n))
+            df.attrs["data_spec"] = data_spec  # featurize reads target/smiles cols off attrs
+        X, y, _names, groups = self.featurize(df, {"random_state": rs})
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y, dtype=float)
+        n = len(y)
+        n_groups = int(len(np.unique(groups))) if groups is not None else 0
+        if n < 80 or n_groups < 5:  # too small for a grouped grid + a meaningful slope -> fail closed
+            return {
+                "form": "predictive_law", "holds": False, "statistic": None,
+                "detail": (f"insufficient data for the leakage-slope law on {ref} "
+                           f"(n={n}, scaffolds={n_groups}); need n>=80 and >=5 scaffolds. Fail-closed."),
+                "datasets": [ref],
+            }
+
+        grid = self._law_grid(rs)
+        names = list(grid.keys())
+        g_cv = GroupKFold(n_splits=max(2, min(5, n_groups)))
+        r_cv = KFold(n_splits=5, shuffle=True, random_state=rs)
+        g_splits = list(g_cv.split(X, y, groups))
+        r_splits = list(r_cv.split(X, y))
+
+        # matched out-of-fold predictions under BOTH protocols (same molecules, paired).
+        per: dict[str, dict[str, Any]] = {}
+        for name, factory in grid.items():
+            scaf_oof = cross_val_predict(factory(), X, y, cv=g_cv, groups=groups, n_jobs=1)
+            rand_oof = cross_val_predict(factory(), X, y, cv=r_cv, n_jobs=1)
+            rmse_scaffold = float(mean_squared_error(y, scaf_oof) ** 0.5)
+            rmse_random = float(mean_squared_error(y, rand_oof) ** 0.5)
+            per[name] = {
+                "scaf_oof": np.asarray(scaf_oof, dtype=float),
+                "rand_oof": np.asarray(rand_oof, dtype=float),
+                "rmse_scaffold": rmse_scaffold,
+                "rmse_random": rmse_random,
+                "penalty": rmse_scaffold - rmse_random,
+            }
+
+        # the leakage geometry: distance from each molecule to its nearest TRAINING neighbour,
+        # under each protocol (model-agnostic — identical across the grid for a fixed split).
+        leak_random = 1.0 - self._max_sim_for_splits(X, r_splits)    # random-split test distance
+        leak_scaffold = 1.0 - self._max_sim_for_splits(X, g_splits)  # scaffold-split test distance
+
+        # Part 2: the random-split-ONLY leakage-sensitivity slope per model, and the law's
+        # central claim — does that slope FORECAST the (random-blind) scaffold penalty?
+        slopes, penalties = [], []
+        for name in names:
+            abserr = np.abs(per[name]["rand_oof"] - y)
+            per[name]["slope"] = self._lin_slope(leak_random, abserr)
+            slopes.append(per[name]["slope"])
+            penalties.append(per[name]["penalty"])
+        slopes = np.asarray(slopes, dtype=float)
+        penalties = np.asarray(penalties, dtype=float)
+        rho = self._pearson(slopes, penalties)
+
+        # Part 1: do the two protocols rank the grid differently?
+        tau_raw = self._kendall_tau(
+            [per[m]["rmse_random"] for m in names], [per[m]["rmse_scaffold"] for m in names]
+        )
+        disagree = tau_raw is not None and tau_raw < 0.999
+
+        # Part 3: the similarity-matched counterfactual — score the random split on ONLY its
+        # most scaffold-like molecules (random-split distance >= a typical scaffold distance);
+        # if that reconciles the ranking with the scaffold protocol, the divergence is leakage.
+        thresh = float(np.quantile(leak_scaffold, 0.5))
+        matched = leak_random >= thresh
+        tau_matched = None
+        if int(matched.sum()) >= 20:
+            matched_rmse = {
+                m: float(mean_squared_error(y[matched], per[m]["rand_oof"][matched]) ** 0.5)
+                for m in names
+            }
+            tau_matched = self._kendall_tau(
+                [per[m]["rmse_scaffold"] for m in names], [matched_rmse[m] for m in names]
+            )
+        reconciles = (
+            tau_matched is not None and tau_raw is not None and tau_matched > tau_raw
+        )
+
+        # paired bootstrap CI on the slope->penalty rho (resample molecules, recompute the grid
+        # statistics from the stored OOF predictions — cheap, no re-fitting).
+        rng = np.random.default_rng(rs)
+        boot: list[float] = []
+        for _ in range(max(0, n_boot)):
+            idx = rng.integers(0, n, size=n)
+            yb, leakb = y[idx], leak_random[idx]
+            sl_b, pen_b = [], []
+            for name in names:
+                rerr = np.abs(per[name]["rand_oof"][idx] - yb)
+                rmse_r = float(np.mean((per[name]["rand_oof"][idx] - yb) ** 2) ** 0.5)
+                rmse_s = float(np.mean((per[name]["scaf_oof"][idx] - yb) ** 2) ** 0.5)
+                sl_b.append(self._lin_slope(leakb, rerr))
+                pen_b.append(rmse_s - rmse_r)
+            r_b = self._pearson(np.asarray(sl_b), np.asarray(pen_b))
+            if not np.isnan(r_b):
+                boot.append(r_b)
+        ci = None
+        ci_supports = False
+        if len(boot) > 10:
+            lo = float(np.quantile(boot, 0.025))
+            hi = float(np.quantile(boot, 0.975))
+            ci = [round(lo, 4), round(hi, 4)]
+            ci_supports = lo > 0.0  # the law predicts a POSITIVE slope->penalty relationship
+
+        holds = bool(ci_supports and disagree and reconciles)
+        statistic = round(float(rho), 4) if not np.isnan(rho) else None
+        grid_out = {
+            m: {
+                "rmse_random": round(per[m]["rmse_random"], 4),
+                "rmse_scaffold": round(per[m]["rmse_scaffold"], 4),
+                "penalty": round(per[m]["penalty"], 4),
+                "slope": round(per[m]["slope"], 4),
+            }
+            for m in names
+        }
+        detail = (
+            f"leakage-slope law on {ref} (n={n}, {n_groups} scaffolds, {len(names)}-model grid): "
+            f"(1) ranking disagreement Kendall tau={tau_raw if tau_raw is None else round(tau_raw, 3)} "
+            f"({'disagree' if disagree else 'agree'}); "
+            f"(2) random-split-only slope FORECASTS the scaffold penalty: rho="
+            f"{statistic} (95% CI {ci}) -> {'predictive' if ci_supports else 'NOT predictive'}; "
+            f"(3) similarity-matched counterfactual tau={tau_matched if tau_matched is None else round(tau_matched, 3)} "
+            f"-> {'reconciles' if reconciles else 'does NOT reconcile'} the rankings. "
+            f"The law is {'SUPPORTED' if holds else 'NOT supported'} by this run."
+        )
+        return {
+            "form": "predictive_law",
+            "holds": holds,
+            "statistic": statistic,
+            "detail": detail,
+            "grid": grid_out,
+            "kendall_tau": None if tau_raw is None else round(tau_raw, 4),
+            "slope_penalty_rho": statistic,
+            "slope_penalty_ci": ci,
+            "counterfactual_tau": None if tau_matched is None else round(tau_matched, 4),
+            "datasets": [ref],
         }
 
     def baselines(self) -> list[dict[str, Any]]:

@@ -143,6 +143,15 @@ class Settings(BaseSettings):
     sandbox_max_memory_mb: int = 4096  # RLIMIT_AS (best-effort on macOS)
     coder_enabled: bool = True  # author a solution.py each run (falls back if it fails the gate)
 
+    # --- AI-authored demonstration (the frontier path) ---
+    # The AI writes the discriminating computation itself (compute_demonstration); the harness
+    # applies its pre-registered decision rule + negative control. Falls back to a registered
+    # capability when disabled or when authoring/gating fails (fail closed).
+    ai_demonstration_enabled: bool = True
+    demonstration_min_samples: int = 20  # min n on BOTH the test and control sides (probe)
+    demonstration_timeout_s: float = 120.0  # wall-clock for the AI demonstration subprocess
+    demonstration_audit_enabled: bool = True  # independent cross-vendor audit of the AI demo
+
     # --- compute backend ---
     # "local"  = restricted subprocess on the host (soft guardrails).
     # "docker" = HARD sandbox: host featurizes + stages X/y, a light no-network

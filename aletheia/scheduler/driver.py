@@ -13,19 +13,32 @@ import json
 import re
 from typing import Any
 
-from aletheia.coder.sandbox import check_code, smoke_test_solution
+from aletheia.coder.demonstration import (
+    CANNED_PREREGISTRATION,
+    CANNED_DEMO,
+    DEMO_SYSTEM,
+    demonstration_prompt,
+    extract_preregistration,
+)
+from aletheia.coder.sandbox import (
+    DEMO_REQUIRED_FUNCTION,
+    check_code,
+    smoke_test_demonstration,
+    smoke_test_solution,
+)
 from aletheia.coder.worker import CANNED_SOLUTION, CODER_SYSTEM, coder_prompt, extract_code
 from aletheia.compute.base import JobSpec
 from aletheia.compute.factory import get_compute_backend
 from aletheia.compute.mcp_tools import resolve_data_spec
 from aletheia.config import get_settings
 from aletheia.critics.gateway import CriticGateway
-from aletheia.domains.base import DomainProfile
+from aletheia.domains.base import DomainPlugin, DomainProfile
 from aletheia.domains.registry import get_domain_plugin
 from aletheia.events.bus import get_bus, make_event
 from aletheia.iam import policy
 from aletheia.iam.github_app import GitHubBackend, RepoResult, get_github_backend
 from aletheia.memory.service import (
+    attach_claim_evidence,
     create_claim,
     create_experiment,
     get_run,
@@ -161,6 +174,7 @@ class ExperimentDriver:
         reproduced: bool | None = None,
         demonstration_holds: bool | None = None,
         cross_vendor: bool = True,
+        audit_passed: bool | None = None,
     ) -> str:
         """Deterministic, harness-owned claim strength — never the LLM's self-rating.
         Keeps a report from implying stronger evidence than the ledger holds.
@@ -203,8 +217,8 @@ class ExperimentDriver:
             if kind == "formulation":
                 if demonstration_holds is None:
                     return "speculative"  # no discriminating demonstration executed -> a proposal
-                if not demonstration_holds or gate_passed is False:
-                    return "weak"  # demonstration did not hold, or the gate did not pass
+                if not demonstration_holds or gate_passed is False or audit_passed is False:
+                    return "weak"  # didn't hold, gate failed, OR the independent audit refuted it
                 if reproduced and gate_verdict == "approve":
                     return "strong"  # held + clean approve + STABLE across an independent re-run
                 return "moderate"  # held + approved (approve_with_changes, or not reproduced)
@@ -498,6 +512,10 @@ class ExperimentDriver:
         try:
             plug = self.plugin or (get_domain_plugin(self.domain) if self.domain else None)
             caps = plug.demonstration_capabilities() if plug is not None else {}
+            # the AI-authored capability is NOT an IDEATE-selectable menu item: the driver
+            # decides to author a demonstration (when no registered capability fits), so it
+            # never appears here. IDEATE only picks among hand-built, registered computations.
+            caps = {k: v for k, v in caps.items() if k != getattr(plug, "AI_AUTHORED_CAPABILITY_ID", None)}
         except Exception:  # noqa: BLE001 - menu is best-effort context, never fatal
             caps = {}
         if not caps:
@@ -921,6 +939,111 @@ class ExperimentDriver:
         await self._index("design_rationale", f"coder solution:\n{code[:400]}", exp_id)
         return code
 
+    @staticmethod
+    def _valid_preregistration(prereg: Any) -> bool:
+        """A committable pre-registration carries all descriptive keys AND both decision rules
+        well-formed (op + finite threshold) — the structured rule is what lets the harness derive
+        ``holds`` with NO LLM assertion. Reuses the base-class rule validator."""
+        if not isinstance(prereg, dict):
+            return False
+        for k in ("statistic_name", "computation", "control_description", "expected_control"):
+            if not str(prereg.get(k, "")).strip():
+                return False
+        return DomainPlugin._valid_decision_rules(prereg)
+
+    def _read_committed_preregistration(self) -> dict | None:
+        """Read the IMMUTABLE pre-registration back from the LEDGER (not driver memory), so the
+        rule applied at compute time is provably the one committed BEFORE results existed — the
+        central anti-fakeability guard. Returns None if none was committed."""
+        fid = self._claim_ids.get("formulation")
+        if not fid:
+            return None
+        try:
+            for c in list_claims(self.run_id):
+                if c.get("id") != fid:
+                    continue
+                for e in c.get("evidence", []):
+                    if e.get("evidence_kind") == "preregistration" and e.get("note"):
+                        return json.loads(e["note"])
+        except Exception:  # noqa: BLE001 - ledger read best-effort; missing -> fail closed
+            return None
+        return None
+
+    async def _demonstration_code(self, design: dict, data_spec: dict, exp_id: str | None) -> None:
+        """DEMONSTRATION CODE stage (paradigm frontier): Opus authors ``compute_demonstration``
+        + a STRUCTURED pre-registration. Both are statically gated + smoke-tested; the
+        pre-registration is committed IMMUTABLY to the formulation claim BEFORE execution (so it
+        cannot be tuned to the observed statistic). On success, stashes the code on ``design`` so
+        ``_compute_demonstration`` routes to the AI-authored capability. ANY failure -> no commit,
+        fall back to the registered-capability path (fail closed). Never raises."""
+        if not get_settings().coder_enabled or not getattr(
+            get_settings(), "ai_demonstration_enabled", True
+        ):
+            return
+        fid = self._claim_ids.get("formulation")
+        demo = self._paradigm_demonstration()
+        if not fid or not demo:
+            return
+        # Registered-first: if a trusted, hand-built capability already grounds this claim, use
+        # it (deterministic + already audited) — the AI-authored path is for claims NOTHING can
+        # currently ground (Codex gap #3: "arbitrary AI-proposed demonstrations out of reach").
+        plugin = self.plugin or (get_domain_plugin(self.domain) if self.domain else None)
+        if plugin is not None:
+            caps = plugin.demonstration_capabilities()
+            registered = {k: v for k, v in caps.items() if k != plugin.AI_AUTHORED_CAPABILITY_ID}
+            if plugin._select_capability(demo, registered) is not None:
+                return  # a registered capability fits; don't AI-author
+        await self._status("coding", "authoring the discriminating demonstration")
+        min_n = int(getattr(get_settings(), "demonstration_min_samples", 20))
+        text = await run_worker(
+            self.run_id, "coder",
+            demonstration_prompt(
+                self.hypothesis, demo, data_spec,
+                feature_desc=self.profile.feature_desc if self.profile
+                else "a dense numeric feature matrix",
+                min_samples=min_n,
+            ),
+            system=DEMO_SYSTEM, dry_run=self.dry_run,
+            dry_value="```python\n" + CANNED_DEMO + "```\n```json\n"
+            + json.dumps(CANNED_PREREGISTRATION) + "\n```",
+        )
+        if is_degraded(text):
+            return  # worker unavailable -> fall back to registered capability
+        code = extract_code(text)
+        prereg = extract_preregistration(text)
+        ok, reasons = check_code(code, required_function=DEMO_REQUIRED_FUNCTION)
+        if ok:
+            smoke_ok, smoke_err = await asyncio.to_thread(smoke_test_demonstration, code)
+            if not smoke_ok:
+                ok, reasons = False, [*reasons, f"import/run failed: {smoke_err}"]
+        valid_prereg = self._valid_preregistration(prereg)
+        accepted = bool(ok and valid_prereg)
+        await get_bus().publish(
+            make_event("demonstration_code", run_id=self.run_id, payload={
+                "accepted": accepted, "lines": code.count("\n") + 1, "reasons": reasons[:5],
+                "preregistration_valid": valid_prereg})
+        )
+        if not accepted:
+            await record_transition(
+                self.run_id, exp_id, "experiment_design", "experiment_design",
+                f"AI demonstration not accepted (code_ok={ok}, prereg_ok={valid_prereg}); "
+                f"falling back to a registered capability",
+            )
+            return
+        # immutable commit BEFORE execution — the pre-registration cannot be revised post-hoc.
+        await asyncio.to_thread(
+            attach_claim_evidence, fid, "preregistration",
+            str(prereg.get("statistic_name", "statistic")), json.dumps(prereg),
+        )
+        await get_bus().publish(
+            make_event("preregistration", run_id=self.run_id, payload={
+                "statistic": prereg.get("statistic_name"),
+                "supported_if": prereg.get("supported_if"),
+                "control_silent_if": prereg.get("control_silent_if")})
+        )
+        design["demonstration_code"] = code
+        await self._index("design_rationale", f"AI-authored demonstration:\n{code[:400]}", exp_id)
+
     async def _code_rag(self, design: dict, exp_id: str | None) -> None:
         """RAG-aware coder: author the GENERATION STRATEGY (answer prompt + retrieval
         depth k) for a host-side-LLM domain, instead of build_pipeline() code. Mutates
@@ -1208,6 +1331,7 @@ class ExperimentDriver:
         self, protocol_status: str | None, rpanel, reproduction: dict | None = None,
         exp_id: str | None = None, ablation: dict | None = None,
         method_not_instantiated: bool = False, demonstration: dict | None = None,
+        audit_passed: bool | None = None,
     ) -> None:
         """After the results gate, set the final strength + status of the proposed
         metric/mechanism claims from the (harness-owned) evidence rule, and record a
@@ -1275,6 +1399,7 @@ class ExperimentDriver:
                 strength=self._claim_strength(
                     "formulation", gate_passed=passed, gate_verdict=verdict,
                     reproduced=demo_repro, demonstration_holds=holds, cross_vendor=cross_vendor,
+                    audit_passed=audit_passed,
                 ),
                 status=form_status,
             )
@@ -1525,6 +1650,12 @@ class ExperimentDriver:
             if solution_code:
                 design["solution_code"] = solution_code
 
+        # 2c) DEMONSTRATION CODE (paradigm only, the frontier path): the AI authors the
+        # DISCRIMINATING COMPUTATION itself + pre-registers its decision rule, committed
+        # immutably BEFORE execution so it can't be tuned to the result.
+        if self._contribution_type() == "paradigm":
+            await self._demonstration_code(design, data_spec, exp_id)
+
         # 3) EXECUTION
         await record_transition(self.run_id, exp_id, "experiment_design", "execution", "design approved; running")
         await self._status("executing")
@@ -1591,9 +1722,14 @@ class ExperimentDriver:
         await self._status("analyzing")
         analysis = await self._analyze(design, result, exp_id)
 
+        # 4b) INDEPENDENT AUDIT of an AI-authored demonstration (author vendor excluded) —
+        # runs before the results gate so a refuting audit (forced holds=False) is reflected
+        # in the demonstration result the gate + claim finalization read.
+        info = result.get("info") or {}
+        audit_passed = await self._audit_demonstration(design, info.get("demonstration"))
+
         # 5) review_results gate — the critics see the CLAIMS + evidence (proposed in
         # analysis) + the protocol status + the reproduction, so they review evidence.
-        info = result.get("info") or {}
         claims = await asyncio.to_thread(list_claims, self.run_id, exp_id)
         contribution_type = self._contribution_type()
         rpanel = await self.gateway.review(
@@ -1620,6 +1756,7 @@ class ExperimentDriver:
             ablation=info.get("ablation"),
             method_not_instantiated=bool(info.get("method_drift")),
             demonstration=info.get("demonstration"),
+            audit_passed=audit_passed,
         )
 
         # 6) OPTIMIZE (<=1 iteration) — skipped when the results gate rejected, since
@@ -1977,6 +2114,17 @@ class ExperimentDriver:
         # an identical recompute (see _demo_activity_cliff_lipschitz).
         spec = {**(self._paradigm_demonstration() or {}),
                 "random_state": int(design.get("random_state", 42))}
+        # FRONTIER PATH: if the AI authored a demonstration this experiment, route to the
+        # AI-authored capability by EXPLICIT id and attach the sandboxed code + the pre-
+        # registration READ BACK FROM THE LEDGER (the committed-before-results version — the
+        # anti-fakeability guard). If authoring didn't happen, the spec is untagged and dispatch
+        # falls back to the domain's registered capabilities exactly as before.
+        if design.get("demonstration_code"):
+            prereg = self._read_committed_preregistration()
+            if prereg:
+                spec["capability"] = plugin.AI_AUTHORED_CAPABILITY_ID
+                spec["demonstration_code"] = design["demonstration_code"]
+                spec["preregistration"] = prereg
         try:
             demo = await asyncio.to_thread(
                 plugin.run_demonstration, spec, data_spec,
@@ -1995,6 +2143,51 @@ class ExperimentDriver:
                                     "holds": demo.get("holds"), "statistic": demo.get("statistic")})
             )
         return demo
+
+    async def _audit_demonstration(self, design: dict, demo_result: dict | None) -> bool | None:
+        """Independently AUDIT an AI-authored demonstration with the AUTHOR vendor EXCLUDED
+        (genuine cross-vendor independence, not Opus reviewing its own code). A refuting audit
+        (gate did not pass) FORCES ``holds=False`` on the result — the auditor's adversarial
+        finding cannot be overridden by the author — so the formulation claim becomes
+        ``refuted``. Returns the audit's gate_passed (True/False), or None when no audit ran
+        (not an AI-authored demo, disabled, dry-run, or no formulation claim).
+
+        Mutates ``demo_result`` in place (the same dict ``_finalize_claims`` reads)."""
+        if self.dry_run or not getattr(get_settings(), "demonstration_audit_enabled", True):
+            return None
+        if not isinstance(demo_result, dict) or not demo_result.get("preregistration"):
+            return None  # only AI-authored demonstrations carry a pre-registration
+        fid = self._claim_ids.get("formulation")
+        payload = {
+            "demonstration_code": str(design.get("demonstration_code", ""))[:20000],
+            "test_statistic": demo_result.get("test_statistic"),
+            "control_statistic": demo_result.get("control_statistic"),
+            "preregistration": demo_result.get("preregistration"),
+            "probes": demo_result.get("probes"),
+            "detail": demo_result.get("detail"),
+        }
+        panel = await self.gateway.review(
+            "demonstration_audit", payload, self.run_id, run_id=self.run_id,
+            dry_run=self.dry_run, exclude_vendors={"anthropic"},  # exclude the Opus AUTHOR
+        )
+        audit_passed = bool(panel.gate_passed)
+        # independence guard: if the Anthropic author somehow appears in the panel, treat the
+        # audit as NOT independent -> fail closed (cannot be trusted as a real audit).
+        auditors = {c.critic_id for c in (getattr(panel, "critiques", None) or [])}
+        if "anthropic" in auditors:
+            audit_passed = False
+        if not audit_passed:
+            demo_result["holds"] = False  # a refuting/non-independent audit -> refuted
+            demo_result["audit_refuted"] = True
+        if fid:
+            await asyncio.to_thread(
+                attach_claim_evidence, fid, "audit", str(panel.consensus_verdict),
+                f"independent demonstration audit (author-excluded): {panel.consensus_verdict}",
+            )
+        await get_bus().publish(make_event("demonstration_audit", run_id=self.run_id, payload={
+            "verdict": panel.consensus_verdict, "gate_passed": panel.gate_passed,
+            "auditors": sorted(auditors)}))
+        return audit_passed
 
     _DEFAULT_RAG_PROMPT = (
         "Answer the question using ONLY the context. Be concise (a short phrase). "

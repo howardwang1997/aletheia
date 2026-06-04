@@ -11,13 +11,19 @@ from __future__ import annotations
 from typing import Any
 
 ESOL_URL = "https://deepchemdata.s3-us-west-1.amazonaws.com/datasets/delaney-processed.csv"
+# AqSolDB curated aqueous-solubility dataset (~10k compounds), Harvard Dataverse
+# (doi:10.7910/DVN/OVHAW8, curated-solubility-dataset.csv). OPTIONAL — a larger second
+# benchmark for replicating a finding across datasets; network-gated, so callers that need
+# offline determinism (e.g. the milestone law re-run) default to ESOL and fail-closed here.
+AQSOLDB_URL = "https://dataverse.harvard.edu/api/access/datafile/3407241"
 
 # Target column shipped by each known benchmark (SMILES is the feature).
 KNOWN_TARGETS = {
     "esol": "measured log solubility in mols per litre",
     "delaney": "measured log solubility in mols per litre",
+    "aqsoldb": "Solubility",
 }
-KNOWN_SMILES = {"esol": "smiles", "delaney": "smiles"}
+KNOWN_SMILES = {"esol": "smiles", "delaney": "smiles", "aqsoldb": "SMILES"}
 
 
 def load_benchmark(ref: str) -> Any:
@@ -27,6 +33,8 @@ def load_benchmark(ref: str) -> Any:
     key = (ref or "esol").strip().lower()
     if key in ("esol", "delaney"):
         return pd.read_csv(ESOL_URL)
+    if key == "aqsoldb":
+        return pd.read_csv(AQSOLDB_URL)
     raise ValueError(f"unknown molecular benchmark: {ref!r}")
 
 

@@ -103,6 +103,11 @@ class DomainPlugin(ABC):
 
     name: str = "base"
 
+    # The AI-AUTHORED demonstration capability (the frontier path): registered for EVERY
+    # domain, reachable by explicit id ONLY (never keyword-matched), so the AI can author the
+    # discriminating computation itself while the harness still owns the verdict.
+    AI_AUTHORED_CAPABILITY_ID = "ai_authored_demonstration"
+
     @abstractmethod
     def load_data(self, data_spec: dict[str, Any]) -> Any:
         """Resolve a data spec (source benchmark|upload|api) to a DataFrame."""
@@ -147,9 +152,28 @@ class DomainPlugin(ABC):
         """The discriminating demonstrations this domain can actually COMPUTE, keyed by
         capability id (Codex #2). IDEATE chooses a paradigm's demonstration from this menu;
         ``run_demonstration`` dispatches to it by id; an unmatched request stays unverified.
-        Default: none — a domain with no registered capability cannot ground a paradigm
-        claim (fail-closed), and that is the honest state until a capability is added."""
-        return {}
+
+        Every domain ALWAYS gets the AI-AUTHORED capability (the frontier path): the AI writes
+        the discriminating computation as sandboxed code and the harness applies the AI's
+        PRE-REGISTERED decision rule + negative control (still never an LLM 'holds'). Domains
+        add their own hand-built capabilities by MERGING into this dict
+        (``{**super().demonstration_capabilities(), ...}``). A domain that adds none can still
+        ground a paradigm claim via an AI-authored demonstration — but only when the driver
+        supplies authored code + a committed pre-registration; otherwise it fails closed."""
+        return {
+            self.AI_AUTHORED_CAPABILITY_ID: DemonstrationCapability(
+                id=self.AI_AUTHORED_CAPABILITY_ID,
+                description=(
+                    "AI-AUTHORED discriminating demonstration: the AI writes sandboxed code that "
+                    "computes a TEST statistic and a CONTROL statistic; the harness applies the "
+                    "AI's PRE-REGISTERED decision rule (supported_if / control_silent_if) plus "
+                    "leakage/degeneracy probes to decide `holds` (never an LLM assertion). Reachable "
+                    "by explicit id only; requires driver-supplied code + committed pre-registration."
+                ),
+                compute=self._compute_ai_authored_demonstration,
+                reproduce_factor=2.0,
+            )
+        }
 
     def run_demonstration(
         self, demonstration: dict[str, Any], data_spec: dict[str, Any], workdir: Path
@@ -190,5 +214,142 @@ class DomainPlugin(ABC):
         self, demonstration: dict[str, Any], caps: dict[str, DemonstrationCapability]
     ) -> DemonstrationCapability | None:
         """Domain-specific keyword fallback when a spec carries no explicit ``capability``
-        id. Default: no fuzzy match — fail closed. Override to map intent -> capability."""
+        id. Default: no fuzzy match — fail closed. Override to map intent -> capability. The
+        AI-authored capability is intentionally NOT keyword-matched (explicit id only)."""
         return None
+
+    # --- AI-authored demonstration: harness owns the verdict (the frontier path) -------
+    @staticmethod
+    def _apply_rule(value: float, rule: dict[str, Any]) -> bool:
+        """Apply a pre-registered comparison rule ``{op, threshold}`` to ``value``. A
+        malformed rule -> False (fail closed: an un-appliable rule never 'triggers')."""
+        try:
+            op = str(rule["op"]).strip()
+            thr = float(rule["threshold"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        v = float(value)
+        return {">=": v >= thr, ">": v > thr, "<=": v <= thr, "<": v < thr}.get(op, False)
+
+    @staticmethod
+    def _valid_decision_rules(prereg: dict[str, Any]) -> bool:
+        """A usable pre-registration must carry both decision rules as ``{op, threshold}`` with
+        a recognized op and a finite threshold; otherwise the harness cannot derive ``holds``."""
+        import math
+
+        if not isinstance(prereg, dict):
+            return False
+        for key, ops in (("supported_if", {">=", ">", "<=", "<"}),
+                         ("control_silent_if", {"<", "<="})):
+            r = prereg.get(key)
+            if not isinstance(r, dict) or str(r.get("op")) not in ops:
+                return False
+            try:
+                if not math.isfinite(float(r["threshold"])):
+                    return False
+            except (KeyError, TypeError, ValueError):
+                return False
+        return True
+
+    def _demonstration_probes(self, res: dict[str, Any]) -> dict[str, Any]:
+        """Harness-side leakage/degeneracy probes (anti-fakeability #4). Deterministic checks
+        that the statistic isn't trivially gamed: adequate sample sizes on BOTH the test and
+        control sides (a sham empty/degenerate control fails here), and finite statistics. Any
+        flag -> ``clean=False`` -> the demonstration is REFUTED, not silently passed."""
+        import math
+
+        try:
+            from aletheia.config import get_settings
+            min_n = int(getattr(get_settings(), "demonstration_min_samples", 20))
+        except Exception:  # noqa: BLE001 - config best-effort; fall back to a safe default
+            min_n = 20
+        flags: list[str] = []
+        n_test, n_control = int(res.get("n_test", 0)), int(res.get("n_control", 0))
+        if n_test < min_n:
+            flags.append(f"test sample too small (n_test={n_test} < {min_n})")
+        if n_control < min_n:
+            flags.append(f"control sample too small/degenerate (n_control={n_control} < {min_n})")
+        if not (math.isfinite(float(res.get("test_statistic", float("nan"))))
+                and math.isfinite(float(res.get("control_statistic", float("nan"))))):
+            flags.append("non-finite statistic")
+        clean = not flags
+        note = "" if clean else " [probe flags: " + "; ".join(flags) + "]"
+        return {"clean": clean, "note": note, "flags": flags,
+                "min_samples": min_n, "n_test": n_test, "n_control": n_control}
+
+    def _compute_ai_authored_demonstration(
+        self, demonstration: dict[str, Any], data_spec: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Run an AI-AUTHORED ``compute_demonstration`` and derive ``holds`` from the AI's
+        COMMITTED pre-registration — the harness owns the verdict, the AI only computes the
+        statistic. The driver injects ``demonstration_code`` (sandboxed) + ``preregistration``
+        (read back from the ledger, immutable) onto the spec.
+
+        ``holds = test_triggers AND control_silent AND probes_clean`` — all harness-applied.
+        Never reads an AI-provided 'holds'. FAIL CLOSED everywhere: missing code/rule -> None
+        (not_evaluated); gate reject / control fires / probe trips -> holds False (refuted);
+        sandbox failure -> holds None (not_evaluated). Never raises."""
+        from aletheia.coder.demonstration_runner import run_authored_demonstration
+        from aletheia.coder.sandbox import DEMO_REQUIRED_FUNCTION, check_code
+
+        code = demonstration.get("demonstration_code")
+        prereg = demonstration.get("preregistration")
+        form = demonstration.get("form") or "discriminating_instance"
+        if not isinstance(code, str) or not code.strip() or not self._valid_decision_rules(prereg):
+            return None  # no authored demonstration / no usable rule -> not_evaluated (fail closed)
+
+        ok, reasons = check_code(code, required_function=DEMO_REQUIRED_FUNCTION)
+        if not ok:
+            return {"form": form, "holds": False, "statistic": None,
+                    "detail": f"AI-authored demonstration rejected by code gate: {reasons[:3]}",
+                    "preregistration": prereg}
+
+        rs = int(demonstration.get("random_state") or data_spec.get("random_state") or 42)
+        try:
+            df = self.load_data(data_spec)
+            sample_n = demonstration.get("sample_n") or data_spec.get("sample_n")
+            if sample_n:
+                df = df.head(int(sample_n))
+                try:
+                    df.attrs["data_spec"] = data_spec  # plugins read target/feature cols off attrs
+                except Exception:  # noqa: BLE001 - not all frames carry attrs
+                    pass
+            X, y, _names, groups = self.featurize(df, {"random_state": rs})
+        except Exception as exc:  # noqa: BLE001 - featurization failure -> not_evaluated
+            return {"form": form, "holds": None, "statistic": None,
+                    "detail": f"could not stage data for the AI demonstration: {exc}",
+                    "preregistration": prereg}
+
+        meta = {"random_state": rs, "preregistration": prereg}
+        res = run_authored_demonstration(code, X, y, groups, meta)
+        if res is None:
+            return {"form": form, "holds": None, "statistic": None,
+                    "detail": "AI-authored demonstration did not run (sandbox timeout/error)",
+                    "preregistration": prereg}
+
+        probes = self._demonstration_probes(res)
+        test_triggers = self._apply_rule(res["test_statistic"], prereg["supported_if"])
+        control_silent = self._apply_rule(res["control_statistic"], prereg["control_silent_if"])
+        holds = bool(test_triggers and control_silent and probes["clean"])  # harness, not the AI
+        verdict = ("holds" if holds else
+                   "control fired" if not control_silent else
+                   "test did not trigger" if not test_triggers else
+                   "probe flagged")
+        return {
+            "form": form,
+            "holds": holds,
+            "statistic": round(float(res["test_statistic"]), 4),
+            "detail": (
+                f"AI-authored demonstration ({prereg.get('statistic_name', 'statistic')}): "
+                f"test={res['test_statistic']:.4g} (supported_if {prereg['supported_if']}), "
+                f"control={res['control_statistic']:.4g} (silent_if {prereg['control_silent_if']}) "
+                f"-> {verdict}. {res.get('detail', '')}{probes['note']}"
+            ),
+            "test_statistic": float(res["test_statistic"]),
+            "control_statistic": float(res["control_statistic"]),
+            "test_triggers": test_triggers,
+            "control_silent": control_silent,
+            "preregistration": prereg,
+            "probes": probes,
+            "components": res.get("components", {}),
+        }

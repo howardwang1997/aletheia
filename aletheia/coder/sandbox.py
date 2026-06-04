@@ -53,15 +53,20 @@ FORBIDDEN_ATTRS = {
 }
 
 REQUIRED_FUNCTION = "build_pipeline"
+# The AI-authored DEMONSTRATION contract (the frontier path): the AI writes the
+# discriminating computation, not a model. Same allowlist/forbidden sets — it needs only
+# numpy/scipy/sklearn/math/statistics, and is denied io/net/process exactly as solutions are.
+DEMO_REQUIRED_FUNCTION = "compute_demonstration"
 
 
 def _import_root(name: str) -> str:
     return (name or "").split(".")[0]
 
 
-def check_code(source: str) -> tuple[bool, list[str]]:
-    """Return (ok, reasons). ok=True means the code passes the static gate and
-    defines the required ``build_pipeline`` function."""
+def check_code(source: str, *, required_function: str = REQUIRED_FUNCTION) -> tuple[bool, list[str]]:
+    """Return (ok, reasons). ok=True means the code passes the static gate and defines
+    ``required_function`` (``build_pipeline`` for solutions, ``compute_demonstration`` for
+    AI-authored demonstrations). The allowlist/forbidden sets are identical for both."""
     reasons: list[str] = []
     try:
         tree = ast.parse(source)
@@ -72,7 +77,7 @@ def check_code(source: str) -> tuple[bool, list[str]]:
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name == REQUIRED_FUNCTION:
+            if node.name == required_function:
                 defines_required = True
         elif isinstance(node, ast.Import):
             for alias in node.names:
@@ -89,7 +94,7 @@ def check_code(source: str) -> tuple[bool, list[str]]:
                 reasons.append(f"forbidden name: {node.id}")
 
     if not defines_required:
-        reasons.append(f"must define a `{REQUIRED_FUNCTION}()` function")
+        reasons.append(f"must define a `{required_function}()` function")
     return (len(reasons) == 0), reasons
 
 
@@ -145,6 +150,48 @@ def smoke_test_solution(source: str, timeout_s: float = 30.0) -> tuple[bool, str
             # the smoke test EXECUTES AI-authored code, so apply the same CPU/memory
             # rlimits as the training subprocess (no-network is not enforced here — that
             # is the Docker backend's job; this caps runaway import/build code).
+            proc = subprocess.run(
+                [sys.executable, "-c", probe],
+                capture_output=True, text=True, timeout=timeout_s,
+                stdin=subprocess.DEVNULL, preexec_fn=resource_limits(),
+            )
+        except Exception as exc:  # noqa: BLE001 - smoke test is best-effort
+            return False, f"smoke-test could not run: {exc}"
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout or "non-zero exit").strip()
+            return False, err.splitlines()[-1][:200] if err else "non-zero exit"
+        return True, ""
+
+
+def smoke_test_demonstration(source: str, timeout_s: float = 30.0) -> tuple[bool, str]:
+    """Beyond the static gate: IMPORT the AI-authored demonstration and CALL
+    ``compute_demonstration`` on a tiny synthetic frame in an isolated subprocess, asserting
+    it returns a dict with FINITE ``test_statistic``/``control_statistic``. Catches a runtime
+    import/shape error before the real run, so a coder slip degrades to the registered-
+    capability fallback instead of crashing. Returns ``(ok, error)``.
+
+    Safe: ``source`` already passed ``check_code`` (allowlisted imports, no os/open/exec);
+    here it only runs on a 40x4 random matrix. Same CPU/memory rlimits as training."""
+    import subprocess
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as td:
+        sol = Path(td) / "demo.py"
+        sol.write_text(source)
+        probe = (
+            "import importlib.util as u, numpy as np, math;"
+            f"s=u.spec_from_file_location('demo', r'{sol}');"
+            "m=u.module_from_spec(s);s.loader.exec_module(m);"
+            "rng=np.random.default_rng(0);"
+            "X=rng.random((40,4));y=rng.random(40);g=np.array([i%5 for i in range(40)],dtype=object);"
+            "r=m.compute_demonstration(X,y,g,{'random_state':0,'preregistration':{}});"
+            "assert isinstance(r,dict),'compute_demonstration must return a dict';"
+            "ts=float(r['test_statistic']);cs=float(r['control_statistic']);"
+            "assert math.isfinite(ts) and math.isfinite(cs),'statistics must be finite'"
+        )
+        try:
             proc = subprocess.run(
                 [sys.executable, "-c", probe],
                 capture_output=True, text=True, timeout=timeout_s,

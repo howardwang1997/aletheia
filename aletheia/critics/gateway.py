@@ -58,7 +58,23 @@ def _instruction(target: str, stance: str, mode: str = "performance") -> str:
     # a PARADIGM contribution (new question / formulation / representation / metric) is
     # judged on different axes than a PERFORMANCE one — beating the benchmark is NOT the
     # bar (see docs/PARADIGM_MODE_DESIGN.md). The bar is arguably HIGHER, not softer.
-    if target == "results" and mode == "paradigm":
+    if target == "demonstration_audit":
+        focus = (
+            "AUDIT an AI-AUTHORED discriminating demonstration. You are given the authored "
+            "`compute_demonstration` CODE, its computed {test_statistic, control_statistic}, "
+            "the harness automatic probe flags, and the PRE-REGISTRATION (statistic, "
+            "supported/refuted thresholds, the control condition, and why the statistic should "
+            "VANISH on the control if the effect is real). Your MANDATE — hunt for: (1) train/test "
+            "LEAKAGE or any information that lets the test statistic trivially inflate; (2) a "
+            "CONFOUND that makes the control NOT a true negative (a sham/degenerate control, or a "
+            "control that differs from the test in more than the one factor under study); (3) a "
+            "DEGENERATE sample (tiny n, near-constant y, or a statistic dominated by a few points); "
+            "(4) a MISMATCH between what the code computes and what the pre-registration says. This "
+            "is critique-level: you do NOT author a counter-computation. Reserve 'reject'/'blocker' "
+            "for a demonstration that is leaky, confounded, degenerate, or whose code does not "
+            "implement the pre-registered rule — i.e. evidence that should NOT be trusted."
+        )
+    elif target == "results" and mode == "paradigm":
         focus = (
             "Review the RESULTS of a PARADIGM contribution — a new problem formulation, "
             "representation, or evaluation metric. Beating the incumbent benchmark is "
@@ -145,9 +161,11 @@ class CriticGateway:
             return bool(get_settings().claude_code_oauth_token) or machine_has_claude_login()
         return bool(get_settings().vendor_key(c.id))
 
-    def _providers(self) -> list[CriticProvider]:
+    def _providers(self, exclude_vendors: set[str] | None = None) -> list[CriticProvider]:
         providers: list[CriticProvider] = []
         for c in self.config.active:
+            if exclude_vendors and c.id in exclude_vendors:
+                continue  # independence guard: e.g. exclude the demonstration's AUTHOR vendor
             impls = _PROVIDERS.get(c.id)
             if not impls:
                 continue
@@ -346,14 +364,18 @@ class CriticGateway:
     async def review(
         self, target: str, content_obj: dict[str, Any], target_ref: str,
         run_id: str | None = None, dry_run: bool = False, mode: str = "performance",
+        exclude_vendors: set[str] | None = None,
     ) -> CritiquePanel:
         """Cross-model peer review with dynamic rebuttal rounds. Streams a
         ``critique_panel`` event per round and persists the full transcript.
 
         ``mode`` selects the review STANDARD for a results review: ``performance``
         (beat/match SOTA, today's default) or ``paradigm`` (judge a new formulation on
-        novelty/well-posedness/discriminating-demonstration; SOTA-delta irrelevant)."""
-        providers = [] if dry_run else self._providers()
+        novelty/well-posedness/discriminating-demonstration; SOTA-delta irrelevant).
+
+        ``exclude_vendors`` drops vendors from the panel — used to AUDIT an AI-authored
+        demonstration with the AUTHOR vendor excluded (genuine independence, not self-review)."""
+        providers = [] if dry_run else self._providers(exclude_vendors)
         rounds: list[list[Critique]] = []
         rebuttals: list[str] = []
 

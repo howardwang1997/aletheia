@@ -1,0 +1,244 @@
+"""Paradigm-mode P5 — the AI-AUTHORED demonstration executor (the frontier path). The AI
+writes the discriminating COMPUTATION itself (``compute_demonstration``); the harness owns the
+verdict via a PRE-REGISTERED decision rule + a NEGATIVE CONTROL + leakage/degeneracy probes +
+an independent (author-excluded) cross-vendor audit. The AI never returns ``holds``.
+
+Tests inject fake ``compute_demonstration`` source directly (no LLM spend); the integration
+tests use REAL ESOL (subsampled). Per the Codex gap analysis, several tests check the EVIDENCE
+DEFINITION is strong (a sham control / artifact is refuted), not just that fields are present.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+
+from aletheia.coder.demonstration import CANNED_DEMO, CANNED_PREREGISTRATION, extract_preregistration
+from aletheia.coder.demonstration_runner import run_authored_demonstration
+from aletheia.coder.sandbox import (
+    DEMO_REQUIRED_FUNCTION,
+    check_code,
+    smoke_test_demonstration,
+)
+from aletheia.domains.base import DomainPlugin
+from aletheia.domains.registry import get_domain_plugin
+from aletheia.scheduler.driver import ExperimentDriver
+
+ESOL = {"source": "benchmark", "ref": "esol"}
+
+# --- fake AI-authored demonstrations (the AI returns only test/control statistics) ---------
+_HOLDS = (
+    "def compute_demonstration(X, y, groups, meta):\n"
+    "    n = len(y)\n"
+    "    return {'test_statistic': 5.0, 'control_statistic': 0.01, 'components': {},\n"
+    "            'detail': 'crafted holds', 'n_test': n // 2, 'n_control': n // 2}\n"
+)
+_CONTROL_FIRES = _HOLDS.replace("0.01", "5.0")  # the 'effect' is an ARTIFACT (also on control)
+_DEGENERATE = (
+    "def compute_demonstration(X, y, groups, meta):\n"
+    "    return {'test_statistic': 5.0, 'control_statistic': 0.0, 'components': {},\n"
+    "            'detail': 'sham control', 'n_test': len(y), 'n_control': 2}\n"
+)
+_SEEDED = (  # statistic depends on meta['random_state'] -> genuine re-computation
+    "def compute_demonstration(X, y, groups, meta):\n"
+    "    import numpy as np\n"
+    "    rng = np.random.default_rng(int(meta['random_state']))\n"
+    "    n = len(y); idx = rng.permutation(n)\n"
+    "    t = idx[: n // 2]\n"
+    "    return {'test_statistic': float(2.0 + np.std(y[t])), 'control_statistic': 0.01,\n"
+    "            'components': {}, 'detail': 's', 'n_test': n // 2, 'n_control': n - n // 2}\n"
+)
+_CHEAT = (  # AI tries to assert holds=True with a non-triggering statistic
+    "def compute_demonstration(X, y, groups, meta):\n"
+    "    return {'test_statistic': 0.0, 'control_statistic': 0.0, 'holds': True,\n"
+    "            'components': {}, 'detail': 'cheat', 'n_test': len(y) // 2, 'n_control': len(y) // 2}\n"
+)
+_BAD_IMPORT = "import os\ndef compute_demonstration(X, y, groups, meta):\n    return {}\n"
+
+_PREREG = {
+    "statistic_name": "gap", "computation": "c", "control_description": "d", "expected_control": "e",
+    "supported_if": {"op": ">=", "threshold": 1.0},
+    "control_silent_if": {"op": "<", "threshold": 0.5},
+}
+
+
+def _spec(code, prereg=_PREREG, **extra):
+    s = {"capability": DomainPlugin.AI_AUTHORED_CAPABILITY_ID, "demonstration_code": code,
+         "sample_n": 300, **extra}
+    if prereg is not None:
+        s["preregistration"] = prereg
+    return s
+
+
+# --- the static gate + smoke test honor the demonstration contract -------------------------
+def test_demo_gate_requires_compute_demonstration():
+    ok, _ = check_code(CANNED_DEMO, required_function=DEMO_REQUIRED_FUNCTION)
+    assert ok
+    # a build_pipeline-only module does NOT satisfy the demonstration required-function
+    ok2, reasons = check_code("def build_pipeline():\n    return 1\n",
+                              required_function=DEMO_REQUIRED_FUNCTION)
+    assert not ok2 and any("compute_demonstration" in r for r in reasons)
+    # forbidden import still rejected
+    ok3, _ = check_code(_BAD_IMPORT, required_function=DEMO_REQUIRED_FUNCTION)
+    assert not ok3
+
+
+def test_smoke_test_demonstration_runs_canned():
+    ok, err = smoke_test_demonstration(CANNED_DEMO)
+    assert ok, err
+    # a module that returns the wrong shape fails the smoke test
+    bad = "def compute_demonstration(X, y, groups, meta):\n    return 123\n"
+    ok2, _ = smoke_test_demonstration(bad)
+    assert not ok2
+
+
+# --- the harness decision rule + probes (offline, no data) ---------------------------------
+def test_apply_rule_truth_table():
+    f = DomainPlugin._apply_rule
+    assert f(5.0, {"op": ">=", "threshold": 1.0}) is True
+    assert f(0.4, {"op": "<", "threshold": 0.5}) is True
+    assert f(0.6, {"op": "<", "threshold": 0.5}) is False
+    assert f(1.0, {"op": ">", "threshold": 1.0}) is False
+    assert f(1.0, {"op": "<=", "threshold": 1.0}) is True
+    assert f(1.0, {"op": "??", "threshold": 1.0}) is False  # malformed op -> fail closed
+
+
+def test_valid_decision_rules():
+    assert DomainPlugin._valid_decision_rules(_PREREG)
+    assert not DomainPlugin._valid_decision_rules({"supported_if": {"op": ">=", "threshold": 1.0}})
+    assert not DomainPlugin._valid_decision_rules(
+        {"supported_if": {"op": "bad", "threshold": 1.0}, "control_silent_if": {"op": "<", "threshold": 0.5}})
+
+
+# --- the sandbox runner stages arrays + returns a validated dict (offline) ------------------
+def test_runner_returns_validated_result_on_synthetic():
+    rng = np.random.default_rng(1)
+    X, y = rng.random((60, 4)), rng.random(60)
+    g = np.array([i % 6 for i in range(60)], dtype=object)
+    res = run_authored_demonstration(_HOLDS, X, y, g, {"random_state": 7, "preregistration": {}})
+    assert res is not None and set(res) >= {"test_statistic", "control_statistic", "n_test", "n_control"}
+    # code that raises / returns a non-dict -> None (fail closed -> not_evaluated)
+    raises = "def compute_demonstration(X, y, groups, meta):\n    raise ValueError('boom')\n"
+    assert run_authored_demonstration(raises, X, y, g, {"random_state": 0, "preregistration": {}}) is None
+
+
+# --- integration on REAL ESOL via the molecules plugin -------------------------------------
+def test_ai_demo_holds_when_test_triggers_and_control_silent():
+    p = get_domain_plugin("molecules")
+    d = p.run_demonstration(_spec(_HOLDS), ESOL, "/tmp/p5_holds")
+    assert d["holds"] is True and d["form"]
+    assert d["capability"] == "ai_authored_demonstration" and d["reproduce_factor"] == 2.0
+    assert d["statistic"] == 5.0
+
+
+def test_ai_demo_refuted_when_effect_is_an_artifact_on_control():
+    # EVIDENCE-STRENGTH (Codex #4): the 'effect' also appears on the control -> NOT discriminating.
+    p = get_domain_plugin("molecules")
+    d = p.run_demonstration(_spec(_CONTROL_FIRES), ESOL, "/tmp/p5_ctrl")
+    assert d["holds"] is False and d["control_silent"] is False
+
+
+def test_ai_demo_refuted_on_degenerate_control_probe():
+    # EVIDENCE-STRENGTH: a sham control (n_control below the floor) cannot ground the claim.
+    p = get_domain_plugin("molecules")
+    d = p.run_demonstration(_spec(_DEGENERATE), ESOL, "/tmp/p5_degen")
+    assert d["holds"] is False and any("control" in f for f in d["probes"]["flags"])
+
+
+def test_ai_demo_fails_closed_on_code_gate_reject():
+    p = get_domain_plugin("molecules")
+    d = p.run_demonstration(_spec(_BAD_IMPORT), ESOL, "/tmp/p5_badimp")
+    assert d["holds"] is False and "code gate" in d["detail"]  # no crash
+
+
+def test_ai_demo_not_evaluated_without_preregistration():
+    p = get_domain_plugin("molecules")
+    d = p.run_demonstration(_spec(_HOLDS, prereg=None), ESOL, "/tmp/p5_noprereg")
+    assert d is None  # no usable rule -> not_evaluated (fail closed)
+
+
+def test_ai_demo_ignores_ai_asserted_holds():
+    # the AI cannot grade its own homework: an AI-returned holds=True is ignored; the harness
+    # derives holds from the rule (test_statistic 0 fails supported_if >= 1).
+    p = get_domain_plugin("molecules")
+    d = p.run_demonstration(_spec(_CHEAT), ESOL, "/tmp/p5_cheat")
+    assert d["holds"] is False
+
+
+def test_ai_demo_is_seed_perturbed_for_real_reproduction():
+    p = get_domain_plugin("molecules")
+    a = p.run_demonstration(_spec(_SEEDED, random_state=1), ESOL, "/tmp/p5_s1")
+    b = p.run_demonstration(_spec(_SEEDED, random_state=2), ESOL, "/tmp/p5_s2")
+    assert a["statistic"] != b["statistic"]  # the random-state genuinely perturbs the compute
+
+
+# --- pre-registration prompt/extraction --------------------------------------------------
+def test_canned_preregistration_is_valid_and_extractable():
+    reply = "```python\n" + CANNED_DEMO + "```\n```json\n" + json.dumps(CANNED_PREREGISTRATION) + "\n```"
+    assert ExperimentDriver._valid_preregistration(CANNED_PREREGISTRATION)
+    assert extract_preregistration(reply) == CANNED_PREREGISTRATION
+
+
+# --- independence: the AUTHOR vendor is excluded from the audit panel ----------------------
+def test_providers_exclude_author_vendor():
+    from aletheia.critics.gateway import CriticGateway
+
+    g = CriticGateway()
+    ids = {p.critic_id for p in g._providers(exclude_vendors={"anthropic"})}
+    assert "anthropic" not in ids  # the Opus author is never an auditor of its own code
+
+
+# --- the audit forces holds=False on a refuting / non-independent verdict -------------------
+def _fake_panel(verdict, gate_passed, critic_ids):
+    return SimpleNamespace(
+        consensus_verdict=verdict, gate_passed=gate_passed,
+        critiques=[SimpleNamespace(critic_id=cid) for cid in critic_ids],
+    )
+
+
+def test_audit_refutation_forces_holds_false():
+    d = ExperimentDriver("rid-audit", dry_run=False)
+    d._claim_ids = {}  # no formulation claim -> skip the ledger attach (hermetic)
+
+    async def fake_review(*a, **k):
+        return _fake_panel("reject", False, ["gemini", "deepseek"])
+
+    d.gateway = SimpleNamespace(review=fake_review)
+    demo = {"holds": True, "preregistration": _PREREG, "test_statistic": 5.0, "control_statistic": 0.0}
+    passed = asyncio.run(d._audit_demonstration({"demonstration_code": _HOLDS}, demo))
+    assert passed is False and demo["holds"] is False and demo["audit_refuted"] is True
+
+
+def test_audit_not_independent_if_author_present_fails_closed():
+    d = ExperimentDriver("rid-audit2", dry_run=False)
+    d._claim_ids = {}
+
+    async def fake_review(*a, **k):
+        return _fake_panel("approve", True, ["anthropic"])  # author leaked into the panel
+
+    d.gateway = SimpleNamespace(review=fake_review)
+    demo = {"holds": True, "preregistration": _PREREG, "test_statistic": 5.0, "control_statistic": 0.0}
+    passed = asyncio.run(d._audit_demonstration({"demonstration_code": _HOLDS}, demo))
+    assert passed is False and demo["holds"] is False  # not independent -> fail closed
+
+
+def test_audit_skipped_for_non_ai_demonstration():
+    d = ExperimentDriver("rid-audit3", dry_run=False)
+    d._claim_ids = {}
+    # a registered (non-AI) demonstration carries no preregistration -> no audit
+    passed = asyncio.run(d._audit_demonstration({}, {"holds": True, "statistic": 1.6}))
+    assert passed is None
+
+
+# --- claim strength: an audit failure caps the formulation claim at weak -------------------
+def test_audit_failure_caps_formulation_strength():
+    f = ExperimentDriver._claim_strength
+    strong = f("formulation", gate_passed=True, gate_verdict="approve", reproduced=True,
+               demonstration_holds=True, cross_vendor=True, audit_passed=True)
+    capped = f("formulation", gate_passed=True, gate_verdict="approve", reproduced=True,
+               demonstration_holds=True, cross_vendor=True, audit_passed=False)
+    assert strong == "strong" and capped == "weak"

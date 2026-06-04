@@ -41,7 +41,7 @@ def _gw(providers, *, max_rounds=5, rule="any_blocker", dynamic=True):
                             importance={"design": max_rounds, "default": 1}),
     )
     gw = CriticGateway(cfg)
-    gw._providers = lambda: providers  # inject stubs
+    gw._providers = lambda *a, **k: providers  # inject stubs (accepts exclude_vendors)
     return gw
 
 
