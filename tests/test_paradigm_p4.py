@@ -87,6 +87,51 @@ def test_run_demonstration_fails_closed_on_unmatched_claim():
     assert demo is None
 
 
+# --- the capability REGISTRY (Codex #2): explicit, enumerable, id-dispatched ------
+def test_capability_registry_is_explicit_and_empty_by_default():
+    # molecules registers exactly its two computable demonstrations; materials registers
+    # none (so a paradigm claim there stays unverified — honest fail-closed).
+    mol = get_domain_plugin("molecules").demonstration_capabilities()
+    assert set(mol) == {"activity_cliff_lipschitz", "scaffold_generalization_gap"}
+    assert all(c.description and callable(c.compute) for c in mol.values())
+    assert get_domain_plugin("materials").demonstration_capabilities() == {}
+
+
+def test_run_demonstration_dispatches_by_explicit_capability_id():
+    # an explicit capability id WINS over the (here, non-matching) free-text claim: the
+    # harness computes EXACTLY the registered capability IDEATE chose, not a keyword guess.
+    p = get_domain_plugin("molecules")
+    demo = p.run_demonstration(
+        {"claim": "an opaque restatement with no routing keywords", "sample_n": 600,
+         "capability": "activity_cliff_lipschitz"},
+        {"source": "benchmark", "ref": "esol"}, "/tmp/cap_id",
+    )
+    assert demo is not None and "Lipschitz" in demo["detail"]  # routed by id, not keyword
+
+
+def test_demonstration_result_is_stamped_with_capability_and_factor():
+    # the computed result carries the capability id + its reproduction tolerance, so the
+    # artifact/critic/reproduction path all key off the registered capability (Codex #2/#5).
+    p = get_domain_plugin("molecules")
+    demo = p.run_demonstration(
+        {"claim": "random-split RMSE is blind to scaffold generalization", "sample_n": 600},
+        {"source": "benchmark", "ref": "esol"}, "/tmp/stamp",
+    )
+    assert demo["capability"] == "scaffold_generalization_gap"
+    assert demo["reproduce_factor"] == 2.0
+
+
+def test_unknown_capability_id_falls_back_then_fails_closed():
+    # an unrecognized capability id is not a free pass: with no keyword match either, it
+    # fails closed (None) rather than running an unrelated demonstration.
+    p = get_domain_plugin("molecules")
+    demo = p.run_demonstration(
+        {"claim": "no routing keywords here", "capability": "made_up_capability"},
+        {"source": "benchmark", "ref": "esol"}, "/tmp/badid",
+    )
+    assert demo is None
+
+
 def test_results_payload_carries_computed_demonstration_result():
     # the cross-vendor critic must see the COMPUTED result, not just the proposed spec
     result = {"metrics": {}, "info": {"demonstration":
@@ -128,6 +173,17 @@ def test_paradigm_guard_blocks_without_demonstration():
                     "demonstration": {"form": "x", "claim": "c"}}
     result = {"metrics": {}, "artifacts": [], "info": {}}  # demonstration never computed
     assert asyncio.run(d._post_execution_guards(result, None)) is False
+
+
+def test_capability_menu_lists_registered_capabilities():
+    # IDEATE surfaces the harness's computable demonstrations so the LLM picks one by id
+    # (a real run); empty when the domain has none.
+    d = ExperimentDriver("rid-menu", dry_run=True)
+    d.plugin = get_domain_plugin("molecules")
+    menu = d._capability_menu()
+    assert "activity_cliff_lipschitz" in menu and "scaffold_generalization_gap" in menu
+    d.plugin = get_domain_plugin("materials")
+    assert d._capability_menu() == ""
 
 
 def test_run_eval_computes_demonstration_when_perf_eval_fails(monkeypatch):

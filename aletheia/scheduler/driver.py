@@ -490,6 +490,25 @@ class ExperimentDriver:
             )
         return papers
 
+    def _capability_menu(self) -> str:
+        """The domain's registered demonstration capabilities (Codex #2), as a prompt menu
+        so IDEATE picks a paradigm demonstration the harness can ACTUALLY compute (by id)
+        rather than inventing one nothing can ground. Empty when the domain has none (then
+        any paradigm demonstration stays unverified — honest)."""
+        try:
+            plug = self.plugin or (get_domain_plugin(self.domain) if self.domain else None)
+            caps = plug.demonstration_capabilities() if plug is not None else {}
+        except Exception:  # noqa: BLE001 - menu is best-effort context, never fatal
+            caps = {}
+        if not caps:
+            return ""
+        lines = "\n".join(f'- "{cid}": {cap.description}' for cid, cap in caps.items())
+        return (
+            "DEMONSTRATION CAPABILITIES (the harness can COMPUTE exactly these discriminating "
+            "demonstrations; a paradigm claim is only grounded by one of them):\n"
+            f"{lines}\n\n"
+        )
+
     async def _ideate(self, plan: dict, exp_id: str | None) -> dict:
         """IDEATE: from the survey + gaps, generate testable hypotheses and pick the
         most novel + feasible one. Persist it to the experiment. Mirrors the
@@ -499,6 +518,7 @@ class ExperimentDriver:
             f"PLAN:\n{json.dumps(plan, indent=2)}\n\n"
             + (self.survey_brief + "\n\n" if self.survey_brief else "")
             + ("RESEARCH GAPS:\n- " + "\n- ".join(self.survey_gaps) + "\n\n" if self.survey_gaps else "")
+            + self._capability_menu()
             + "Propose 2-3 TESTABLE hypotheses for this direction (each: statement, one-line rationale, "
             "concrete prediction). Then pick the ONE that is most NOVEL given the literature/gaps above "
             "and feasible on CPU within budget.\n"
@@ -511,11 +531,15 @@ class ExperimentDriver:
             "If (and ONLY if) paradigm, also give a \"demonstration\": "
             '{"form": "discriminating_instance | enablement | unification | impossibility", '
             '"claim": "the concrete, checkable case the incumbent frame provably cannot '
-            'handle/distinguish"}. A paradigm hypothesis WITHOUT a concrete demonstration will be '
-            "treated as a performance contribution.\n"
+            'handle/distinguish", "capability": "<one of the DEMONSTRATION CAPABILITIES ids '
+            "above, if your demonstration matches it — the harness will then COMPUTE exactly "
+            "that; omit/leave blank to propose a NEW demonstration the harness cannot yet "
+            'compute (it will stay UNVERIFIED)"}. A paradigm hypothesis WITHOUT a concrete '
+            "demonstration will be treated as a performance contribution.\n"
             "Return ONLY JSON for the chosen one: "
             '{"statement": "...", "rationale": "...", "prediction": "...", "novelty_note": "...", '
-            '"contribution_type": "performance" | "paradigm", "demonstration": {"form": "...", "claim": "..."}}.'
+            '"contribution_type": "performance" | "paradigm", '
+            '"demonstration": {"form": "...", "claim": "...", "capability": "..."}}.'
         )
         text = await reason_stage(
             self.run_id, "ideate", prompt, dry_run=self.dry_run,
@@ -1124,14 +1148,17 @@ class ExperimentDriver:
         repro_demo = (repro_result.get("info") or {}).get("demonstration")
         if isinstance(orig_demo, dict):
             # a demonstration is REPRODUCED iff it still HOLDS on the seed-perturbed re-run
-            # AND its statistic stays the same ORDER of magnitude (within 2x) — the right
-            # check for an impossibility-style ratio (qualitatively robust, not bit-identical;
-            # the strict metric tolerance would wrongly fail an honestly-noisy ratio).
+            # AND its statistic stays within the capability's own reproduction tolerance
+            # (Codex #5 — per-capability ``reproduce_factor``, default 2x): qualitatively
+            # robust, not bit-identical; the strict metric tolerance would wrongly fail an
+            # honestly-noisy ratio, and a hard-coded 2x would over/under-constrain a
+            # capability whose statistic is tighter or looser than an order-of-magnitude.
             s1, s2 = orig_demo.get("statistic"), (repro_demo or {}).get("statistic")
             demo_repro = bool(orig_demo.get("holds")) and bool((repro_demo or {}).get("holds"))
             if demo_repro and s1 is not None and s2 is not None:
+                factor = max(1.0, float(orig_demo.get("reproduce_factor", 2.0)))
                 lo, hi = sorted((abs(float(s1)), abs(float(s2))))
-                demo_repro = hi <= 1e-9 or (lo / hi) >= 0.5  # within ~2x
+                demo_repro = hi <= 1e-9 or (lo / hi) >= 1.0 / factor
             payload["demonstration_reproduced"] = demo_repro
         await get_bus().publish(make_event("reproduction", run_id=self.run_id, payload=payload))
         await record_transition(

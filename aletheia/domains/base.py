@@ -10,6 +10,7 @@ subprocess and the plugin reports back through this contract.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -73,6 +74,28 @@ class DomainProfile:
     dry_eval_summary: str = ""
 
 
+@dataclass
+class DemonstrationCapability:
+    """A registered, harness-IMPLEMENTED discriminating demonstration a domain can compute
+    deterministically (Codex #2). Paradigm grounding dispatches to these by ``id`` — an
+    explicit, enumerable contract — instead of free-text keyword guessing, so what the
+    harness can actually demonstrate is knowable up front (IDEATE chooses from this menu)
+    and an unrecognized request stays UNVERIFIED rather than being silently matched to an
+    unrelated computation.
+
+    ``compute(demonstration, data_spec) -> {form, holds, statistic, detail, ...} | None``
+    is harness-owned (never an LLM 'holds' assertion). ``reproduce_factor`` is the
+    per-capability reproduction tolerance (Codex #5): the demonstration's statistic must
+    stay within this multiplicative factor across the seed-perturbed re-run (default 2x —
+    order-of-magnitude stability, the right check for an impossibility-style ratio; a
+    capability with a tighter, well-behaved statistic can lower it)."""
+
+    id: str
+    description: str  # what it computes + which incumbent frame it discriminates against
+    compute: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any] | None]
+    reproduce_factor: float = 2.0
+
+
 class DomainPlugin(ABC):
     """Contract every domain implements. Steps are separable so they can be unit
     tested offline (featurize/train on a tiny in-memory frame) and also composed by
@@ -120,12 +143,52 @@ class DomainPlugin(ABC):
         result.info.setdefault("n_rows", int(getattr(df, "shape", [0])[0]))
         return result
 
+    def demonstration_capabilities(self) -> dict[str, DemonstrationCapability]:
+        """The discriminating demonstrations this domain can actually COMPUTE, keyed by
+        capability id (Codex #2). IDEATE chooses a paradigm's demonstration from this menu;
+        ``run_demonstration`` dispatches to it by id; an unmatched request stays unverified.
+        Default: none — a domain with no registered capability cannot ground a paradigm
+        claim (fail-closed), and that is the honest state until a capability is added."""
+        return {}
+
     def run_demonstration(
         self, demonstration: dict[str, Any], data_spec: dict[str, Any], workdir: Path
     ) -> dict[str, Any] | None:
         """Compute a PARADIGM contribution's discriminating demonstration DETERMINISTICALLY
         (harness-owned — never an LLM 'holds' assertion): does the new frame reveal/measure
-        something the incumbent provably cannot? Return
-        ``{form, holds: bool, statistic: float|None, detail: str}`` or ``None`` if the
-        domain has no computable demonstration. Default: no demonstration available."""
+        something the incumbent provably cannot? Dispatches to a registered
+        ``demonstration_capabilities()`` entry — by explicit ``demonstration["capability"]``
+        id, else by best-effort keyword match — and stamps the chosen ``capability`` id +
+        ``reproduce_factor`` onto the result. Returns
+        ``{form, holds: bool, statistic: float|None, detail: str, capability, reproduce_factor}``
+        or ``None`` (FAIL CLOSED) when no registered capability matches — never grounds the
+        formulation with an unrelated computation. Default: no capabilities -> ``None``."""
+        caps = self.demonstration_capabilities()
+        cap = self._select_capability(demonstration, caps)
+        if cap is None:
+            return None
+        result = cap.compute(demonstration, data_spec)
+        if isinstance(result, dict):
+            result.setdefault("capability", cap.id)
+            result.setdefault("reproduce_factor", cap.reproduce_factor)
+        return result
+
+    def _select_capability(
+        self, demonstration: dict[str, Any], caps: dict[str, DemonstrationCapability]
+    ) -> DemonstrationCapability | None:
+        """Resolve a demonstration spec to a registered capability: an explicit
+        ``demonstration["capability"]`` id wins; otherwise fall back to the domain's
+        keyword matcher (legacy specs / specs IDEATE didn't tag). No match -> ``None``."""
+        if not caps:
+            return None
+        cap_id = str(demonstration.get("capability") or "").strip()
+        if cap_id in caps:
+            return caps[cap_id]
+        return self._match_capability(demonstration, caps)
+
+    def _match_capability(
+        self, demonstration: dict[str, Any], caps: dict[str, DemonstrationCapability]
+    ) -> DemonstrationCapability | None:
+        """Domain-specific keyword fallback when a spec carries no explicit ``capability``
+        id. Default: no fuzzy match — fail closed. Override to map intent -> capability."""
         return None
