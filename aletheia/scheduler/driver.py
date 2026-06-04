@@ -1124,7 +1124,11 @@ class ExperimentDriver:
             "executed_impl": info.get("model_impl", ""),
             "reproduction": info.get("reproduction"),
             "contribution_type": contribution_type,
-            "demonstration": demonstration,
+            "demonstration": demonstration,  # the PROPOSED discriminating demonstration
+            # the COMPUTED, harness-owned result {form, holds, statistic, detail} — so the
+            # critic judges what was actually computed (and whether it matches the claim),
+            # not just the proposal. This is what makes the paradigm gate adversarially real.
+            "demonstration_result": info.get("demonstration"),
             "claims": claims,
             "analysis": analysis,
             # the coder's actual model code, so an adversarial reviewer can check

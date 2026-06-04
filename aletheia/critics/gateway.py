@@ -66,11 +66,12 @@ def _instruction(target: str, stance: str, mode: str = "performance") -> str:
             "compares to SOTA. Judge ONLY: (1) is the claimed novelty real or merely "
             "repackaged — attack it using the cited literature; (2) is the new frame "
             "well-posed and precisely defined (not vague or circular); (3) does the "
-            "DISCRIMINATING DEMONSTRATION actually hold — i.e. does it show a concrete "
-            "case the incumbent frame provably cannot handle or distinguish; (4) is that "
+            "DISCRIMINATING DEMONSTRATION actually hold — check the COMPUTED "
+            "`demonstration_result` (holds/statistic/detail) and confirm it genuinely "
+            "MEASURES what the formulation claims (not an unrelated quantity); (4) is that "
             "demonstration reproducible and free of leakage. Reserve 'reject'/'blocker' "
-            "for a frame that is not novel, not well-posed, or a demonstration that does "
-            "not hold."
+            "for a frame that is not novel, not well-posed, or whose demonstration does "
+            "not hold or does not match the claim."
         )
     else:
         focus = {
