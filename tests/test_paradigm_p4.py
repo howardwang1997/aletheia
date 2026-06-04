@@ -23,7 +23,9 @@ def test_molecules_demonstration_computes_real_scaffold_gap():
     computed (not asserted) gap on MoleculeNet ESOL. Subsampled for test speed."""
     p = get_domain_plugin("molecules")
     demo = p.run_demonstration(
-        {"random_state": 42, "sample_n": 600}, {"source": "benchmark", "ref": "esol"}, "/tmp/demo_test"
+        {"claim": "random-split RMSE is blind to scaffold generalization",
+         "random_state": 42, "sample_n": 600},
+        {"source": "benchmark", "ref": "esol"}, "/tmp/demo_test",
     )
     assert demo is not None
     assert demo["form"] == "impossibility"
@@ -52,6 +54,29 @@ def test_run_demonstration_dispatches_to_scaffold():
         {"source": "benchmark", "ref": "esol"}, "/tmp/scaf_test",
     )
     assert "scaffold-grouped RMSE" in demo["detail"]
+
+
+def test_run_demonstration_fails_closed_on_unmatched_claim():
+    # the domain cannot compute THIS demonstration -> None (don't ground with a mismatched
+    # demo). Returns before any data load, so this is fast + offline.
+    p = get_domain_plugin("molecules")
+    demo = p.run_demonstration(
+        {"claim": "a brand-new entropy theory of solubility", "form": "x"},
+        {"source": "benchmark", "ref": "esol"}, "/tmp/none",
+    )
+    assert demo is None
+
+
+def test_results_payload_carries_computed_demonstration_result():
+    # the cross-vendor critic must see the COMPUTED result, not just the proposed spec
+    result = {"metrics": {}, "info": {"demonstration":
+              {"form": "impossibility", "holds": True, "statistic": 9.0, "detail": "L_cliff/L_global=9"}}}
+    payload = ExperimentDriver._results_review_payload(
+        {"model": "x"}, result, analysis={}, claims=[], contribution_type="paradigm",
+        demonstration={"form": "impossibility", "claim": "cliffs force a huge Lipschitz constant"},
+    )
+    assert payload["demonstration_result"]["holds"] is True and payload["demonstration_result"]["statistic"] == 9.0
+    assert payload["demonstration"]["claim"]  # the proposed spec is still carried too
 
 
 # --- paradigm runs are gated on the DEMONSTRATION, not a fitted model ----------

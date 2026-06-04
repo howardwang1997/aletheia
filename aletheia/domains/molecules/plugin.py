@@ -146,7 +146,12 @@ class MoleculePropertyPlugin(DomainPlugin):
         intent = f"{demonstration.get('claim', '')} {demonstration.get('form', '')}".lower()
         if "cliff" in intent or "lipschitz" in intent:
             return self._demo_activity_cliff_lipschitz(demonstration, data_spec)
-        return self._demo_scaffold_generalization(demonstration, data_spec)
+        if any(t in intent for t in ("scaffold", "random-split", "random split", "generaliz")):
+            return self._demo_scaffold_generalization(demonstration, data_spec)
+        # FAIL CLOSED: this domain cannot compute the SPECIFIC demonstration this paradigm
+        # claim describes — return None rather than grounding the formulation with an
+        # unrelated demonstration (which would be a dishonest match).
+        return None
 
     def _demo_activity_cliff_lipschitz(
         self, demonstration: dict[str, Any], data_spec: dict[str, Any]
