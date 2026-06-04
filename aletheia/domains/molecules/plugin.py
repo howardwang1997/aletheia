@@ -12,7 +12,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from aletheia.domains.base import DomainPlugin, DomainProfile, ExperimentResult
+from aletheia.domains.base import (
+    DemonstrationCapability,
+    DomainPlugin,
+    DomainProfile,
+    ExperimentResult,
+)
 from aletheia.domains.molecules.datasets import load_benchmark, resolve_columns
 from aletheia.domains.molecules.featurizers import morgan_features, scaffold_groups
 from aletheia.domains.protocol import grouped_regression_eval
@@ -136,21 +141,46 @@ class MoleculePropertyPlugin(DomainPlugin):
             stratify_label="solubility range",
         )
 
-    def run_demonstration(
-        self, demonstration: dict[str, Any], data_spec: dict[str, Any], workdir: Path
-    ) -> dict[str, Any] | None:
-        """Compute the discriminating demonstration the paradigm hypothesis describes
-        (DETERMINISTIC, harness-owned — never an LLM 'holds' assertion). Dispatches by
-        intent: an activity-cliff / Lipschitz claim -> the cliff-Lipschitz impossibility;
-        otherwise the scaffold-generalization blind-spot."""
+    def demonstration_capabilities(self) -> dict[str, DemonstrationCapability]:
+        """The discriminating demonstrations this domain can COMPUTE (Codex #2). IDEATE
+        picks one by id; ``run_demonstration`` (base class) dispatches by id, falling back
+        to ``_match_capability``'s keyword matcher for untagged specs; an unmatched spec
+        stays unverified (fail-closed)."""
+        return {
+            "activity_cliff_lipschitz": DemonstrationCapability(
+                id="activity_cliff_lipschitz",
+                description=(
+                    "Activity cliffs as a representational IMPOSSIBILITY (not data scarcity): "
+                    "among near-identical molecules (Tanimoto>=0.9), cliff pairs imply a local "
+                    "Lipschitz constant orders of magnitude larger than smooth regions, so a single "
+                    "continuous regressor on this representation cannot fit cliffs and generalize. "
+                    "Statistic = L_cliff / L_global."
+                ),
+                compute=self._demo_activity_cliff_lipschitz,
+            ),
+            "scaffold_generalization_gap": DemonstrationCapability(
+                id="scaffold_generalization_gap",
+                description=(
+                    "The incumbent random-split RMSE is BLIND to scaffold generalization: the same "
+                    "model scored random-holdout way (what most ESOL papers report) vs scaffold-"
+                    "grouped way; the metric the field reports cannot certify generalization to "
+                    "novel scaffolds. Statistic = scaffold / random RMSE ratio."
+                ),
+                compute=self._demo_scaffold_generalization,
+            ),
+        }
+
+    def _match_capability(
+        self, demonstration: dict[str, Any], caps: dict[str, DemonstrationCapability]
+    ) -> DemonstrationCapability | None:
+        """Keyword fallback for specs IDEATE didn't tag with an explicit capability id:
+        an activity-cliff / Lipschitz claim -> the cliff-Lipschitz impossibility; a
+        scaffold / random-split / generalization claim -> the scaffold blind-spot."""
         intent = f"{demonstration.get('claim', '')} {demonstration.get('form', '')}".lower()
         if "cliff" in intent or "lipschitz" in intent:
-            return self._demo_activity_cliff_lipschitz(demonstration, data_spec)
+            return caps["activity_cliff_lipschitz"]
         if any(t in intent for t in ("scaffold", "random-split", "random split", "generaliz")):
-            return self._demo_scaffold_generalization(demonstration, data_spec)
-        # FAIL CLOSED: this domain cannot compute the SPECIFIC demonstration this paradigm
-        # claim describes — return None rather than grounding the formulation with an
-        # unrelated demonstration (which would be a dishonest match).
+            return caps["scaffold_generalization_gap"]
         return None
 
     def _demo_activity_cliff_lipschitz(
