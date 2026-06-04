@@ -142,9 +142,13 @@ def smoke_test_solution(source: str, timeout_s: float = 30.0) -> tuple[bool, str
             "assert hasattr(p,'fit') and hasattr(p,'predict'),'build_pipeline must return an estimator'"
         )
         try:
+            # the smoke test EXECUTES AI-authored code, so apply the same CPU/memory
+            # rlimits as the training subprocess (no-network is not enforced here — that
+            # is the Docker backend's job; this caps runaway import/build code).
             proc = subprocess.run(
                 [sys.executable, "-c", probe],
                 capture_output=True, text=True, timeout=timeout_s,
+                stdin=subprocess.DEVNULL, preexec_fn=resource_limits(),
             )
         except Exception as exc:  # noqa: BLE001 - smoke test is best-effort
             return False, f"smoke-test could not run: {exc}"
