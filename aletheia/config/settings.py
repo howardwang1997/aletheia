@@ -121,6 +121,11 @@ class Settings(BaseSettings):
     # claim is capped at `weak` (single-vendor / same-vendor self-review is not strong evidence).
     min_review_vendors: int = 2
 
+    # min citable papers a survey must retrieve for the prior-work grounding to be "healthy";
+    # below this (but >0) the run proceeds with a recorded weak-grounding limitation so a
+    # near-empty literature search is treated as WEAK evidence, never as confirmed novelty.
+    min_survey_papers: int = 3
+
     # --- literature reranking: reorder the multi-source candidate pool by genuine query
     # relevance with a CPU cross-encoder + drop off-topic hits. ms-marco-MiniLM is the
     # fast CPU default; swap to BAAI/bge-reranker-v2-m3 or gte-reranker-modernbert-base

@@ -141,6 +141,7 @@ class ExperimentDriver:
         self.survey_papers: list[literature.Paper] = []  # citable refs for WRITE_UP
         self.survey_findings: list[dict[str, Any]] = []  # structured LiteratureFinding rows
         self.survey_sota: list[dict[str, Any]] = []  # structured SOTAResult rows (curated + extracted)
+        self.survey_weak: bool = False  # retrieval health: too few citable papers to ground novelty
         self.hypothesis: dict[str, Any] = {}  # the hypothesis chosen by IDEATE
         self.profile: DomainProfile | None = None  # the domain's vocabulary (set in _run)
         self.plugin: Any = None  # the resolved DomainPlugin (set in _run)
@@ -312,6 +313,15 @@ class ExperimentDriver:
         # the domain's curated published SOTA (always recorded) + any survey-extracted rows
         curated_sota = list(self.profile.sota_rows) if self.profile else []
         self.survey_sota = curated_sota + extracted_sota
+        # retrieval health: a near-empty literature search is WEAK evidence, not novelty.
+        # (Zero papers is fail-closed upstream; this flags the few-papers case so the
+        # novelty claim is honestly qualified.)
+        n_papers = len(self.survey_papers)
+        self.survey_weak = (not self.dry_run) and 0 < n_papers < int(get_settings().min_survey_papers)
+        await get_bus().publish(make_event(
+            "survey_health", run_id=self.run_id,
+            payload={"papers": n_papers, "findings": len(self.survey_findings),
+                     "gaps": len(gaps), "weak_grounding": self.survey_weak}))
         await self._record_structured_literature(topic)
         await self._record_survey(topic, briefing, gaps, methods, exp_id)
         await record_transition(
@@ -552,6 +562,19 @@ class ExperimentDriver:
             status="unverified", experiment_id=exp_id, created_by="ideate", stage="ideate",
             evidence=evidence,
         )
+        # weak retrieval health: too few papers to support a novelty judgment -> record it
+        # as a limitation so "barely found prior work" is never read as confirmed novelty.
+        if self.survey_weak:
+            await asyncio.to_thread(
+                create_claim, self.run_id,
+                claim_text=(f"Novelty is unconfirmed: the literature search returned only "
+                            f"{len(self.survey_papers)} citable paper(s) (< {get_settings().min_survey_papers}); "
+                            "treat the novelty claim as speculative, not established."),
+                claim_type="limitation", strength="moderate", status="supported",
+                experiment_id=exp_id, created_by="ideate", stage="ideate",
+                evidence=[{"evidence_kind": "experiment", "evidence_ref": exp_id or self.run_id,
+                           "note": "weak prior-work retrieval"}],
+            )
         # a PARADIGM hypothesis gets a first-class `formulation` claim (the contribution is
         # the new frame, not a benchmark number). It stays `proposed`/`speculative` until a
         # reproducible discriminating demonstration grounds it (see PARADIGM_MODE_DESIGN.md);
