@@ -156,6 +156,18 @@ button.launch.resume { background: var(--yellow); }
 .v-sub { color: var(--muted); padding-left: 8px; }
 .report-pre { white-space: pre-wrap; word-break: break-word; font-size: 11px; max-height: 220px; overflow-y: auto; margin: 0; }
 
+/* claim ledger — the verification spine made visible */
+.claims-card { margin: 12px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel2); }
+.claim-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 11.5px; }
+.claim-type { flex: 0 0 96px; text-transform: capitalize; }
+.claim-status { flex: 0 0 92px; font-weight: 600; text-transform: capitalize; }
+.claim-strength { flex: 0 0 60px; color: var(--muted); }
+.claim-evidence { flex: 1; color: var(--muted); font-size: 10.5px; text-align: right; }
+.cl-supported { color: var(--green); }
+.cl-refuted { color: var(--red); }
+.cl-unverified { color: var(--yellow); }
+.cl-skip { color: var(--muted); }
+
 /* --- platform auth --- */
 .auth-loading { padding: 40px; color: var(--muted); text-align: center; }
 .auth-bar { display: flex; justify-content: flex-end; align-items: center; gap: 12px;

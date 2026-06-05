@@ -52,6 +52,11 @@ const ACTIVITY_TYPES = new Set([
   "compute_submitted",
   "compute_status",
   "code",
+  "demonstration_code",
+  "preregistration",
+  "demonstration",
+  "claims",
+  "degraded_review",
   "critique_panel",
   "critique_round",
   "iam",
@@ -231,6 +236,13 @@ export function useSession() {
     [events],
   );
 
+  // the verification spine's outcome: the final claim ledger (type/status/strength + the
+  // evidence kinds that grounded each), emitted once claims are finalized.
+  const claims = useMemo(() => {
+    const last = [...events].reverse().find((e) => e.type === "claims");
+    return ((last?.payload as any)?.claims as any[]) ?? null;
+  }, [events]);
+
   // campaign: one Run -> several linked experiments (round markers)
   const experiments = useMemo(
     () =>
@@ -274,6 +286,7 @@ export function useSession() {
     stageHistory,
     experiments,
     critiques,
+    claims,
     report,
     finalMetrics,
     paused,

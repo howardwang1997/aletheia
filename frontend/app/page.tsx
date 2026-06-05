@@ -55,6 +55,7 @@ function Lab() {
           stageHistory={s.stageHistory}
           experiments={s.experiments}
           critiques={s.critiques}
+          claims={s.claims}
           report={s.report}
           finalMetrics={s.finalMetrics}
         />

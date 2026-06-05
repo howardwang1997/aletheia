@@ -128,6 +128,32 @@ function line(e: LabEvent): string {
       }`;
     case "compute_status":
       return `🧮 job ${p.job_id ?? ""}: ${p.status ?? ""}${p.metrics ? ` ${JSON.stringify(p.metrics)}` : ""}`;
+    case "demonstration_code":
+      return `🧬 AI-authored demonstration ${p.accepted ? "accepted" : "rejected"} (${p.lines ?? 0} lines, prereg ${p.preregistration_valid ? "✓" : "✗"})${
+        !p.accepted && p.reasons?.length ? ` — ${p.reasons.join("; ")}` : ""
+      }`;
+    case "preregistration": {
+      const si = p.supported_if ? `${p.supported_if.op} ${p.supported_if.threshold}` : "?";
+      const cs = p.control_silent_if ? `${p.control_silent_if.op} ${p.control_silent_if.threshold}` : "?";
+      return `📜 pre-registered "${p.statistic ?? "statistic"}" — supported if ${si}; control silent if ${cs}`;
+    }
+    case "demonstration": {
+      if (p.computed === false) return `🔬 demonstration not computed${p.error ? ` — ${p.error}` : ""}`;
+      const verdict = p.audit_refuted ? "REFUTED by audit ✗" : p.holds === true ? "holds ✓" : p.holds === false ? "does not hold ✗" : "not evaluated";
+      const tc =
+        p.test_statistic != null && p.control_statistic != null
+          ? ` — test ${Number(p.test_statistic).toFixed(3)} vs control ${Number(p.control_statistic).toFixed(3)}`
+          : p.statistic != null
+            ? ` — statistic ${Number(p.statistic).toFixed(3)}`
+            : "";
+      return `🔬 demonstration (${p.form ?? "?"}): ${verdict}${tc}${p.capability ? ` [${p.capability}]` : ""}`;
+    }
+    case "degraded_review":
+      return `⚠ degraded review — ${p.reason ?? `${p.n_vendors ?? "?"}/${p.min_vendors ?? "?"} vendors`}`;
+    case "claims": {
+      const cs = (p.claims ?? []) as { claim_type?: string; status?: string }[];
+      return `📒 claims: ${cs.map((c) => `${c.claim_type} ${c.status}`).join(", ")}`;
+    }
     case "critique_panel":
       return `⚖ ${p.target}: ${p.consensus_verdict} (gate ${p.gate_passed ? "✓" : "✗"}${p.rounds ? `, ${p.rounds} round${p.rounds > 1 ? "s" : ""}` : ""})`;
     case "critique_round":
@@ -224,6 +250,44 @@ function Verdicts({ critiques }: { critiques: any[] }) {
   );
 }
 
+interface Claim {
+  claim_type?: string;
+  status?: string;
+  strength?: string;
+  evidence_kinds?: string[];
+  claim_text?: string;
+}
+
+// the verification spine made visible: each claim's status drives the colour, so a viewer can
+// see at a glance what was established (supported), contradicted (refuted), tested-but-unendorsed
+// (unverified), or never run (not_evaluated). Pre-registration / audit show as evidence kinds.
+const CLAIM_STATUS_CLASS: Record<string, string> = {
+  supported: "cl-supported",
+  refuted: "cl-refuted",
+  unverified: "cl-unverified",
+  not_evaluated: "cl-skip",
+};
+
+function ClaimsPanel({ claims }: { claims: Claim[] }) {
+  return (
+    <div className="claims-card">
+      <div className="plan-title">📒 Claim ledger</div>
+      {claims.map((c, i) => (
+        <div key={i} className="claim-row" title={c.claim_text ?? ""}>
+          <span className="claim-type">{c.claim_type}</span>
+          <span className={`claim-status ${CLAIM_STATUS_CLASS[c.status ?? ""] ?? "cl-skip"}`}>
+            {(c.status ?? "—").replace(/_/g, " ")}
+          </span>
+          <span className="claim-strength">{c.strength}</span>
+          {c.evidence_kinds?.length ? (
+            <span className="claim-evidence">{c.evidence_kinds.join(" · ")}</span>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function Activity({
   activity,
   status,
@@ -232,6 +296,7 @@ export function Activity({
   stageHistory = [],
   experiments = [],
   critiques = [],
+  claims = null,
   report = null,
   finalMetrics = null,
 }: {
@@ -242,6 +307,7 @@ export function Activity({
   stageHistory?: string[];
   experiments?: { round?: number; exp_id?: string; of?: number }[];
   critiques?: any[];
+  claims?: Claim[] | null;
   report?: { uri?: string; preview?: string } | null;
   finalMetrics?: Record<string, number> | null;
 }) {
@@ -274,6 +340,8 @@ export function Activity({
           ))}
         </div>
       )}
+
+      {claims && claims.length > 0 && <ClaimsPanel claims={claims} />}
 
       {critiques.length > 0 && <Verdicts critiques={critiques} />}
 
