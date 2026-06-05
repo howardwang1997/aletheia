@@ -209,8 +209,9 @@ def test_audit_refutation_forces_holds_false():
 
     d.gateway = SimpleNamespace(review=fake_review)
     demo = {"holds": True, "preregistration": _PREREG, "test_statistic": 5.0, "control_statistic": 0.0}
-    passed = asyncio.run(d._audit_demonstration({"demonstration_code": _HOLDS}, demo))
-    assert passed is False and demo["holds"] is False and demo["audit_refuted"] is True
+    passed, err = asyncio.run(d._audit_demonstration({"demonstration_code": _HOLDS}, demo))
+    assert passed is False and err is False  # audit RAN and refuted -> not an infra error
+    assert demo["holds"] is False and demo["audit_refuted"] is True
 
 
 def test_audit_not_independent_if_author_present_fails_closed():
@@ -222,16 +223,33 @@ def test_audit_not_independent_if_author_present_fails_closed():
 
     d.gateway = SimpleNamespace(review=fake_review)
     demo = {"holds": True, "preregistration": _PREREG, "test_statistic": 5.0, "control_statistic": 0.0}
-    passed = asyncio.run(d._audit_demonstration({"demonstration_code": _HOLDS}, demo))
-    assert passed is False and demo["holds"] is False  # not independent -> fail closed
+    passed, err = asyncio.run(d._audit_demonstration({"demonstration_code": _HOLDS}, demo))
+    assert passed is False and err is False and demo["holds"] is False  # not independent -> fail closed
+
+
+def test_audit_infra_error_is_not_refutation():
+    # the audit INFRASTRUCTURE errors (gateway raises). This is missing verification, NOT a
+    # refutation: ``holds`` is left untouched (no audit_refuted) and the call signals
+    # ``audit_error=True`` so strength is capped without marking the claim refuted.
+    d = ExperimentDriver("rid-audit-err", dry_run=False)
+    d._claim_ids = {}
+
+    async def fake_review(*a, **k):
+        raise RuntimeError("auditor offline")
+
+    d.gateway = SimpleNamespace(review=fake_review)
+    demo = {"holds": True, "preregistration": _PREREG, "test_statistic": 5.0, "control_statistic": 0.0}
+    passed, err = asyncio.run(d._audit_demonstration({"demonstration_code": _HOLDS}, demo))
+    assert passed is None and err is True  # audit did NOT run
+    assert demo["holds"] is True and "audit_refuted" not in demo  # untouched -> not refuted
 
 
 def test_audit_skipped_for_non_ai_demonstration():
     d = ExperimentDriver("rid-audit3", dry_run=False)
     d._claim_ids = {}
     # a registered (non-AI) demonstration carries no preregistration -> no audit
-    passed = asyncio.run(d._audit_demonstration({}, {"holds": True, "statistic": 1.6}))
-    assert passed is None
+    passed, err = asyncio.run(d._audit_demonstration({}, {"holds": True, "statistic": 1.6}))
+    assert passed is None and err is False
 
 
 # --- claim strength: an audit failure caps the formulation claim at weak -------------------
@@ -242,6 +260,16 @@ def test_audit_failure_caps_formulation_strength():
     capped = f("formulation", gate_passed=True, gate_verdict="approve", reproduced=True,
                demonstration_holds=True, cross_vendor=True, audit_passed=False)
     assert strong == "strong" and capped == "weak"
+
+
+def test_audit_error_caps_formulation_strength_without_refuting():
+    # audit_error (audit could not run) caps strength at weak just like a refutation would,
+    # but it is a DISTINCT state: audit_passed is None (not False), so callers must not treat
+    # it as a refutation when deciding the claim's STATUS.
+    f = ExperimentDriver._claim_strength
+    capped = f("formulation", gate_passed=True, gate_verdict="approve", reproduced=True,
+               demonstration_holds=True, cross_vendor=True, audit_passed=None, audit_error=True)
+    assert capped == "weak"
 
 
 # --- frontier override: prefer the AI-authored path over registered-first ------------------

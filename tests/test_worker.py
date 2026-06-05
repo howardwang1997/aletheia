@@ -4,10 +4,14 @@ label-tagged event, and independent workers fan out in parallel."""
 from __future__ import annotations
 
 import asyncio
+import sys
+import types
+from types import SimpleNamespace
 
 from aletheia.events.bus import get_bus
 from aletheia.orchestrator.reasoner import reason_stage
 from aletheia.orchestrator.worker import (
+    _NO_TOOLS,
     _looks_like_api_error,
     degraded_marker,
     is_degraded,
@@ -75,6 +79,92 @@ def test_degradation_helpers():
     assert not _looks_like_api_error("LCSO MAE 0.466; no leakage.")
     m = degraded_marker("analysis:leakage")
     assert is_degraded(m) and not is_degraded("a real finding")
+
+
+# --- non-dry-run ClaudeAgentOptions wiring (real path, faked SDK) --------------------------
+# The dry-run tests above never construct ClaudeAgentOptions, so an SDK incompatibility with
+# the option combo we set for text-only workers (empty allowed_tools + a disallow list) would
+# only ever surface in a live run. These tests drive the non-dry-run branch with a faked SDK
+# that captures the constructor kwargs, pinning the tool-permission contract.
+def _install_fake_sdk(monkeypatch):
+    """Replace ``claude_agent_sdk`` with a fake that records ClaudeAgentOptions kwargs and
+    yields one inline assistant-text message (so the worker returns without retry/backoff)."""
+    captured: dict = {}
+
+    class FakeOptions:
+        def __init__(self, **kwargs):
+            captured.clear()
+            captured.update(kwargs)
+
+    class FakeClient:
+        def __init__(self, options=None):
+            self.options = options
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def query(self, prompt):
+            return None
+
+        async def receive_response(self):
+            # one AssistantMessage-shaped object: content blocks with a .text attr
+            yield SimpleNamespace(content=[SimpleNamespace(text="inline answer")])
+
+    fake_mod = types.ModuleType("claude_agent_sdk")
+    fake_mod.ClaudeAgentOptions = FakeOptions
+    fake_mod.ClaudeSDKClient = FakeClient
+    monkeypatch.setitem(sys.modules, "claude_agent_sdk", fake_mod)
+
+    import aletheia.orchestrator.worker as w
+    monkeypatch.setattr(w, "has_credentials", lambda *a, **k: True)
+    monkeypatch.setattr(w, "configure_auth", lambda *a, **k: None)
+    return captured
+
+
+def test_text_only_worker_disables_all_tools(monkeypatch):
+    captured = _install_fake_sdk(monkeypatch)
+    out = asyncio.run(run_worker("run-opts1", "coder", "author code", dry_run=False))
+    assert out == "inline answer"
+    # text-only: autonomous, NO tools allowed, and the full built-in toolset disallowed so the
+    # model cannot quietly Write its answer to a file and return only prose.
+    assert captured["permission_mode"] == "bypassPermissions"
+    assert captured["allowed_tools"] == []
+    disallowed = set(captured["disallowed_tools"])
+    assert {"Write", "Bash", "Read", "Edit"} <= disallowed
+    assert disallowed == set(_NO_TOOLS)
+
+
+def test_mcp_worker_passes_allowed_tools_and_no_disallow_list(monkeypatch):
+    captured = _install_fake_sdk(monkeypatch)
+    out = asyncio.run(run_worker(
+        "run-opts2", "retriever", "search",
+        mcp_servers={"lit": object()}, allowed_tools=["mcp__lit__search"], dry_run=False,
+    ))
+    assert out == "inline answer"
+    # mcp/tool worker: allowed_tools pass through and the text-only disallow list is NOT applied.
+    assert captured["allowed_tools"] == ["mcp__lit__search"]
+    assert "disallowed_tools" not in captured
+    assert captured["permission_mode"] == "bypassPermissions"  # no can_use_tool gate -> autonomous
+
+
+def test_mcp_worker_with_gate_is_default_permission(monkeypatch):
+    captured = _install_fake_sdk(monkeypatch)
+
+    async def gate(*a, **k):
+        return True
+
+    out = asyncio.run(run_worker(
+        "run-opts3", "retriever", "search",
+        mcp_servers={"lit": object()}, allowed_tools=["mcp__lit__search"],
+        can_use_tool=gate, dry_run=False,
+    ))
+    assert out == "inline answer"
+    # a tool gate is supplied -> the SDK asks the gate per call instead of bypassing.
+    assert captured["permission_mode"] == "default"
+    assert captured["can_use_tool"] is gate
 
 
 def test_analysis_excludes_degraded_subchecks(monkeypatch):

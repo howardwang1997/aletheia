@@ -175,6 +175,7 @@ class ExperimentDriver:
         demonstration_holds: bool | None = None,
         cross_vendor: bool = True,
         audit_passed: bool | None = None,
+        audit_error: bool = False,
     ) -> str:
         """Deterministic, harness-owned claim strength — never the LLM's self-rating.
         Keeps a report from implying stronger evidence than the ledger holds.
@@ -193,7 +194,14 @@ class ExperimentDriver:
         gate-derived claim cannot exceed `weak` on single-vendor (degraded) review — the
         cross-vendor adversarial panel is the load-bearing guarantee for moderate/strong,
         so a gate that survived on one vendor (e.g. same-vendor self-review) must not yield
-        a strong claim."""
+        a strong claim.
+
+        ``audit_passed`` / ``audit_error`` keep two DIFFERENT failure modes apart for a
+        formulation claim: ``audit_passed is False`` means the independent audit RAN and
+        refuted/failed the demonstration (caps to `weak`); ``audit_error is True`` means the
+        audit could NOT run (infrastructure error) so there is no independent verification —
+        also caps to `weak`, but this is missing evidence, NOT a refutation, and must not be
+        reported as one (the same not_evaluated/refuted distinction used elsewhere)."""
 
         def _s() -> str:
             if kind == "metric":
@@ -219,6 +227,8 @@ class ExperimentDriver:
                     return "speculative"  # no discriminating demonstration executed -> a proposal
                 if not demonstration_holds or gate_passed is False or audit_passed is False:
                     return "weak"  # didn't hold, gate failed, OR the independent audit refuted it
+                if audit_error:
+                    return "weak"  # audit could NOT run -> no independent verification (not a refutation)
                 if reproduced and gate_verdict == "approve":
                     return "strong"  # held + clean approve + STABLE across an independent re-run
                 return "moderate"  # held + approved (approve_with_changes, or not reproduced)
@@ -1346,7 +1356,7 @@ class ExperimentDriver:
         self, protocol_status: str | None, rpanel, reproduction: dict | None = None,
         exp_id: str | None = None, ablation: dict | None = None,
         method_not_instantiated: bool = False, demonstration: dict | None = None,
-        audit_passed: bool | None = None,
+        audit_passed: bool | None = None, audit_error: bool = False,
     ) -> None:
         """After the results gate, set the final strength + status of the proposed
         metric/mechanism claims from the (harness-owned) evidence rule, and record a
@@ -1414,7 +1424,7 @@ class ExperimentDriver:
                 strength=self._claim_strength(
                     "formulation", gate_passed=passed, gate_verdict=verdict,
                     reproduced=demo_repro, demonstration_holds=holds, cross_vendor=cross_vendor,
-                    audit_passed=audit_passed,
+                    audit_passed=audit_passed, audit_error=audit_error,
                 ),
                 status=form_status,
             )
@@ -1773,7 +1783,7 @@ class ExperimentDriver:
         # runs before the results gate so a refuting audit (forced holds=False) is reflected
         # in the demonstration result the gate + claim finalization read.
         info = result.get("info") or {}
-        audit_passed = await self._audit_demonstration(design, info.get("demonstration"))
+        audit_passed, audit_error = await self._audit_demonstration(design, info.get("demonstration"))
 
         # 5) review_results gate — the critics see the CLAIMS + evidence (proposed in
         # analysis) + the protocol status + the reproduction, so they review evidence.
@@ -1804,6 +1814,7 @@ class ExperimentDriver:
             method_not_instantiated=bool(info.get("method_drift")),
             demonstration=info.get("demonstration"),
             audit_passed=audit_passed,
+            audit_error=audit_error,
         )
 
         # 6) OPTIMIZE (<=1 iteration) — skipped when the results gate rejected, since
@@ -2197,19 +2208,28 @@ class ExperimentDriver:
             )
         return demo
 
-    async def _audit_demonstration(self, design: dict, demo_result: dict | None) -> bool | None:
+    async def _audit_demonstration(
+        self, design: dict, demo_result: dict | None
+    ) -> tuple[bool | None, bool]:
         """Independently AUDIT an AI-authored demonstration with the AUTHOR vendor EXCLUDED
         (genuine cross-vendor independence, not Opus reviewing its own code). A refuting audit
         (gate did not pass) FORCES ``holds=False`` on the result — the auditor's adversarial
         finding cannot be overridden by the author — so the formulation claim becomes
-        ``refuted``. Returns the audit's gate_passed (True/False), or None when no audit ran
-        (not an AI-authored demo, disabled, dry-run, or no formulation claim).
+        ``refuted``.
+
+        Returns ``(audit_passed, audit_error)``, keeping two distinct states apart:
+        - ``(True, False)``  — audit ran and PASSED;
+        - ``(False, False)`` — audit ran and REFUTED / was not independent (forces holds=False);
+        - ``(None, True)``   — audit could NOT run (infrastructure error): ``holds`` is left
+          untouched (missing verification is NOT a refutation), but strength is capped at `weak`;
+        - ``(None, False)``  — no audit applicable (not an AI-authored demo, disabled, dry-run,
+          or no formulation claim).
 
         Mutates ``demo_result`` in place (the same dict ``_finalize_claims`` reads)."""
         if self.dry_run or not getattr(get_settings(), "demonstration_audit_enabled", True):
-            return None
+            return None, False
         if not isinstance(demo_result, dict) or not demo_result.get("preregistration"):
-            return None  # only AI-authored demonstrations carry a pre-registration
+            return None, False  # only AI-authored demonstrations carry a pre-registration
         fid = self._claim_ids.get("formulation")
         payload = {
             "demonstration_code": str(design.get("demonstration_code", ""))[:20000],
@@ -2227,18 +2247,19 @@ class ExperimentDriver:
         except Exception as exc:  # noqa: BLE001 - the audit must never kill the run
             # The audit INFRASTRUCTURE errored — the demonstration was never independently
             # reviewed, which is NOT a refutation (the refuted/not-evaluated distinction):
-            # leave ``holds`` untouched, but fail closed on STRENGTH by returning False
+            # leave ``holds`` untouched, but fail closed on STRENGTH via ``audit_error=True``
             # (``_claim_strength`` caps the formulation claim to ``weak`` — an unaudited
-            # AI-authored demonstration must not carry independent-verification strength).
+            # AI-authored demonstration must not carry independent-verification strength —
+            # yet the claim is NOT marked ``refuted``, since the audit never ran).
             await get_bus().publish(make_event("demonstration_audit", run_id=self.run_id, payload={
-                "verdict": "error", "gate_passed": False, "auditors": [],
+                "verdict": "error", "gate_passed": None, "auditors": [],
                 "error": str(exc)[:200]}))
             if fid:
                 await asyncio.to_thread(
                     attach_claim_evidence, fid, "audit", "error",
                     f"independent demonstration audit could not run: {str(exc)[:200]}",
                 )
-            return False
+            return None, True
         audit_passed = bool(panel.gate_passed)
         # independence guard: if the Anthropic author somehow appears in the panel, treat the
         # audit as NOT independent -> fail closed (cannot be trusted as a real audit).
@@ -2256,7 +2277,7 @@ class ExperimentDriver:
         await get_bus().publish(make_event("demonstration_audit", run_id=self.run_id, payload={
             "verdict": panel.consensus_verdict, "gate_passed": panel.gate_passed,
             "auditors": sorted(auditors)}))
-        return audit_passed
+        return audit_passed, False
 
     _DEFAULT_RAG_PROMPT = (
         "Answer the question using ONLY the context. Be concise (a short phrase). "

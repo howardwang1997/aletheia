@@ -16,6 +16,9 @@ Spends Opus + critic credit. CPU-only demonstration compute is seconds-to-minute
 from __future__ import annotations
 
 import asyncio
+import time
+
+from _e2e_common import RunRecorder, write_e2e_summary
 
 from aletheia.config import get_settings
 from aletheia.data.registry import register_dataset
@@ -92,14 +95,18 @@ async def main() -> None:
     )
     print(f"run_id={run_id} exp_id={exp_id}\n--- live events ---", flush=True)
 
+    recorder = RunRecorder()
+
     async def printer() -> None:
         async for evt in get_bus().subscribe():
+            recorder.observe(evt)  # accumulate for the machine-readable summary
             print(f">> {evt['type']}: {_short(evt.get('payload') or {})}", flush=True)
 
     pt = asyncio.create_task(printer())
     try:
         await ExperimentDriver(run_id, dry_run=False).run()
     finally:
+        await asyncio.sleep(0.1)  # let the final events drain into the recorder
         pt.cancel()
 
     run = get_run(run_id)
@@ -107,6 +114,14 @@ async def main() -> None:
     print("run status:", run["status"])
     print("metrics:", list_metrics(exp_id))
     print("claims:", [(c["claim_type"], c["status"], c["strength"]) for c in list_claims(run_id)])
+
+    # auditable artifact: one JSON file capturing route fired + demonstration + audit + ledger.
+    summary_path = write_e2e_summary(
+        run_id=run_id, exp_id=exp_id, timestamp=time.strftime("%Y%m%dT%H%M%S"),
+        prefer_authored=get_settings().demonstration_prefer_authored,
+        recorder=recorder, domain="molecules",
+    )
+    print(f"summary written: {summary_path}", flush=True)
 
 
 if __name__ == "__main__":
