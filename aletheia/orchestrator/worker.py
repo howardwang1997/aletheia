@@ -33,6 +33,17 @@ _DEGRADED_PREFIX = "[worker-unavailable"
 _OUTER_ATTEMPTS = 2
 _BACKOFF_S = 8.0
 
+# Built-in tools a text-only worker must NOT have. Without this, a worker running under
+# ``bypassPermissions`` keeps the full default Claude Code toolset, so the model may "help"
+# by WRITING its answer to a file (e.g. the coder doing ``Write('/tmp/demo.py', ...)``) and
+# returning only prose — then ``extract_code`` gets prose, not a fenced block, and the gate
+# rejects it. Text-only workers must return their answer INLINE. (mcp-tool workers opt back
+# in via ``allowed_tools``.)
+_NO_TOOLS: list[str] = [
+    "Write", "Edit", "MultiEdit", "NotebookEdit", "Read", "Bash", "BashOutput",
+    "Glob", "Grep", "WebFetch", "WebSearch", "Task", "TodoWrite", "KillBash",
+]
+
 
 def degraded_marker(label: str) -> str:
     """Sentinel a worker returns when it could not produce real output (e.g. a
@@ -94,7 +105,11 @@ async def run_worker(
         if can_use_tool:
             opts["can_use_tool"] = can_use_tool
     else:
+        # text-only worker: no tools. Force an INLINE reply so ``extract_code`` /
+        # ``_parse_json`` see the actual answer instead of prose left after a Write tool call.
         opts["permission_mode"] = "bypassPermissions"
+        opts["allowed_tools"] = []
+        opts["disallowed_tools"] = list(_NO_TOOLS)
     options = ClaudeAgentOptions(**opts)
 
     last = ""

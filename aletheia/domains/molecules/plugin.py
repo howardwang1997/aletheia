@@ -73,18 +73,30 @@ class MoleculePropertyPlugin(DomainPlugin):
     def _make_model(self, design: dict[str, Any]):
         solution_path = design.get("solution_path")
         if solution_path:
-            return self._load_solution_pipeline(solution_path)
+            # harness-owned seed: override the solution's hardcoded random_state so the
+            # reproduction re-run (design random_state+1) is a REAL re-computation.
+            from aletheia.domains.base import reseed_estimator
+
+            return reseed_estimator(
+                self._load_solution_pipeline(solution_path),
+                int(design.get("random_state", 42)),
+            )
 
         from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
 
+        from aletheia.domains.base import filter_estimator_params
+
         model = (design.get("model") or "random_forest").lower()
         params = dict(design.get("model_params") or {})
+        rs = int(design.get("random_state", 42))  # harness seed (reproduction sets rs+1)
         if model in ("gradient_boosting", "gbm", "gbr"):
+            params = filter_estimator_params(GradientBoostingRegressor, params)
             params.setdefault("n_estimators", 200)
-            params.setdefault("random_state", 42)
+            params.setdefault("random_state", rs)
             return GradientBoostingRegressor(**params)
+        params = filter_estimator_params(RandomForestRegressor, params)
         params.setdefault("n_estimators", 200)
-        params.setdefault("random_state", 42)
+        params.setdefault("random_state", rs)
         params.setdefault("n_jobs", -1)
         return RandomForestRegressor(**params)
 

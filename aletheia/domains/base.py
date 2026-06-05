@@ -96,6 +96,44 @@ class DemonstrationCapability:
     reproduce_factor: float = 2.0
 
 
+def filter_estimator_params(cls: type, params: dict[str, Any]) -> dict[str, Any]:
+    """Keep only the kwargs ``cls.__init__`` actually accepts. The DESIGN stage sometimes
+    packs featurization keys (``fingerprint``, ``radius``, ``n_bits``, …) into
+    ``model_params``; splatting those into an sklearn constructor is a ``TypeError`` that
+    kills the whole training job. Featurization keys are consumed from the design by
+    ``featurize`` — dropping them here loses nothing."""
+    import inspect
+
+    try:
+        valid = set(inspect.signature(cls.__init__).parameters) - {"self"}
+    except (TypeError, ValueError):  # pragma: no cover - C-level __init__
+        return dict(params)
+    return {k: v for k, v in params.items() if k in valid}
+
+
+def reseed_estimator(est: Any, random_state: Any) -> Any:
+    """Override every ``random_state`` hyperparameter on a built (possibly nested) sklearn
+    estimator. The HARNESS owns the seed: a coder-authored ``build_pipeline()`` hardcodes its
+    own random_state, so without this the locked-code reproduction re-run (``random_state+1``)
+    is bit-identical to the original — "confirmed (rel Δ 0.0)" would be a VACUOUS check, and a
+    metric claim could reach ``strong`` on a reproduction that never re-computed anything.
+    Best-effort: an estimator without ``get_params``/seed params is returned unchanged."""
+    if random_state is None:
+        return est
+    try:
+        params = est.get_params(deep=True)
+        seeds = {
+            k: int(random_state)
+            for k in params
+            if k == "random_state" or k.endswith("__random_state")
+        }
+        if seeds:
+            est.set_params(**seeds)
+    except Exception:  # noqa: BLE001 - reseeding is best-effort, never break model build
+        pass
+    return est
+
+
 class DomainPlugin(ABC):
     """Contract every domain implements. Steps are separable so they can be unit
     tested offline (featurize/train on a tiny in-memory frame) and also composed by

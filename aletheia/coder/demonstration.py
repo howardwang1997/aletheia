@@ -26,7 +26,11 @@ DEMO_SYSTEM = (
     "effect is real, the statistic should VANISH. You NEVER decide whether the effect holds "
     "— a fixed harness applies your PRE-REGISTERED decision rule. You never access data, "
     "files, the network, or the process; X/y/groups are passed to you. You return one python "
-    "code block and one JSON pre-registration block."
+    "code block and one JSON pre-registration block.\n"
+    "OUTPUT DISCIPLINE (hard): reply with ONLY the two fenced blocks and NOTHING else — no "
+    "preamble, no explanation, no tool use. Do NOT write your answer to a file; return it "
+    "INLINE. Use ASCII only: write operators as `<=` `>=` `!=` `*` and the word `in` — never "
+    "Unicode math symbols (e.g. no perpendicular/bottom, <=, >=, !=, times, in, sqrt, sum)."
 )
 
 _CONTRACT_TEMPLATE = """\

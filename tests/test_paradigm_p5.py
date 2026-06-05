@@ -242,3 +242,27 @@ def test_audit_failure_caps_formulation_strength():
     capped = f("formulation", gate_passed=True, gate_verdict="approve", reproduced=True,
                demonstration_holds=True, cross_vendor=True, audit_passed=False)
     assert strong == "strong" and capped == "weak"
+
+
+# --- frontier override: prefer the AI-authored path over registered-first ------------------
+def test_prefer_authored_default_is_registered_first():
+    from aletheia.config import get_settings
+
+    pref = ExperimentDriver._prefer_authored_demonstration
+    s = get_settings()
+    saved = s.demonstration_prefer_authored
+    s.demonstration_prefer_authored = False
+    try:
+        # default + an untagged spec -> registered-first stands (no override)
+        assert pref({"form": "impossibility", "claim": "an activity-cliff lipschitz claim"}) is False
+        assert pref("a bare-string demonstration") is False
+        # an explicitly tagged spec forces AI authoring even under the default setting
+        assert pref({"claim": "x", "authoring": "ai"}) is True
+        assert pref({"claim": "x", "authoring": "AI"}) is True
+        assert pref({"claim": "x", "ai_authored": True}) is True
+        # the global setting overrides regardless of (even mis-typed) spec shape
+        s.demonstration_prefer_authored = True
+        assert pref({"form": "impossibility", "claim": "cliff"}) is True
+        assert pref("bare string") is True
+    finally:
+        s.demonstration_prefer_authored = saved

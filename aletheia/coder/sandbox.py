@@ -16,6 +16,7 @@ import ast
 # Module roots the solution may import. Enough to build sklearn pipelines /
 # feature transforms; deliberately excludes io / net / process / serialization.
 ALLOWED_IMPORT_ROOTS = {
+    "__future__",  # compile-time directive (``from __future__ import annotations``), not io
     "sklearn",
     "numpy",
     "np",

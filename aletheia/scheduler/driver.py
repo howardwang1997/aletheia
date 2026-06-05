@@ -969,6 +969,18 @@ class ExperimentDriver:
             return None
         return None
 
+    @staticmethod
+    def _prefer_authored_demonstration(demo: dict) -> bool:
+        """The frontier OVERRIDE to registered-first routing: author the demonstration even when
+        a registered capability keyword-matches. True when the global ``demonstration_prefer_authored``
+        setting is on, OR the demonstration spec is explicitly tagged (``authoring == "ai"`` or a
+        truthy ``ai_authored``). Default False -> registered-first stands."""
+        if getattr(get_settings(), "demonstration_prefer_authored", False):
+            return True
+        if not isinstance(demo, dict):
+            return False
+        return str(demo.get("authoring", "")).strip().lower() == "ai" or bool(demo.get("ai_authored"))
+
     async def _demonstration_code(self, design: dict, data_spec: dict, exp_id: str | None) -> None:
         """DEMONSTRATION CODE stage (paradigm frontier): Opus authors ``compute_demonstration``
         + a STRUCTURED pre-registration. Both are statically gated + smoke-tested; the
@@ -984,11 +996,14 @@ class ExperimentDriver:
         demo = self._paradigm_demonstration()
         if not fid or not demo:
             return
-        # Registered-first: if a trusted, hand-built capability already grounds this claim, use
-        # it (deterministic + already audited) — the AI-authored path is for claims NOTHING can
-        # currently ground (Codex gap #3: "arbitrary AI-proposed demonstrations out of reach").
+        # Registered-first (default): if a trusted, hand-built capability already grounds this
+        # claim, use it (deterministic + already audited) — the AI-authored path is for claims
+        # NOTHING can currently ground (Codex gap #3: "arbitrary AI-proposed demonstrations out of
+        # reach"). The frontier OVERRIDE: a ``demonstration_prefer_authored`` setting or a spec
+        # tagged ``authoring="ai"`` forces the AI to author even when a registered capability fits
+        # (the full anti-fakeability spine — prereg + control + audit + probes — still applies).
         plugin = self.plugin or (get_domain_plugin(self.domain) if self.domain else None)
-        if plugin is not None:
+        if plugin is not None and not self._prefer_authored_demonstration(demo):
             caps = plugin.demonstration_capabilities()
             registered = {k: v for k, v in caps.items() if k != plugin.AI_AUTHORED_CAPABILITY_ID}
             if plugin._select_capability(demo, registered) is not None:
@@ -1406,17 +1421,28 @@ class ExperimentDriver:
         # a reproducibility claim: did an independent re-run confirm the headline?
         if repro.get("attempted"):
             confirmed = bool(repro.get("reproduced"))
+            # rel Δ None means NO comparison ever happened (no headline value on the
+            # original and/or the re-run, or the re-run errored). That is ``not_evaluated``
+            # — ``refuted`` is reserved for a comparison that RAN and contradicted the
+            # headline (the same refuted/not-evaluated distinction as elsewhere).
+            compared = repro.get("delta") is not None
             await asyncio.to_thread(
                 create_claim, self.run_id,
                 claim_text=(
                     f"An independent re-run ({repro.get('mode', 'rerun')}) "
-                    f"{'confirmed' if confirmed else 'did NOT confirm'} the headline "
-                    f"{repro.get('metric', '')} (original={repro.get('original')}, "
-                    f"reproduced={repro.get('repro')}, rel Δ {repro.get('delta')})."
+                    + (
+                        f"{'confirmed' if confirmed else 'did NOT confirm'} the headline "
+                        f"{repro.get('metric', '')} (original={repro.get('original')}, "
+                        f"reproduced={repro.get('repro')}, rel Δ {repro.get('delta')})."
+                        if compared
+                        else f"could not evaluate the headline {repro.get('metric', '')} "
+                        f"(original={repro.get('original')}, reproduced={repro.get('repro')} "
+                        f"— no comparable value on both runs)."
+                    )
                 ),
                 claim_type="reproducibility",
                 strength="moderate" if confirmed else "weak",
-                status="supported" if confirmed else "refuted",
+                status=("supported" if confirmed else ("refuted" if compared else "not_evaluated")),
                 experiment_id=exp_id, created_by="reproduction", stage="analysis",
                 evidence=[
                     {"evidence_kind": "reproduction", "evidence_ref": repro.get("mode", "rerun"),
@@ -1448,6 +1474,23 @@ class ExperimentDriver:
                     {"evidence_kind": "artifact", "evidence_ref": "ablation.json", "note": "controlled comparison"},
                 ],
             )
+        # surface the verification spine's outcome: the final claim ledger (type/status/strength
+        # + which evidence kinds grounded each) so the UI can show what was actually established,
+        # refuted, or left unverified — not just the headline metric.
+        try:
+            ledger = await asyncio.to_thread(list_claims, self.run_id)
+            await get_bus().publish(make_event(
+                "claims", run_id=self.run_id,
+                payload={"claims": [
+                    {"claim_type": c.get("claim_type"), "status": c.get("status"),
+                     "strength": c.get("strength"),
+                     "evidence_kinds": sorted({e.get("evidence_kind")
+                                               for e in (c.get("evidence") or [])
+                                               if e.get("evidence_kind")}),
+                     "claim_text": str(c.get("claim_text", ""))[:240]}
+                    for c in ledger]}))
+        except Exception:  # noqa: BLE001 - the claims summary is a best-effort UI signal
+            pass
 
     async def _guard_budget(self, kind: str, amount: float) -> None:
         """Charge an estimated cost and auto-pause + notify if a cap is breached."""
@@ -1481,8 +1524,12 @@ class ExperimentDriver:
         except BudgetPaused:
             return  # already paused + notified; a clean stop, not a failure
         except Exception as exc:  # noqa: BLE001
+            import traceback
+
+            tb = traceback.format_exc()
             await get_bus().publish(
-                make_event("error", run_id=self.run_id, payload={"error": str(exc)})
+                make_event("error", run_id=self.run_id,
+                           payload={"error": str(exc), "traceback": tb[-1500:]})
             )
             await asyncio.to_thread(set_run_status, self.run_id, "failed")
             await self._status("failed", str(exc))
@@ -2140,7 +2187,13 @@ class ExperimentDriver:
             await get_bus().publish(
                 make_event("demonstration", run_id=self.run_id,
                            payload={"computed": True, "form": demo.get("form"),
-                                    "holds": demo.get("holds"), "statistic": demo.get("statistic")})
+                                    "holds": demo.get("holds"), "statistic": demo.get("statistic"),
+                                    "capability": demo.get("capability"),
+                                    # the negative-control split (AI-authored path) — what makes
+                                    # `holds` honest: the effect must fire on test AND vanish on control
+                                    "test_statistic": demo.get("test_statistic"),
+                                    "control_statistic": demo.get("control_statistic"),
+                                    "audit_refuted": demo.get("audit_refuted")})
             )
         return demo
 
@@ -2166,10 +2219,26 @@ class ExperimentDriver:
             "probes": demo_result.get("probes"),
             "detail": demo_result.get("detail"),
         }
-        panel = await self.gateway.review(
-            "demonstration_audit", payload, self.run_id, run_id=self.run_id,
-            dry_run=self.dry_run, exclude_vendors={"anthropic"},  # exclude the Opus AUTHOR
-        )
+        try:
+            panel = await self.gateway.review(
+                "demonstration_audit", payload, self.run_id, run_id=self.run_id,
+                dry_run=self.dry_run, exclude_vendors={"anthropic"},  # exclude the Opus AUTHOR
+            )
+        except Exception as exc:  # noqa: BLE001 - the audit must never kill the run
+            # The audit INFRASTRUCTURE errored — the demonstration was never independently
+            # reviewed, which is NOT a refutation (the refuted/not-evaluated distinction):
+            # leave ``holds`` untouched, but fail closed on STRENGTH by returning False
+            # (``_claim_strength`` caps the formulation claim to ``weak`` — an unaudited
+            # AI-authored demonstration must not carry independent-verification strength).
+            await get_bus().publish(make_event("demonstration_audit", run_id=self.run_id, payload={
+                "verdict": "error", "gate_passed": False, "auditors": [],
+                "error": str(exc)[:200]}))
+            if fid:
+                await asyncio.to_thread(
+                    attach_claim_evidence, fid, "audit", "error",
+                    f"independent demonstration audit could not run: {str(exc)[:200]}",
+                )
+            return False
         audit_passed = bool(panel.gate_passed)
         # independence guard: if the Anthropic author somehow appears in the panel, treat the
         # audit as NOT independent -> fail closed (cannot be trusted as a real audit).
@@ -2555,8 +2624,15 @@ class ExperimentDriver:
         # SOTA claim now stands on STRUCTURED rows (Phase H): find the best comparable
         # published number on the headline metric family and compute a real win/loss.
         best_sota, comparable, beat = self._compare_to_sota(hk, hv)
-        if not comparable:
-            sota_text = f"No structured SOTA row comparable on {hk}; known reference: {sota}."
+        if not comparable or best_sota is None:
+            # best_sota is None with comparable rows when there is NO headline value to
+            # compare (the performance eval produced no metrics) — no comparison happened.
+            sota_text = (
+                f"No structured SOTA row comparable on {hk}; known reference: {sota}."
+                if not comparable
+                else f"No headline {hk} was measured (performance eval produced no metrics); "
+                f"{len(comparable)} comparable SOTA row(s) exist but no comparison is possible."
+            )
             sota_strength = "weak"
         else:
             rel = "beats" if beat else "does not beat"
@@ -2581,7 +2657,7 @@ class ExperimentDriver:
         await asyncio.to_thread(
             create_claim, self.run_id,
             claim_text=sota_text, claim_type="sota", strength=sota_strength,
-            status=("supported" if comparable else "unverified"),
+            status=("supported" if (comparable and best_sota is not None) else "unverified"),
             experiment_id=exp_id, created_by="write_up", stage="write_up",
             evidence=sota_evidence,
         )

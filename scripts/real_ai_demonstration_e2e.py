@@ -38,6 +38,10 @@ def _short(p: dict, n: int = 170) -> str:
 
 async def main() -> None:
     get_settings().max_experiments_per_campaign = 1
+    # FRONTIER OVERRIDE: force the AI-authored demonstration path even if IDEATE reframes the claim
+    # into something a registered capability would keyword-match. Without this, routing is
+    # registered-first and the hand-built cliff/scaffold/law capabilities pre-empt AI authoring.
+    get_settings().demonstration_prefer_authored = True
     create_all()
     run_id = create_run(
         "Real e2e (AI-authored demonstration): is a regressor's local sensitivity to a single "

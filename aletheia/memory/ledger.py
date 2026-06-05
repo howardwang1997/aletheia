@@ -191,7 +191,7 @@ class CritiquePanel(Base):
     __tablename__ = "critique_panels"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    target: Mapped[str] = mapped_column(String(32))  # design | direction | results
+    target: Mapped[str] = mapped_column(String(32))  # design | direction | results | demonstration_audit
     target_ref: Mapped[str | None] = mapped_column(String(32))  # ledger id
     consensus_verdict: Mapped[str | None] = mapped_column(String(32))
     gate_passed: Mapped[bool | None] = mapped_column()

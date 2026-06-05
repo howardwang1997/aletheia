@@ -10,6 +10,7 @@ the ledger. A ``dry_run`` job synthesizes metrics and spawns nothing.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -142,12 +143,25 @@ class LocalBackend(ComputeBackend):
         # Restricted subprocess: CPU/memory rlimits applied in the child.
         from aletheia.coder.sandbox import resource_limits
 
+        # Pin the math libraries to a SINGLE thread. ``RLIMIT_CPU`` counts CPU-seconds summed
+        # across ALL threads, so multithreaded BLAS (numpy/sklearn default) burns the budget
+        # several times faster than wall-clock and the job dies with SIGXCPU long before the
+        # wall-clock backstop — making the limit unpredictable. Single-threaded => CPU-time ~=
+        # wall-time, so the limit is meaningful. Also silence the RDKit deprecation flood
+        # (1000+ lines/run) that otherwise bloats job.log.
+        env = {
+            **os.environ,
+            "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
+            "NUMEXPR_NUM_THREADS": "1", "VECLIB_MAXIMUM_THREADS": "1",
+            "RDKIT_DISABLE_LOGS": "1",
+        }
         job.proc = subprocess.Popen(
             [sys.executable, str(workdir / "train.py")],
             cwd=str(workdir),
             stdout=log,
             stderr=subprocess.STDOUT,
             preexec_fn=resource_limits(),
+            env=env,
         )
         set_compute_job_status(job_id, "running")
         self._jobs[job_id] = job

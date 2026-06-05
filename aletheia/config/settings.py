@@ -151,6 +151,12 @@ class Settings(BaseSettings):
     demonstration_min_samples: int = 20  # min n on BOTH the test and control sides (probe)
     demonstration_timeout_s: float = 120.0  # wall-clock for the AI demonstration subprocess
     demonstration_audit_enabled: bool = True  # independent cross-vendor audit of the AI demo
+    # Default routing is REGISTERED-FIRST: a hand-built, already-audited capability grounds the
+    # claim when one keyword-matches, and the AI-authored path is reserved for claims nothing can
+    # currently ground. Set True (or tag a demonstration spec with ``authoring="ai"``) to PREFER
+    # the AI-authored path even when a registered capability matches — the frontier override.
+    # Authoring failure still falls back to the registered capability (fail closed).
+    demonstration_prefer_authored: bool = False
 
     # --- compute backend ---
     # "local"  = restricted subprocess on the host (soft guardrails).
