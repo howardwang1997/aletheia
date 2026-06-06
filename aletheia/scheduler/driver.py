@@ -1295,19 +1295,36 @@ class ExperimentDriver:
         orig_demo = (result.get("info") or {}).get("demonstration")
         repro_demo = (repro_result.get("info") or {}).get("demonstration")
         if isinstance(orig_demo, dict):
-            # a demonstration is REPRODUCED iff it still HOLDS on the seed-perturbed re-run
-            # AND its statistic stays within the capability's own reproduction tolerance
-            # (Codex #5 — per-capability ``reproduce_factor``, default 2x): qualitatively
-            # robust, not bit-identical; the strict metric tolerance would wrongly fail an
-            # honestly-noisy ratio, and a hard-coded 2x would over/under-constrain a
-            # capability whose statistic is tighter or looser than an order-of-magnitude.
+            # DECOMPOSED stability (review Finding 5 — one opaque bool hid WHICH kind of
+            # reproduction was achieved; seen live: the statistic swung 20x across seeds and
+            # the payload couldn't show it):
+            #   verdict_stable    — QUALITATIVE: the harness verdict (holds) is the same on the
+            #                       seed-perturbed re-run (True for a twice-refuted demo too);
+            #   statistic_stable  — STATISTICAL: the statistic stays within the capability's
+            #                       own ``reproduce_factor`` (Codex #5, default 2x; None when
+            #                       either run produced no statistic).
+            # ``demonstration_reproduced`` (the strength-escalation gate to `strong`) stays
+            # STRICT: held on BOTH runs AND the statistic did not swing beyond tolerance.
+            # Both samples + seeds are persisted so a reviewer can audit the swing directly.
             s1, s2 = orig_demo.get("statistic"), (repro_demo or {}).get("statistic")
-            demo_repro = bool(orig_demo.get("holds")) and bool((repro_demo or {}).get("holds"))
-            if demo_repro and s1 is not None and s2 is not None:
-                factor = max(1.0, float(orig_demo.get("reproduce_factor", 2.0)))
+            h1, h2 = orig_demo.get("holds"), (repro_demo or {}).get("holds")
+            verdict_stable = (h2 is not None) and (bool(h1) == bool(h2))
+            factor = max(1.0, float(orig_demo.get("reproduce_factor", 2.0)))
+            statistic_stable: bool | None = None
+            if s1 is not None and s2 is not None:
                 lo, hi = sorted((abs(float(s1)), abs(float(s2))))
-                demo_repro = hi <= 1e-9 or (lo / hi) >= 1.0 / factor
-            payload["demonstration_reproduced"] = demo_repro
+                statistic_stable = hi <= 1e-9 or (lo / hi) >= 1.0 / factor
+            payload["demonstration_reproduced"] = (
+                bool(h1) and bool(h2) and statistic_stable is not False
+            )
+            payload["demonstration_verdict_stable"] = verdict_stable
+            payload["demonstration_statistic_stable"] = statistic_stable
+            payload["demonstration_original_statistic"] = s1
+            payload["demonstration_repro_statistic"] = s2
+            payload["demonstration_reproduce_factor"] = factor
+            payload["demonstration_seeds"] = [
+                int(design.get("random_state", 42)), int(repro_design["random_state"]),
+            ]
         await get_bus().publish(make_event("reproduction", run_id=self.run_id, payload=payload))
         await record_transition(
             self.run_id, exp_id, "analysis", "analysis",
@@ -2217,13 +2234,18 @@ class ExperimentDriver:
         finding cannot be overridden by the author — so the formulation claim becomes
         ``refuted``.
 
-        Returns ``(audit_passed, audit_error)``, keeping two distinct states apart:
-        - ``(True, False)``  — audit ran and PASSED;
+        Returns ``(audit_passed, audit_error)``, keeping the distinct states apart:
+        - ``(True, False)``  — audit ran and PASSED with >= the vendor floor of auditors;
         - ``(False, False)`` — audit ran and REFUTED / was not independent (forces holds=False);
-        - ``(None, True)``   — audit could NOT run (infrastructure error): ``holds`` is left
-          untouched (missing verification is NOT a refutation), but strength is capped at `weak`;
+        - ``(None, True)``   — NO USABLE independent verification: the audit infrastructure
+          errored, OR it approved with fewer distinct auditors than ``min_review_vendors``
+          (a one-survivor approval is not adequate independent verification). ``holds`` is
+          left untouched (missing verification is NOT a refutation), strength caps at `weak`;
         - ``(None, False)``  — no audit applicable (not an AI-authored demo, disabled, dry-run,
           or no formulation claim).
+
+        A refuting audit keeps its fail-closed force regardless of panel size — one adversarial
+        finding is enough to block, but one approval is not enough to verify.
 
         Mutates ``demo_result`` in place (the same dict ``_finalize_claims`` reads)."""
         if self.dry_run or not getattr(get_settings(), "demonstration_audit_enabled", True):
@@ -2266,9 +2288,36 @@ class ExperimentDriver:
         auditors = {c.critic_id for c in (getattr(panel, "critiques", None) or [])}
         if "anthropic" in auditors:
             audit_passed = False
+        # vendor floor (mirrors the results gate's min_review_vendors): a PASSING audit on
+        # fewer distinct auditors — e.g. every provider but one errored out — is NOT adequate
+        # independent verification. Degrade (strength caps at `weak` via audit_error) WITHOUT
+        # refuting; only a genuine adversarial rejection forces holds=False.
+        min_vendors = int(getattr(get_settings(), "min_review_vendors", 2))
+        if audit_passed and len(auditors) < min_vendors:
+            if fid:
+                await asyncio.to_thread(
+                    attach_claim_evidence, fid, "audit", "degraded",
+                    f"audit approved but with only {len(auditors)} independent auditor(s) "
+                    f"(< {min_vendors}) — not adequate verification; strength capped",
+                )
+            await get_bus().publish(make_event("demonstration_audit", run_id=self.run_id, payload={
+                "verdict": "degraded", "gate_passed": None, "auditors": sorted(auditors),
+                "n_auditors": len(auditors), "min_vendors": min_vendors}))
+            return None, True
         if not audit_passed:
             demo_result["holds"] = False  # a refuting/non-independent audit -> refuted
             demo_result["audit_refuted"] = True
+            # re-publish the demonstration with the audit's mutation applied, so the event
+            # stream / e2e summary / UI reflect the POST-audit verdict instead of the stale
+            # snapshot emitted at compute time (seen live: summary showed audit_refuted=null
+            # while the audit verdict was reject).
+            await get_bus().publish(make_event("demonstration", run_id=self.run_id, payload={
+                "computed": True, "form": demo_result.get("form"),
+                "holds": False, "statistic": demo_result.get("statistic"),
+                "capability": demo_result.get("capability"),
+                "test_statistic": demo_result.get("test_statistic"),
+                "control_statistic": demo_result.get("control_statistic"),
+                "audit_refuted": True}))
         if fid:
             await asyncio.to_thread(
                 attach_claim_evidence, fid, "audit", str(panel.consensus_verdict),

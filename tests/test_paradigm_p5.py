@@ -252,6 +252,148 @@ def test_audit_skipped_for_non_ai_demonstration():
     assert passed is None and err is False
 
 
+# --- audit vendor floor: one approval is not verification; one rejection still blocks --------
+def test_audit_single_auditor_approve_is_degraded_not_verification():
+    # seen live (materials e2e): every provider but grok errored out, leaving a 1-auditor
+    # panel. An approval from a single surviving auditor must NOT count as full independent
+    # verification — degrade (audit_error caps strength at weak) WITHOUT refuting.
+    d = ExperimentDriver("rid-audit4", dry_run=False)
+    d._claim_ids = {}
+
+    async def fake_review(*a, **k):
+        return _fake_panel("approve", True, ["grok"])  # one survivor approves
+
+    d.gateway = SimpleNamespace(review=fake_review)
+    demo = {"holds": True, "preregistration": _PREREG, "test_statistic": 5.0, "control_statistic": 0.0}
+    passed, err = asyncio.run(d._audit_demonstration({"demonstration_code": _HOLDS}, demo))
+    assert passed is None and err is True  # degraded: no usable independent verification
+    assert demo["holds"] is True and "audit_refuted" not in demo  # NOT a refutation
+
+
+def test_audit_single_auditor_reject_still_refutes():
+    # the floor is asymmetric by design: one adversarial finding is enough to BLOCK
+    # (fail-closed), even though one approval is not enough to verify.
+    d = ExperimentDriver("rid-audit5", dry_run=False)
+    d._claim_ids = {}
+
+    async def fake_review(*a, **k):
+        return _fake_panel("reject", False, ["grok"])
+
+    d.gateway = SimpleNamespace(review=fake_review)
+    demo = {"holds": True, "preregistration": _PREREG, "test_statistic": 5.0, "control_statistic": 0.0}
+    passed, err = asyncio.run(d._audit_demonstration({"demonstration_code": _HOLDS}, demo))
+    assert passed is False and err is False
+    assert demo["holds"] is False and demo["audit_refuted"] is True
+
+
+def test_audit_two_auditor_approve_passes():
+    d = ExperimentDriver("rid-audit6", dry_run=False)
+    d._claim_ids = {}
+
+    async def fake_review(*a, **k):
+        return _fake_panel("approve", True, ["grok", "gemini"])  # meets the vendor floor
+
+    d.gateway = SimpleNamespace(review=fake_review)
+    demo = {"holds": True, "preregistration": _PREREG, "test_statistic": 5.0, "control_statistic": 0.0}
+    passed, err = asyncio.run(d._audit_demonstration({"demonstration_code": _HOLDS}, demo))
+    assert passed is True and err is False and demo["holds"] is True
+
+
+def test_refuting_audit_republishes_demonstration_event():
+    # the `demonstration` event is first published at COMPUTE time; the audit's later
+    # holds=False mutation must be re-published so the event stream / e2e summary / UI never
+    # show a stale pre-audit verdict (seen live: summary said audit_refuted=null, audit=reject).
+    from aletheia.events.bus import get_bus
+
+    d = ExperimentDriver("rid-audit7", dry_run=False)
+    d._claim_ids = {}
+
+    async def fake_review(*a, **k):
+        return _fake_panel("reject", False, ["gemini", "deepseek"])
+
+    d.gateway = SimpleNamespace(review=fake_review)
+    demo = {"holds": True, "preregistration": _PREREG, "capability": "ai_authored_demonstration",
+            "statistic": 5.0, "test_statistic": 5.0, "control_statistic": 0.0}
+
+    async def go():
+        captured = []
+
+        async def sub():
+            async for evt in get_bus().subscribe():
+                if evt.get("run_id") == "rid-audit7":
+                    captured.append(evt)
+
+        task = asyncio.create_task(sub())
+        await asyncio.sleep(0)
+        out = await d._audit_demonstration({"demonstration_code": _HOLDS}, demo)
+        await asyncio.sleep(0.1)
+        task.cancel()
+        return out, captured
+
+    (passed, err), events = asyncio.run(go())
+    assert passed is False
+    demos = [e["payload"] for e in events if e["type"] == "demonstration"]
+    assert demos and demos[-1]["holds"] is False and demos[-1]["audit_refuted"] is True
+    assert demos[-1]["capability"] == "ai_authored_demonstration"
+
+
+# --- reproduction semantics: verdict stability vs statistic stability are DISTINCT ----------
+def _repro_driver(monkeypatch, orig_demo, repro_demo):
+    """Drive _reproduce with a faked re-run; returns the reproduction payload."""
+    import aletheia.scheduler.driver as drv
+    from aletheia.db import create_all
+    from aletheia.memory.service import create_run, finalize_plan
+
+    create_all()
+    run_id = create_run("repro semantics test", domain="materials", status="planned")
+    finalize_plan(run_id, {"objective": "x", "domain": "materials"})
+    d = drv.ExperimentDriver(run_id, dry_run=False)
+
+    async def fake_run_eval(design, data_spec, domain, exp_id):
+        return {"metrics": {"mae": 0.5}, "info": {"demonstration": repro_demo}}
+
+    monkeypatch.setattr(d, "_run_eval", fake_run_eval)
+    result = {"metrics": {"mae": 0.5}, "info": {"demonstration": orig_demo}}
+    return asyncio.run(d._reproduce({"random_state": 42}, {}, "materials", result, None))
+
+
+def test_repro_decomposes_verdict_and_statistic_stability(monkeypatch):
+    # seen live (materials e2e): statistic swung 20x across seeds (0.074 -> 0.0037) but the
+    # payload couldn't show it. Twice-refuted -> verdict IS stable, statistic is NOT, and
+    # the strict `demonstration_reproduced` gate stays False (never escalates a refuted demo).
+    p = _repro_driver(
+        monkeypatch,
+        {"holds": False, "statistic": 0.074, "reproduce_factor": 2.0},
+        {"holds": False, "statistic": 0.0037},
+    )
+    assert p["demonstration_reproduced"] is False
+    assert p["demonstration_verdict_stable"] is True  # refuted on BOTH runs — qualitatively stable
+    assert p["demonstration_statistic_stable"] is False  # 20x swing > the 2x tolerance
+    assert p["demonstration_original_statistic"] == 0.074
+    assert p["demonstration_repro_statistic"] == 0.0037
+    assert p["demonstration_seeds"] == [42, 43]  # both seeds persisted for the auditor
+
+
+def test_repro_strict_gate_requires_holds_and_stable_statistic(monkeypatch):
+    held = _repro_driver(
+        monkeypatch,
+        {"holds": True, "statistic": 1.6, "reproduce_factor": 2.0},
+        {"holds": True, "statistic": 1.5},
+    )
+    assert held["demonstration_reproduced"] is True
+    assert held["demonstration_verdict_stable"] is True
+    assert held["demonstration_statistic_stable"] is True
+
+    swung = _repro_driver(
+        monkeypatch,
+        {"holds": True, "statistic": 1.6, "reproduce_factor": 2.0},
+        {"holds": True, "statistic": 0.2},  # held twice, but the statistic swung 8x
+    )
+    assert swung["demonstration_reproduced"] is False  # statistic instability blocks `strong`
+    assert swung["demonstration_verdict_stable"] is True
+    assert swung["demonstration_statistic_stable"] is False
+
+
 # --- claim strength: an audit failure caps the formulation claim at weak -------------------
 def test_audit_failure_caps_formulation_strength():
     f = ExperimentDriver._claim_strength

@@ -67,10 +67,11 @@ def write_e2e_summary(
     domain: str,
 ) -> Path:
     """Write a compact, machine-readable run summary under ``artifacts/`` and return its path."""
-    demo = recorder.payload("demonstration")
+    demo = recorder.payload("demonstration")  # last-wins -> the POST-audit verdict if re-published
     audit = recorder.payload("demonstration_audit")
     demo_code = recorder.payload("demonstration_code")
     prereg = recorder.payload("preregistration")
+    repro = recorder.payload("reproduction")
     run = get_run(run_id) or {}
     route = demo.get("capability")  # None until a demonstration actually computes
 
@@ -95,10 +96,23 @@ def write_e2e_summary(
             "audit_refuted": demo.get("audit_refuted"),
         },
         "demonstration_audit": {
-            "verdict": audit.get("verdict"),
+            "verdict": audit.get("verdict"),  # passed | reject | degraded | error
             "gate_passed": audit.get("gate_passed"),
             "auditors": audit.get("auditors"),
+            "n_auditors": audit.get("n_auditors"),
+            "min_vendors": audit.get("min_vendors"),
             "error": audit.get("error"),
+        },
+        # reproduction decomposed into qualitative (verdict) vs statistical (statistic) stability,
+        # with both seeds + statistics so a reviewer can audit a statistic swing directly.
+        "reproduction": {
+            "demonstration_reproduced": repro.get("demonstration_reproduced"),
+            "verdict_stable": repro.get("demonstration_verdict_stable"),
+            "statistic_stable": repro.get("demonstration_statistic_stable"),
+            "original_statistic": repro.get("demonstration_original_statistic"),
+            "repro_statistic": repro.get("demonstration_repro_statistic"),
+            "reproduce_factor": repro.get("demonstration_reproduce_factor"),
+            "seeds": repro.get("demonstration_seeds"),
         },
         "demonstration_code": {
             "accepted": demo_code.get("accepted"),

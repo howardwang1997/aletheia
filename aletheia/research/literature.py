@@ -57,6 +57,51 @@ def _pace_s2() -> None:
         _s2_last = time.monotonic()
 
 
+# --- per-source circuit breaker -------------------------------------------------------------
+# Pacing + short retries protect ONE call, but a survey fans out many sub-queries: once a source
+# is clearly throttled (429s/timeouts that survive the retries), paying the pace+retry cost again
+# for EVERY remaining query both hammers the API and stalls the survey (seen live: dozens of
+# consecutive arXiv/S2 429 lines). After _BREAKER_THRESHOLD consecutive cross-query failures a
+# source's circuit OPENS and it is skipped until _BREAKER_COOLDOWN_S elapses; one success closes
+# it. ``search`` stays best-effort either way — a skipped source is just an empty contribution,
+# and retrieval health already surfaces weak coverage downstream.
+_BREAKER_THRESHOLD = 3
+_BREAKER_COOLDOWN_S = 180.0
+_breaker_lock = threading.Lock()
+_breaker_failures: dict[str, int] = {}
+_breaker_open_until: dict[str, float] = {}
+
+
+def _breaker_allows(source: str) -> bool:
+    with _breaker_lock:
+        return time.monotonic() >= _breaker_open_until.get(source, 0.0)
+
+
+def _breaker_success(source: str) -> None:
+    with _breaker_lock:
+        _breaker_failures[source] = 0
+        _breaker_open_until.pop(source, None)
+
+
+def _breaker_failure(source: str) -> bool:
+    """Record one cross-query failure; returns True iff this failure OPENED the circuit."""
+    with _breaker_lock:
+        n = _breaker_failures.get(source, 0) + 1
+        if n >= _BREAKER_THRESHOLD:
+            _breaker_open_until[source] = time.monotonic() + _BREAKER_COOLDOWN_S
+            _breaker_failures[source] = 0
+            return True
+        _breaker_failures[source] = n
+        return False
+
+
+def _breaker_reset() -> None:
+    """Test hook: clear circuit-breaker state (module-level, would leak across tests)."""
+    with _breaker_lock:
+        _breaker_failures.clear()
+        _breaker_open_until.clear()
+
+
 def _get_with_retry(client: Any, url: str, params: dict, *, retries: int = 2) -> Any:
     """GET with SHORT exponential backoff on 429 / 5xx / timeout, honoring a Retry-After
     header when present. Raises the last error if all attempts fail. Backoff is kept small
@@ -263,10 +308,17 @@ def search(query: str, k: int = 8) -> list[Paper]:
     per_source = max(k, 15)
     found: list[Paper] = []
     for fn in (_semantic_scholar, _arxiv, _openalex):  # S2 first: best relevance for dedupe
+        src = fn.__name__
+        if not _breaker_allows(src):
+            continue  # circuit open: source was recently throttling/failing — skip quietly
         try:
             found.extend(fn(query, per_source))
+            _breaker_success(src)
         except Exception as exc:  # pragma: no cover - network/parse, defensive
-            print(f"[literature] {fn.__name__} failed: {exc}", file=sys.stderr)
+            opened = _breaker_failure(src)
+            suffix = (f" — circuit OPEN, skipping {src} for {int(_BREAKER_COOLDOWN_S)}s"
+                      if opened else "")
+            print(f"[literature] {src} failed: {exc}{suffix}", file=sys.stderr)
     seen: set[str] = set()
     merged: list[Paper] = []
     for p in found:
