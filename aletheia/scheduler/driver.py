@@ -783,6 +783,62 @@ class ExperimentDriver:
             if stmt and exp_id:
                 await asyncio.to_thread(set_experiment_hypothesis, exp_id, stmt)
 
+    @staticmethod
+    def _writeup_claim_policy(claims: list[dict[str, Any]]) -> dict[str, str]:
+        """Classify ledger claims for WRITE_UP.
+
+        The report is a view over the ledger. Supported moderate/strong non-limitation claims are
+        the only positive findings; supported limitations are required limitations; everything else
+        must be downgraded in prose with its exact status/strength.
+        """
+        rank = {"speculative": 0, "weak": 1, "moderate": 2, "strong": 3}
+        allowed: list[str] = []
+        limitations: list[str] = []
+        restricted: list[str] = []
+        table: list[str] = []
+
+        for c in claims:
+            ctype = str(c.get("claim_type") or "claim")
+            status = str(c.get("status") or "proposed")
+            strength = str(c.get("strength") or "speculative")
+            text = str(c.get("claim_text") or "").strip()
+            prefix = f"[{ctype}] status={status} strength={strength}"
+            row = f"- {prefix}: {text}"
+            if status == "supported" and rank.get(strength, 0) >= 2 and ctype != "limitation":
+                allowed.append(row)
+                tag = "FINDING_ALLOWED"
+            elif ctype == "limitation" and status == "supported":
+                limitations.append(row)
+                tag = "REQUIRED_LIMITATION"
+            else:
+                restricted.append(row)
+                tag = "NOT_FINDING"
+            table.append(f"- {tag} {prefix}: {text}")
+
+        return {
+            "allowed": "\n".join(allowed) or "- (none; no claim reached finding-grade support)",
+            "limitations": "\n".join(limitations) or "- (none recorded)",
+            "restricted": "\n".join(restricted) or "- (none)",
+            "table": "\n".join(table) or "- (no claims recorded)",
+        }
+
+    @staticmethod
+    def _dry_writeup_ledger_text(claim_policy: dict[str, str]) -> str:
+        """Dry-run report paragraph derived from the claim policy, not free-form analysis."""
+        allowed = claim_policy.get("allowed", "")
+        limitations = claim_policy.get("limitations", "")
+        restricted = claim_policy.get("restricted", "")
+        parts: list[str] = []
+        if "(none;" in allowed:
+            parts.append("No claim reached finding-grade support in the claim ledger.")
+        else:
+            parts.append("Finding-grade claims from the ledger: " + allowed.replace("\n", " "))
+        if "(none recorded)" not in limitations:
+            parts.append("Required limitations: " + limitations.replace("\n", " "))
+        if "(none)" not in restricted:
+            parts.append("Claims not eligible as findings: " + restricted.replace("\n", " "))
+        return " ".join(parts)
+
     # --- hypothesis scorecard (gate low-value experiments before spending compute) ---
     _SCORE_DIMS = (
         "novelty", "feasibility", "expected_information_gain", "sota_relevance",
@@ -2806,13 +2862,12 @@ class ExperimentDriver:
                 update_claim, self._claim_ids["metric"],
                 claim_text=f"Under grouped CV, {design.get('model')} attains {hk}={hv}{usfx}.",
             )
-        # the claim table the writer must obey (only supported & ≥moderate claims may
-        # be stated strongly; speculative / unverified / weak ones must be labeled).
+        # the claim table the writer must obey. The ledger is the source of truth: analysis text
+        # can suggest interpretations, but only ledger-supported, sufficiently strong claims can
+        # be written as findings.
         claims = await asyncio.to_thread(list_claims, self.run_id, exp_id)
-        claim_table = "\n".join(
-            f"- [{c['claim_type']}] strength={c['strength']} status={c['status']}: {c['claim_text']}"
-            for c in claims
-        ) or "- (no claims recorded)"
+        claim_policy = self._writeup_claim_policy(claims)
+        claim_table = claim_policy["table"]
         degraded_note = (
             "The headline rests on a DEGRADED (plain-KFold) protocol — do NOT state the grouped-CV "
             "result as a strong/headline generalization claim; describe it as preliminary.\n"
@@ -2861,21 +2916,25 @@ class ExperimentDriver:
             "number. Do NOT write a References section — it is appended automatically.\n"
             "In the Method, state the model that ACTUALLY ran (EXECUTED IMPLEMENTATION below); if it differs "
             "from the requested method, say so plainly — never claim a method that was not executed.\n\n"
-            "CLAIM RULES (obey strictly — the report must not imply more than the evidence): only claims with "
-            "status=supported AND strength in {moderate, strong} may be stated as findings; mark weak claims as "
-            "preliminary, and speculative/unverified claims (e.g. novelty) explicitly as such (e.g. 'we did not "
-            "verify novelty against a structured literature search'). Do not assert SOTA superiority beyond the "
-            "curated KNOWN SOTA string. A claim with status=not_evaluated must be reported as not evaluated, "
-            "never as a finding or a refutation.\n"
+            "CLAIM LEDGER IS AUTHORITATIVE: the prose must be a view over the claim ledger, not over the "
+            "analysis narrative alone. State as research findings ONLY the claims listed under ALLOWED FINDINGS. "
+            "If ALLOWED FINDINGS is empty, explicitly say no claim reached finding-grade support. Claims under "
+            "REQUIRED LIMITATIONS must appear as limitations. Claims under NOT FINDINGS may be mentioned only "
+            "with their ledger status/strength: weak=say preliminary, unverified=say unverified, not_evaluated="
+            "say not evaluated, refuted=say refuted. Never convert a NOT FINDING into a positive result.\n"
             f"{degraded_note}{repro_note}{drift_note}{paradigm_note}"
-            f"CLAIM TABLE:\n{claim_table}\n\n"
+            f"ALLOWED FINDINGS:\n{claim_policy['allowed']}\n\n"
+            f"REQUIRED LIMITATIONS:\n{claim_policy['limitations']}\n\n"
+            f"NOT FINDINGS / MUST DOWNGRADE:\n{claim_policy['restricted']}\n\n"
+            f"FULL CLAIM TABLE:\n{claim_table}\n\n"
             f"HYPOTHESIS: {json.dumps(self.hypothesis)}\n"
             f"PLAN: {json.dumps(plan)}\nDESIGN: {json.dumps(design)}\nMETRICS: {json.dumps(metrics)}\n"
             f"REQUESTED METHOD: {requested or 'n/a'}\nEXECUTED IMPLEMENTATION: {impl or 'n/a'}\n"
             f"EVAL PROTOCOL SUMMARY: {eval_summary}\nKNOWN SOTA: {sota}\n"
-            f"ANALYSIS: {analysis}\nCRITIC VERDICT: {rpanel.consensus_verdict}\n\n"
+            f"ANALYSIS (subordinate to the claim ledger): {analysis}\nCRITIC VERDICT: {rpanel.consensus_verdict}\n\n"
             f"CITABLE REFERENCES (cite inline as [n]):\n{cite_list or '(none retrieved)'}"
         )
+        dry_ledger = self._dry_writeup_ledger_text(claim_policy)
         cite_a = "[1]" if refs else ""
         cite_b = "[2]" if len(refs) > 1 else cite_a
         body = await reason_stage(
@@ -2907,7 +2966,7 @@ class ExperimentDriver:
                 f"MAE={metrics.get('mae_holdout')}, RMSE={metrics.get('rmse_holdout')}. See "
                 f"`figures/parity.png`. Protocol: {eval_summary}\n\n"
                 f"## 5. Discussion & Limitations\n\n"
-                f"{analysis or 'The pipeline ran end-to-end under a leakage-aware protocol.'} Known SOTA: {sota}."
+                f"{dry_ledger} Known SOTA: {sota}."
             ),
         )
         report = body.rstrip() + (("\n\n" + references_md) if references_md else "")
