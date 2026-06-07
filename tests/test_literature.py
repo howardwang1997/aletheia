@@ -188,6 +188,32 @@ def test_circuit_breaker_success_resets_failures(monkeypatch):
     assert calls["arxiv"] == 3
 
 
+def test_degraded_search_result_is_not_cached(monkeypatch):
+    # If a source failed/open-circuited, the merged result is incomplete. Do not cache that weak
+    # result for the process lifetime; after the source recovers, the same query should retry.
+    calls = {"arxiv": 0}
+    broken = {"value": True}
+
+    def arxiv(q, k):
+        calls["arxiv"] += 1
+        if broken["value"]:
+            raise RuntimeError("HTTP 429")
+        return [Paper(title="recovered arxiv", source="arxiv")]
+
+    monkeypatch.setattr(literature, "_arxiv", arxiv)
+    monkeypatch.setattr(literature, "_semantic_scholar", lambda q, k: [Paper(title="s2", source="s2")])
+    monkeypatch.setattr(literature, "_openalex", lambda q, k: [])
+
+    first = search("same query", k=5)
+    assert [p.title for p in first] == ["s2"]
+    assert calls["arxiv"] == 1
+
+    broken["value"] = False
+    second = search("same query", k=5)
+    assert calls["arxiv"] == 2  # retried instead of returning the degraded cached result
+    assert [p.title for p in second] == ["s2", "recovered arxiv"]
+
+
 def test_semantic_scholar_sends_api_key_header(monkeypatch):
     captured = {}
 

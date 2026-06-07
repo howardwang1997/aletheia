@@ -1315,7 +1315,7 @@ class ExperimentDriver:
                 lo, hi = sorted((abs(float(s1)), abs(float(s2))))
                 statistic_stable = hi <= 1e-9 or (lo / hi) >= 1.0 / factor
             payload["demonstration_reproduced"] = (
-                bool(h1) and bool(h2) and statistic_stable is not False
+                bool(h1) and bool(h2) and statistic_stable is True
             )
             payload["demonstration_verdict_stable"] = verdict_stable
             payload["demonstration_statistic_stable"] = statistic_stable
@@ -2248,11 +2248,22 @@ class ExperimentDriver:
         finding is enough to block, but one approval is not enough to verify.
 
         Mutates ``demo_result`` in place (the same dict ``_finalize_claims`` reads)."""
-        if self.dry_run or not getattr(get_settings(), "demonstration_audit_enabled", True):
+        if self.dry_run:
             return None, False
         if not isinstance(demo_result, dict) or not demo_result.get("preregistration"):
             return None, False  # only AI-authored demonstrations carry a pre-registration
         fid = self._claim_ids.get("formulation")
+        if not getattr(get_settings(), "demonstration_audit_enabled", True):
+            # AI-authored demonstration, but audit explicitly disabled: not a refutation, but
+            # also not independently verified. Cap strength the same way as an audit infra error.
+            if fid:
+                await asyncio.to_thread(
+                    attach_claim_evidence, fid, "audit", "disabled",
+                    "independent demonstration audit disabled; strength capped",
+                )
+            await get_bus().publish(make_event("demonstration_audit", run_id=self.run_id, payload={
+                "verdict": "disabled", "gate_passed": None, "auditors": []}))
+            return None, True
         payload = {
             "demonstration_code": str(design.get("demonstration_code", ""))[:20000],
             "test_statistic": demo_result.get("test_statistic"),

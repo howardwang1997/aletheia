@@ -307,14 +307,17 @@ def search(query: str, k: int = 8) -> list[Paper]:
     # over-fetch per source so the reranker has a real pool to choose from
     per_source = max(k, 15)
     found: list[Paper] = []
+    degraded = False
     for fn in (_semantic_scholar, _arxiv, _openalex):  # S2 first: best relevance for dedupe
         src = fn.__name__
         if not _breaker_allows(src):
+            degraded = True
             continue  # circuit open: source was recently throttling/failing — skip quietly
         try:
             found.extend(fn(query, per_source))
             _breaker_success(src)
         except Exception as exc:  # pragma: no cover - network/parse, defensive
+            degraded = True
             opened = _breaker_failure(src)
             suffix = (f" — circuit OPEN, skipping {src} for {int(_BREAKER_COOLDOWN_S)}s"
                       if opened else "")
@@ -330,9 +333,10 @@ def search(query: str, k: int = 8) -> list[Paper]:
     from aletheia.research.rerank import rerank_papers
 
     out = rerank_papers(query, merged, top_k=k)
-    with _search_cache_lock:
-        if len(_search_cache) < 1024:  # simple bound; a survey is far below this
-            _search_cache[ckey] = list(out)
+    if not degraded:
+        with _search_cache_lock:
+            if len(_search_cache) < 1024:  # simple bound; a survey is far below this
+                _search_cache[ckey] = list(out)
     return out
 
 

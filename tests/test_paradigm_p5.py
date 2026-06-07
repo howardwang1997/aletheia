@@ -15,6 +15,7 @@ import json
 from types import SimpleNamespace
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from aletheia.coder.demonstration import CANNED_DEMO, CANNED_PREREGISTRATION, extract_preregistration
@@ -25,10 +26,20 @@ from aletheia.coder.sandbox import (
     smoke_test_demonstration,
 )
 from aletheia.domains.base import DomainPlugin
-from aletheia.domains.registry import get_domain_plugin
+from aletheia.domains.molecules.plugin import MoleculePropertyPlugin
 from aletheia.scheduler.driver import ExperimentDriver
 
 ESOL = {"source": "benchmark", "ref": "esol"}
+_TOY_MOL_SPEC = {"source": "toy", "smiles_column": "smiles", "target_column": "y"}
+_TOY_SMILES = [
+    "C", "CC", "CCC", "CCCC", "CCCCC", "CCCCCC", "CCCCCCC", "CCCCCCCC",
+    "CO", "CCO", "CCCO", "CCCCO", "CCN", "CCCN", "CCCCN", "CCCl",
+    "CCBr", "CCI", "CCl", "CBr", "CI", "CC(=O)O", "CCC(=O)O", "CCOC",
+    "c1ccccc1", "Cc1ccccc1", "Oc1ccccc1", "Nc1ccccc1", "Clc1ccccc1", "Brc1ccccc1",
+    "c1ccncc1", "c1ccoc1", "c1ccsc1", "CCS", "CCCS", "CCF",
+    "CC(C)O", "CC(C)N", "CC(C)Cl", "CC(C)Br", "CC(C)C", "CC(C)(C)O",
+    "C1CCCCC1", "CC1CCCCC1", "OC1CCCCC1", "NC1CCCCC1", "ClC1CCCCC1", "BrC1CCCCC1",
+]
 
 # --- fake AI-authored demonstrations (the AI returns only test/control statistics) ---------
 _HOLDS = (
@@ -72,6 +83,22 @@ def _spec(code, prereg=_PREREG, **extra):
     if prereg is not None:
         s["preregistration"] = prereg
     return s
+
+
+@pytest.fixture
+def molecules_plugin(monkeypatch):
+    """Offline molecules plugin for P5 harness tests.
+
+    These tests assert the generic AI-authored demonstration contract, not MoleculeNet download
+    availability. A previous ESOL-backed version failed under transient SSL/network errors and
+    returned ``holds=None`` before exercising the harness rule. Keep real ESOL for e2e scripts;
+    unit tests use this local valid-SMILES frame.
+    """
+    plug = MoleculePropertyPlugin()
+    df = pd.DataFrame({"smiles": _TOY_SMILES, "y": np.linspace(-2.0, 2.0, len(_TOY_SMILES))})
+    df.attrs["data_spec"] = _TOY_MOL_SPEC
+    monkeypatch.setattr(plug, "load_data", lambda data_spec: df)
+    return plug
 
 
 # --- the static gate + smoke test honor the demonstration contract -------------------------
@@ -126,53 +153,46 @@ def test_runner_returns_validated_result_on_synthetic():
     assert run_authored_demonstration(raises, X, y, g, {"random_state": 0, "preregistration": {}}) is None
 
 
-# --- integration on REAL ESOL via the molecules plugin -------------------------------------
-def test_ai_demo_holds_when_test_triggers_and_control_silent():
-    p = get_domain_plugin("molecules")
-    d = p.run_demonstration(_spec(_HOLDS), ESOL, "/tmp/p5_holds")
+# --- integration through the molecules plugin (offline valid-SMILES frame) -----------------
+def test_ai_demo_holds_when_test_triggers_and_control_silent(molecules_plugin):
+    d = molecules_plugin.run_demonstration(_spec(_HOLDS), _TOY_MOL_SPEC, "/tmp/p5_holds")
     assert d["holds"] is True and d["form"]
     assert d["capability"] == "ai_authored_demonstration" and d["reproduce_factor"] == 2.0
     assert d["statistic"] == 5.0
 
 
-def test_ai_demo_refuted_when_effect_is_an_artifact_on_control():
+def test_ai_demo_refuted_when_effect_is_an_artifact_on_control(molecules_plugin):
     # EVIDENCE-STRENGTH (Codex #4): the 'effect' also appears on the control -> NOT discriminating.
-    p = get_domain_plugin("molecules")
-    d = p.run_demonstration(_spec(_CONTROL_FIRES), ESOL, "/tmp/p5_ctrl")
+    d = molecules_plugin.run_demonstration(_spec(_CONTROL_FIRES), _TOY_MOL_SPEC, "/tmp/p5_ctrl")
     assert d["holds"] is False and d["control_silent"] is False
 
 
-def test_ai_demo_refuted_on_degenerate_control_probe():
+def test_ai_demo_refuted_on_degenerate_control_probe(molecules_plugin):
     # EVIDENCE-STRENGTH: a sham control (n_control below the floor) cannot ground the claim.
-    p = get_domain_plugin("molecules")
-    d = p.run_demonstration(_spec(_DEGENERATE), ESOL, "/tmp/p5_degen")
+    d = molecules_plugin.run_demonstration(_spec(_DEGENERATE), _TOY_MOL_SPEC, "/tmp/p5_degen")
     assert d["holds"] is False and any("control" in f for f in d["probes"]["flags"])
 
 
-def test_ai_demo_fails_closed_on_code_gate_reject():
-    p = get_domain_plugin("molecules")
-    d = p.run_demonstration(_spec(_BAD_IMPORT), ESOL, "/tmp/p5_badimp")
+def test_ai_demo_fails_closed_on_code_gate_reject(molecules_plugin):
+    d = molecules_plugin.run_demonstration(_spec(_BAD_IMPORT), _TOY_MOL_SPEC, "/tmp/p5_badimp")
     assert d["holds"] is False and "code gate" in d["detail"]  # no crash
 
 
-def test_ai_demo_not_evaluated_without_preregistration():
-    p = get_domain_plugin("molecules")
-    d = p.run_demonstration(_spec(_HOLDS, prereg=None), ESOL, "/tmp/p5_noprereg")
+def test_ai_demo_not_evaluated_without_preregistration(molecules_plugin):
+    d = molecules_plugin.run_demonstration(_spec(_HOLDS, prereg=None), _TOY_MOL_SPEC, "/tmp/p5_noprereg")
     assert d is None  # no usable rule -> not_evaluated (fail closed)
 
 
-def test_ai_demo_ignores_ai_asserted_holds():
+def test_ai_demo_ignores_ai_asserted_holds(molecules_plugin):
     # the AI cannot grade its own homework: an AI-returned holds=True is ignored; the harness
     # derives holds from the rule (test_statistic 0 fails supported_if >= 1).
-    p = get_domain_plugin("molecules")
-    d = p.run_demonstration(_spec(_CHEAT), ESOL, "/tmp/p5_cheat")
+    d = molecules_plugin.run_demonstration(_spec(_CHEAT), _TOY_MOL_SPEC, "/tmp/p5_cheat")
     assert d["holds"] is False
 
 
-def test_ai_demo_is_seed_perturbed_for_real_reproduction():
-    p = get_domain_plugin("molecules")
-    a = p.run_demonstration(_spec(_SEEDED, random_state=1), ESOL, "/tmp/p5_s1")
-    b = p.run_demonstration(_spec(_SEEDED, random_state=2), ESOL, "/tmp/p5_s2")
+def test_ai_demo_is_seed_perturbed_for_real_reproduction(molecules_plugin):
+    a = molecules_plugin.run_demonstration(_spec(_SEEDED, random_state=1), _TOY_MOL_SPEC, "/tmp/p5_s1")
+    b = molecules_plugin.run_demonstration(_spec(_SEEDED, random_state=2), _TOY_MOL_SPEC, "/tmp/p5_s2")
     assert a["statistic"] != b["statistic"]  # the random-state genuinely perturbs the compute
 
 
@@ -250,6 +270,23 @@ def test_audit_skipped_for_non_ai_demonstration():
     # a registered (non-AI) demonstration carries no preregistration -> no audit
     passed, err = asyncio.run(d._audit_demonstration({}, {"holds": True, "statistic": 1.6}))
     assert passed is None and err is False
+
+
+def test_audit_disabled_for_ai_authored_caps_without_refuting(monkeypatch):
+    from aletheia.config import get_settings
+
+    s = get_settings()
+    saved = s.demonstration_audit_enabled
+    s.demonstration_audit_enabled = False
+    try:
+        d = ExperimentDriver("rid-audit-disabled", dry_run=False)
+        d._claim_ids = {}
+        demo = {"holds": True, "preregistration": _PREREG, "test_statistic": 5.0, "control_statistic": 0.0}
+        passed, err = asyncio.run(d._audit_demonstration({"demonstration_code": _HOLDS}, demo))
+        assert passed is None and err is True
+        assert demo["holds"] is True and "audit_refuted" not in demo
+    finally:
+        s.demonstration_audit_enabled = saved
 
 
 # --- audit vendor floor: one approval is not verification; one rejection still blocks --------
@@ -392,6 +429,19 @@ def test_repro_strict_gate_requires_holds_and_stable_statistic(monkeypatch):
     assert swung["demonstration_reproduced"] is False  # statistic instability blocks `strong`
     assert swung["demonstration_verdict_stable"] is True
     assert swung["demonstration_statistic_stable"] is False
+
+
+def test_repro_missing_statistic_does_not_count_as_reproduced(monkeypatch):
+    # Missing comparable statistics means statistic stability was NOT evaluated. Even if the
+    # qualitative verdict held twice, this must not satisfy the strict strong-claim gate.
+    p = _repro_driver(
+        monkeypatch,
+        {"holds": True, "statistic": None, "reproduce_factor": 2.0},
+        {"holds": True, "statistic": 1.5},
+    )
+    assert p["demonstration_verdict_stable"] is True
+    assert p["demonstration_statistic_stable"] is None
+    assert p["demonstration_reproduced"] is False
 
 
 # --- claim strength: an audit failure caps the formulation claim at weak -------------------
