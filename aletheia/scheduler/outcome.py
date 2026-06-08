@@ -29,12 +29,14 @@ REASON_AUDIT_REFUTED = "audit_refuted"        # an independent cross-vendor audi
 REASON_SCOPE_OVERCLAIM = "scope_overclaim"    # held, but the broader claim outran the demonstration
 REASON_CONFOUND = "confound"                  # a leakage/degeneracy probe flagged the statistic
 REASON_INFRA_DEGRADED = "infra_degraded"      # didn't run / wasn't independently verified
+REASON_AUTHORING_FAILED = "authoring_failed"  # paradigm round: AI could not author a committable demo
 REASON_NO_DEMONSTRATION = "no_demonstration"  # non-paradigm round (no AI-authored demonstration)
 
 REASONS = (
     REASON_GENERALIZED, REASON_DID_NOT_GENERALIZE, REASON_THRESHOLD_TOO_STRONG,
     REASON_CONTROL_NOT_SILENT, REASON_SAMPLE_STARVED, REASON_AUDIT_REFUTED,
-    REASON_SCOPE_OVERCLAIM, REASON_CONFOUND, REASON_INFRA_DEGRADED, REASON_NO_DEMONSTRATION,
+    REASON_SCOPE_OVERCLAIM, REASON_CONFOUND, REASON_INFRA_DEGRADED,
+    REASON_AUTHORING_FAILED, REASON_NO_DEMONSTRATION,
 )
 
 # Reasons where re-running the SAME hypothesis is pointless — the effect itself was not there

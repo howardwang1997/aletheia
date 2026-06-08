@@ -1459,15 +1459,12 @@ class ExperimentDriver:
         info = result.get("info") or {}
         kinds = {a.get("kind") for a in (result.get("artifacts") or [])}
         # a PARADIGM run is verifiable through its discriminating DEMONSTRATION, not a
-        # fitted model — gate on the demonstration; a failed/timed-out performance eval is
-        # a limitation (recorded in write-up), NOT a blocker.
+        # fitted model — a failed/timed-out performance eval is a limitation (recorded in
+        # write-up), NOT a blocker. A MISSING demonstration is no longer hard-paused here:
+        # K2 S3.5 turns it into a bounded campaign PIVOT (an informative negative), decided
+        # in the campaign loop — _run_experiment surfaces it as an "undemonstrated" outcome.
         if self._contribution_type() == "paradigm":
-            if not info.get("demonstration"):
-                await self._block_run(
-                    exp_id, "paradigm run produced no discriminating demonstration; "
-                    "pausing before analysis",
-                )
-                return False
+            pass  # skip the fitted-artifact requirement; the loop handles a missing demonstration
         else:
             required = set(self.profile.required_artifacts) if self.profile else {"eval", "model"}
             missing = required - kinds
@@ -1866,10 +1863,12 @@ class ExperimentDriver:
         # hypothesis, runs the full experiment, then a go/no-go step decides whether
         # the next experiment is worth running (and what it should test).
         max_exps = max(1, get_settings().max_experiments_per_campaign)
+        max_pivots = max(0, int(get_settings().campaign_max_pivots))
         outcomes: list[dict[str, Any]] = []
         cur_exp_id = exp_id
         next_hint: dict[str, Any] | None = None
         round_idx = 1
+        pivots_used = 0  # K2 S3.5: undemonstrated rounds that triggered a bounded pivot
         while True:
             # per-round guard isolation so design/direction revision counters don't
             # bleed across experiments
@@ -1881,9 +1880,9 @@ class ExperimentDriver:
                 make_event("experiment", run_id=self.run_id,
                            payload={"round": round_idx, "exp_id": cur_exp_id, "of": max_exps})
             )
-            # IDEATE this round's hypothesis: round 1 from the survey; later rounds
-            # adopt the go/no-go step's proposed next hypothesis.
-            if round_idx == 1:
+            # IDEATE the first hypothesis from the survey; every later attempt — a campaign
+            # CONTINUATION or a bounded PIVOT (K2 S3.5) — adopts the go/no-go step's proposal.
+            if next_hint is None:
                 await self._ideate(plan, cur_exp_id)
             else:
                 await self._adopt_hypothesis(next_hint or {}, cur_exp_id)
@@ -1901,6 +1900,38 @@ class ExperimentDriver:
                 return  # a gate rejected past the loop limit -> paused + escalated
             outcomes.append(outcome)
 
+            # K2 S3.5: a PARADIGM round that produced no demonstration is an informative negative.
+            # PIVOT to a different hypothesis (bounded by campaign_max_pivots) instead of aborting;
+            # fail CLOSED (pause) only when the pivot budget is spent or the planner finds no viable
+            # alternative. A pivot does NOT consume the max_exps budget (round_idx is unchanged).
+            if outcome.get("undemonstrated"):
+                if pivots_used >= max_pivots:
+                    await self._block_run(
+                        cur_exp_id,
+                        f"paradigm run produced no discriminating demonstration after "
+                        f"{pivots_used} pivot(s); pausing before analysis",
+                    )
+                    return
+                decision = await self._campaign_step(plan, outcomes, round_idx, max_exps)
+                if not decision.get("continue"):
+                    await self._block_run(
+                        cur_exp_id,
+                        "paradigm run produced no discriminating demonstration and the campaign "
+                        "found no viable pivot; pausing before analysis",
+                    )
+                    return
+                pivots_used += 1
+                next_hint = decision.get("next_hypothesis") or {}
+                cur_exp_id = await asyncio.to_thread(
+                    create_experiment, self.run_id, plan, parent_experiment_id=cur_exp_id
+                )
+                await get_bus().publish(
+                    make_event("campaign", run_id=self.run_id, payload={
+                        "decision": "pivot", "pivots_used": pivots_used, "max_pivots": max_pivots,
+                        "rationale": decision.get("rationale", "")})
+                )
+                continue  # re-attempt at the same round_idx with a different hypothesis
+
             if round_idx >= max_exps:
                 break
             decision = await self._campaign_step(plan, outcomes, round_idx, max_exps)
@@ -1916,17 +1947,21 @@ class ExperimentDriver:
             )
             round_idx += 1
 
-        # campaign-level synthesis across the experiments (only when >1 ran)
-        if len(outcomes) > 1:
-            await self._campaign_synthesis(plan, outcomes, exp_id)
+        # synthesis / archive consider only DEMONSTRATED rounds — an undemonstrated pivot carries no
+        # metrics and finalized no claims, so it must not drive the run-level verdict or synthesis.
+        demonstrated = [o for o in outcomes if not o.get("undemonstrated")]
+
+        # campaign-level synthesis across the experiments (only when >1 demonstrated)
+        if len(demonstrated) > 1:
+            await self._campaign_synthesis(plan, demonstrated, exp_id)
 
         # ARCHIVE -------------------------------------------------------------
         # A run whose concluding experiment's results gate REJECTED is distinguished
         # from a clean completion: it ran to the end and is archived, but peer review
         # did not endorse the result. The claims already carry the refutation; this
         # makes the run-level outcome legible too.
-        last_exp_id = outcomes[-1]["exp_id"] if outcomes else cur_exp_id
-        results_rejected = bool(outcomes) and outcomes[-1].get("verdict") == "reject"
+        last_exp_id = demonstrated[-1]["exp_id"] if demonstrated else cur_exp_id
+        results_rejected = bool(demonstrated) and demonstrated[-1].get("verdict") == "reject"
         final_status = "results_rejected" if results_rejected else "completed"
         await record_transition(self.run_id, last_exp_id, "write_up", "archive", "campaign complete")
         await asyncio.to_thread(set_run_status, self.run_id, final_status)
@@ -1937,14 +1972,15 @@ class ExperimentDriver:
                 payload={
                     "status": final_status,
                     "results_gate": "rejected" if results_rejected else "passed",
-                    "experiments": len(outcomes),
-                    "metrics": outcomes[-1].get("metrics") if outcomes else None,
+                    "experiments": len(demonstrated),
+                    "pivots": pivots_used,
+                    "metrics": demonstrated[-1].get("metrics") if demonstrated else None,
                 },
             )
         )
         detail = (
-            f"campaign complete ({len(outcomes)} experiment(s)) — results rejected by peer review"
-            if results_rejected else f"campaign complete ({len(outcomes)} experiment(s))"
+            f"campaign complete ({len(demonstrated)} experiment(s)) — results rejected by peer review"
+            if results_rejected else f"campaign complete ({len(demonstrated)} experiment(s))"
         )
         await self._status("archived", detail)
 
@@ -1998,6 +2034,16 @@ class ExperimentDriver:
         # (KFold-fallback) headline is surfaced, not hidden.
         if not await self._post_execution_guards(result, exp_id):
             return None
+
+        # 3b') K2 S3.5: a PARADIGM round that produced NO discriminating demonstration (e.g. the
+        # AI could not author a threshold consistent with its own exploration — seal #5 doom-to-
+        # zero) is an informative negative, not a dead end. Surface it as an "undemonstrated"
+        # outcome so the campaign loop can PIVOT to a different hypothesis (bounded) rather than
+        # abort. The round is honestly NOT evaluated (no claims finalized, no metrics) — the spine
+        # is unchanged; only the response to it (pivot vs hard-pause) moved up to the loop.
+        if (not self.dry_run and self._contribution_type() == "paradigm"
+                and not (result.get("info") or {}).get("demonstration")):
+            return await self._undemonstrated_outcome(round_idx, exp_id)
 
         # plan↔execution drift: did the executed model match the family the hypothesis
         # names? If not, the hypothesis mechanism was never instantiated (so its claim
@@ -2140,6 +2186,34 @@ class ExperimentDriver:
             "narrowing_hint": demo_outcome["narrowing_hint"],
             "recoverable": demo_outcome["recoverable"],
             "outcome_detail": demo_outcome["detail"],
+        }
+
+    async def _undemonstrated_outcome(self, round_idx: int, exp_id: str | None) -> dict[str, Any]:
+        """K2 S3.5: build the campaign outcome for a paradigm round that produced no committable
+        demonstration. Carries reason=authoring_failed + a PIVOT hint so the campaign loop steers
+        the next attempt to a different effect/statistic/question. ``undemonstrated`` marks it so
+        the loop pivots (bounded) rather than treating it as a normal completed round, and so it is
+        excluded from the campaign synthesis / archive (it has no metrics, no finalized claims)."""
+        hint = (
+            "the AI could not author a demonstration whose pre-registered threshold was consistent "
+            "with its OWN exploration (e.g. the explore-estimated effect was ~0, so any positive "
+            "threshold is doom-to-zero, or the authored code failed the gate twice). Do NOT re-tune "
+            "the same threshold — PIVOT: choose a different effect/statistic the exploration "
+            "actually reveals, or a different open question."
+        )
+        await get_bus().publish(make_event("campaign_reason", run_id=self.run_id, payload={
+            "round": round_idx, "exp_id": exp_id, "reason": "authoring_failed",
+            "recoverable": True, "detail": "paradigm round produced no discriminating demonstration"}))
+        return {
+            "round": round_idx, "exp_id": exp_id, "undemonstrated": True,
+            "model": None, "metrics": {}, "headline_metric": (self.profile.headline_metric if self.profile else "mae"),
+            "headline": None, "units": self.profile.units if self.profile else "",
+            "analysis": "", "verdict": "blocked",
+            "hypothesis": str(self.hypothesis.get("statement", "")).strip(),
+            "experiment_type": str(self.hypothesis.get("experiment_type") or ("baseline" if round_idx == 1 else "")),
+            "open_question": str(self.hypothesis.get("open_question") or ""),
+            "reason": "authoring_failed", "narrowing_hint": hint,
+            "recoverable": True, "outcome_detail": "no discriminating demonstration produced",
         }
 
     async def _adopt_hypothesis(self, hypo: dict[str, Any], exp_id: str | None) -> None:

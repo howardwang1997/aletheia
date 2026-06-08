@@ -242,7 +242,10 @@ def test_paradigm_guard_passes_on_demonstration_without_model():
     assert asyncio.run(d._post_execution_guards(result, "exp1")) is True
 
 
-def test_paradigm_guard_blocks_without_demonstration():
+def test_paradigm_guard_does_not_block_without_demonstration():
+    # K2 S3.5: a missing demonstration is no longer hard-paused in the guard — guards pass
+    # (paradigm is verified by its demonstration, not artifacts), and the campaign loop turns
+    # the missing demonstration into a bounded PIVOT / fail-closed pause instead.
     from aletheia.db import create_all
     from aletheia.memory.service import create_run
 
@@ -253,7 +256,7 @@ def test_paradigm_guard_blocks_without_demonstration():
     d.hypothesis = {"contribution_type": "paradigm",
                     "demonstration": {"form": "x", "claim": "c"}}
     result = {"metrics": {}, "artifacts": [], "info": {}}  # demonstration never computed
-    assert asyncio.run(d._post_execution_guards(result, None)) is False
+    assert asyncio.run(d._post_execution_guards(result, None)) is True
 
 
 def test_capability_menu_lists_registered_capabilities():

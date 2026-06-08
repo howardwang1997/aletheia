@@ -181,6 +181,10 @@ class Settings(BaseSettings):
     wall_clock_hours: float = 24.0
     est_stage_cost_usd: float = 0.10  # estimated cost charged per Opus reasoning stage
     max_experiments_per_campaign: int = 3  # one Run -> up to N linked experiments (go/no-go decides)
+    # K2 S3.5: a paradigm round that produces NO demonstration (e.g. the AI could not author a
+    # threshold consistent with its own exploration) is an informative negative — the campaign may
+    # PIVOT to a different hypothesis this many times before failing closed (pausing the run).
+    campaign_max_pivots: int = 2
 
     # --- hypothesis scorecard (gate low-value experiments before spending compute) ---
     # scores are 0..1; a hypothesis is blocked if it scores below these on the two

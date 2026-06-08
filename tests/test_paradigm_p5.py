@@ -790,3 +790,44 @@ def test_campaign_no_demonstration_round_omits_directive(monkeypatch):
     prompt, _ = _campaign_prompt(monkeypatch, [out])
     assert "WHAT THE LAST ROUND LEARNED" not in prompt
     assert "WHY [" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# K2 S3.5 — a paradigm round that produced NO demonstration is an informative negative:
+# the campaign PIVOTS (bounded) instead of hard-pausing. Here we cover the undemonstrated
+# outcome's shape + that its reason drives a PIVOT directive in the next-round planner.
+# (The full loop pivot-vs-pause wiring is exercised by the live e2e.)
+# ---------------------------------------------------------------------------
+
+def test_undemonstrated_outcome_shape(monkeypatch):
+    import aletheia.scheduler.driver as drv
+    from aletheia.db import create_all
+    from aletheia.domains.registry import get_domain_plugin
+    from aletheia.memory.service import create_run, finalize_plan
+
+    create_all()
+    run_id = create_run("k2 s3.5 test", domain="materials", status="planned")
+    finalize_plan(run_id, {"objective": "x", "domain": "materials"})
+    d = drv.ExperimentDriver(run_id, dry_run=False)
+    d.profile = get_domain_plugin("materials").profile()
+    d.hypothesis = {"statement": "an effect that the exploration found to be ~0", "experiment_type": "baseline"}
+    out = asyncio.run(d._undemonstrated_outcome(round_idx=1, exp_id="exp1"))
+    assert out["undemonstrated"] is True
+    assert out["reason"] == "authoring_failed"
+    assert out["recoverable"] is True
+    assert out["verdict"] == "blocked"        # never counts as a peer-review reject
+    assert out["metrics"] == {}               # no metrics -> excluded from synthesis/archive
+    assert "pivot" in out["narrowing_hint"].lower()
+
+
+def test_authoring_failed_reason_drives_pivot_directive(monkeypatch):
+    # the undemonstrated round's reason must reach the planner as a PIVOT instruction.
+    out = _outcome(1, "authoring_failed",
+                   "the AI could not author a demonstration consistent with its own exploration; "
+                   "PIVOT: choose a different effect/statistic the exploration actually reveals.",
+                   recoverable=True)
+    out["undemonstrated"] = True
+    prompt, _ = _campaign_prompt(monkeypatch, [out])
+    assert "WHY [authoring_failed]" in prompt
+    assert "WHAT THE LAST ROUND LEARNED" in prompt
+    assert "pivot" in prompt.lower()
