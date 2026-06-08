@@ -58,6 +58,10 @@ REQUIRED_FUNCTION = "build_pipeline"
 # discriminating computation, not a model. Same allowlist/forbidden sets — it needs only
 # numpy/scipy/sklearn/math/statistics, and is denied io/net/process exactly as solutions are.
 DEMO_REQUIRED_FUNCTION = "compute_demonstration"
+# The AI-authored EXPLORATION probe (K1, the explore->confirm seal): the AI looks at a DISJOINT
+# exploration subset and returns DESCRIPTIVE observations only (never a verdict) so it can calibrate
+# the pre-registration before the harness confirms on held-out data. Same allowlist/forbidden sets.
+EXPLORE_REQUIRED_FUNCTION = "explore_demonstration"
 
 
 def _import_root(name: str) -> str:

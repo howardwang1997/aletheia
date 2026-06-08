@@ -112,3 +112,26 @@ def test_materials_ai_demo_ignores_ai_asserted_holds(materials_plugin, tmp_path)
     # AI-returned holds=True is ignored — the AI cannot grade its own homework on materials either.
     d = materials_plugin.run_demonstration(_spec(_CHEAT), _DATA_SPEC, str(tmp_path / "cheat"))
     assert d["holds"] is False
+
+
+# --- K1 explore->confirm seal on the materials (X, y, groups) shape -------------------------
+_LEN_STAT = (  # returns the row count it received -> proves the compute ran on the CONFIRM subset
+    "def compute_demonstration(X, y, groups, meta):\n"
+    "    n = len(y)\n"
+    "    return {'test_statistic': float(n), 'control_statistic': 0.01, 'components': {},\n"
+    "            'detail': 'rows seen', 'n_test': n, 'n_control': n}\n"
+)
+
+
+def test_materials_confirm_only_compute_runs_on_the_confirm_subset(materials_plugin, tmp_path):
+    d = materials_plugin.run_demonstration(
+        _spec(_LEN_STAT, confirm_index=list(range(30)), split_meta={"index_hash": "abc"}),
+        _DATA_SPEC, str(tmp_path / "confirm"))
+    assert d["exploration_applied"] is True
+    assert d["statistic"] == 30.0 and d["n_confirm"] == 30 and d["holds"] is True
+
+
+def test_materials_confirm_index_out_of_range_is_seal_mismatch(materials_plugin, tmp_path):
+    d = materials_plugin.run_demonstration(
+        _spec(_LEN_STAT, confirm_index=[0, 1, 999]), _DATA_SPEC, str(tmp_path / "mismatch"))
+    assert d["holds"] is None and "seal mismatch" in d["detail"]

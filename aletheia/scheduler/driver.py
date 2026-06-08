@@ -14,14 +14,19 @@ import re
 from typing import Any
 
 from aletheia.coder.demonstration import (
+    CANNED_EXPLORATION,
     CANNED_PREREGISTRATION,
     CANNED_DEMO,
     DEMO_SYSTEM,
+    EXPLORE_SYSTEM,
     demonstration_prompt,
+    exploration_prompt,
     extract_preregistration,
 )
+from aletheia.coder.demonstration_runner import run_authored_exploration
 from aletheia.coder.sandbox import (
     DEMO_REQUIRED_FUNCTION,
+    EXPLORE_REQUIRED_FUNCTION,
     check_code,
     smoke_test_demonstration,
     smoke_test_solution,
@@ -176,6 +181,7 @@ class ExperimentDriver:
         cross_vendor: bool = True,
         audit_passed: bool | None = None,
         audit_error: bool = False,
+        exploration_missing: bool = False,
     ) -> str:
         """Deterministic, harness-owned claim strength — never the LLM's self-rating.
         Keeps a report from implying stronger evidence than the ledger holds.
@@ -201,7 +207,11 @@ class ExperimentDriver:
         refuted/failed the demonstration (caps to `weak`); ``audit_error is True`` means the
         audit could NOT run (infrastructure error) so there is no independent verification —
         also caps to `weak`, but this is missing evidence, NOT a refutation, and must not be
-        reported as one (the same not_evaluated/refuted distinction used elsewhere)."""
+        reported as one (the same not_evaluated/refuted distinction used elsewhere).
+
+        ``exploration_missing`` (K1): the AI-authored demonstration ran WITHOUT the explore->confirm
+        seal (blind fallback) — there is no verification its threshold wasn't fit to noise, so the
+        formulation claim is capped at `moderate` (never `strong`), even when held + reproduced."""
 
         def _s() -> str:
             if kind == "metric":
@@ -229,9 +239,12 @@ class ExperimentDriver:
                     return "weak"  # didn't hold, gate failed, OR the independent audit refuted it
                 if audit_error:
                     return "weak"  # audit could NOT run -> no independent verification (not a refutation)
-                if reproduced and gate_verdict == "approve":
-                    return "strong"  # held + clean approve + STABLE across an independent re-run
-                return "moderate"  # held + approved (approve_with_changes, or not reproduced)
+                if reproduced and gate_verdict == "approve" and not exploration_missing:
+                    return "strong"  # held + clean approve + STABLE re-run + explore->confirm seal
+                # K1: a held+approved+reproduced demo whose explore->confirm seal was NOT applied
+                # (blind fallback) cannot reach `strong` — there is no verification the threshold
+                # wasn't fit to noise; it is capped at `moderate`.
+                return "moderate"  # held + approved (approve_with_changes / not reproduced / no seal)
             return "weak"
 
         s = _s()
@@ -1074,41 +1087,101 @@ class ExperimentDriver:
             registered = {k: v for k, v in caps.items() if k != plugin.AI_AUTHORED_CAPABILITY_ID}
             if plugin._select_capability(demo, registered) is not None:
                 return  # a registered capability fits; don't AI-author
-        await self._status("coding", "authoring the discriminating demonstration")
+        feature_desc = self.profile.feature_desc if self.profile else "a dense numeric feature matrix"
         min_n = int(getattr(get_settings(), "demonstration_min_samples", 20))
-        text = await run_worker(
-            self.run_id, "coder",
-            demonstration_prompt(
-                self.hypothesis, demo, data_spec,
-                feature_desc=self.profile.feature_desc if self.profile
-                else "a dense numeric feature matrix",
-                min_samples=min_n,
-            ),
-            system=DEMO_SYSTEM, dry_run=self.dry_run,
-            dry_value="```python\n" + CANNED_DEMO + "```\n```json\n"
-            + json.dumps(CANNED_PREREGISTRATION) + "\n```",
+        rs = int(design.get("random_state", 42))
+
+        # K1 EXPLORE phase (the explore->confirm seal): author + run an exploration probe on a
+        # DISJOINT explore subset so the threshold is CALIBRATED to observed data, then have the
+        # harness CONFIRM on a held-out subset the authoring never saw. Best-effort: any failure
+        # (disabled, dry-run, infeasible split, worker/sandbox error) -> blind authoring, with the
+        # formulation claim capped below `strong` (no seal = no verification it isn't fit to noise).
+        exploration_obs: dict | None = None
+        confirm_index: list[int] | None = None
+        split_meta: dict | None = None
+        if (getattr(get_settings(), "demonstration_explore_confirm_enabled", True)
+                and plugin is not None and not self.dry_run):
+            exploration_obs, confirm_index, split_meta = await self._explore_for_demonstration(
+                plugin, demo, data_spec, feature_desc, rs, exp_id
+            )
+
+        await self._status("coding", "authoring the discriminating demonstration")
+        base_prompt = demonstration_prompt(
+            self.hypothesis, demo, data_spec,
+            feature_desc=feature_desc, min_samples=min_n, exploration=exploration_obs,
         )
-        if is_degraded(text):
-            return  # worker unavailable -> fall back to registered capability
-        code = extract_code(text)
-        prereg = extract_preregistration(text)
-        ok, reasons = check_code(code, required_function=DEMO_REQUIRED_FUNCTION)
-        if ok:
-            smoke_ok, smoke_err = await asyncio.to_thread(smoke_test_demonstration, code)
-            if not smoke_ok:
-                ok, reasons = False, [*reasons, f"import/run failed: {smoke_err}"]
-        valid_prereg = self._valid_preregistration(prereg)
-        accepted = bool(ok and valid_prereg)
+        retry_note = ""
+        code, prereg = "", None
+        ok, valid_prereg, consistent = False, False, True
+        reasons: list[str] = []
+        consistency_reason = ""
+        accepted = False
+        for attempt in range(2):
+            text = await run_worker(
+                self.run_id, "coder", base_prompt + retry_note,
+                system=DEMO_SYSTEM, dry_run=self.dry_run,
+                dry_value="```python\n" + CANNED_DEMO + "```\n```json\n"
+                + json.dumps(CANNED_PREREGISTRATION) + "\n```",
+            )
+            if is_degraded(text):
+                return  # worker unavailable -> fall back to registered capability
+            code = extract_code(text)
+            prereg = extract_preregistration(text)
+            ok, reasons = check_code(code, required_function=DEMO_REQUIRED_FUNCTION)
+            if ok:
+                smoke_ok, smoke_err = await asyncio.to_thread(smoke_test_demonstration, code)
+                if not smoke_ok:
+                    ok, reasons = False, [*reasons, f"import/run failed: {smoke_err}"]
+            valid_prereg = self._valid_preregistration(prereg)
+            # K1 seal #5 (DETERMINISTIC, pre-commit): a threshold inconsistent with what the AI
+            # observed on the explore subset (doom-to-zero / control-not-silent / trivially-easy)
+            # is NOT committed.
+            consistent, consistency_reason = True, ""
+            if exploration_obs is not None and valid_prereg:
+                consistent, consistency_reason = self._prereg_consistent_with_exploration(
+                    prereg, exploration_obs)
+                if not consistent:
+                    reasons = [*reasons, consistency_reason]
+            accepted = bool(ok and valid_prereg and consistent)
+            # K1 v1.1: ONE bounded recalibration retry, ONLY for a consistency rejection — the
+            # seal's reason is specific and actionable ("your threshold exceeds your own explore
+            # estimate"), and re-authoring happens PRE-COMMIT against the same explore-only
+            # observations, so the seal is not weakened. Any other failure (code gate, smoke,
+            # malformed prereg) keeps the single-shot fallback. Seen live (run b1993c7f): the first
+            # sealed run authored supported_if>=0.55 against its own explore estimate 0.493 and
+            # died with no demonstration at all — one informed retry is the fix.
+            if accepted or attempt == 1 or not (ok and valid_prereg and not consistent):
+                break
+            await get_bus().publish(
+                make_event("demonstration_code", run_id=self.run_id, payload={
+                    "accepted": False, "lines": code.count("\n") + 1, "reasons": reasons[:5],
+                    "preregistration_valid": valid_prereg,
+                    "exploration_applied": confirm_index is not None,
+                    "exploration_consistent": False, "retrying": True})
+            )
+            await self._status("coding", "recalibrating the pre-registered threshold (bounded retry)")
+            retry_note = (
+                "\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED PRE-COMMIT by the harness's deterministic "
+                "threshold-consistency check against YOUR OWN exploration observations:\n"
+                f"  {consistency_reason}\n"
+                "Recalibrate the pre-registered thresholds to values the EXPLORATION OBSERVATIONS "
+                "actually support (a supported_if your expected_test_statistic meets, a "
+                "control_silent_if your expected_control_statistic satisfies, and thresholds that "
+                "still DISCRIMINATE test from control). Keep the same statistic unless the "
+                "observations show it cannot work. Return the SAME two blocks (python + json)."
+            )
         await get_bus().publish(
             make_event("demonstration_code", run_id=self.run_id, payload={
                 "accepted": accepted, "lines": code.count("\n") + 1, "reasons": reasons[:5],
-                "preregistration_valid": valid_prereg})
+                "preregistration_valid": valid_prereg,
+                "exploration_applied": confirm_index is not None,
+                "exploration_consistent": consistent})
         )
         if not accepted:
             await record_transition(
                 self.run_id, exp_id, "experiment_design", "experiment_design",
-                f"AI demonstration not accepted (code_ok={ok}, prereg_ok={valid_prereg}); "
-                f"falling back to a registered capability",
+                f"AI demonstration not accepted (code_ok={ok}, prereg_ok={valid_prereg}, "
+                f"explore_consistent={consistent}); falling back to a registered capability",
             )
             return
         # immutable commit BEFORE execution — the pre-registration cannot be revised post-hoc.
@@ -1123,7 +1196,113 @@ class ExperimentDriver:
                 "control_silent_if": prereg.get("control_silent_if")})
         )
         design["demonstration_code"] = code
+        # K1: carry the held-out CONFIRM partition (+ its audit meta) so the compute step runs the
+        # demonstration ONLY on data the authoring never saw — the partition is evidence, like the
+        # prereg. Absent -> the compute path stays full-data (backward compatible) and the claim is
+        # capped below `strong` (the seal could not be applied).
+        if confirm_index is not None and split_meta is not None:
+            design["demonstration_confirm_index"] = confirm_index
+            design["demonstration_split_meta"] = split_meta
+            design["demonstration_exploration"] = exploration_obs  # for the audit's seal-#5 check
+            await asyncio.to_thread(
+                attach_claim_evidence, fid, "split",
+                f"explore/confirm seal (algo v{split_meta.get('split_algo_version')})",
+                json.dumps(split_meta),
+            )
         await self._index("design_rationale", f"AI-authored demonstration:\n{code[:400]}", exp_id)
+
+    async def _explore_for_demonstration(
+        self, plugin, demo: dict, data_spec: dict, feature_desc: str, rs: int, exp_id: str | None,
+    ) -> tuple[dict | None, list[int] | None, dict | None]:
+        """K1 EXPLORE phase: author + run an ``explore_demonstration`` probe on a DISJOINT explore
+        subset and return ``(observations, confirm_index, split_meta)`` for calibrating + sealing
+        the confirmatory demonstration. Returns ``(None, None, None)`` on any failure (infeasible
+        split, worker degraded, gate reject, sandbox error) so the caller degrades to blind
+        authoring. The exploration output is DESCRIPTIVE only and never enters the verdict."""
+        try:
+            staged = await asyncio.to_thread(self._stage_explore_arrays, plugin, demo, data_spec, rs)
+        except Exception:  # noqa: BLE001 - staging best-effort -> blind fallback
+            staged = None
+        if staged is None:
+            return None, None, None
+        x_explore, y_explore, groups_explore, confirm_index, split_meta = staged
+
+        await self._status("coding", "authoring the exploration probe")
+        text = await run_worker(
+            self.run_id, "coder",
+            exploration_prompt(self.hypothesis, demo, data_spec, feature_desc=feature_desc),
+            system=EXPLORE_SYSTEM, dry_run=self.dry_run,
+            dry_value="```python\n" + CANNED_EXPLORATION + "```",
+        )
+        if is_degraded(text):
+            return None, None, None
+        code = extract_code(text)
+        ok, _reasons = check_code(code, required_function=EXPLORE_REQUIRED_FUNCTION)
+        if not ok:
+            return None, None, None
+        obs = await asyncio.to_thread(
+            run_authored_exploration, code, x_explore, y_explore, groups_explore, {"random_state": rs},
+        )
+        if obs is None:
+            return None, None, None
+        await get_bus().publish(make_event("demonstration_exploration", run_id=self.run_id, payload={
+            "observations": obs.get("observations"), "n_explore": obs.get("n"),
+            "n_confirm": split_meta.get("n_confirm"), "split": split_meta}))
+        return obs, confirm_index, split_meta
+
+    @staticmethod
+    def _stage_explore_arrays(plugin, demo: dict, data_spec: dict, rs: int):
+        """Load + featurize (the SAME way the compute step does) and return the EXPLORE-subset
+        arrays + the held-out confirm index + split meta, or ``None`` when the data cannot support
+        an honest 4-way split. Pure/sync (run in a thread)."""
+        import numpy as np
+
+        df = plugin.load_data(data_spec)
+        sample_n = demo.get("sample_n") or data_spec.get("sample_n")
+        if sample_n:
+            df = df.head(int(sample_n))
+            try:
+                df.attrs["data_spec"] = data_spec
+            except Exception:  # noqa: BLE001 - not all frames carry attrs
+                pass
+        X, y, _names, groups = plugin.featurize(df, {"random_state": rs})
+        split = plugin._split_explore_confirm(groups, len(y), rs)
+        if split is None:
+            return None
+        ex = split["explore_idx"]
+        X = np.asarray(X)
+        y = np.asarray(y)
+        groups_explore = (np.asarray(groups, dtype=object)[ex] if groups is not None else None)
+        confirm_index = [int(i) for i in split["confirm_idx"].tolist()]
+        return X[ex], y[ex], groups_explore, confirm_index, split["meta"]
+
+    @staticmethod
+    def _prereg_consistent_with_exploration(prereg: dict, exploration: dict) -> tuple[bool, str]:
+        """K1 seal #5 (DETERMINISTIC, harness-owned): is the committed threshold consistent with what
+        the AI observed on the explore subset? Fails closed on a threshold that is doom-to-zero (its
+        own explore estimate of the test statistic does not satisfy ``supported_if``), a control that
+        is already not silent on explore, or a trivially-easy threshold (the control estimate ALSO
+        satisfies ``supported_if`` — not discriminating). Lenient (passes) when the exploration did
+        not report the expected statistics — the cross-vendor audit is then the only seal-#5 layer.
+        This runs FIRST; the LLM auditor is the second, softer layer (never the only guard)."""
+        obs = (exploration or {}).get("observations") or {}
+        sup = prereg.get("supported_if") or {}
+        sil = prereg.get("control_silent_if") or {}
+        et = obs.get("expected_test_statistic")
+        ec = obs.get("expected_control_statistic")
+        try:
+            if et is not None and not DomainPlugin._apply_rule(float(et), sup):
+                return False, (f"threshold doom-to-zero: supported_if {sup} unmet by the explore-"
+                               f"estimated test statistic ({et})")
+            if ec is not None and not DomainPlugin._apply_rule(float(ec), sil):
+                return False, (f"control not silent on explore: control_silent_if {sil} violated by "
+                               f"the explore-estimated control statistic ({ec})")
+            if ec is not None and DomainPlugin._apply_rule(float(ec), sup):
+                return False, (f"threshold trivially easy: supported_if {sup} is also met by the "
+                               f"control statistic ({ec}) — not discriminating")
+        except (TypeError, ValueError):
+            return True, ""  # un-parseable estimates -> defer to the LLM auditor
+        return True, ""
 
     async def _code_rag(self, design: dict, exp_id: str | None) -> None:
         """RAG-aware coder: author the GENERATION STRATEGY (answer prompt + retrieval
@@ -1370,11 +1549,18 @@ class ExperimentDriver:
             if s1 is not None and s2 is not None:
                 lo, hi = sorted((abs(float(s1)), abs(float(s2))))
                 statistic_stable = hi <= 1e-9 or (lo / hi) >= 1.0 / factor
+            # K1: the re-run must recompute on the SAME held-out CONFIRM partition (same
+            # explore->confirm seal). A missing confirm statistic (s2 None -> statistic_stable not
+            # True) or a mismatched split (different index_hash) is NOT a reproduction.
+            sm1 = orig_demo.get("split_meta") or {}
+            sm2 = (repro_demo or {}).get("split_meta") or {}
+            split_match = (not sm1) or (sm1.get("index_hash") == sm2.get("index_hash"))
             payload["demonstration_reproduced"] = (
-                bool(h1) and bool(h2) and statistic_stable is True
+                bool(h1) and bool(h2) and statistic_stable is True and split_match
             )
             payload["demonstration_verdict_stable"] = verdict_stable
             payload["demonstration_statistic_stable"] = statistic_stable
+            payload["demonstration_split_match"] = split_match
             payload["demonstration_original_statistic"] = s1
             payload["demonstration_repro_statistic"] = s2
             payload["demonstration_reproduce_factor"] = factor
@@ -1481,6 +1667,13 @@ class ExperimentDriver:
             demo = demonstration if isinstance(demonstration, dict) else {}
             holds = demo.get("holds")  # True | False | None(not executed)
             demo_repro = repro.get("demonstration_reproduced") if repro.get("attempted") else None
+            # K1: an AI-authored demonstration that ran WITHOUT the explore->confirm seal (blind
+            # fallback) cannot reach `strong` — see _claim_strength. Registered capabilities (a
+            # different `capability`) are unaffected.
+            exploration_missing = (
+                demo.get("capability") == DomainPlugin.AI_AUTHORED_CAPABILITY_ID
+                and not demo.get("exploration_applied")
+            )
             # `refuted` is reserved for a demonstration that was TESTED and did NOT hold —
             # NOT for one that held but the gate didn't endorse (that is `unverified`),
             # mirroring the not_evaluated/refuted distinction elsewhere.
@@ -1498,6 +1691,7 @@ class ExperimentDriver:
                     "formulation", gate_passed=passed, gate_verdict=verdict,
                     reproduced=demo_repro, demonstration_holds=holds, cross_vendor=cross_vendor,
                     audit_passed=audit_passed, audit_error=audit_error,
+                    exploration_missing=exploration_missing,
                 ),
                 status=form_status,
             )
@@ -2256,6 +2450,12 @@ class ExperimentDriver:
                 spec["capability"] = plugin.AI_AUTHORED_CAPABILITY_ID
                 spec["demonstration_code"] = design["demonstration_code"]
                 spec["preregistration"] = prereg
+                # K1: route the demonstration onto the held-out CONFIRM partition (the
+                # explore->confirm seal). Reproduction reseeds the design but reuses this exact
+                # index, so the re-run is a genuine recompute on the same held-out data.
+                if design.get("demonstration_confirm_index") is not None:
+                    spec["confirm_index"] = design["demonstration_confirm_index"]
+                    spec["split_meta"] = design.get("demonstration_split_meta")
         try:
             demo = await asyncio.to_thread(
                 plugin.run_demonstration, spec, data_spec,
@@ -2277,7 +2477,11 @@ class ExperimentDriver:
                                     # `holds` honest: the effect must fire on test AND vanish on control
                                     "test_statistic": demo.get("test_statistic"),
                                     "control_statistic": demo.get("control_statistic"),
-                                    "audit_refuted": demo.get("audit_refuted")})
+                                    "audit_refuted": demo.get("audit_refuted"),
+                                    # K1 explore->confirm seal: was it applied, and on what split?
+                                    "exploration_applied": demo.get("exploration_applied"),
+                                    "n_confirm": demo.get("n_confirm"),
+                                    "split_meta": demo.get("split_meta")})
             )
         return demo
 
@@ -2309,6 +2513,36 @@ class ExperimentDriver:
         if not isinstance(demo_result, dict) or not demo_result.get("preregistration"):
             return None, False  # only AI-authored demonstrations carry a pre-registration
         fid = self._claim_ids.get("formulation")
+        # K1 seal #5 (DETERMINISTIC, runs FIRST, harness-owned): refute a pre-registered threshold
+        # that is inconsistent with the AI's OWN exploration observations (doom-to-zero /
+        # control-not-silent / trivially-easy) WITHOUT the LLM. The cross-vendor auditor below is
+        # the second, softer layer — never the only seal-#5 guard.
+        exploration = design.get("demonstration_exploration")
+        prereg_rule = demo_result.get("preregistration") or {}
+        if exploration and prereg_rule:
+            consistent, reason = self._prereg_consistent_with_exploration(prereg_rule, exploration)
+            if not consistent:
+                demo_result["holds"] = False
+                demo_result["audit_refuted"] = True
+                if fid:
+                    await asyncio.to_thread(
+                        attach_claim_evidence, fid, "audit", "reject",
+                        f"deterministic seal #5 refutation: {reason}",
+                    )
+                await get_bus().publish(make_event("demonstration_audit", run_id=self.run_id, payload={
+                    "verdict": "reject", "gate_passed": False, "auditors": [],
+                    "deterministic": True, "reason": reason}))
+                await get_bus().publish(make_event("demonstration", run_id=self.run_id, payload={
+                    "computed": True, "form": demo_result.get("form"), "holds": False,
+                    "statistic": demo_result.get("statistic"),
+                    "capability": demo_result.get("capability"),
+                    "test_statistic": demo_result.get("test_statistic"),
+                    "control_statistic": demo_result.get("control_statistic"),
+                    "audit_refuted": True,
+                    "exploration_applied": demo_result.get("exploration_applied"),
+                    "n_confirm": demo_result.get("n_confirm"),
+                    "split_meta": demo_result.get("split_meta")}))
+                return False, False
         if not getattr(get_settings(), "demonstration_audit_enabled", True):
             # AI-authored demonstration, but audit explicitly disabled: not a refutation, but
             # also not independently verified. Cap strength the same way as an audit infra error.
@@ -2384,7 +2618,10 @@ class ExperimentDriver:
                 "capability": demo_result.get("capability"),
                 "test_statistic": demo_result.get("test_statistic"),
                 "control_statistic": demo_result.get("control_statistic"),
-                "audit_refuted": True}))
+                "audit_refuted": True,
+                "exploration_applied": demo_result.get("exploration_applied"),
+                "n_confirm": demo_result.get("n_confirm"),
+                "split_meta": demo_result.get("split_meta")}))
         if fid:
             await asyncio.to_thread(
                 attach_claim_evidence, fid, "audit", str(panel.consensus_verdict),

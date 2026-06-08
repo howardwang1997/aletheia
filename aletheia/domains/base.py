@@ -315,6 +315,86 @@ class DomainPlugin(ABC):
         return {"clean": clean, "note": note, "flags": flags,
                 "min_samples": min_n, "n_test": n_test, "n_control": n_control}
 
+    # --- K1: exploratory -> confirmatory seal (the 5th anti-fakeability guard) ----------
+    SPLIT_ALGO_VERSION = 1
+
+    @staticmethod
+    def _split_explore_confirm(
+        groups: Any, n: int, seed: int, explore_frac: float = 0.5
+    ) -> dict[str, Any] | None:
+        """Partition the rows into a disjoint EXPLORE and CONFIRM set — the anti-p-hacking seal
+        that lets the AI calibrate a pre-registration on data it may look at, then have the harness
+        confirm on data its authoring never saw. HARNESS-OWNED: a pure, deterministic function of
+        ``(groups, seed)`` (the AI never chooses the split).
+
+        Group-aware: every row sharing a ``groups`` key lands on the SAME side, so no group spans
+        the explore/confirm boundary (otherwise a leaked group would defeat the seal). With
+        ``groups is None`` it falls back to a seeded per-row split. Assignment is a stable hash of
+        ``(seed, key)`` mapped into ``[0, 1)``; ``< explore_frac`` -> explore.
+
+        FAIL CLOSED: returns ``None`` when the data cannot support an honest 4-way split
+        (explore/confirm x test/control) — both sides must clear ``demonstration_min_samples`` and
+        confirm must leave room for its own test/control split (``>= 2 * min_samples``). A starved
+        split is never silently used; the caller maps ``None`` to the blind fallback / not_evaluated.
+
+        Returns ``{"explore_idx": ndarray, "confirm_idx": ndarray, "meta": {...}}`` where ``meta`` is
+        JSON-safe and carries the seal's audit record (sizes, group-disjointness, and an
+        ``index_hash`` so a later audit/reproduction can confirm the SAME partition was used)."""
+        import hashlib
+
+        import numpy as np
+
+        try:
+            from aletheia.config import get_settings
+            min_n = int(getattr(get_settings(), "demonstration_min_samples", 20))
+        except Exception:  # noqa: BLE001 - config best-effort; safe default
+            min_n = 20
+
+        n = int(n)
+        if n <= 0:
+            return None
+        frac = float(explore_frac)
+
+        def _to_explore(key: str) -> bool:
+            h = hashlib.sha256(f"{int(seed)}:{key}".encode()).hexdigest()
+            return (int(h[:16], 16) / float(1 << 64)) < frac
+
+        explore_mask = np.zeros(n, dtype=bool)
+        group_disjoint = False
+        g = None
+        if groups is not None:
+            g = np.asarray(groups, dtype=object)
+            group_disjoint = g.shape[0] == n
+        if group_disjoint:
+            for gid in {str(x) for x in g.tolist()}:
+                explore_mask[np.asarray([str(x) == gid for x in g], dtype=bool)] = _to_explore(gid)
+        else:
+            for i in range(n):
+                explore_mask[i] = _to_explore(f"row:{i}")
+
+        explore_idx = np.flatnonzero(explore_mask)
+        confirm_idx = np.flatnonzero(~explore_mask)
+        n_explore, n_confirm = int(explore_idx.size), int(confirm_idx.size)
+        # both sides honest, and confirm large enough for its own test/control split
+        if n_explore < min_n or n_confirm < 2 * min_n:
+            return None
+
+        index_hash = hashlib.sha256(
+            np.ascontiguousarray(explore_idx, dtype=np.int64).tobytes()
+            + b"|"
+            + np.ascontiguousarray(confirm_idx, dtype=np.int64).tobytes()
+        ).hexdigest()[:16]
+        meta = {
+            "seed": int(seed),
+            "explore_frac": frac,
+            "n_explore": n_explore,
+            "n_confirm": n_confirm,
+            "split_algo_version": DomainPlugin.SPLIT_ALGO_VERSION,
+            "group_disjoint": bool(group_disjoint),
+            "index_hash": index_hash,
+        }
+        return {"explore_idx": explore_idx, "confirm_idx": confirm_idx, "meta": meta}
+
     def _compute_ai_authored_demonstration(
         self, demonstration: dict[str, Any], data_spec: dict[str, Any]
     ) -> dict[str, Any] | None:
@@ -358,6 +438,29 @@ class DomainPlugin(ABC):
                     "detail": f"could not stage data for the AI demonstration: {exc}",
                     "preregistration": prereg}
 
+        # K1 CONFIRM-ONLY (the explore->confirm seal): when the driver supplied the held-out CONFIRM
+        # partition, run the demonstration ONLY on it — the authoring saw the disjoint EXPLORE subset,
+        # never these rows, so a threshold fit to explore noise is refuted here. Absent (registered
+        # capabilities, or the exploration-failed blind fallback) -> full-data, exactly as before.
+        import numpy as np
+
+        confirm_index = demonstration.get("confirm_index")
+        split_meta = demonstration.get("split_meta")
+        exploration_applied = False
+        if confirm_index:
+            idx = np.asarray(confirm_index, dtype=int)
+            n_full = int(np.asarray(y).shape[0])
+            if idx.size == 0 or int(idx.max()) >= n_full or int(idx.min()) < 0:
+                return {"form": form, "holds": None, "statistic": None,
+                        "detail": "explore/confirm split index does not match the staged data "
+                                  "(seal mismatch)",
+                        "preregistration": prereg, "split_meta": split_meta,
+                        "exploration_applied": False}
+            X = np.asarray(X)[idx]
+            y = np.asarray(y)[idx]
+            groups = np.asarray(groups, dtype=object)[idx] if groups is not None else None
+            exploration_applied = True
+
         meta = {"random_state": rs, "preregistration": prereg}
         res = run_authored_demonstration(code, X, y, groups, meta)
         if res is None:
@@ -390,4 +493,10 @@ class DomainPlugin(ABC):
             "preregistration": prereg,
             "probes": probes,
             "components": res.get("components", {}),
+            # K1 seal record: did the demonstration run on the held-out CONFIRM partition, and on
+            # which split? ``exploration_applied=False`` means the seal was NOT applied (blind
+            # fallback) — the formulation claim is then capped below `strong` in _claim_strength.
+            "exploration_applied": exploration_applied,
+            "split_meta": split_meta,
+            "n_confirm": (len(y) if exploration_applied else None),
         }

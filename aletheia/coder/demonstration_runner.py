@@ -44,17 +44,52 @@ out = {
 print("ALETHEIA_DEMO_OK " + json.dumps(out))
 """
 
+# The EXPLORATION probe (K1 explore->confirm seal): call ``explore_demonstration`` and return
+# DESCRIPTIVE observations only. FAIL CLOSED if the AI smuggles a verdict field (a `holds` /
+# `test_statistic` / decision key, at top level OR inside observations) — the exploration step is
+# never allowed to influence the verdict.
+_EXPLORE_RUNNER_SCRIPT = """\
+import json, math, sys
+import numpy as np
+import importlib.util as u
 
-def run_authored_demonstration(
-    code: str,
-    X: Any,
-    y: Any,
-    groups: Any,
-    meta: dict[str, Any],
-    timeout_s: float | None = None,
+_d = np.load("staged.npz", allow_pickle=True)
+X = _d["X"]; y = _d["y"]
+groups = _d["groups"] if "groups" in _d and _d["groups"].ndim and _d["groups"].size else None
+with open("meta.json") as _f:
+    meta = json.load(_f)
+
+s = u.spec_from_file_location("demo", "demo.py")
+m = u.module_from_spec(s); s.loader.exec_module(m)
+r = m.explore_demonstration(X, y, groups, meta)
+if not isinstance(r, dict):
+    print("ALETHEIA_DEMO_ERR not-a-dict", file=sys.stderr); sys.exit(2)
+obs = r.get("observations")
+if not isinstance(obs, dict) or not obs:
+    print("ALETHEIA_DEMO_ERR no-observations", file=sys.stderr); sys.exit(3)
+_FORBIDDEN = {"holds", "test_statistic", "control_statistic", "supported_if",
+              "control_silent_if", "verdict"}
+bad = _FORBIDDEN & (set(map(str, r.keys())) | set(map(str, obs.keys())))
+if bad:
+    print("ALETHEIA_DEMO_ERR verdict-fields:" + ",".join(sorted(bad)), file=sys.stderr); sys.exit(4)
+clean = {}
+for k, v in obs.items():
+    fv = float(v)
+    if not math.isfinite(fv):
+        print("ALETHEIA_DEMO_ERR non-finite-observation", file=sys.stderr); sys.exit(5)
+    clean[str(k)] = fv
+out = {"observations": clean, "detail": str(r.get("detail", "")), "n": int(r.get("n", len(y)))}
+print("ALETHEIA_DEMO_OK " + json.dumps(out))
+"""
+
+
+def _stage_and_run(
+    code: str, X: Any, y: Any, groups: Any, meta: dict[str, Any],
+    runner_script: str, timeout_s: float,
 ) -> dict[str, Any] | None:
-    """Execute ``code``'s ``compute_demonstration`` on staged ``X``/``y``/``groups`` in an
-    isolated rlimit subprocess. Returns the validated result dict, or ``None`` on any failure."""
+    """Stage ``X``/``y``/``groups`` + ``meta`` into a temp dir and run ``runner_script`` (which
+    imports ``demo.py`` and prints an ``ALETHEIA_DEMO_OK <json>`` line) in an isolated rlimit
+    subprocess. Returns the parsed result dict, or ``None`` on any failure (FAIL CLOSED)."""
     import json
     import subprocess
     import sys
@@ -64,10 +99,6 @@ def run_authored_demonstration(
     import numpy as np
 
     from aletheia.coder.sandbox import resource_limits
-    from aletheia.config import get_settings
-
-    if timeout_s is None:
-        timeout_s = float(getattr(get_settings(), "demonstration_timeout_s", 120.0))
 
     try:
         with tempfile.TemporaryDirectory() as td:
@@ -82,7 +113,7 @@ def run_authored_demonstration(
                         else np.asarray([], dtype=object)),
             )
             proc = subprocess.run(
-                [sys.executable, "-c", _RUNNER_SCRIPT],
+                [sys.executable, "-c", runner_script],
                 cwd=str(tdp), capture_output=True, text=True, timeout=timeout_s,
                 stdin=subprocess.DEVNULL, preexec_fn=resource_limits(),
             )
@@ -98,3 +129,38 @@ def run_authored_demonstration(
             except (ValueError, TypeError):
                 return None
     return None
+
+
+def _resolve_timeout(timeout_s: float | None) -> float:
+    if timeout_s is not None:
+        return float(timeout_s)
+    from aletheia.config import get_settings
+    return float(getattr(get_settings(), "demonstration_timeout_s", 120.0))
+
+
+def run_authored_demonstration(
+    code: str,
+    X: Any,
+    y: Any,
+    groups: Any,
+    meta: dict[str, Any],
+    timeout_s: float | None = None,
+) -> dict[str, Any] | None:
+    """Execute ``code``'s ``compute_demonstration`` on staged ``X``/``y``/``groups`` in an
+    isolated rlimit subprocess. Returns the validated result dict, or ``None`` on any failure."""
+    return _stage_and_run(code, X, y, groups, meta, _RUNNER_SCRIPT, _resolve_timeout(timeout_s))
+
+
+def run_authored_exploration(
+    code: str,
+    X: Any,
+    y: Any,
+    groups: Any,
+    meta: dict[str, Any],
+    timeout_s: float | None = None,
+) -> dict[str, Any] | None:
+    """Execute ``code``'s ``explore_demonstration`` on the staged EXPLORATION arrays in an isolated
+    rlimit subprocess. Returns ``{"observations": {..}, "detail": str, "n": int}`` with descriptive
+    numbers only, or ``None`` on any failure — INCLUDING when the AI smuggles a verdict field, which
+    the runner rejects (the exploration step must never touch the verdict)."""
+    return _stage_and_run(code, X, y, groups, meta, _EXPLORE_RUNNER_SCRIPT, _resolve_timeout(timeout_s))

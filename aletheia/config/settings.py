@@ -157,6 +157,12 @@ class Settings(BaseSettings):
     # the AI-authored path even when a registered capability matches — the frontier override.
     # Authoring failure still falls back to the registered capability (fail closed).
     demonstration_prefer_authored: bool = False
+    # K1 explore->confirm seal: the AI authors an EXPLORATION probe on a disjoint explore subset,
+    # calibrates its pre-registered threshold to what it observed, then the harness CONFIRMS on a
+    # held-out confirm subset the authoring never saw. On any failure (infeasible split, exploration
+    # worker/sandbox error) the run degrades to the blind authoring path, but the formulation claim
+    # is then capped below `strong` (no seal = no independent-of-noise verification).
+    demonstration_explore_confirm_enabled: bool = True
 
     # --- compute backend ---
     # "local"  = restricted subprocess on the host (soft guardrails).

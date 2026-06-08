@@ -107,6 +107,79 @@ CANNED_PREREGISTRATION = {
 
 _JSON_BLOCK_LANGS = ("json", "JSON")
 
+# --- K1: the EXPLORATION probe (explore->confirm seal) ---------------------------------
+EXPLORE_SYSTEM = (
+    "You are a meticulous research scientist running an EXPLORATORY analysis. You look at an "
+    "EXPLORATION subset of the data and measure DESCRIPTIVE quantities (effect sizes, spreads, "
+    "rates) so you can later PRE-REGISTER a decision threshold the data can actually support — "
+    "instead of guessing it blind. You decide NOTHING here: you return only descriptive numbers. "
+    "You never access data, files, the network, or the process; X/y/groups are passed to you. "
+    "Return ONE python code block and NOTHING else.\n"
+    "OUTPUT DISCIPLINE (hard): reply with ONLY the fenced code block — no preamble, no explanation, "
+    "no tool use. Do NOT write to a file; return it INLINE. ASCII only."
+)
+
+_EXPLORE_CONTRACT = """\
+EXPLORATION PHASE. Write a Python module that defines EXACTLY one function:
+
+    def explore_demonstration(X, y, groups, meta):
+        \"\"\"X: (n, d) float ndarray — {feature_desc} (host-featurized, trusted; the EXPLORATION
+        subset only). y: (n,) float target. groups: (n,) object array (a grouping key) or None.
+        meta: {{"random_state": int}}.
+
+        Measure DESCRIPTIVE quantities that reveal how large the claimed effect is on this kind of
+        data, and how a future TEST statistic and its negative CONTROL would behave — enough to set
+        a sensible pre-registered threshold later. Return EXACTLY this dict:
+            {{"observations": {{<name>: float, ...}},  # descriptive numbers (NOT a verdict)
+              "detail": str,                            # one-line human summary
+              "n": int}}                                # rows used
+        STRONGLY RECOMMENDED keys in `observations` (the harness uses them to sanity-check your later
+        threshold against this exploration, so you cannot pre-register a threshold this data already
+        contradicts):
+            "expected_test_statistic": float,     # your point estimate, ON THIS EXPLORE SUBSET, of the
+                                                  # TEST statistic you will later compute
+            "expected_control_statistic": float   # the same estimate for the negative CONTROL
+        You are NOT deciding whether anything holds. Returning ANY verdict field — `holds`,
+        `test_statistic`, `control_statistic`, `supported_if`, `control_silent_if`, `verdict` —
+        (at top level OR inside `observations`) is REJECTED by the harness.
+        \"\"\"
+
+Hard rules (your code is statically checked and rejected if violated):
+- Import ONLY from: sklearn, numpy, scipy, pandas, math, statistics (+ typing, dataclasses,
+  functools, itertools, collections, warnings, random).
+- No file/network/process access; no eval/exec/open/__import__/pickle/joblib; no dunder
+  introspection (__globals__, __subclasses__, ...).
+
+Return your reply as ONE ```python ... ``` code block."""
+
+# canned, gate-passing exploration for dry-run + as a safe reference.
+CANNED_EXPLORATION = (
+    "def explore_demonstration(X, y, groups, meta):\n"
+    "    import numpy as np\n"
+    "    return {\n"
+    "        'observations': {'y_std': float(np.std(y)), 'y_mean': float(np.mean(y)),\n"
+    "                         'n_groups': float(len(set(groups.tolist())) if groups is not None else 0)},\n"
+    "        'detail': 'placeholder exploration: target spread + group count',\n"
+    "        'n': int(len(y)),\n"
+    "    }\n"
+)
+
+
+def exploration_prompt(
+    hypothesis: dict[str, Any],
+    demonstration: dict[str, Any],
+    data_spec: dict[str, Any],
+    *,
+    feature_desc: str = "a dense numeric feature matrix",
+) -> str:
+    return (
+        "Author the EXPLORATION probe for this PARADIGM contribution.\n\n"
+        f"HYPOTHESIS:\n{json.dumps(hypothesis, indent=2)}\n\n"
+        f"DEMONSTRATION CLAIM (the concrete case the incumbent frame cannot handle):\n"
+        f"{json.dumps(demonstration, indent=2)}\n\n"
+        f"DATA:\n{json.dumps(data_spec, indent=2)}\n\n" + _EXPLORE_CONTRACT.format(feature_desc=feature_desc)
+    )
+
 
 def demonstration_prompt(
     hypothesis: dict[str, Any],
@@ -115,14 +188,23 @@ def demonstration_prompt(
     *,
     feature_desc: str = "a dense numeric feature matrix",
     min_samples: int = 20,
+    exploration: dict[str, Any] | None = None,
 ) -> str:
     contract = _CONTRACT_TEMPLATE.format(feature_desc=feature_desc, min_samples=min_samples)
+    explore_block = ""
+    if exploration:
+        explore_block = (
+            "EXPLORATION OBSERVATIONS (measured on a DISJOINT exploration subset — calibrate your "
+            "pre-registered threshold to what these support; the harness will CONFIRM on a held-out "
+            "subset your code has NOT seen, so a threshold tuned to noise will be refuted):\n"
+            f"{json.dumps(exploration, indent=2)}\n\n"
+        )
     return (
         "Author the discriminating demonstration for this PARADIGM contribution.\n\n"
         f"HYPOTHESIS:\n{json.dumps(hypothesis, indent=2)}\n\n"
         f"DEMONSTRATION CLAIM (the concrete case the incumbent frame cannot handle):\n"
         f"{json.dumps(demonstration, indent=2)}\n\n"
-        f"DATA:\n{json.dumps(data_spec, indent=2)}\n\n" + contract
+        f"DATA:\n{json.dumps(data_spec, indent=2)}\n\n" + explore_block + contract
     )
 
 

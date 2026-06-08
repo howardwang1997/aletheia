@@ -196,6 +196,184 @@ def test_ai_demo_is_seed_perturbed_for_real_reproduction(molecules_plugin):
     assert a["statistic"] != b["statistic"]  # the random-state genuinely perturbs the compute
 
 
+# --- K1: the explore->confirm seal (confirm-only compute + deterministic threshold check) ----
+_LEN_STAT = (  # returns the ROW COUNT it received -> proves WHICH rows the compute saw
+    "def compute_demonstration(X, y, groups, meta):\n"
+    "    n = len(y)\n"
+    "    return {'test_statistic': float(n), 'control_statistic': 0.01, 'components': {},\n"
+    "            'detail': 'rows seen', 'n_test': n, 'n_control': n}\n"
+)
+
+
+def test_confirm_only_compute_runs_on_the_confirm_subset(molecules_plugin):
+    # the demonstration must run ONLY on the held-out CONFIRM rows the authoring never saw:
+    # _LEN_STAT returns the row count it received, so statistic == n_confirm proves the seal.
+    d = molecules_plugin.run_demonstration(
+        _spec(_LEN_STAT, confirm_index=list(range(30)), split_meta={"index_hash": "abc"}),
+        _TOY_MOL_SPEC, "/tmp/p5_confirm")
+    assert d["exploration_applied"] is True
+    assert d["statistic"] == 30.0 and d["n_confirm"] == 30
+    assert d["holds"] is True and d["split_meta"] == {"index_hash": "abc"}
+
+
+def test_confirm_index_out_of_range_is_seal_mismatch_not_evaluated(molecules_plugin):
+    d = molecules_plugin.run_demonstration(
+        _spec(_LEN_STAT, confirm_index=[0, 1, 999]), _TOY_MOL_SPEC, "/tmp/p5_mismatch")
+    assert d["holds"] is None and "seal mismatch" in d["detail"]
+    assert d["exploration_applied"] is False
+
+
+def test_starved_confirm_partition_fails_the_probe_floor(molecules_plugin):
+    # a confirm subset below the probe min-sample floor cannot ground the claim (fail closed)
+    d = molecules_plugin.run_demonstration(
+        _spec(_LEN_STAT, confirm_index=[0, 1, 2, 3, 4], split_meta={"index_hash": "z"}),
+        _TOY_MOL_SPEC, "/tmp/p5_starved")
+    assert d["holds"] is False and any("too small" in f for f in d["probes"]["flags"])
+
+
+def test_no_seal_marks_exploration_not_applied(molecules_plugin):
+    # the blind fallback (no confirm_index) still runs full-data and marks the seal ABSENT, so
+    # _finalize_claims caps the formulation below `strong`.
+    d = molecules_plugin.run_demonstration(_spec(_HOLDS), _TOY_MOL_SPEC, "/tmp/p5_noseal")
+    assert d["holds"] is True and d["exploration_applied"] is False and d["n_confirm"] is None
+
+
+def test_prereg_consistency_doom_trivial_and_control():
+    # seal #5 (deterministic): the committed threshold must be consistent with the AI's OWN
+    # exploration estimates — doom-to-zero / control-not-silent / trivially-easy all fail closed.
+    f = ExperimentDriver._prereg_consistent_with_exploration
+    ok, _ = f(_PREREG, {"observations": {"expected_test_statistic": 5.0, "expected_control_statistic": 0.1}})
+    assert ok is True
+    doom, why = f(_PREREG, {"observations": {"expected_test_statistic": 0.2, "expected_control_statistic": 0.1}})
+    assert doom is False and "doom-to-zero" in why  # test estimate 0.2 fails supported_if >= 1.0
+    ctrl, why2 = f(_PREREG, {"observations": {"expected_test_statistic": 5.0, "expected_control_statistic": 0.9}})
+    assert ctrl is False and "not silent" in why2  # control 0.9 violates control_silent_if < 0.5
+    triv_prereg = {**_PREREG, "control_silent_if": {"op": "<", "threshold": 3.0}}
+    triv, why3 = f(triv_prereg, {"observations": {"expected_test_statistic": 5.0, "expected_control_statistic": 2.0}})
+    assert triv is False and "trivially easy" in why3  # control 2.0 ALSO meets supported_if >= 1.0
+    lenient, _ = f(_PREREG, {"observations": {"y_std": 1.0}})
+    assert lenient is True  # no expected statistics -> defer to the LLM auditor
+
+
+def test_audit_deterministic_seal_refutes_inconsistent_threshold():
+    # seal #5 runs BEFORE the LLM auditor: an inconsistent threshold (doom-to-zero vs the AI's own
+    # exploration) is refuted deterministically, short-circuiting the panel entirely.
+    d = ExperimentDriver("rid-seal", dry_run=False)
+    d._claim_ids = {}
+    called = {"llm": False}
+
+    async def fake_review(*a, **k):
+        called["llm"] = True
+        return _fake_panel("approve", True, ["grok", "gemini"])
+
+    d.gateway = SimpleNamespace(review=fake_review)
+    design = {"demonstration_code": _HOLDS,
+              "demonstration_exploration": {"observations": {"expected_test_statistic": 0.1,
+                                                             "expected_control_statistic": 0.1}}}
+    demo = {"holds": True, "preregistration": _PREREG, "capability": "ai_authored_demonstration",
+            "statistic": 0.1, "test_statistic": 0.1, "control_statistic": 0.1}
+    passed, err = asyncio.run(d._audit_demonstration(design, demo))
+    assert passed is False and err is False
+    assert demo["holds"] is False and demo["audit_refuted"] is True
+    assert called["llm"] is False  # deterministic refutation never reached the LLM auditor
+
+
+def _reply(threshold):
+    """A worker reply: valid demo code + a prereg whose supported_if threshold we control."""
+    prereg = {**_PREREG, "supported_if": {"op": ">=", "threshold": threshold}}
+    return "```python\n" + _HOLDS + "```\n```json\n" + json.dumps(prereg) + "\n```"
+
+
+def _authoring_driver(monkeypatch, replies):
+    """Drive _demonstration_code with mocked worker replies + a fixed exploration; returns
+    (design, prompts, run_id, fid) so callers can assert on the retry + the committed prereg."""
+    import aletheia.scheduler.driver as drv
+    from aletheia.db import create_all
+    from aletheia.memory.service import create_claim, create_run, finalize_plan
+
+    create_all()
+    run_id = create_run("k1 retry test", domain="materials", status="planned")
+    finalize_plan(run_id, {"objective": "x", "domain": "materials"})
+    fid = create_claim(run_id, claim_text="f", claim_type="formulation", strength="speculative")
+    d = drv.ExperimentDriver(run_id, dry_run=False)
+    d._claim_ids = {"formulation": fid}
+    # authoring="ai" -> the frontier override skips the registered-first check entirely
+    d.hypothesis = {"demonstration": {"form": "discriminating_instance", "claim": "c", "authoring": "ai"}}
+    d.plugin = object()  # non-None so the explore phase runs; the explore call itself is faked
+
+    obs = {"observations": {"expected_test_statistic": 0.49, "expected_control_statistic": 0.1},
+           "detail": "explore", "n": 100}
+
+    async def fake_explore(plugin, demo, data_spec, feature_desc, rs, exp_id):
+        return obs, list(range(40)), {"seed": rs, "explore_frac": 0.5, "n_explore": 100,
+                                      "n_confirm": 40, "split_algo_version": 1,
+                                      "group_disjoint": True, "index_hash": "deadbeef"}
+
+    d._explore_for_demonstration = fake_explore
+
+    prompts: list[str] = []
+    seq = iter(replies)
+
+    async def fake_worker(run_id_, role, prompt, **kw):
+        prompts.append(prompt)
+        return next(seq)
+
+    monkeypatch.setattr(drv, "run_worker", fake_worker)
+
+    async def noop_index(*a, **k):
+        return None
+
+    d._index = noop_index
+    design = {"random_state": 42}
+    asyncio.run(d._demonstration_code(design, {"source": "toy"}, None))
+    return design, prompts, run_id, fid
+
+
+def _committed_prereg(run_id, fid):
+    from aletheia.memory.service import list_claims
+
+    for c in list_claims(run_id):
+        if c.get("id") != fid:
+            continue
+        for e in c.get("evidence", []):
+            if e.get("evidence_kind") == "preregistration" and e.get("note"):
+                return json.loads(e["note"])
+    return None
+
+
+def test_consistency_rejection_gets_one_informed_recalibration_retry(monkeypatch):
+    # K1 v1.1 (seen live, run b1993c7f): the AI registered supported_if>=0.55 against its OWN
+    # explore estimate 0.49 -> doomed -> rejected. The fix: ONE retry that feeds the rejection
+    # reason back so the AI recalibrates PRE-COMMIT on the same explore-only observations.
+    design, prompts, run_id, fid = _authoring_driver(
+        monkeypatch, [_reply(0.55), _reply(0.4)])
+    assert len(prompts) == 2
+    assert "doom-to-zero" in prompts[1]  # the retry prompt carries the seal's specific reason
+    assert design.get("demonstration_code")  # the recalibrated attempt was accepted
+    assert design.get("demonstration_confirm_index") == list(range(40))
+    committed = _committed_prereg(run_id, fid)
+    assert committed and committed["supported_if"]["threshold"] == 0.4  # the RECALIBRATED rule
+
+
+def test_still_inconsistent_after_retry_falls_back_without_commit(monkeypatch):
+    # the retry is BOUNDED: a second inconsistent threshold (0.6 > estimate 0.49) is not retried
+    # again — no commit, no demonstration_code, fall back to the registered-capability path.
+    design, prompts, run_id, fid = _authoring_driver(
+        monkeypatch, [_reply(0.55), _reply(0.6), _reply(0.4)])
+    assert len(prompts) == 2  # exactly one retry, never a third attempt
+    assert "demonstration_code" not in design and "demonstration_confirm_index" not in design
+    assert _committed_prereg(run_id, fid) is None  # nothing was committed
+
+
+def test_missing_seal_caps_formulation_below_strong():
+    f = ExperimentDriver._claim_strength
+    sealed = f("formulation", gate_passed=True, gate_verdict="approve", reproduced=True,
+               demonstration_holds=True, cross_vendor=True, audit_passed=True, exploration_missing=False)
+    capped = f("formulation", gate_passed=True, gate_verdict="approve", reproduced=True,
+               demonstration_holds=True, cross_vendor=True, audit_passed=True, exploration_missing=True)
+    assert sealed == "strong" and capped == "moderate"
+
+
 # --- pre-registration prompt/extraction --------------------------------------------------
 def test_canned_preregistration_is_valid_and_extractable():
     reply = "```python\n" + CANNED_DEMO + "```\n```json\n" + json.dumps(CANNED_PREREGISTRATION) + "\n```"
@@ -441,6 +619,18 @@ def test_repro_missing_statistic_does_not_count_as_reproduced(monkeypatch):
     )
     assert p["demonstration_verdict_stable"] is True
     assert p["demonstration_statistic_stable"] is None
+    assert p["demonstration_reproduced"] is False
+
+
+def test_repro_split_mismatch_does_not_count_as_reproduced(monkeypatch):
+    # K1: the re-run must recompute on the SAME held-out CONFIRM partition; a different split
+    # index_hash is NOT a reproduction, even if the verdict + statistic look stable.
+    p = _repro_driver(
+        monkeypatch,
+        {"holds": True, "statistic": 1.6, "reproduce_factor": 2.0, "split_meta": {"index_hash": "aaa"}},
+        {"holds": True, "statistic": 1.55, "split_meta": {"index_hash": "bbb"}},
+    )
+    assert p["demonstration_split_match"] is False
     assert p["demonstration_reproduced"] is False
 
 

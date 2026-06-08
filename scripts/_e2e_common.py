@@ -72,6 +72,7 @@ def write_e2e_summary(
     demo_code = recorder.payload("demonstration_code")
     prereg = recorder.payload("preregistration")
     repro = recorder.payload("reproduction")
+    exploration = recorder.payload("demonstration_exploration")  # K1 explore->confirm seal
     run = get_run(run_id) or {}
     route = demo.get("capability")  # None until a demonstration actually computes
 
@@ -94,6 +95,24 @@ def write_e2e_summary(
             "control_statistic": demo.get("control_statistic"),
             "capability": route,
             "audit_refuted": demo.get("audit_refuted"),
+            # K1 explore->confirm seal: did the demonstration run on a held-out CONFIRM partition the
+            # authoring never saw? False/None => the seal was NOT applied (blind fallback), which
+            # caps the formulation claim below `strong`.
+            "exploration_applied": demo.get("exploration_applied"),
+            "n_confirm": demo.get("n_confirm"),
+        },
+        # the EXPLORATION phase: descriptive observations the AI measured on the disjoint explore
+        # subset to calibrate its pre-registered threshold (never an input to the verdict). Empty
+        # when the seal was not applied. ``exploration_missing`` = the AI-authored demo bypassed the
+        # seal (so a reviewer can tell a sealed run from a blind-fallback one at a glance).
+        "exploration": {
+            "applied": bool(demo.get("exploration_applied")),
+            "exploration_missing": (route == AI_AUTHORED_CAPABILITY_ID
+                                    and not demo.get("exploration_applied")),
+            "observations": exploration.get("observations"),
+            "n_explore": exploration.get("n_explore"),
+            "n_confirm": exploration.get("n_confirm") or demo.get("n_confirm"),
+            "split": exploration.get("split") or demo.get("split_meta"),
         },
         "demonstration_audit": {
             "verdict": audit.get("verdict"),  # passed | reject | degraded | error
