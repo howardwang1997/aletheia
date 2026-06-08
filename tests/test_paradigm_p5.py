@@ -696,3 +696,97 @@ def test_prefer_authored_default_is_registered_first():
         assert pref("bare string") is True
     finally:
         s.demonstration_prefer_authored = saved
+
+
+# ---------------------------------------------------------------------------
+# K2 S3 — the campaign loop LEARNS from the last round's reason. _campaign_step's
+# next-experiment prompt must carry each round's deterministic outcome reason + a
+# concrete narrowing hint (not just a metric + verdict), and a hard directive built
+# from the most recent reason — so round N+1 is provably shaped by round N, not blind.
+# ---------------------------------------------------------------------------
+
+def _outcome(round_idx, reason, narrowing_hint, recoverable, verdict="reject"):
+    return {
+        "round": round_idx, "exp_id": f"exp{round_idx}", "model": "rf",
+        "metrics": {}, "headline_metric": "mae", "headline": 0.5, "units": "",
+        "analysis": "", "verdict": verdict, "hypothesis": f"hypothesis {round_idx}",
+        "experiment_type": "baseline" if round_idx == 1 else "ablation",
+        "open_question": "q", "reason": reason, "narrowing_hint": narrowing_hint,
+        "recoverable": recoverable, "outcome_detail": "d",
+    }
+
+
+def _campaign_prompt(monkeypatch, outcomes):
+    """Run _campaign_step with a captured reason_stage; return (prompt, decision)."""
+    import aletheia.scheduler.driver as drv
+    from aletheia.db import create_all
+    from aletheia.memory.service import create_run, finalize_plan
+
+    create_all()
+    run_id = create_run("k2 campaign test", domain="materials", status="planned")
+    finalize_plan(run_id, {"objective": "x", "domain": "materials"})
+    d = drv.ExperimentDriver(run_id, dry_run=False)
+
+    prompts: list[str] = []
+    cand = [{
+        "experiment_type": "ablation", "open_question": "which feature drives it?",
+        "expected_information_gain": 0.7, "rationale": "r",
+        "hypothesis": {"statement": "s", "rationale": "r", "prediction": "p", "novelty_note": "n"},
+    }]
+
+    async def fake_reason(run_id_, role, prompt, **kw):
+        prompts.append(prompt)
+        return json.dumps({"candidates": cand})
+
+    monkeypatch.setattr(drv, "reason_stage", fake_reason)
+
+    async def noop_index(*a, **k):
+        return None
+
+    d._index = noop_index
+    decision = asyncio.run(
+        d._campaign_step({"objective": "x"}, outcomes, round_idx=1, max_exps=3)
+    )
+    return prompts[0], decision
+
+
+def test_campaign_trajectory_carries_reason_and_narrowing_hint(monkeypatch):
+    # the milestone case: round 1 held on confirm but the broad claim was rejected (scope_overclaim).
+    out = _outcome(1, "scope_overclaim",
+                   "NARROW the claim to exactly what this confirm-split demonstration shows, "
+                   "or author a separate demonstration for each unshown pillar.",
+                   recoverable=True)
+    prompt, decision = _campaign_prompt(monkeypatch, [out])
+    assert "WHY [scope_overclaim]" in prompt          # reasoned trajectory line
+    assert "narrow" in prompt.lower()                  # the actionable hint reached the planner
+    assert "WHAT THE LAST ROUND LEARNED" in prompt     # the hard directive header
+    assert "scope_overclaim" in prompt
+    assert decision["continue"] is True
+
+
+def test_campaign_requires_pivot_when_reason_not_recoverable(monkeypatch):
+    # did_not_generalize: the effect was not there on held-out data -> re-tuning it is forbidden.
+    out = _outcome(1, "did_not_generalize",
+                   "the effect calibrated on explore did NOT appear on confirm; change the effect.",
+                   recoverable=False)
+    prompt, _ = _campaign_prompt(monkeypatch, [out])
+    assert "pivot to a DIFFERENT open question" in prompt
+    assert "did_not_generalize" in prompt
+
+
+def test_campaign_recoverable_reason_demands_acting_on_hint(monkeypatch):
+    out = _outcome(1, "threshold_too_strong",
+                   "the effect is present but the bar was too high; recalibrate conservatively.",
+                   recoverable=True)
+    prompt, _ = _campaign_prompt(monkeypatch, [out])
+    assert "directly act on this hint" in prompt
+    assert "pivot to a DIFFERENT open question" not in prompt
+
+
+def test_campaign_no_demonstration_round_omits_directive(monkeypatch):
+    # a non-paradigm round (no reason / no_demonstration) must not inject a learning directive.
+    out = _outcome(1, "no_demonstration", "", recoverable=True, verdict="approve")
+    out["reason"] = "no_demonstration"
+    prompt, _ = _campaign_prompt(monkeypatch, [out])
+    assert "WHAT THE LAST ROUND LEARNED" not in prompt
+    assert "WHY [" not in prompt

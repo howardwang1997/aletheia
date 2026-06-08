@@ -68,6 +68,7 @@ from aletheia.orchestrator.reasoner import reason_stage
 from aletheia.orchestrator.worker import is_degraded, run_worker
 from aletheia.paths import run_artifacts_dir
 from aletheia.scheduler.budget import BudgetPaused, BudgetTracker
+from aletheia.scheduler.outcome import classify_outcome
 from aletheia.scheduler.statemachine import LoopGuard, record_transition
 
 _JSON = re.compile(r"\{.*\}", re.DOTALL)
@@ -2102,6 +2103,24 @@ class ExperimentDriver:
 
         metrics = best_result.get("metrics", {})
         hk = self.profile.headline_metric if self.profile else "mae"
+        # K2: classify WHY the demonstration held/failed (deterministic, harness-owned) so the
+        # next campaign round is shaped by this round's reason, not a fresh blind guess. Read the
+        # POST-audit demonstration in ``info`` (the same dict the audit mutated + claims read);
+        # it never decides holds/strength.
+        demo_outcome = classify_outcome(
+            info.get("demonstration"),
+            info.get("reproduction"),
+            audit_passed=audit_passed,
+            audit_error=audit_error,
+            gate_passed=rpanel.gate_passed,
+            verdict=rpanel.consensus_verdict,
+            min_confirm_n=2 * int(getattr(get_settings(), "demonstration_min_samples", 20)),
+        )
+        await get_bus().publish(
+            make_event("campaign_reason", run_id=self.run_id, payload={
+                "round": round_idx, "exp_id": exp_id, "reason": demo_outcome["reason"],
+                "recoverable": demo_outcome["recoverable"], "detail": demo_outcome["detail"]})
+        )
         return {
             "round": round_idx,
             "exp_id": exp_id,
@@ -2116,6 +2135,11 @@ class ExperimentDriver:
             # what the planner intended this round to be (round 1 = the baseline)
             "experiment_type": str(self.hypothesis.get("experiment_type") or ("baseline" if round_idx == 1 else "")),
             "open_question": str(self.hypothesis.get("open_question") or ""),
+            # K2 outcome-reason classification (feeds _campaign_step's reasoned trajectory)
+            "reason": demo_outcome["reason"],
+            "narrowing_hint": demo_outcome["narrowing_hint"],
+            "recoverable": demo_outcome["recoverable"],
+            "outcome_detail": demo_outcome["detail"],
         }
 
     async def _adopt_hypothesis(self, hypo: dict[str, Any], exp_id: str | None) -> None:
@@ -2147,11 +2171,44 @@ class ExperimentDriver:
         {"continue": bool, "next_hypothesis": {...}, "rationale": str, "candidates": [...]}.
         """
         await self._status("planning", "planning the next experiment")
-        trajectory = "\n".join(
-            f"- round {o['round']} [{o.get('experiment_type') or '?'}]: '{o['hypothesis']}' -> "
-            f"{o.get('headline_metric')} {o.get('headline')} [{o.get('model')}], verdict {o.get('verdict')}"
-            for o in outcomes
-        )
+
+        # K2: a REASONED trajectory — each round carries WHY its demonstration held/failed (the
+        # deterministic outcome-reason classification) + a concrete narrowing hint, not just a
+        # metric + an approve/reject token. This is the seam that makes the next round provably
+        # shaped by the last round's reason instead of a fresh blind guess.
+        def _line(o: dict[str, Any]) -> str:
+            base = (
+                f"- round {o['round']} [{o.get('experiment_type') or '?'}]: '{o['hypothesis']}' -> "
+                f"{o.get('headline_metric')} {o.get('headline')} [{o.get('model')}], "
+                f"verdict {o.get('verdict')}"
+            )
+            reason = o.get("reason")
+            if reason and reason != "no_demonstration":
+                hint = str(o.get("narrowing_hint") or "").strip()
+                base += f"\n    WHY [{reason}]: {hint}"
+            return base
+
+        trajectory = "\n".join(_line(o) for o in outcomes)
+
+        # A hard directive built from the MOST RECENT round's reason: the next candidates must act
+        # on it. When the effect itself did not appear on held-out data (recoverable is False),
+        # re-tuning the same effect is forbidden — pivot to a different open question.
+        last = outcomes[-1] if outcomes else {}
+        last_reason = str(last.get("reason") or "")
+        learning = ""
+        if last_reason and last_reason != "no_demonstration":
+            hint = str(last.get("narrowing_hint") or "").strip()
+            pivot = (
+                " The effect did NOT hold on held-out data, so re-tuning the SAME effect/threshold "
+                "is unacceptable — at least one candidate must pivot to a DIFFERENT open question."
+                if last.get("recoverable") is False else
+                " At least one candidate must directly act on this hint rather than re-guess blind."
+            )
+            learning = (
+                f"WHAT THE LAST ROUND LEARNED (reason: {last_reason}):\n  {hint}\n"
+                f"  REQUIREMENT:{pivot}\n\n"
+            )
+
         gaps = ("OPEN GAPS:\n- " + "\n- ".join(self.survey_gaps) + "\n\n") if self.survey_gaps else ""
         budget_line = ""
         if self.budget is not None:
@@ -2162,7 +2219,7 @@ class ExperimentDriver:
         prompt = (
             f"You are PLANNING the next experiment in a research campaign (objective: "
             f"{plan.get('objective', '')}). {round_idx} of at most {max_exps} have run:\n{trajectory}\n\n"
-            f"{gaps}{budget_line}\n"
+            f"{learning}{gaps}{budget_line}\n"
             "Propose 2-3 candidate NEXT experiments. Each must answer a NAMED open question, be a "
             f"distinct angle from the rounds above, and have a type from: {types}. Estimate each "
             "candidate's expected_information_gain (0..1) honestly — an experiment that would barely "

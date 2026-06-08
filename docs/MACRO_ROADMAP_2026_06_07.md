@@ -66,8 +66,8 @@ believe itself more easily is wrong, no matter how much capability it adds.
 
 | # | Keystone | Closes (north-star gap) | Success criterion | Depends on | Status |
 |---|----------|--------------------------|-------------------|------------|--------|
-| **K1** | **Exploratory→Confirmatory demonstration** | #5 partial (real scientific process) | A true, generalizing effect can HOLD on a disjoint confirm split; the seal is airtight (5th anti-fakeability guard) | — | **DETAILED ↓** |
-| **K2** | **Campaign learning loop** | #5 (research programs, not one-shot) | Round N+1's hypothesis/design is provably shaped by round N's confirm/refute *reason*, not a fresh blind guess | K1 | keystone only |
+| **K1** | **Exploratory→Confirmatory demonstration** | #5 partial (real scientific process) | A true, generalizing effect can HOLD on a disjoint confirm split; the seal is airtight (5th anti-fakeability guard) | — | **DONE ✓** (live e2e `4c97becc`: first holding + reproduced result on a disjoint confirm split) |
+| **K2** | **Campaign learning loop** | #5 (research programs, not one-shot) | Round N+1's hypothesis/design is provably shaped by round N's confirm/refute *reason*, not a fresh blind guess | K1 | **DETAILED ↓** (building S2+S3) |
 | **K3** | **Knowledge-grounded ideation + novelty/SOTA health** | #1, #2, #6 (partial) | Novelty/SOTA claims gated on a structured-literature quality bar + a published-SOTA row comparison; "not found" ≠ novel | — (parallel to K1/K2) | keystone only |
 | **K4** | **Real-experiment repertoire beyond fit-a-regressor** | #3, #4 (mechanisms, ablations, general methods, multi-domain, scientific computing) | The system runs ablations / mechanism tests / hypothesis tests with frontier methods across ≥3 domains, not one sklearn benchmark | K1 (verdict seal), K3 (grounding) | keystone only (likely splits into sub-keystones) |
 | **K5** | **Scientific output: paper as a generated evidence-bundle view** | #6 (cited, faithful paper) | The paper renders strictly from the claim→evidence ledger with citations; prose can never outrun evidence | K1–K4 feed it | keystone only |
@@ -266,19 +266,156 @@ n_explore/n_confirm, seed, split_algo_version, group_disjoint, index_hash) + the
 
 ---
 
-# K2–K5 — keystone granularity (to be detailed when reached)
+# K2 — Campaign learning loop  (DETAILED EXECUTABLE PLAN)
+
+> Detailed 2026-06-08, after K1 went live (run `4c97becc`). K1 made a holding result *reachable*;
+> K2 makes the campaign *learn* across rounds. This IS the **epistemic world model** (see
+> *Organizing lens*).
+
+## Context — the loop exists, but it does not yet *learn*
+
+The multi-round campaign loop is already in the code (`driver.py:1864-1916`: one Run → up to
+`max_experiments_per_campaign=3` linked experiments; `_campaign_step:2140-2232` picks the next).
+But it is not yet a *learning* loop, for three concrete reasons the code makes explicit:
+
+1. **EIG is a vibe, not a measurement.** `_campaign_step` asks the LLM to "estimate each candidate's
+   `expected_information_gain` (0..1) honestly" (`driver.py:2168`). There is no belief state, so
+   "information gain" reduces nothing and is unfalsifiable — yet the deterministic selection
+   (`:2190`) trusts that number against the `campaign_min_eig=0.3` floor.
+2. **The next round is blind to WHY the last one held/failed.** The trajectory handed to the planner
+   (`:2150-2154`) is only `'<hypothesis>' -> <headline_metric> <value> [model], verdict
+   <approve/reject>`. It carries a metric + an approve/reject token but NOT the structured *reason*
+   the demonstration confirmed or refuted (didn't generalize to confirm / threshold too strong /
+   control not silent / sample starved / audit-refuted / scope over-claim). So round N+1 is
+   "informed" only by a number + a token — still essentially a fresh guess. **This is exactly the
+   milestone-run gap** (`4c97becc`): the AI demonstrated 1 of 4 claimed pillars and was rejected for
+   over-claim, and nothing fed "narrow the claim, or demonstrate pillars 2-4" into a next round.
+3. **No credence, no forward prediction, no Bayesian update.** Claims are discrete `status`+`strength`
+   strings (`memory/ledger.py` `Claim`). There is no calibrated belief to update, so the north-star
+   metric "information gain per campaign round" is unmeasurable today.
+
+K2 closes this by making the campaign loop an **epistemic world model**: a belief-state ledger of
+calibrated credences, a forward outcome predictor, a Bayesian update fired ONLY by the
+harness-verified confirm-split verdict, and an EIG that is *measured* entropy reduction — plus a
+deterministic **outcome-reason classifier** that feeds round N+1.
+
+## Invariants extended (never relaxed — the world model proposes; the harness disposes)
+
+- **The belief state is a planning aid, never a verdict.** It NEVER sets `holds`, `supported`, or
+  claim strength — those stay 100% harness-owned (the seal restated). A credence is updated **only**
+  by a harness-verified, held-out (confirm-split) outcome — never by a dreamed rollout, never by an
+  LLM's say-so.
+- **Fail closed.** No belief state / starved history / degraded round → fall back to today's
+  behavior; the credence is marked low-confidence (weak prior), never silently treated as strong.
+- **Calibration honesty.** Early credences ARE weak priors — surface them as such; never present an
+  uncalibrated credence as a hard probability. Don't claim "causal" from a single control.
+- **Pre-registration / immutability.** The forward *prediction* is committed BEFORE the experiment
+  runs, so prediction−outcome surprise cannot be back-fitted. The prediction is evidence, like the
+  prereg.
+
+## Core idea — two new objects + one new signal
+
+1. **Belief ledger** — each claim (or research question) carries a calibrated credence `Beta(α,β)`.
+   The literature/scorecard sets a *weak* prior; the harness verdict on the confirm split is the
+   only thing that updates it.
+2. **Outcome-reason classifier** (deterministic) — from the demonstration result + audit +
+   reproduction + results-gate, classify the round into a typed reason taxonomy: `generalized` /
+   `did_not_generalize` / `threshold_too_strong` / `control_not_silent` / `sample_starved` /
+   `audit_refuted` / `scope_overclaim` / `confound` / `infra_degraded`. A pure function over the
+   existing result dicts, no LLM.
+3. **Measured EIG** — the planner's candidate EIG becomes a *checkable* quantity: the expected
+   entropy reduction of the belief ledger under the candidate's pre-registered predicted outcome
+   distribution. The LLM may still propose, but the harness recomputes EIG from the belief state;
+   the LLM's number can only *lose* to the measured one (fail-closed toward the measured value).
+
+## Implementation
+
+### S1. Belief-ledger primitive (storage + update math)
+New `aletheia/memory/belief.py` (+ a `ClaimCredence` table in `ledger.py`, or a JSON column on
+`Claim`). `Credence = Beta(alpha, beta)`; helpers: `prior_from_scorecard(scores) -> Beta` (weak:
+α+β ≈ 2-4), `update(beta, harness_verdict) -> Beta` (+1 to α on a harness-confirmed hold, +1 to β
+on a harness-confirmed refute; NO update on `not_evaluated`/degraded), `entropy(beta)`,
+`mean(beta)`, `is_weak_prior(beta) -> bool`. `update()` accepts ONLY a harness verdict object
+(`holds ∈ {True, False}` from a confirm-split demonstration); it no-ops on `None`.
+
+### S2. Outcome-reason classifier (deterministic)  ← BUILDING NOW
+New `aletheia/scheduler/outcome.py` — `classify_outcome(demo, reproduction, audit, rpanel,
+split_meta) -> {reason, narrowing_hint, recoverable}`. Pure function over the existing result dicts
+(no new I/O). E.g. `holds=False` + high `control_statistic` → `control_not_silent`; `holds=True` +
+audit scope flag / gate reject on over-claim → `scope_overclaim`; `n_confirm < floor` →
+`sample_starved`; held on explore but not confirm → `did_not_generalize`. Wire into
+`_run_experiment`'s return (`:2105-2119`): add `outcome["reason"/"narrowing_hint"/"recoverable"]`.
+
+### S3. Feed the reason into the next round (the actual learning)  ← BUILDING NOW
+`driver.py` `_campaign_step` (`:2150-2173`). Replace the bare trajectory with a **reasoned
+trajectory**: each line gains `reason` + `narrowing_hint` (+ the round's claim credence mean once
+S1 lands). The prompt gains an explicit instruction: a `scope_overclaim` reason MUST spawn a
+candidate that narrows the claim or demonstrates an as-yet-unshown pillar; a `did_not_generalize`
+MUST change the effect/feature, not just re-tune the threshold; a `sample_starved` MUST scale n.
+This is the seam that makes round N+1 *provably* shaped by round N's reason.
+
+### S4. Forward prediction + measured EIG (pre-registered)
+Before a round runs, commit a **predicted outcome distribution** for its hypothesis (`P(holds)` from
+the candidate claim's credence) as an immutable pre-registration event. After the harness verdict,
+compute the **realized surprise** = `|predicted_P(holds) − outcome|` and the **realized entropy
+reduction**; emit a `belief_update` event. In `_campaign_step`, recompute each candidate's EIG as
+`expected_entropy_reduction(belief, candidate.predicted_outcome_dist)`; the selection floor
+(`:2186-2192`) uses the MEASURED EIG; the LLM's self-reported number is a tiebreak only and can
+never raise a candidate above its measured EIG. Convergence = measured EIG below floor.
+
+### S5. Claim-strength / calibration-honesty wiring
+`_claim_strength` / `_finalize_claims`: a claim whose credence is still a weak prior (S1
+`is_weak_prior`) cannot be `strong` (mirrors the K1 `exploration_missing` cap); surface the credence
++ weak-prior flag in the claim evidence. `_campaign_synthesis` (`:2234+`) reports the **belief
+trajectory** (credence per round) and the **calibration** (mean `|predicted−realized|` surprise) as
+the north-star progress metric, honestly labeled "weak/early."
+
+### S6. Persistence + e2e summary surfacing
+`ledger.py` (credence storage); `scripts/_e2e_common.py` `write_e2e_summary` gains a `belief` block
+(per-round reason, credence trajectory, measured EIG, predicted-vs-realized surprise / calibration).
+New events: `belief_prior`, `belief_update`, `campaign_reason`.
+
+## Acceptance criteria (K2 "done right")
+1. Round N+1's planner input provably contains round N's structured reason + narrowing hint (not
+   just a metric + verdict token).
+2. A `scope_overclaim` outcome (the milestone case) deterministically produces a next-round
+   candidate that narrows the claim or demonstrates an unshown pillar.
+3. A credence is updated ONLY by a harness-verified confirm-split verdict; `not_evaluated`/degraded
+   never moves it.
+4. EIG used for selection is *measured* entropy reduction of the belief ledger; the LLM's
+   self-reported EIG can never raise a candidate above its measured value.
+5. A forward outcome prediction is committed BEFORE the round runs; predicted−realized surprise is
+   recorded (calibration metric).
+6. A weak-prior credence cannot yield a `strong` claim; the synthesis labels early credences as weak.
+7. Fail-closed: no belief state / starved history / degraded round → today's behavior, credence
+   marked low-confidence.
+8. The world model never sets a verdict — `holds`/`supported`/strength stay harness-owned.
+
+## Tests (offline / mocked — safe in-session)
+- new `tests/test_belief.py` (S1 math), `tests/test_outcome_classifier.py` (S2 taxonomy);
+- extend `tests/test_paradigm_p5.py` (S3 reasoned trajectory + S4 measured EIG + S5 strength cap)
+  and `tests/test_paradigm_p5_materials.py` (the `scope_overclaim`→narrowing path on materials).
+
+## Verification
+- Backend (env `aletheia`): full suite green + new tests.
+- Live e2e OUTSIDE the Claude process (in-process trips the AUP classifier). Success = a ≥2-round
+  campaign where round 2's hypothesis is visibly shaped by round 1's reason (e.g. round 1
+  over-claims → round 2 narrows), the belief trajectory + calibration appear in the summary, and the
+  spine's verdicts stay harness-owned. Success is NOT "holds=True every round."
+
+## Build order
+The smallest honest increment that delivers the K2 thesis is **S2 + S3** (classify the reason + feed
+it forward) — that alone makes the loop *learn*. S1 / S4 / S5 then build the world-model rigor
+(credences, measured EIG, calibration) on top. Order: **S2+S3 → S1 → S4 → S5 → S6.**
+
+---
+
+# K3–K5 — keystone granularity (to be detailed when reached)
 
 Each becomes its own K1-shaped detailed plan (Context · core idea · invariants extended ·
 step-level Implementation · Acceptance · Tests · Verification) when we start it.
 
-### K2 — Campaign learning loop
-Turn the single-shot results path into a research program. After a confirm/refute, classify the
-*reason* (effect didn't generalize / threshold too strong / control not silent / sample too small /
-confound) and feed it into the next round's hypothesis + design — informed, not blind. Build on the
-existing campaign step (`driver.py` `_campaign_step`, EIG-based) and the K1 outcome record.
-Closes north-star #5; gap-analysis #7. **Depends on K1.**
-→ **This IS the epistemic world model** (see *Organizing lens*): belief-state ledger as calibrated
-credences + a forward outcome model + EIG planning + Bayesian update on the harness verdict.
+> **K2 — Campaign learning loop** is now DETAILED above (see the K2 detailed executable plan).
 
 ### K3 — Knowledge-grounded ideation + novelty/SOTA health bar
 Move ideation from "plan-handed" toward literature-grounded hypothesis generation; build structured
