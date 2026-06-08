@@ -19,6 +19,36 @@ questions*, designs and runs experiments with frontier methods, reasons about wh
 and writes up cited results — autonomously, within guardrails. Every change is weighed by whether
 it moves Aletheia toward that. See the roadmap in the approved plan and `docs/ARCHITECTURE.md`.
 
+## Keystone roadmap
+
+Aletheia's path to the north star is organized around six keystones. The project is past the toy
+demo stage and is best understood today as a credible early research operating system, not yet a
+reliable autonomous frontier scientist.
+
+1. **Evidence spine — mostly done, still hardening.** Structured claims, evidence refs, claim
+   strength/status, fail-closed gates, cross-vendor review, reproduction checks, and write-up rules
+   prevent polished prose from outrunning the ledger.
+2. **AI-authored demonstration harness — mostly done, still hardening.** The AI can author a
+   `compute_demonstration`, but the harness owns `holds` through pre-registration, negative
+   controls, probes, audit, and claim finalization. Molecules and materials exercise this path.
+3. **Exploratory -> confirmatory demonstrations — next keystone.** The AI should calibrate on an
+   exploration partition, commit a pre-registered threshold, then be judged only on a disjoint
+   confirmation partition. This makes a real holding result reachable without weakening the
+   anti-fakeability spine.
+4. **Campaign learning loop — missing.** A refuted or unstable demonstration should feed back into
+   the next hypothesis/design instead of starting from a fresh blind guess. This is the transition
+   from one-shot automation to a research program.
+5. **Strong novelty/SOTA grounding — partial.** Literature retrieval, structured findings, and SOTA
+   rows exist, but novelty and SOTA claims still need stronger health checks and prior-work mapping
+   before the system can reliably tell new science from a rephrased known idea.
+6. **Reproducible research bundle — partial.** The final output should be a stable bundle containing
+   the question, literature, data card, split metadata, code, artifacts, metrics, claims, audits,
+   reproduction, limitations, paper, and reproducibility package/PR.
+
+Roughly: keystones 1-2 are substantially built, keystone 3 is the next implementation target, and
+keystones 4-6 are the remaining large steps before Aletheia can credibly claim autonomous frontier
+science rather than a well-guarded research execution system.
+
 ## Invariants (the safety/quality spine — never traded for a feature)
 
 1. **Deterministic FSM + hard gates** — capability is added as gated stages, not free-roaming autonomy.
