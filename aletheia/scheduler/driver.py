@@ -1143,32 +1143,35 @@ class ExperimentDriver:
                 if not consistent:
                     reasons = [*reasons, consistency_reason]
             accepted = bool(ok and valid_prereg and consistent)
-            # K1 v1.1: ONE bounded recalibration retry, ONLY for a consistency rejection — the
-            # seal's reason is specific and actionable ("your threshold exceeds your own explore
-            # estimate"), and re-authoring happens PRE-COMMIT against the same explore-only
-            # observations, so the seal is not weakened. Any other failure (code gate, smoke,
-            # malformed prereg) keeps the single-shot fallback. Seen live (run b1993c7f): the first
-            # sealed run authored supported_if>=0.55 against its own explore estimate 0.493 and
-            # died with no demonstration at all — one informed retry is the fix.
-            if accepted or attempt == 1 or not (ok and valid_prereg and not consistent):
+            # K1 v1.2: ONE bounded INFORMED retry on ANY actionable authoring rejection — a code-gate
+            # reject, a smoke-test runtime error, a malformed pre-registration, OR a threshold
+            # inconsistent with the AI's OWN exploration. The retried output goes through the EXACT
+            # SAME gates (nothing relaxed); it just gives one informed second attempt before falling
+            # back. On a domain with NO registered fallback (materials), that is produce-a-verifiable-
+            # demonstration vs produce-nothing. Seen live: run b1993c7f died on a threshold
+            # inconsistency (v1.1 covered it); run 5cdb9d60 died on a COMPOUND failure (the code
+            # raised AND the control threshold was off) that v1.1's consistency-only retry missed.
+            if accepted or attempt == 1:
                 break
             await get_bus().publish(
                 make_event("demonstration_code", run_id=self.run_id, payload={
                     "accepted": False, "lines": code.count("\n") + 1, "reasons": reasons[:5],
                     "preregistration_valid": valid_prereg,
                     "exploration_applied": confirm_index is not None,
-                    "exploration_consistent": False, "retrying": True})
+                    "exploration_consistent": consistent, "retrying": True})
             )
-            await self._status("coding", "recalibrating the pre-registered threshold (bounded retry)")
+            await self._status("coding", "revising the demonstration (bounded retry)")
             retry_note = (
-                "\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED PRE-COMMIT by the harness's deterministic "
-                "threshold-consistency check against YOUR OWN exploration observations:\n"
-                f"  {consistency_reason}\n"
-                "Recalibrate the pre-registered thresholds to values the EXPLORATION OBSERVATIONS "
-                "actually support (a supported_if your expected_test_statistic meets, a "
-                "control_silent_if your expected_control_statistic satisfies, and thresholds that "
-                "still DISCRIMINATE test from control). Keep the same statistic unless the "
-                "observations show it cannot work. Return the SAME two blocks (python + json)."
+                "\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED PRE-COMMIT by the harness. Fix ALL of these "
+                "and resubmit the SAME two fenced blocks (python + json), keeping the same "
+                "discriminating idea:\n"
+                + "\n".join(f"  - {r}" for r in reasons[:5])
+                + "\nIf a threshold was inconsistent with your exploration observations, recalibrate "
+                "it to what those observations support (a supported_if your expected_test_statistic "
+                "meets, a control_silent_if your expected_control_statistic satisfies, and thresholds "
+                "that still DISCRIMINATE test from control). If the code raised at import/run, fix the "
+                "runtime error. If the pre-registration was malformed, return both decision rules as "
+                "{op, threshold}."
             )
         await get_bus().publish(
             make_event("demonstration_code", run_id=self.run_id, payload={

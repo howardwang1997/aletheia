@@ -365,6 +365,26 @@ def test_still_inconsistent_after_retry_falls_back_without_commit(monkeypatch):
     assert _committed_prereg(run_id, fid) is None  # nothing was committed
 
 
+def _bad_code_reply(threshold=0.4):
+    # passes the static gate (defines compute_demonstration) but FAILS the smoke test (non-dict),
+    # with a threshold consistent vs the fixed exploration (0.49) so ONLY the code is the problem.
+    prereg = {**_PREREG, "supported_if": {"op": ">=", "threshold": threshold}}
+    bad = "def compute_demonstration(X, y, groups, meta):\n    return 123\n"
+    return "```python\n" + bad + "```\n```json\n" + json.dumps(prereg) + "\n```"
+
+
+def test_v12_code_failure_also_gets_one_bounded_retry(monkeypatch):
+    # K1 v1.2 (seen live, run 5cdb9d60): a COMPOUND first attempt — the code raised AND the
+    # threshold was off — must ALSO get one informed retry (v1.1 only retried pure consistency).
+    # Here the first reply's code fails the smoke test; the retry carries the runtime error.
+    design, prompts, run_id, fid = _authoring_driver(
+        monkeypatch, [_bad_code_reply(), _reply(0.4)])
+    assert len(prompts) == 2  # the smoke-test failure triggered the informed retry
+    assert "import/run failed" in prompts[1]  # the concrete runtime error is fed back
+    assert design.get("demonstration_code")  # the fixed second attempt was accepted + committed
+    assert _committed_prereg(run_id, fid) is not None
+
+
 def test_missing_seal_caps_formulation_below_strong():
     f = ExperimentDriver._claim_strength
     sealed = f("formulation", gate_passed=True, gate_verdict="approve", reproduced=True,
