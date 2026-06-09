@@ -39,7 +39,7 @@ from __future__ import annotations
 import asyncio
 import time
 
-from _e2e_common import RunRecorder, write_e2e_summary
+from _e2e_common import RunRecorder, print_usage, tee_console, write_e2e_summary
 
 from aletheia.config import get_settings
 from aletheia.data.registry import register_dataset
@@ -192,7 +192,7 @@ def evaluate_k2(events_log: list[dict], recorder: RunRecorder, run_id: str) -> N
               "belief block in the JSON summary.", flush=True)
 
 
-async def main() -> None:
+async def main(timestamp: str) -> None:
     # MULTI-ROUND: the whole point of K2 is learning ACROSS rounds, so allow up to 3 linked
     # experiments + a bounded pivot budget for informative undemonstrated rounds (S3.5).
     get_settings().max_experiments_per_campaign = 3
@@ -278,14 +278,18 @@ async def main() -> None:
     print("final credences:", list_credences(run_id))
 
     summary_path = write_e2e_summary(
-        run_id=run_id, exp_id=exp_id, timestamp=time.strftime("%Y%m%dT%H%M%S"),
+        run_id=run_id, exp_id=exp_id, timestamp=timestamp,
         prefer_authored=get_settings().demonstration_prefer_authored,
         recorder=recorder, domain="materials",
     )
     print(f"summary written: {summary_path}", flush=True)
+    print_usage(run_id)
 
     evaluate_k2(events_log, recorder, run_id)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    ts = time.strftime("%Y%m%dT%H%M%S")
+    with tee_console("materials", ts) as log_path:
+        asyncio.run(main(ts))
+        print(f"console log: {log_path}", flush=True)

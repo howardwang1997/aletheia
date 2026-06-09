@@ -113,6 +113,24 @@ CLAUDE_CODE_OAUTH_TOKEN=...            # leave BLANK to inherit the machine logi
 conda run -n aletheia python -m pytest        # Phase 0 skeleton tests (needs Postgres up)
 ```
 
+## Token / cost usage
+
+Every Claude SDK call persists its real `total_cost_usd` + token `usage`; these are summed
+per run from the ledger (no estimate). A live run is dominated by `cache_read` tokens — that,
+not USD, is what meters the rolling subscription window (`cost_usd` reads ~0 under a
+subscription login).
+
+```bash
+conda run -n aletheia python scripts/usage_report.py             # all runs + grand total
+conda run -n aletheia python scripts/usage_report.py --top 10    # priciest runs by tokens
+conda run -n aletheia python scripts/usage_report.py <run_id>    # full breakdown for one run
+```
+
+Each e2e summary also carries a `usage` block (incl. `five_hour_window`: the SDK-reported
+pressure on the 5-hour rolling limit during the run — peak utilization + whether it was
+throttled), and `token_cap_per_run` (off by default) bounds a run's total tokens. The budget
+cap now binds on the SDK's real reported cost, not a flat per-stage estimate.
+
 ## Status
 
 The full deterministic research lifecycle runs end-to-end in **dry-run** (DB → event-bus

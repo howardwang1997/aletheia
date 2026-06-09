@@ -180,6 +180,10 @@ class Settings(BaseSettings):
     max_concurrent_jobs: int = 2
     wall_clock_hours: float = 24.0
     est_stage_cost_usd: float = 0.10  # estimated cost charged per Opus reasoning stage
+    # optional hard cap on a run's TOTAL tokens (in+out+cache). None = off. Tokens — not USD —
+    # are what the rolling subscription usage window meters (cost reads ~0 under subscription
+    # auth), so this is the knob that bounds a run's contribution to the 5-hour limit.
+    token_cap_per_run: int | None = None
     max_experiments_per_campaign: int = 3  # one Run -> up to N linked experiments (go/no-go decides)
     # K2 S3.5: a paradigm round that produces NO demonstration (e.g. the AI could not author a
     # threshold consistent with its own exploration) is an informative negative — the campaign may

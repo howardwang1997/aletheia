@@ -12,11 +12,14 @@ scraping the live console stream.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 from aletheia.memory.service import get_run, list_claims, list_credences, list_metrics
+from aletheia.memory.usage import aggregate_run_usage, format_usage, run_rate_limit
 from aletheia.paths import artifacts_dir
 
 # the explicit capability id the driver routes to when the AI authored the computation; any other
@@ -188,7 +191,54 @@ def write_e2e_summary(
         # verified confirm-split verdicts), how well the forward prediction matched reality
         # (surprise/calibration), and the final durable credences — all honestly labeled weak/early.
         "belief": _belief_block(run_id, recorder),
+        # REAL token + cost spend for the run, summed from the SDK's own per-call reports in the
+        # ledger (not the budget estimate). cost_usd reads ~0 under subscription auth — tokens
+        # (esp. cache_read) are the honest signal for what the rolling usage window metered.
+        # ``five_hour_window`` is the SDK-reported pressure on the 5-hour rolling limit DURING the
+        # run (peak utilization + whether it was throttled) — what actually competes with other work.
+        "usage": {
+            **aggregate_run_usage(run_id).to_dict(),
+            "five_hour_window": run_rate_limit(run_id).to_dict(),
+        },
     }
     path = artifacts_dir() / f"demo_e2e_{domain}_{run_id}_{timestamp}.json"
     path.write_text(json.dumps(summary, indent=2, default=str))
     return path
+
+
+def print_usage(run_id: str) -> None:
+    """Print the run's REAL token + cost spend (the same numbers written into the summary)."""
+    print("\n--- TOKEN / COST USAGE (real, from the SDK's own per-call reports) ---", flush=True)
+    print("  " + format_usage(aggregate_run_usage(run_id)), flush=True)
+
+
+class _Tee:
+    """A minimal write-fan-out: everything printed goes to the real stream AND a log file."""
+
+    def __init__(self, *streams: Any) -> None:
+        self._streams = streams
+
+    def write(self, data: str) -> int:
+        for st in self._streams:
+            st.write(data)
+        return len(data)
+
+    def flush(self) -> None:
+        for st in self._streams:
+            st.flush()
+
+
+@contextlib.contextmanager
+def tee_console(domain: str, timestamp: str):
+    """Mirror stdout+stderr to a timestamped ``artifacts/<domain>_e2e_console_<ts>.log`` for the
+    duration of a run, so the raw per-call ``>> result: ... usage={...}`` lines are preserved
+    (not just printed to a terminal that scrolls away). Yields the log path."""
+    log_path = artifacts_dir() / f"{domain}_e2e_console_{timestamp}.log"
+    real_out, real_err = sys.stdout, sys.stderr
+    with open(log_path, "w") as fh:
+        sys.stdout = _Tee(real_out, fh)  # type: ignore[assignment]
+        sys.stderr = _Tee(real_err, fh)  # type: ignore[assignment]
+        try:
+            yield log_path
+        finally:
+            sys.stdout, sys.stderr = real_out, real_err

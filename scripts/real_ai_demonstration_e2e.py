@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import time
 
-from _e2e_common import RunRecorder, write_e2e_summary
+from _e2e_common import RunRecorder, print_usage, tee_console, write_e2e_summary
 
 from aletheia.config import get_settings
 from aletheia.data.registry import register_dataset
@@ -39,7 +39,7 @@ def _short(p: dict, n: int = 170) -> str:
     return s if len(s) <= n else s[:n] + "…"
 
 
-async def main() -> None:
+async def main(timestamp: str) -> None:
     get_settings().max_experiments_per_campaign = 1
     # FRONTIER OVERRIDE: force the AI-authored demonstration path even if IDEATE reframes the claim
     # into something a registered capability would keyword-match. Without this, routing is
@@ -117,12 +117,16 @@ async def main() -> None:
 
     # auditable artifact: one JSON file capturing route fired + demonstration + audit + ledger.
     summary_path = write_e2e_summary(
-        run_id=run_id, exp_id=exp_id, timestamp=time.strftime("%Y%m%dT%H%M%S"),
+        run_id=run_id, exp_id=exp_id, timestamp=timestamp,
         prefer_authored=get_settings().demonstration_prefer_authored,
         recorder=recorder, domain="molecules",
     )
     print(f"summary written: {summary_path}", flush=True)
+    print_usage(run_id)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    ts = time.strftime("%Y%m%dT%H%M%S")
+    with tee_console("molecules", ts) as log_path:
+        asyncio.run(main(ts))
+        print(f"console log: {log_path}", flush=True)
