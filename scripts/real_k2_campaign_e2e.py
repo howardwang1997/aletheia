@@ -54,6 +54,7 @@ from aletheia.memory.service import (
     list_metrics,
 )
 from aletheia.scheduler.driver import ExperimentDriver
+from aletheia.scheduler.k2_acceptance import score_k2
 
 
 def _short(p: dict, n: int = 170) -> str:
@@ -61,135 +62,36 @@ def _short(p: dict, n: int = 170) -> str:
     return s if len(s) <= n else s[:n] + "…"
 
 
-def evaluate_k2(events_log: list[dict], recorder: RunRecorder, run_id: str) -> None:
+def evaluate_k2(events_log: list[dict], run_id: str) -> None:
     """Print an explicit ✓/✗ evaluation of the K2 success criteria from the captured stream.
 
-    Soft checks (no asserts) so a partial/honest outcome still produces a readable report instead of
-    crashing the run and losing the summary. Reads ONLY the event stream + the ledger — the same
-    surface a reviewer has.
+    Thin printer over the pure :func:`aletheia.scheduler.k2_acceptance.score_k2` (which holds the
+    real logic and is unit-tested). Reads ONLY the event stream + the ledger — the same surface a
+    reviewer has — and never asserts, so a partial/honest outcome still produces a readable report.
     """
-    priors = recorder.events("belief_prior")
-    preds = recorder.events("belief_prediction")
-    updates = recorder.events("belief_update")
-    reasons = recorder.events("campaign_reason")
-    finished = recorder.payload("campaign_finished")
-    creds = list_credences(run_id)
-    plans = [e["payload"] for e in events_log if e["type"] == "campaign_plan"]
-    demos = [e["payload"] for e in events_log if e["type"] == "demonstration"]
-    # harness-verified confirm-split verdicts: a demonstration the HARNESS computed (computed=True),
-    # decided on the held-out confirm split (exploration_applied), with a real boolean holds.
-    confirm_verdicts = [
-        d for d in demos
-        if d.get("computed") and d.get("exploration_applied") and isinstance(d.get("holds"), bool)
-    ]
-
-    checks: list[tuple[str, bool | None, str]] = []
-
-    # 1. A reasoned trajectory: each round carries a typed reason (S2/S3).
-    checks.append((
-        "reasoned trajectory — a typed reason per round",
-        len(reasons) >= 1,
-        f"{len(reasons)} campaign_reason event(s): " + ", ".join(
-            f"r{r.get('round')}={r.get('reason')}" for r in reasons),
-    ))
-
-    # 2. The belief was SEEDED as a weak prior (never asserting belief).
-    all_weak = bool(priors) and all(p.get("weak_prior") for p in priors)
-    checks.append((
-        "belief seeded as a WEAK prior per lineage",
-        all_weak,
-        f"{len(priors)} belief_prior event(s), all weak_prior={all_weak}",
-    ))
-
-    # 3. Pre-registration: a forward prediction was committed, and it PRECEDES every belief_update of
-    #    the same lineage in the stream (so predicted−realized surprise can't be back-fitted).
-    ordering_ok = len(preds) >= 1
-    for i, e in enumerate(events_log):
-        if e["type"] == "belief_update":
-            qk = e["payload"].get("question_key")
-            if not any(x["type"] == "belief_prediction" and x["payload"].get("question_key") == qk
-                       for x in events_log[:i]):
-                ordering_ok = False
-    checks.append((
-        "forward prediction committed BEFORE each verdict (pre-registration)",
-        ordering_ok,
-        f"{len(preds)} belief_prediction event(s); ordering holds={ordering_ok}",
-    ))
-
-    # 4. The belief moved ONLY on harness-verified confirm-split verdicts, and exactly on them.
-    updates_match_verdicts = len(updates) == len(confirm_verdicts)
-    updates_well_formed = all(
-        u.get("realized") in (0.0, 1.0) and u.get("surprise") is not None for u in updates)
-    checks.append((
-        "credence moves ONLY on harness confirm-split verdicts (spine intact)",
-        updates_match_verdicts and updates_well_formed,
-        f"{len(updates)} belief_update(s) vs {len(confirm_verdicts)} harness confirm-split verdict(s); "
-        f"all updates well-formed={updates_well_formed}",
-    ))
-
-    # 5. Calibration surfaced (only meaningful once a verdict actually moved the belief).
-    cal = finished.get("calibration")
-    cal_ok = (cal is not None) if updates else None  # n/a if no round produced a verdict
-    checks.append((
-        "calibration (mean |predicted−realized|) surfaced in the synthesis",
-        cal_ok,
-        f"calibration={cal}, n_belief_updates={finished.get('n_belief_updates')}",
-    ))
-
-    # 6. Durable persistence of the credences (S6).
-    checks.append((
-        "credences persisted durably (belief_states)",
-        len(creds) >= 1,
-        f"{len(creds)} lineage(s): " + ", ".join(
-            f"{c['question_key'][:24]}(a={c['alpha']:.2f},b={c['beta']:.2f},n={c['n_updates']})"
-            for c in creds),
-    ))
-
-    # 7. The loop LEARNED across rounds: >=2 rounds ran, and a go/no-go step chose a next experiment
-    #    after a reason (round N+1 shaped by round N). A legitimately-converged 1-round campaign is
-    #    honest but does NOT exercise the cross-round learning this keystone is about.
-    multi_round = len(reasons) >= 2
-    continued = any(p.get("continue") for p in plans)
-    checks.append((
-        ">=2 rounds, round N+1 shaped by round N's reason (the K2 thesis)",
-        multi_round and continued,
-        f"{len(reasons)} round(s); a go/no-go chose to continue/pivot={continued}",
-    ))
-
-    # 8. The world model never set a verdict: no demonstration's holds came from an LLM — every
-    #    confirm-split verdict was harness-COMPUTED.
-    spine_ok = all(d.get("computed") for d in confirm_verdicts) if confirm_verdicts else None
-    checks.append((
-        "every verdict harness-owned (no LLM-set holds)",
-        spine_ok,
-        f"{len(confirm_verdicts)} confirm-split verdict(s), all harness-computed="
-        f"{spine_ok if confirm_verdicts else 'n/a (no verdict this run)'}",
-    ))
+    result = score_k2(events_log, list_credences(run_id))
 
     print("\n=== K2 SUCCESS CRITERIA ===", flush=True)
-    for name, ok, detail in checks:
-        mark = "✓" if ok else ("—" if ok is None else "✗")
-        print(f"  [{mark}] {name}\n        {detail}", flush=True)
+    for c in result.checks:
+        mark = "✓" if c.ok else ("—" if c.ok is None else "✗")
+        print(f"  [{mark}] {c.name}\n        {c.detail}", flush=True)
 
-    # Verdict. The CORE machinery (criteria 1–4, 6) must hold and the spine must be intact. Calibration
-    # (5) + multi-round learning (7) are required for a FULL pass; if the campaign honestly converged
-    # or paused in one round (or no round produced a verdict), report PARTIAL with the reason.
-    core = [checks[i][1] for i in (0, 1, 2, 3, 5)]  # reasoned traj, weak prior, prereg, spine-moves, persist
-    core_ok = all(bool(c) for c in core)
-    spine_intact = checks[7][1] is not False
-    full = core_ok and spine_intact and bool(checks[6][1]) and (checks[4][1] is not False)
     print("\n=== K2 VERDICT ===", flush=True)
-    if full:
+    if result.verdict == "full":
         print("  ✓ FULL PASS — the campaign LEARNED across rounds with the anti-fakeability spine "
               "intact (belief moved only on harness verdicts; verdicts harness-owned).", flush=True)
-    elif core_ok and spine_intact:
+    elif result.verdict == "partial":
         print("  ~ PARTIAL — the K2 machinery + spine are correct, but this run did not exercise the "
-              "full thesis (single round / no confirm-split verdict / converged early). Re-run or "
-              "adjust the objective for a >=2-round campaign with an authored verdict. Note: an honest "
-              "refute or a bounded pivot is NOT a failure.", flush=True)
+              "full thesis: it needs >=1 harness confirm-split verdict that moved a calibrated belief "
+              f"(this run had {result.n_confirm_verdicts} verdict(s), {result.n_updates} belief "
+              "update(s), calibration="
+              f"{result.calibration}). An honest refute or a bounded pivot is NOT a failure — but a "
+              "run with no verdict at all cannot be a FULL pass. Adjust the objective / authoring so "
+              "a discriminating demonstration actually computes on the confirm split.", flush=True)
     else:
-        print("  ✗ FAIL — a core K2 criterion or the spine did not hold. Inspect the ✗ rows + the "
-              "belief block in the JSON summary.", flush=True)
+        print("  ✗ FAIL — a core K2 criterion or the spine did not hold (e.g. a belief moved without "
+              "a harness verdict). Inspect the ✗ rows + the belief block in the JSON summary.",
+              flush=True)
 
 
 async def main(timestamp: str) -> None:
@@ -285,7 +187,7 @@ async def main(timestamp: str) -> None:
     print(f"summary written: {summary_path}", flush=True)
     print_usage(run_id)
 
-    evaluate_k2(events_log, recorder, run_id)
+    evaluate_k2(events_log, run_id)
 
 
 if __name__ == "__main__":
