@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from aletheia.memory.service import get_run, list_claims, list_credences, list_metrics
+from aletheia.memory.transcript import export_transcript
 from aletheia.memory.usage import aggregate_run_usage, format_usage, run_rate_limit
 from aletheia.paths import artifacts_dir
 
@@ -203,6 +204,14 @@ def write_e2e_summary(
     }
     path = artifacts_dir() / f"demo_e2e_{domain}_{run_id}_{timestamp}.json"
     path.write_text(json.dumps(summary, indent=2, default=str))
+
+    # Archive the full conversation record (lossless .jsonl + readable .md) alongside the summary.
+    # Best-effort: a transcript-export failure must never lose the run's summary.
+    try:
+        t = export_transcript(run_id, stem=f"{domain}_{run_id}_{timestamp}")
+        print(f"transcript archived: {t['md']}  (+ {t['jsonl'].name}, {t['events']} events)", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warn] transcript export failed: {exc}", flush=True)
     return path
 
 

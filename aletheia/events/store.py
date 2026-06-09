@@ -22,6 +22,18 @@ def persist_event(evt: dict[str, Any]) -> int:
         return row.id
 
 
+def _row_to_dict(r: Event) -> dict[str, Any]:
+    return {
+        "id": r.id,
+        "run_id": r.run_id,
+        "agent": r.agent,
+        "parent_tool_use_id": r.parent_tool_use_id,
+        "type": r.type,
+        "payload": r.payload,
+        "ts": r.ts.isoformat() if r.ts else None,
+    }
+
+
 def list_events(run_id: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
     with session_scope() as s:
         q = s.query(Event)
@@ -29,15 +41,30 @@ def list_events(run_id: str | None = None, limit: int = 500) -> list[dict[str, A
             q = q.filter(Event.run_id == run_id)
         rows = q.order_by(Event.id.desc()).limit(limit).all()
         rows.reverse()
-        return [
-            {
-                "id": r.id,
-                "run_id": r.run_id,
-                "agent": r.agent,
-                "parent_tool_use_id": r.parent_tool_use_id,
-                "type": r.type,
-                "payload": r.payload,
-                "ts": r.ts.isoformat() if r.ts else None,
-            }
-            for r in rows
-        ]
+        return [_row_to_dict(r) for r in rows]
+
+
+def list_run_events(run_id: str) -> list[dict[str, Any]]:
+    """ALL events for a run in chronological (insertion) order — unbounded.
+
+    Unlike :func:`list_events` (capped at ``limit``, newest-first), this returns the complete
+    ordered stream, for faithful conversation-record export."""
+    with session_scope() as s:
+        rows = s.query(Event).filter(Event.run_id == run_id).order_by(Event.id.asc()).all()
+        return [_row_to_dict(r) for r in rows]
+
+
+def list_run_ids_with_events(limit: int | None = None) -> list[str]:
+    """Run ids that have at least one event, newest-activity first (by latest event id)."""
+    from sqlalchemy import func
+
+    with session_scope() as s:
+        q = (
+            s.query(Event.run_id)
+            .filter(Event.run_id.isnot(None))
+            .group_by(Event.run_id)
+            .order_by(func.max(Event.id).desc())
+        )
+        if limit:
+            q = q.limit(limit)
+        return [r[0] for r in q.all()]

@@ -131,6 +131,19 @@ pressure on the 5-hour rolling limit during the run — peak utilization + wheth
 throttled), and `token_cap_per_run` (off by default) bounds a run's total tokens. The budget
 cap now binds on the SDK's real reported cost, not a flat per-stage estimate.
 
+## Conversation records
+
+Every model turn, tool call, tool result, and per-call usage is persisted to the `events`
+ledger, so the full dialogue of any run can be exported to durable files — a lossless
+`.jsonl` (the archive) and a readable, lane-tagged `.md` with a token/cost + 5h-window header.
+Each e2e run auto-archives its transcript; any past run can be exported on demand:
+
+```bash
+conda run -n aletheia python scripts/export_transcript.py <run_id>   # one run
+conda run -n aletheia python scripts/export_transcript.py --last 5   # 5 most recent
+conda run -n aletheia python scripts/export_transcript.py --all      # every run with events
+```
+
 ## Status
 
 The full deterministic research lifecycle runs end-to-end in **dry-run** (DB → event-bus
