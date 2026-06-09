@@ -8,6 +8,7 @@ from typing import Any
 from aletheia.db import session_scope
 from aletheia.memory.ledger import (
     Artifact,
+    BeliefState,
     BudgetEvent,
     Claim,
     ClaimEvidence,
@@ -406,6 +407,58 @@ def attach_claim_evidence(
                 note=note,
             )
         )
+
+
+# --- K2 belief state: durable mirror of the campaign's calibrated credences ----------------
+
+def upsert_credence(
+    run_id: str, question_key: str, alpha: float, beta: float, n_updates: int = 0
+) -> None:
+    """Write-through the in-memory credence for an open-question lineage. Upsert by
+    ``(run_id, question_key)`` so the durable row always reflects the latest belief — the credence
+    is a planning aid, never a verdict, so this stores state only (it sets no claim strength)."""
+    with session_scope() as s:
+        row = (
+            s.query(BeliefState)
+            .filter(BeliefState.run_id == run_id, BeliefState.question_key == question_key)
+            .one_or_none()
+        )
+        if row is None:
+            s.add(BeliefState(
+                run_id=run_id, question_key=question_key,
+                alpha=float(alpha), beta=float(beta), n_updates=int(n_updates),
+            ))
+        else:
+            row.alpha = float(alpha)
+            row.beta = float(beta)
+            row.n_updates = int(n_updates)
+
+
+def get_credence(run_id: str, question_key: str) -> dict[str, Any] | None:
+    with session_scope() as s:
+        row = (
+            s.query(BeliefState)
+            .filter(BeliefState.run_id == run_id, BeliefState.question_key == question_key)
+            .one_or_none()
+        )
+        if row is None:
+            return None
+        return {"question_key": row.question_key, "alpha": row.alpha, "beta": row.beta,
+                "n_updates": row.n_updates}
+
+
+def list_credences(run_id: str) -> list[dict[str, Any]]:
+    with session_scope() as s:
+        rows = (
+            s.query(BeliefState)
+            .filter(BeliefState.run_id == run_id)
+            .order_by(BeliefState.updated_at.asc())
+            .all()
+        )
+        return [
+            {"question_key": r.question_key, "alpha": r.alpha, "beta": r.beta, "n_updates": r.n_updates}
+            for r in rows
+        ]
 
 
 def list_claims(run_id: str, experiment_id: str | None = None) -> list[dict[str, Any]]:

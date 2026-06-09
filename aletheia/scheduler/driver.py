@@ -57,8 +57,10 @@ from aletheia.memory.service import (
     set_experiment_repo,
     set_run_status,
     update_claim,
+    upsert_credence,
 )
 from aletheia.memory.vector import format_briefing, index_chunk, recall
+from aletheia.memory import belief
 from aletheia.orchestrator.gate import build_tool_gate
 from aletheia.orchestrator.tools import build_search_literature_tool
 from aletheia.research import literature
@@ -167,6 +169,13 @@ class ExperimentDriver:
         self.domain: str | None = None  # the run's domain name (materials | molecules | …)
         self._claim_ids: dict[str, str] = {}  # role -> claim id, reset per experiment round
         self._last_scores: dict[str, float] = {}  # latest hypothesis scorecard scores (campaign EIG)
+        # K2 (epistemic world model): per open-question lineage, a calibrated credence Beta(α,β) for
+        # "will this line hold on held-out data?". Seeded as a WEAK prior from the scorecard; moved
+        # ONLY by a harness-verified confirm-split verdict (S4). A planning aid, never a verdict.
+        self._belief: dict[str, belief.Credence] = {}
+        # K2-S4: per lineage, the forward P(holds) prediction committed BEFORE a round runs (a
+        # pre-registration) so the predicted−realized surprise can't be back-fitted.
+        self._pending_prediction: dict[str, float] = {}
 
     @staticmethod
     def _claim_strength(
@@ -183,6 +192,7 @@ class ExperimentDriver:
         audit_passed: bool | None = None,
         audit_error: bool = False,
         exploration_missing: bool = False,
+        weak_prior: bool = False,
     ) -> str:
         """Deterministic, harness-owned claim strength — never the LLM's self-rating.
         Keeps a report from implying stronger evidence than the ledger holds.
@@ -212,7 +222,13 @@ class ExperimentDriver:
 
         ``exploration_missing`` (K1): the AI-authored demonstration ran WITHOUT the explore->confirm
         seal (blind fallback) — there is no verification its threshold wasn't fit to noise, so the
-        formulation claim is capped at `moderate` (never `strong`), even when held + reproduced."""
+        formulation claim is capped at `moderate` (never `strong`), even when held + reproduced.
+
+        ``weak_prior`` (K2): the campaign's calibrated credence for this line is still a weak prior
+        (too few harness-verified confirm-split rounds to trust). A single confirm-split hold IS a
+        weak prior, so it caps the formulation claim at `moderate` — a `strong` formulation must rest
+        on accumulated, replicated belief, not one round. Couples claim strength to the world model
+        (the epistemic state the spine actually earned), mirroring the ``exploration_missing`` cap."""
 
         def _s() -> str:
             if kind == "metric":
@@ -240,12 +256,13 @@ class ExperimentDriver:
                     return "weak"  # didn't hold, gate failed, OR the independent audit refuted it
                 if audit_error:
                     return "weak"  # audit could NOT run -> no independent verification (not a refutation)
-                if reproduced and gate_verdict == "approve" and not exploration_missing:
-                    return "strong"  # held + clean approve + STABLE re-run + explore->confirm seal
-                # K1: a held+approved+reproduced demo whose explore->confirm seal was NOT applied
-                # (blind fallback) cannot reach `strong` — there is no verification the threshold
-                # wasn't fit to noise; it is capped at `moderate`.
-                return "moderate"  # held + approved (approve_with_changes / not reproduced / no seal)
+                if reproduced and gate_verdict == "approve" and not exploration_missing and not weak_prior:
+                    return "strong"  # held + clean approve + STABLE re-run + seal + accumulated belief
+                # Capped at `moderate` when: the explore->confirm seal was NOT applied (K1, no
+                # verification the threshold wasn't fit to noise), OR the credence is still a weak
+                # prior (K2, one confirm-split hold isn't yet accumulated belief), OR review was only
+                # approve_with_changes / reproduction wasn't confirmed.
+                return "moderate"  # held + approved, but short of the `strong` bar
             return "weak"
 
         s = _s()
@@ -253,6 +270,49 @@ class ExperimentDriver:
         if not cross_vendor and {"speculative": 0, "weak": 1, "moderate": 2, "strong": 3}[s] > 1:
             return "weak"
         return s
+
+    @staticmethod
+    def _slug(text: str) -> str:
+        """Slugify free text into a stable lineage key (K2 belief state)."""
+        return re.sub(r"[^a-z0-9]+", "-", str(text or "").strip().lower()).strip("-")[:80] or "q"
+
+    def _question_key(self, plan: dict) -> str:
+        """A stable key for the open-question lineage a round belongs to (K2 belief state).
+
+        Continuations/pivots carry an ``open_question`` from the go/no-go step; round 1 falls back
+        to the objective. Slugified so the same lineage maps to the same credence across rounds —
+        the seam that lets a refute in round N move the SAME belief the next round reads.
+        """
+        return self._slug(self.hypothesis.get("open_question") or plan.get("objective") or "")
+
+    def _fold_verdict_into_belief(
+        self, qkey: str, demo: dict, audit_error: bool
+    ) -> tuple[belief.Credence, dict[str, Any]]:
+        """K2-S4: fold a harness verdict into the lineage credence and return ``(post_cred, signal)``.
+
+        The credence moves ONLY on a harness-verified confirm-split verdict (``belief.update`` no-ops
+        otherwise), so a not_evaluated / exploration-only / audit-degraded round produces NO update —
+        fail-closed. ``signal`` carries the predicted−realized surprise (against the pre-registered
+        forward prediction) + the realized / remaining information gain for the event, the outcome
+        dict, and the calibration metric. The belief NEVER set this verdict; it only learns from it.
+        """
+        prior_cred = self._belief.get(qkey) or belief.prior_from_scorecard(self._last_scores)
+        confirm_split = bool(demo.get("exploration_applied"))
+        post_cred = belief.update(
+            prior_cred, holds=demo.get("holds"), confirm_split=confirm_split, audit_error=audit_error,
+        )
+        self._belief[qkey] = post_cred
+        updated = post_cred != prior_cred
+        predicted = self._pending_prediction.get(qkey)
+        realized = (1.0 if demo.get("holds") else 0.0) if updated else None
+        surprise = abs(predicted - realized) if (updated and predicted is not None) else None
+        realized_eig = belief.entropy(prior_cred) - belief.entropy(post_cred) if updated else 0.0
+        # remaining information in THIS lineage after the update (normalized) — the convergence signal
+        remaining_eig = belief.normalized_information_gain(post_cred, belief.mean(post_cred))
+        return post_cred, {
+            "updated": updated, "predicted": predicted, "realized": realized,
+            "surprise": surprise, "realized_eig": realized_eig, "remaining_eig": remaining_eig,
+        }
 
     def _maximize(self) -> bool:
         """Does a BETTER headline mean a HIGHER value (F1/recall) vs lower (MAE/RMSE)?"""
@@ -935,6 +995,28 @@ class ExperimentDriver:
             )
             if proceed:
                 self._last_scores = scores
+                # K2-S1: seed this lineage's belief as a WEAK prior from the scorecard (once per
+                # open-question lineage). The credence only ever moves on a harness-verified
+                # confirm-split verdict (S4); the prior never asserts belief, it just sizes it.
+                qkey = self._question_key(plan)
+                if qkey not in self._belief:
+                    cred = belief.prior_from_scorecard(scores)
+                    self._belief[qkey] = cred
+                    await asyncio.to_thread(
+                        upsert_credence, self.run_id, qkey, cred.alpha, cred.beta, cred.n_updates)
+                    await get_bus().publish(make_event(
+                        "belief_prior", run_id=self.run_id, payload={
+                            "question_key": qkey, "alpha": cred.alpha, "beta": cred.beta,
+                            "mean": belief.mean(cred), "weak_prior": belief.is_weak_prior(cred)}))
+                # K2-S4: commit the forward P(holds) prediction NOW — before EXECUTE — as an
+                # immutable pre-registration. A continuation reads its accumulated credence (so the
+                # prediction reflects prior learning); a fresh lineage reads its weak prior. The
+                # predicted−realized surprise (computed post-verdict) can't be back-fitted.
+                predicted = belief.mean(self._belief[qkey])
+                self._pending_prediction[qkey] = predicted
+                await get_bus().publish(make_event(
+                    "belief_prediction", run_id=self.run_id, payload={
+                        "question_key": qkey, "predicted_p_holds": predicted}))
                 # the novelty claim (from IDEATE) is now SCORED + grounded in structured
                 # prior work — upgrade it from speculative (still LLM-judged → only weak).
                 if (
@@ -1617,6 +1699,7 @@ class ExperimentDriver:
         exp_id: str | None = None, ablation: dict | None = None,
         method_not_instantiated: bool = False, demonstration: dict | None = None,
         audit_passed: bool | None = None, audit_error: bool = False,
+        credence: belief.Credence | None = None,
     ) -> None:
         """After the results gate, set the final strength + status of the proposed
         metric/mechanism claims from the (harness-owned) evidence rule, and record a
@@ -1686,16 +1769,28 @@ class ExperimentDriver:
                 form_status = "supported"
             else:
                 form_status = "unverified"  # demonstration held, but peer review didn't endorse it
+            # K2-S5: a credence still a weak prior (too few harness-verified confirm-split rounds)
+            # cannot yield a `strong` formulation claim — strong requires accumulated, replicated
+            # belief, not one round. Fail-closed: no credence supplied => treated as weak.
+            weak_prior = belief.is_weak_prior(credence) if credence is not None else True
             await asyncio.to_thread(
                 update_claim, self._claim_ids["formulation"],
                 strength=self._claim_strength(
                     "formulation", gate_passed=passed, gate_verdict=verdict,
                     reproduced=demo_repro, demonstration_holds=holds, cross_vendor=cross_vendor,
                     audit_passed=audit_passed, audit_error=audit_error,
-                    exploration_missing=exploration_missing,
+                    exploration_missing=exploration_missing, weak_prior=weak_prior,
                 ),
                 status=form_status,
             )
+            # record the calibrated credence behind that strength, so the cap is auditable.
+            if credence is not None:
+                await asyncio.to_thread(
+                    attach_claim_evidence, self._claim_ids["formulation"], "credence",
+                    f"Beta(alpha={credence.alpha:.2f}, beta={credence.beta:.2f})",
+                    note=(f"mean P(holds)={belief.mean(credence):.3f}; n_updates={credence.n_updates}; "
+                          f"weak_prior={weak_prior}"),
+                )
         # a reproducibility claim: did an independent re-run confirm the headline?
         if repro.get("attempted"):
             confirmed = bool(repro.get("reproduced"))
@@ -2122,9 +2217,26 @@ class ExperimentDriver:
             f"results reviewed: {rpanel.consensus_verdict} (gate_passed={rpanel.gate_passed})",
             actor="critic",
         )
-        # finalize the proposed claims now that the gate has spoken (harness-owned
-        # strength: a metric claim only reaches `strong` with grouped CV + a clean
-        # approve + a CONFIRMED reproduction).
+        # K2-S4: fold THIS round's harness verdict into the lineage credence BEFORE finalizing claims
+        # (the only thing that moves the belief). A confirm-split hold/refute updates it; a
+        # not_evaluated / exploration-only / audit-degraded round folds in nothing (fail-closed). The
+        # belief is a planning aid — it never set this verdict, it only learns from it.
+        qkey = self._question_key(plan)
+        post_cred, sig = self._fold_verdict_into_belief(qkey, info.get("demonstration") or {}, audit_error)
+        if sig["updated"]:
+            await asyncio.to_thread(
+                upsert_credence, self.run_id, qkey, post_cred.alpha, post_cred.beta, post_cred.n_updates)
+            await get_bus().publish(make_event(
+                "belief_update", run_id=self.run_id, payload={
+                    "round": round_idx, "exp_id": exp_id, "question_key": qkey,
+                    "alpha": post_cred.alpha, "beta": post_cred.beta, "mean": belief.mean(post_cred),
+                    "n_updates": post_cred.n_updates, "weak_prior": belief.is_weak_prior(post_cred),
+                    "predicted_p_holds": sig["predicted"], "realized": sig["realized"],
+                    "surprise": sig["surprise"], "realized_eig_bits": sig["realized_eig"],
+                    "remaining_eig": sig["remaining_eig"]}))
+        # finalize the proposed claims now that the gate has spoken (harness-owned strength: a metric
+        # claim only reaches `strong` with grouped CV + a clean approve + a CONFIRMED reproduction; a
+        # formulation claim additionally needs the explore->confirm seal AND a non-weak credence, K2-S5).
         await self._finalize_claims(
             info.get("protocol_status"), rpanel, info.get("reproduction") or {}, exp_id,
             ablation=info.get("ablation"),
@@ -2132,6 +2244,7 @@ class ExperimentDriver:
             demonstration=info.get("demonstration"),
             audit_passed=audit_passed,
             audit_error=audit_error,
+            credence=post_cred,
         )
 
         # 6) OPTIMIZE (<=1 iteration) — skipped when the results gate rejected, since
@@ -2167,6 +2280,7 @@ class ExperimentDriver:
                 "round": round_idx, "exp_id": exp_id, "reason": demo_outcome["reason"],
                 "recoverable": demo_outcome["recoverable"], "detail": demo_outcome["detail"]})
         )
+        # the belief was already folded (above, before claim finalization); reuse post_cred/sig.
         return {
             "round": round_idx,
             "exp_id": exp_id,
@@ -2186,6 +2300,14 @@ class ExperimentDriver:
             "narrowing_hint": demo_outcome["narrowing_hint"],
             "recoverable": demo_outcome["recoverable"],
             "outcome_detail": demo_outcome["detail"],
+            # K2-S4: the belief signal this round produced (read by _campaign_step + the synthesis)
+            "question_key": qkey,
+            "belief_mean": belief.mean(post_cred),
+            "belief_weak_prior": belief.is_weak_prior(post_cred),
+            "belief_updated": sig["updated"],
+            "belief_surprise": sig["surprise"],
+            "belief_remaining_eig": sig["remaining_eig"],
+            "belief_predicted_p_holds": sig["predicted"],
         }
 
     async def _undemonstrated_outcome(self, round_idx: int, exp_id: str | None) -> dict[str, Any]:
@@ -2315,28 +2437,45 @@ class ExperimentDriver:
         parsed = _parse_json(text, _JSON, {"candidates": []})
         candidates = [c for c in (parsed.get("candidates") or []) if isinstance(c, dict)]
         floor = get_settings().campaign_min_eig
-        # deterministic selection: the best candidate that clears the EIG floor wins;
-        # if none does, the program has converged. Also honor the backward-looking
-        # floor on the just-run hypothesis (a low-gain last round signals convergence).
-        viable = [c for c in candidates if float(c.get("expected_information_gain", 0.0) or 0.0) >= floor]
-        last_eig = float(self._last_scores.get("expected_information_gain", 1.0))
-        if not viable or last_eig < floor:
+        # K2-S4: each candidate's information gain is the harness-MEASURED expected entropy reduction
+        # of its lineage credence (normalized 0..1); the LLM's self-reported number can only LOSE to
+        # it (effective = min(llm, measured)). A fresh/weak lineage measures ~1.0 (no cap → today's
+        # behavior, fail-closed); an ACCUMULATED belief measures low, so re-confirming a near-certain
+        # line scores low and the program converges. The harness recomputes EIG — the LLM can't
+        # inflate a candidate above what its belief state says there is to learn.
+        for c in candidates:
+            llm = float(c.get("expected_information_gain", 0.0) or 0.0)
+            cred = self._belief.get(self._slug(c.get("open_question"))) or belief.prior_from_scorecard({})
+            measured = belief.normalized_information_gain(cred, belief.mean(cred))
+            c["measured_eig"] = measured
+            c["effective_eig"] = min(llm, measured)
+        viable = [c for c in candidates if float(c.get("effective_eig", 0.0)) >= floor]
+        # backward-looking convergence on the just-run hypothesis. When its belief actually updated
+        # this round, use the MEASURED remaining information of that lineage (a near-saturated belief
+        # => converge); otherwise fall back to the LLM scorecard EIG (fail-closed on no belief signal,
+        # so non-paradigm / dry-run campaigns behave exactly as before).
+        if last.get("belief_updated"):
+            last_gain = float(last.get("belief_remaining_eig", 1.0))
+            backward_desc = f"belief on the last line is near-saturated (remaining EIG {last_gain:.2f} < {floor})"
+        else:
+            last_gain = float(self._last_scores.get("expected_information_gain", 1.0))
+            backward_desc = f"last experiment's expected information gain {last_gain:.2f} below floor {floor}"
+        if not viable or last_gain < floor:
             reason = (
-                f"no proposed experiment clears the EIG floor {floor}"
-                if not viable else
-                f"last experiment's expected information gain {last_eig:.2f} below floor {floor}"
+                f"no proposed experiment clears the measured EIG floor {floor}"
+                if not viable else backward_desc
             )
             decision = {"continue": False, "rationale": f"{reason}; program converged", "candidates": candidates}
         else:
-            best = max(viable, key=lambda c: float(c.get("expected_information_gain", 0.0) or 0.0))
+            best = max(viable, key=lambda c: float(c.get("effective_eig", 0.0)))
             nxt = dict(best.get("hypothesis") or {})
             nxt["experiment_type"] = best.get("experiment_type")
             nxt["open_question"] = best.get("open_question")
             decision = {
                 "continue": True,
                 "rationale": (
-                    f"chose a {best.get('experiment_type')} (EIG "
-                    f"{float(best.get('expected_information_gain', 0.0)):.2f}) to answer: "
+                    f"chose a {best.get('experiment_type')} (measured EIG "
+                    f"{float(best.get('effective_eig', 0.0)):.2f}) to answer: "
                     f"{best.get('open_question')}"
                 ),
                 "next_hypothesis": nxt,
@@ -2349,7 +2488,8 @@ class ExperimentDriver:
                 "rationale": decision.get("rationale", ""),
                 "candidates": [
                     {"experiment_type": c.get("experiment_type"), "open_question": c.get("open_question"),
-                     "eig": c.get("expected_information_gain")}
+                     "eig": c.get("expected_information_gain"),
+                     "measured_eig": c.get("measured_eig"), "effective_eig": c.get("effective_eig")}
                     for c in candidates
                 ],
             })
@@ -2381,18 +2521,46 @@ class ExperimentDriver:
             (max if self._maximize() else min)(scored, key=lambda o: o["headline"])
             if scored else outcomes[-1]
         )
+        # K2-S5: the BELIEF trajectory + calibration — the north-star progress signal, surfaced
+        # HONESTLY as early/weak. A credence is calibrated only by harness-verified confirm-split
+        # verdicts, so few updates => a weak prior, never a hard probability. Calibration =
+        # mean |predicted − realized| surprise over the rounds that actually moved the belief.
+        belief_rows = [o for o in outcomes if o.get("belief_mean") is not None]
+        n_updates = sum(1 for o in outcomes if o.get("belief_updated"))
+        surprises = [o["belief_surprise"] for o in outcomes if o.get("belief_surprise") is not None]
+        calibration = (sum(surprises) / len(surprises)) if surprises else None
+        belief_block = ""
+        if belief_rows:
+            traj = "\n".join(
+                f"- round {o['round']}: P(holds)={o['belief_mean']:.2f}"
+                + (f", surprise {o['belief_surprise']:.2f}" if o.get("belief_surprise") is not None else "")
+                + (f" [{o.get('reason')}]" if o.get("reason") and o.get("reason") != "no_demonstration" else "")
+                for o in belief_rows
+            )
+            cal = (
+                f"mean predicted−realized surprise {calibration:.2f} over {n_updates} harness-verified "
+                f"update(s) — EARLY/WEAK, not a calibrated probability"
+                if calibration is not None else
+                "no harness-verified confirm-split update yet — credences are weak priors"
+            )
+            belief_block = (
+                "\n\n## Belief trajectory (calibrated only by held-out verdicts; early/weak)\n\n"
+                f"{traj}\n\n**Calibration:** {cal}\n"
+            )
         prompt = (
             f"Summarize this research campaign (objective: {plan.get('objective', '')}) as a short markdown "
-            f"brief. Experiments:\n{rows}\n\nThe best {hk} was {best.get('headline')} in round "
+            f"brief. Experiments:\n{rows}\n{belief_block}\nThe best {hk} was {best.get('headline')} in round "
             f"{best.get('round')}. Write: the trajectory (how each experiment informed the next), which "
             "experiment won and why, what the program learned, and the most important still-open gap. "
-            f"Ground every claim in the {hk} numbers above; do not invent results."
+            f"Ground every claim in the {hk} numbers above; do not invent results. If a belief trajectory "
+            "is shown, report it + its calibration as given and label credences as early/weak — never as "
+            "hard probabilities."
         )
         summary = await reason_stage(
             self.run_id, "campaign", prompt, dry_run=self.dry_run,
             dry_text=(
                 f"# Campaign Summary\n\n**Objective:** {plan.get('objective', 'n/a')}\n\n"
-                f"## Trajectory\n\n{rows}\n\n"
+                f"## Trajectory\n\n{rows}\n{belief_block}\n"
                 f"## Outcome\n\nThe best {hk} was {best.get('headline')}{usfx} in "
                 f"round {best.get('round')} ({best.get('model')}). Across {len(outcomes)} experiments the "
                 f"program refined its hypothesis from the survey gaps toward the most informative test.\n\n"
@@ -2415,6 +2583,13 @@ class ExperimentDriver:
             make_event("campaign_finished", run_id=self.run_id, payload={
                 "uri": str(path), "experiments": len(outcomes),
                 "best_round": best.get("round"), "best_headline": best.get("headline"),
+                # K2-S5: the belief trajectory + calibration (honest north-star progress signal)
+                "belief_trajectory": [
+                    {"round": o["round"], "mean": o["belief_mean"],
+                     "surprise": o.get("belief_surprise"), "reason": o.get("reason")}
+                    for o in belief_rows
+                ],
+                "calibration": calibration, "n_belief_updates": n_updates,
             })
         )
 

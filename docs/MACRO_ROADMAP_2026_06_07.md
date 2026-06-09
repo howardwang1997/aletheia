@@ -67,7 +67,7 @@ believe itself more easily is wrong, no matter how much capability it adds.
 | # | Keystone | Closes (north-star gap) | Success criterion | Depends on | Status |
 |---|----------|--------------------------|-------------------|------------|--------|
 | **K1** | **Exploratory→Confirmatory demonstration** | #5 partial (real scientific process) | A true, generalizing effect can HOLD on a disjoint confirm split; the seal is airtight (5th anti-fakeability guard) | — | **DONE ✓** (live e2e `4c97becc`: first holding + reproduced result on a disjoint confirm split) |
-| **K2** | **Campaign learning loop** | #5 (research programs, not one-shot) | Round N+1's hypothesis/design is provably shaped by round N's confirm/refute *reason*, not a fresh blind guess | K1 | **DETAILED ↓** (building S2+S3) |
+| **K2** | **Campaign learning loop** | #5 (research programs, not one-shot) | Round N+1's hypothesis/design is provably shaped by round N's confirm/refute *reason*, not a fresh blind guess | K1 | **BUILT (offline-green) ↓** S1–S6 all landed: reasoned trajectory + belief credences + measured EIG + weak-prior strength cap + durable persistence. Live multi-round e2e (outside the Claude process) still owed |
 | **K3** | **Knowledge-grounded ideation + novelty/SOTA health** | #1, #2, #6 (partial) | Novelty/SOTA claims gated on a structured-literature quality bar + a published-SOTA row comparison; "not found" ≠ novel | — (parallel to K1/K2) | keystone only |
 | **K4** | **Real-experiment repertoire beyond fit-a-regressor** | #3, #4 (mechanisms, ablations, general methods, multi-domain, scientific computing) | The system runs ablations / mechanism tests / hypothesis tests with frontier methods across ≥3 domains, not one sklearn benchmark | K1 (verdict seal), K3 (grounding) | keystone only (likely splits into sub-keystones) |
 | **K5** | **Scientific output: paper as a generated evidence-bundle view** | #6 (cited, faithful paper) | The paper renders strictly from the claim→evidence ledger with citations; prose can never outrun evidence | K1–K4 feed it | keystone only |
@@ -407,6 +407,16 @@ New events: `belief_prior`, `belief_update`, `campaign_reason`.
 The smallest honest increment that delivers the K2 thesis is **S2 + S3** (classify the reason + feed
 it forward) — that alone makes the loop *learn*. S1 / S4 / S5 then build the world-model rigor
 (credences, measured EIG, calibration) on top. Order: **S2+S3 → S1 → S4 → S5 → S6.**
+
+**Status (2026-06-09): ALL of S1–S6 built and offline-green.** S2+S3 (reasoned trajectory) +
+S1 (`aletheia/memory/belief.py` credence primitive + driver seeding) + S4 (forward `belief_prediction`
++ harness-measured EIG `min(llm, measured)` + `belief_update` surprise) + S5 (weak-prior caps a
+formulation claim at `moderate` + belief trajectory/calibration in the synthesis) + S6 (`belief_states`
+table + `upsert/get/list_credences` + the e2e summary `belief` block). New tests: `tests/test_belief.py`
+plus extensions in `tests/test_paradigm_p5.py` / `test_paradigm_p3.py` / `test_campaign.py`. The
+detailed plan + open decisions live in `docs/K2_S1_S4_S6_DETAILED_PLAN_2026_06_09.md`. **Still owed:**
+a live multi-round campaign e2e run OUTSIDE the Claude process (in-process trips the AUP classifier),
+showing the belief trajectory + calibration with every verdict harness-owned.
 
 ---
 

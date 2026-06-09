@@ -98,6 +98,7 @@ EVIDENCE_KINDS = (
     "dataset",
     "code",
     "reproduction",
+    "credence",  # K2: the campaign's calibrated Beta credence behind a formulation claim's strength
 )
 
 # how a dataset is connected:
@@ -234,6 +235,29 @@ class ClaimEvidence(Base):
     note: Mapped[str | None] = mapped_column(Text)
 
     claim: Mapped[Claim] = relationship(back_populates="evidence")
+
+
+class BeliefState(Base):
+    """K2 (epistemic world model): the campaign's calibrated credence ``Beta(alpha, beta)`` for an
+    open-question lineage — "will this line hold on held-out data?". Seeded as a WEAK prior from the
+    scorecard; moved ONLY by a harness-verified confirm-split verdict. A planning aid + an honest
+    progress signal, NEVER a verdict (it never sets ``holds``/``supported``/strength). One row per
+    ``(run_id, question_key)``; the hot path is in-memory on the driver, this is the durable mirror
+    + the cross-round audit trail (alongside the ``belief_prior``/``belief_update`` events)."""
+
+    __tablename__ = "belief_states"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    question_key: Mapped[str] = mapped_column(String(96), index=True)
+    alpha: Mapped[float] = mapped_column(Float)
+    beta: Mapped[float] = mapped_column(Float)
+    n_updates: Mapped[int] = mapped_column(default=0)  # harness-verified confirm-split updates folded in
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (UniqueConstraint("run_id", "question_key", name="uq_belief_run_question"),)
 
 
 class HypothesisScorecard(Base):

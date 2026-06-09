@@ -11,7 +11,13 @@ from aletheia.config import get_settings
 from aletheia.data.registry import register_dataset
 from aletheia.db import create_all, session_scope
 from aletheia.memory.ledger import Experiment, Run
-from aletheia.memory.service import create_run, finalize_plan, list_artifacts, list_metrics
+from aletheia.memory.service import (
+    create_run,
+    finalize_plan,
+    list_artifacts,
+    list_credences,
+    list_metrics,
+)
 from aletheia.scheduler.driver import ExperimentDriver
 
 
@@ -58,6 +64,27 @@ async def test_campaign_runs_linked_experiments(monkeypatch):
     all_arts = [a for e in (first_exp, child[0].id) for a in list_artifacts(e)]
     assert sum(1 for a in all_arts if a["kind"] == "report") >= 1
     assert any(a["kind"] == "campaign" for a in list_artifacts(first_exp))
+
+
+@pytest.mark.asyncio
+async def test_campaign_persists_belief_priors_and_never_moves_them_without_a_verdict(monkeypatch):
+    # K2-S6: a campaign seeds + DURABLY persists a calibrated credence per open-question lineage. In
+    # a regression campaign no confirm-split demonstration ever holds, so every credence must stay a
+    # WEAK prior with zero harness updates — the belief moves ONLY on a held-out verdict (fail-closed).
+    from aletheia.memory.belief import WEAK_PRIOR_MAX_MASS
+
+    monkeypatch.setattr(get_settings(), "max_experiments_per_campaign", 2)
+    create_all()
+    run_id = create_run("belief persist e2e", domain="materials", status="scoping")
+    _launch(run_id)
+    await ExperimentDriver(run_id, dry_run=True).run()
+
+    creds = list_credences(run_id)
+    assert creds, "expected at least one persisted credence lineage"
+    # no confirm-split verdict in a regression campaign => the belief never moved
+    assert all(c["n_updates"] == 0 for c in creds)
+    # a weak prior carries too little mass to be trusted as a hard probability
+    assert all((c["alpha"] + c["beta"]) < WEAK_PRIOR_MAX_MASS for c in creds)
 
 
 @pytest.mark.asyncio

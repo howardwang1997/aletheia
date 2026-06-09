@@ -16,12 +16,16 @@ import json
 from pathlib import Path
 from typing import Any
 
-from aletheia.memory.service import get_run, list_claims, list_metrics
+from aletheia.memory.service import get_run, list_claims, list_credences, list_metrics
 from aletheia.paths import artifacts_dir
 
 # the explicit capability id the driver routes to when the AI authored the computation; any other
 # value (or None) means a registered/hand-built demonstration ran instead.
 AI_AUTHORED_CAPABILITY_ID = "ai_authored_demonstration"
+
+# K2 events that form a per-round TRAJECTORY (one per round) — accumulated as a list, not last-wins,
+# so a multi-round campaign's belief evolution survives into the summary.
+_LIST_EVENTS = ("belief_prior", "belief_prediction", "belief_update", "campaign_reason")
 
 
 class RunRecorder:
@@ -29,17 +33,27 @@ class RunRecorder:
 
     Keeps the LAST payload seen for each event type (last-wins), which is what we want for the
     single-experiment e2e scripts: the final ``demonstration`` / ``demonstration_audit`` /
-    ``claims`` events reflect the run's outcome.
+    ``claims`` events reflect the run's outcome. Per-round K2 belief events are ALSO kept as a list
+    (``events``) so a multi-round campaign's trajectory is not collapsed to its last entry.
     """
 
     def __init__(self) -> None:
         self._last: dict[str, dict] = {}
+        self._lists: dict[str, list[dict]] = {k: [] for k in _LIST_EVENTS}
 
     def observe(self, evt: dict) -> None:
-        self._last[evt.get("type", "")] = evt.get("payload") or {}
+        etype = evt.get("type", "")
+        payload = evt.get("payload") or {}
+        self._last[etype] = payload
+        if etype in self._lists:
+            self._lists[etype].append(payload)
 
     def payload(self, event_type: str) -> dict:
         return self._last.get(event_type, {})
+
+    def events(self, event_type: str) -> list[dict]:
+        """All payloads seen for ``event_type`` in order (for per-round trajectories)."""
+        return list(self._lists.get(event_type, []))
 
 
 def _claim_ledger(run_id: str) -> list[dict]:
@@ -55,6 +69,35 @@ def _claim_ledger(run_id: str) -> list[dict]:
             "claim_text": str(c.get("claim_text", ""))[:240],
         })
     return rows
+
+
+def _belief_block(run_id: str, recorder: "RunRecorder") -> dict[str, Any]:
+    """The K2 belief trajectory + calibration, reconstructed from the per-round events + the durable
+    credence rows. Honest by construction: a credence moved only on a harness-verified confirm-split
+    verdict, so few updates => weak priors (never a hard probability)."""
+    updates = recorder.events("belief_update")
+    finished = recorder.payload("campaign_finished")
+    return {
+        "priors": [
+            {"question_key": p.get("question_key"), "mean": p.get("mean"),
+             "weak_prior": p.get("weak_prior")}
+            for p in recorder.events("belief_prior")
+        ],
+        "trajectory": [
+            {"round": u.get("round"), "question_key": u.get("question_key"), "mean": u.get("mean"),
+             "predicted_p_holds": u.get("predicted_p_holds"), "realized": u.get("realized"),
+             "surprise": u.get("surprise"), "remaining_eig": u.get("remaining_eig"),
+             "n_updates": u.get("n_updates"), "weak_prior": u.get("weak_prior")}
+            for u in updates
+        ],
+        "reasons": [
+            {"round": r.get("round"), "reason": r.get("reason"), "recoverable": r.get("recoverable")}
+            for r in recorder.events("campaign_reason")
+        ],
+        "calibration": finished.get("calibration"),
+        "n_harness_updates": finished.get("n_belief_updates", len(updates)),
+        "final_credences": list_credences(run_id),
+    }
 
 
 def write_e2e_summary(
@@ -140,6 +183,11 @@ def write_e2e_summary(
             "reasons": demo_code.get("reasons"),
         },
         "preregistration": prereg,
+        # K2 (epistemic world model): the campaign's belief trajectory + calibration. One reviewer
+        # can see WHY each round held/failed (reason), how the credence moved (only on harness-
+        # verified confirm-split verdicts), how well the forward prediction matched reality
+        # (surprise/calibration), and the final durable credences — all honestly labeled weak/early.
+        "belief": _belief_block(run_id, recorder),
     }
     path = artifacts_dir() / f"demo_e2e_{domain}_{run_id}_{timestamp}.json"
     path.write_text(json.dumps(summary, indent=2, default=str))

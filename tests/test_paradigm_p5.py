@@ -394,6 +394,33 @@ def test_missing_seal_caps_formulation_below_strong():
     assert sealed == "strong" and capped == "moderate"
 
 
+def test_weak_prior_credence_caps_formulation_below_strong():
+    # K2-S5: an identical held+approved+reproduced+SEALED demonstration; the ONLY difference is
+    # whether the campaign's credence has accumulated enough harness-verified belief. A weak prior
+    # cannot yield a `strong` formulation — strong requires accumulated, replicated belief.
+    f = ExperimentDriver._claim_strength
+    base = dict(gate_passed=True, gate_verdict="approve", reproduced=True, demonstration_holds=True,
+                cross_vendor=True, audit_passed=True, exploration_missing=False)
+    assert f("formulation", **base, weak_prior=False) == "strong"
+    assert f("formulation", **base, weak_prior=True) == "moderate"
+
+
+def test_single_confirmed_round_is_still_weak_so_strength_caps_at_moderate():
+    # ties the cap to the real belief mass: one confirm-split hold is still a weak prior (mass 3) ->
+    # `moderate`; a SECOND confirmed round crosses the mass floor -> the `strong` bar becomes
+    # reachable. This is the K2 coupling: a strong claim is earned by replication, not one round.
+    from aletheia.memory import belief as B
+
+    f = ExperimentDriver._claim_strength
+    one = B.update(B.prior_from_scorecard({"novelty": 0.6}), holds=True, confirm_split=True)  # mass 3
+    two = B.update(one, holds=True, confirm_split=True)                                        # mass 4
+    assert B.is_weak_prior(one) and not B.is_weak_prior(two)
+    base = dict(gate_passed=True, gate_verdict="approve", reproduced=True, demonstration_holds=True,
+                cross_vendor=True, audit_passed=True, exploration_missing=False)
+    assert f("formulation", **base, weak_prior=B.is_weak_prior(one)) == "moderate"  # one round: weak
+    assert f("formulation", **base, weak_prior=B.is_weak_prior(two)) == "strong"    # two rounds: earned
+
+
 # --- pre-registration prompt/extraction --------------------------------------------------
 def test_canned_preregistration_is_valid_and_extractable():
     reply = "```python\n" + CANNED_DEMO + "```\n```json\n" + json.dumps(CANNED_PREREGISTRATION) + "\n```"
@@ -831,3 +858,113 @@ def test_authoring_failed_reason_drives_pivot_directive(monkeypatch):
     assert "WHY [authoring_failed]" in prompt
     assert "WHAT THE LAST ROUND LEARNED" in prompt
     assert "pivot" in prompt.lower()
+
+
+# ---------------------------------------------------------------------------
+# K2 S4 — forward prediction + harness-MEASURED EIG. The belief state (not the LLM's self-reported
+# number) sizes information gain; the harness recomputes it and the LLM's number can only LOSE.
+# ---------------------------------------------------------------------------
+
+def _driver_for_campaign(monkeypatch, candidate):
+    """A dry driver whose campaign planner returns exactly ``candidate``; exposed so a test can
+    pre-seed the belief state BEFORE _campaign_step runs."""
+    import aletheia.scheduler.driver as drv
+    from aletheia.db import create_all
+    from aletheia.memory.service import create_run, finalize_plan
+
+    create_all()
+    run_id = create_run("k2 s4 test", domain="materials", status="planned")
+    finalize_plan(run_id, {"objective": "x", "domain": "materials"})
+    d = drv.ExperimentDriver(run_id, dry_run=False)
+
+    async def fake_reason(run_id_, role, prompt, **kw):
+        return json.dumps({"candidates": [candidate]})
+
+    monkeypatch.setattr(drv, "reason_stage", fake_reason)
+
+    async def noop_index(*a, **k):
+        return None
+
+    d._index = noop_index
+    return d
+
+
+def _last_outcome(belief_updated=False, remaining_eig=1.0):
+    o = _outcome(1, "generalized", "build on it", recoverable=True, verdict="approve")
+    o["belief_updated"] = belief_updated
+    o["belief_remaining_eig"] = remaining_eig
+    return o
+
+
+def test_measured_eig_caps_an_inflated_llm_number(monkeypatch):
+    # A candidate the LLM rates 0.99, but whose open-question belief is already near-certain (many
+    # confirmed rounds). The harness recomputes EIG from the belief: almost nothing left to learn,
+    # so the effective EIG is floored to the MEASURED value and the program converges. The LLM's
+    # self-reported number can only LOSE to the measured one (criterion 4).
+    from aletheia.memory import belief as B
+
+    cand = {"experiment_type": "ablation", "open_question": "is the saturated effect real?",
+            "expected_information_gain": 0.99, "rationale": "r", "hypothesis": {"statement": "s"}}
+    d = _driver_for_campaign(monkeypatch, cand)
+    d._belief[d._slug(cand["open_question"])] = B.Credence(20.0, 1.0, n_updates=19)
+    decision = asyncio.run(d._campaign_step({"objective": "x"}, [_last_outcome()], round_idx=1, max_exps=3))
+    assert decision["continue"] is False                       # converged on the MEASURED floor
+    assert "measured EIG floor" in decision["rationale"]
+    capped = decision["candidates"][0]
+    assert capped["measured_eig"] < 0.3 < capped["expected_information_gain"]
+    assert capped["effective_eig"] == capped["measured_eig"]   # min(llm, measured) == measured
+
+
+def test_same_candidate_proceeds_when_belief_is_fresh(monkeypatch):
+    # The CONTRAST: the identical 0.99 candidate, but with NO accumulated belief on its question, has
+    # ~all the information to gain -> measured ~1.0 -> NOT capped, the campaign continues. Proves the
+    # belief STATE (not the LLM number) gates selection.
+    cand = {"experiment_type": "ablation", "open_question": "is a brand-new effect real?",
+            "expected_information_gain": 0.99, "rationale": "r", "hypothesis": {"statement": "s"}}
+    d = _driver_for_campaign(monkeypatch, cand)
+    decision = asyncio.run(d._campaign_step({"objective": "x"}, [_last_outcome()], round_idx=1, max_exps=3))
+    assert decision["continue"] is True
+    assert decision["candidates"][0]["measured_eig"] > 0.9
+
+
+def test_saturated_belief_on_last_round_triggers_convergence(monkeypatch):
+    # backward floor: when the just-run lineage's belief actually updated and is near-saturated
+    # (little remaining EIG), the program converges even though a fresh candidate exists.
+    cand = {"experiment_type": "ablation", "open_question": "a fresh question",
+            "expected_information_gain": 0.9, "rationale": "r", "hypothesis": {"statement": "s"}}
+    d = _driver_for_campaign(monkeypatch, cand)
+    decision = asyncio.run(d._campaign_step(
+        {"objective": "x"}, [_last_outcome(belief_updated=True, remaining_eig=0.05)],
+        round_idx=1, max_exps=3))
+    assert decision["continue"] is False
+    assert "near-saturated" in decision["rationale"]
+
+
+def test_fold_verdict_records_surprise_only_on_confirm_split(monkeypatch):
+    # criterion 5: a confirm-split HOLD updates the credence and records the predicted−realized
+    # surprise against the pre-registered forward prediction; a not_evaluated / exploration-only /
+    # audit-degraded round folds in NOTHING (fail-closed — the belief never moves on weak evidence).
+    from aletheia.memory import belief as B
+    from aletheia.db import create_all
+    from aletheia.memory.service import create_run, finalize_plan
+    import aletheia.scheduler.driver as drv
+
+    create_all()
+    rid = create_run("k2 s4 fold", domain="materials", status="planned")
+    finalize_plan(rid, {"objective": "x", "domain": "materials"})
+    d = drv.ExperimentDriver(rid, dry_run=False)
+    qkey = "q1"
+    d._belief[qkey] = B.Credence(1.0, 1.0)
+    d._pending_prediction[qkey] = 0.5  # the pre-registered forward prediction (Beta(1,1) mean)
+
+    post, sig = d._fold_verdict_into_belief(qkey, {"holds": True, "exploration_applied": True}, audit_error=False)
+    assert sig["updated"] and sig["realized"] == 1.0 and sig["surprise"] == pytest.approx(0.5)
+    assert post.n_updates == 1 and B.mean(post) > 0.5
+
+    d._belief[qkey] = B.Credence(1.0, 1.0)
+    for demo, ae in [({"holds": None, "exploration_applied": True}, False),    # not_evaluated
+                     ({"holds": True, "exploration_applied": False}, False),   # exploration-only
+                     ({"holds": True, "exploration_applied": True}, True)]:     # audit degraded
+        _, s = d._fold_verdict_into_belief(qkey, demo, audit_error=ae)
+        assert s["updated"] is False and s["surprise"] is None
+        assert d._belief[qkey] == B.Credence(1.0, 1.0)  # belief unchanged
