@@ -140,6 +140,13 @@ def _k2_campaign_settings() -> None:
     # harness-verified verdict the campaign can fold into its belief (materials has no hand-built
     # fallback demonstration).
     get_settings().demonstration_prefer_authored = True
+    # WEAK-NETWORK MODE: this box reaches the API through a flaky proxy/tunnel that resets
+    # long-lived streams. Cap concurrent live streams (less pressure on the tunnel) and retry a
+    # failed call several patient outer attempts (each a fresh connection over the SDK's own
+    # retries). Combined with the resume cache, a reset costs at most one call's worth of work.
+    get_settings().max_concurrent_workers = 3
+    get_settings().worker_max_attempts = 4
+    get_settings().worker_backoff_s = 10.0
 
 
 async def resume(timestamp: str, run_id: str) -> None:

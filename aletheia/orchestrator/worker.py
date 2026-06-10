@@ -31,9 +31,26 @@ STAGE_SYSTEM = (
 )
 
 _DEGRADED_PREFIX = "[worker-unavailable"
-# extra outer attempts on a transient API error (the SDK already retries internally)
+# default outer attempts on a transient API error (the SDK already retries internally).
+# Overridable via settings.worker_max_attempts / worker_backoff_s for weak-network resilience.
 _OUTER_ATTEMPTS = 2
 _BACKOFF_S = 8.0
+
+# Process-wide cap on CONCURRENT live SDK streams (settings.max_concurrent_workers). Created lazily
+# at the configured size; on a fragile proxy/tunnel this keeps many long-lived streams from being
+# opened at once (the main ECONNRESET trigger). None/0 => unlimited.
+_worker_sem: asyncio.Semaphore | None = None
+_worker_sem_limit: int | None = None
+
+
+def _get_worker_sem(limit: int | None) -> asyncio.Semaphore | None:
+    global _worker_sem, _worker_sem_limit
+    if not limit or limit <= 0:
+        return None
+    if _worker_sem is None or _worker_sem_limit != limit:
+        _worker_sem = asyncio.Semaphore(limit)
+        _worker_sem_limit = limit
+    return _worker_sem
 
 # Built-in tools a text-only worker must NOT have. Without this, a worker running under
 # ``bypassPermissions`` keeps the full default Claude Code toolset, so the model may "help"
@@ -148,9 +165,17 @@ async def run_worker(
         opts["disallowed_tools"] = list(_NO_TOOLS)
     options = ClaudeAgentOptions(**opts)
 
+    sem = _get_worker_sem(settings.max_concurrent_workers)
+    max_attempts = max(1, int(settings.worker_max_attempts))
+    backoff = float(settings.worker_backoff_s)
+
     last = ""
-    for attempt in range(1, _OUTER_ATTEMPTS + 1):
+    for attempt in range(1, max_attempts + 1):
         chunks: list[str] = []
+        # Hold a concurrency slot ONLY around the live stream — not the backoff sleep — so a
+        # retrying worker frees its slot for others while it waits.
+        if sem is not None:
+            await sem.acquire()
         try:
             async with ClaudeSDKClient(options=options) as client:
                 await client.query(prompt)
@@ -162,16 +187,24 @@ async def run_worker(
             last = "\n".join(chunks).strip()
         except Exception as exc:  # noqa: BLE001 - transient client/transport failures
             last = f"API Error: {exc}"
+        finally:
+            if sem is not None:
+                sem.release()
         if not _looks_like_api_error(last):
             if settings.resume_cache_enabled:  # cache only SUCCESSES — a failed call re-runs on resume
                 await _cache_put(run_id, cache_key, label, last)
             return last
-        if attempt < _OUTER_ATTEMPTS:
-            await asyncio.sleep(_BACKOFF_S * attempt)
+        if attempt < max_attempts:
+            await get_bus().publish(
+                make_event("worker_retry", run_id=run_id, agent=label,
+                           payload={"label": label, "attempt": attempt, "of": max_attempts,
+                                    "reason": last[:160]})
+            )
+            await asyncio.sleep(backoff * attempt)
     # transient failure survived the SDK's retries + our outer attempts: degrade
     # cleanly so downstream ignores it instead of ingesting an error string.
     await get_bus().publish(
         make_event("worker_degraded", run_id=run_id, agent=label,
-                   payload={"label": label, "reason": last[:200]})
+                   payload={"label": label, "reason": last[:200], "attempts": max_attempts})
     )
     return degraded_marker(label)

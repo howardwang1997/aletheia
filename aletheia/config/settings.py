@@ -190,6 +190,13 @@ class Settings(BaseSettings):
     # normal run never short-circuits on the cache (no within-run collisions).
     resume_cache_enabled: bool = True
     resume_cache_read: bool = False
+    # weak-network resilience: cap how many live Claude (SDK) calls stream CONCURRENTLY, so a fragile
+    # proxy/tunnel isn't asked to hold many long-lived streams at once (the main ECONNRESET trigger).
+    # None = unlimited (default). And retry a failed call this many OUTER attempts (each opens a fresh
+    # connection and wraps the SDK's own internal retries), with linear backoff between attempts.
+    max_concurrent_workers: int | None = None
+    worker_max_attempts: int = 2
+    worker_backoff_s: float = 8.0
     max_experiments_per_campaign: int = 3  # one Run -> up to N linked experiments (go/no-go decides)
     # K2 S3.5: a paradigm round that produces NO demonstration (e.g. the AI could not author a
     # threshold consistent with its own exploration) is an informative negative — the campaign may
