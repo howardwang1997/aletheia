@@ -15,12 +15,14 @@ override, tool wiring, and multi-turn allowance.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from typing import Any
 
 from aletheia.config import get_settings
 from aletheia.events.bus import get_bus, make_event
 from aletheia.events.normalizer import normalize_message
 from aletheia.orchestrator.auth import configure_auth, has_credentials
+from aletheia.memory.service import get_cached_worker, put_cached_worker
 
 STAGE_SYSTEM = (
     "You are Aletheia, an autonomous AI scientist executing one stage of a research "
@@ -56,6 +58,23 @@ def is_degraded(text: str | None) -> bool:
     return (text or "").startswith(_DEGRADED_PREFIX)
 
 
+async def _cache_get(run_id: str, key: str) -> str | None:
+    """Best-effort cache read — the resume cache is an optimization; a DB hiccup must never
+    break the worker, so any failure is swallowed and treated as a miss."""
+    try:
+        return await asyncio.to_thread(get_cached_worker, run_id, key)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def _cache_put(run_id: str, key: str, label: str, result: str) -> None:
+    """Best-effort cache write (e.g. an ad-hoc run_id with no run row simply isn't cached)."""
+    try:
+        await asyncio.to_thread(put_cached_worker, run_id, key, label, result)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _looks_like_api_error(text: str) -> bool:
     """The SDK surfaces an exhausted-retry API failure as its final assistant text
     (e.g. 'API Error: 529 Overloaded ...'); treat empty output the same way."""
@@ -86,6 +105,23 @@ async def run_worker(
             make_event("assistant_text", run_id=run_id, agent=label, payload={"text": text})
         )
         return text
+
+    # Resume cache: a stable fingerprint of this exact call. On a RESUMED run (read mode) a prior
+    # successful result short-circuits the Claude call entirely (0 tokens). A fresh run never reads
+    # (no within-run collisions) but still WRITES, so a later resume can fast-forward.
+    model_resolved = model or settings.claude_model
+    cache_key = hashlib.sha256(
+        "\0".join([label, system, model_resolved, prompt, ",".join(sorted(allowed_tools or []))])
+        .encode("utf-8")
+    ).hexdigest()
+    if settings.resume_cache_enabled and settings.resume_cache_read:
+        cached = await _cache_get(run_id, cache_key)
+        if cached is not None:
+            await get_bus().publish(
+                make_event("worker_cache_hit", run_id=run_id, agent=label,
+                           payload={"label": label, "chars": len(cached)})
+            )
+            return cached
 
     from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
@@ -127,6 +163,8 @@ async def run_worker(
         except Exception as exc:  # noqa: BLE001 - transient client/transport failures
             last = f"API Error: {exc}"
         if not _looks_like_api_error(last):
+            if settings.resume_cache_enabled:  # cache only SUCCESSES — a failed call re-runs on resume
+                await _cache_put(run_id, cache_key, label, last)
             return last
         if attempt < _OUTER_ATTEMPTS:
             await asyncio.sleep(_BACKOFF_S * attempt)

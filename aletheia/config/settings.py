@@ -184,6 +184,12 @@ class Settings(BaseSettings):
     # are what the rolling subscription usage window meters (cost reads ~0 under subscription
     # auth), so this is the knob that bounds a run's contribution to the 5-hour limit.
     token_cap_per_run: int | None = None
+    # checkpoint / resume: persist each successful worker (Claude) result keyed by content hash so a
+    # re-run of the SAME run_id can replay for free. `enabled` controls WRITING the cache (harmless
+    # always-on — a fresh run_id has an empty cache); `read` is set True only by a resume launch, so a
+    # normal run never short-circuits on the cache (no within-run collisions).
+    resume_cache_enabled: bool = True
+    resume_cache_read: bool = False
     max_experiments_per_campaign: int = 3  # one Run -> up to N linked experiments (go/no-go decides)
     # K2 S3.5: a paradigm round that produces NO demonstration (e.g. the AI could not author a
     # threshold consistent with its own exploration) is an informative negative — the campaign may

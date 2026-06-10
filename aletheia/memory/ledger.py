@@ -142,6 +142,9 @@ class Experiment(Base):
     code_repo: Mapped[str | None] = mapped_column(String(256))
     code_branch: Mapped[str | None] = mapped_column(String(256))
     parent_experiment_id: Mapped[str | None] = mapped_column(ForeignKey("experiments.id"))
+    # stable content identity so a resumed run REUSES this row instead of inserting a duplicate
+    # (idempotent create). Computed from (run_id, parent, plan, stage). See create_experiment.
+    dedup_key: Mapped[str | None] = mapped_column(String(64), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -217,6 +220,9 @@ class Claim(Base):
     status: Mapped[str] = mapped_column(String(16), default="proposed")  # CLAIM_STATUSES
     created_by: Mapped[str | None] = mapped_column(String(64))  # stage / actor
     stage: Mapped[str | None] = mapped_column(String(32))
+    # stable content identity so a resumed run UPDATES this claim instead of inserting a duplicate
+    # (idempotent create). Computed from (run_id, experiment_id, claim_type, claim_text).
+    dedup_key: Mapped[str | None] = mapped_column(String(64), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     evidence: Mapped[list["ClaimEvidence"]] = relationship(back_populates="claim")
@@ -327,6 +333,24 @@ class BudgetEvent(Base):
     amount: Mapped[float] = mapped_column(Float)
     cumulative: Mapped[float | None] = mapped_column(Float)
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WorkerCache(Base):
+    """A persisted LLM worker result, keyed by (run_id, content hash of the call). Lets a
+    RESUMED run replay the driver and skip every already-completed Claude call (0 tokens,
+    instant), fast-forwarding to the first call that never finished. Only successful results
+    are stored, so a network-failed call re-runs on resume. See aletheia.orchestrator.worker."""
+
+    __tablename__ = "worker_cache"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    cache_key: Mapped[str] = mapped_column(String(64))  # sha256(label|system|model|prompt)
+    label: Mapped[str | None] = mapped_column(String(128))
+    result: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("run_id", "cache_key", name="uq_worker_cache_run_key"),)
 
 
 class ComputeJob(Base):

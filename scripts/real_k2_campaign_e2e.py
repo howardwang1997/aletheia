@@ -94,7 +94,44 @@ def evaluate_k2(events_log: list[dict], run_id: str) -> None:
               flush=True)
 
 
-async def main(timestamp: str) -> None:
+async def _drive_and_report(run_id: str, exp_id: str, timestamp: str) -> None:
+    """Run the driver to completion (streaming events to the recorder), write the summary + usage +
+    transcript, and print the K2 verdict. Shared by a fresh run and a ``--resume``."""
+    recorder = RunRecorder()
+    events_log: list[dict] = []  # full ordered stream, for cross-type ordering checks
+
+    async def printer() -> None:
+        async for evt in get_bus().subscribe():
+            recorder.observe(evt)
+            events_log.append({"type": evt.get("type", ""), "payload": evt.get("payload") or {}})
+            print(f">> {evt['type']}: {_short(evt.get('payload') or {})}", flush=True)
+
+    pt = asyncio.create_task(printer())
+    try:
+        await ExperimentDriver(run_id, dry_run=False).run()
+    finally:
+        await asyncio.sleep(0.2)  # let the final events drain into the recorder
+        pt.cancel()
+
+    run = get_run(run_id)
+    print("\n--- SUMMARY ---", flush=True)
+    print("run status:", run["status"])
+    print("metrics:", list_metrics(exp_id))
+    print("claims:", [(c["claim_type"], c["status"], c["strength"]) for c in list_claims(run_id)])
+    print("final credences:", list_credences(run_id))
+
+    summary_path = write_e2e_summary(
+        run_id=run_id, exp_id=exp_id, timestamp=timestamp,
+        prefer_authored=get_settings().demonstration_prefer_authored,
+        recorder=recorder, domain="materials",
+    )
+    print(f"summary written: {summary_path}", flush=True)
+    print_usage(run_id)
+
+    evaluate_k2(events_log, run_id)
+
+
+def _k2_campaign_settings() -> None:
     # MULTI-ROUND: the whole point of K2 is learning ACROSS rounds, so allow up to 3 linked
     # experiments + a bounded pivot budget for informative undemonstrated rounds (S3.5).
     get_settings().max_experiments_per_campaign = 3
@@ -103,6 +140,26 @@ async def main(timestamp: str) -> None:
     # harness-verified verdict the campaign can fold into its belief (materials has no hand-built
     # fallback demonstration).
     get_settings().demonstration_prefer_authored = True
+
+
+async def resume(timestamp: str, run_id: str) -> None:
+    """Resume an interrupted run: replay every COMPLETED Claude call from the worker cache (0 tokens)
+    and continue live from the first call that never finished. Idempotent ledger writes keep the
+    summary clean. Reuses the existing run_id — does NOT re-create the run or re-finalize the plan."""
+    _k2_campaign_settings()
+    get_settings().resume_cache_read = True  # the switch that makes completed calls replay for free
+    create_all()
+    run = get_run(run_id)
+    if run is None:
+        raise SystemExit(f"resume: run {run_id} not found in the ledger")
+    exp_id = run.get("plan_experiment_id")
+    print(f"RESUMING run_id={run_id} exp_id={exp_id} — completed Claude calls replay from cache "
+          "(0 tokens); the first unfinished call runs live.\n--- live events ---", flush=True)
+    await _drive_and_report(run_id, exp_id, timestamp)
+
+
+async def main(timestamp: str) -> None:
+    _k2_campaign_settings()
     create_all()
     run_id = create_run(
         "Real e2e (K2 campaign): does a Magpie band-gap regressor have a structurally bounded "
@@ -155,43 +212,20 @@ async def main(timestamp: str) -> None:
         },
     )
     print(f"run_id={run_id} exp_id={exp_id}\n--- live events ---", flush=True)
-
-    recorder = RunRecorder()
-    events_log: list[dict] = []  # full ordered stream, for cross-type ordering checks
-
-    async def printer() -> None:
-        async for evt in get_bus().subscribe():
-            recorder.observe(evt)
-            events_log.append({"type": evt.get("type", ""), "payload": evt.get("payload") or {}})
-            print(f">> {evt['type']}: {_short(evt.get('payload') or {})}", flush=True)
-
-    pt = asyncio.create_task(printer())
-    try:
-        await ExperimentDriver(run_id, dry_run=False).run()
-    finally:
-        await asyncio.sleep(0.2)  # let the final events drain into the recorder
-        pt.cancel()
-
-    run = get_run(run_id)
-    print("\n--- SUMMARY ---", flush=True)
-    print("run status:", run["status"])
-    print("metrics:", list_metrics(exp_id))
-    print("claims:", [(c["claim_type"], c["status"], c["strength"]) for c in list_claims(run_id)])
-    print("final credences:", list_credences(run_id))
-
-    summary_path = write_e2e_summary(
-        run_id=run_id, exp_id=exp_id, timestamp=timestamp,
-        prefer_authored=get_settings().demonstration_prefer_authored,
-        recorder=recorder, domain="materials",
-    )
-    print(f"summary written: {summary_path}", flush=True)
-    print_usage(run_id)
-
-    evaluate_k2(events_log, run_id)
+    await _drive_and_report(run_id, exp_id, timestamp)
 
 
 if __name__ == "__main__":
+    import sys
+
     ts = time.strftime("%Y%m%dT%H%M%S")
+    resume_id: str | None = None
+    if "--resume" in sys.argv:
+        i = sys.argv.index("--resume")
+        resume_id = sys.argv[i + 1] if i + 1 < len(sys.argv) else None
+        if not resume_id:
+            raise SystemExit("usage: real_k2_campaign_e2e.py --resume <run_id>")
     with tee_console("materials", ts) as log_path:
-        asyncio.run(main(ts))
+        asyncio.run(resume(ts, resume_id) if resume_id else main(ts))
+        print(f"console log: {log_path}", flush=True)
         print(f"console log: {log_path}", flush=True)

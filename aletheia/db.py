@@ -63,3 +63,10 @@ def create_all() -> None:
     with eng.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     Base.metadata.create_all(eng)
+    # create_all() only CREATES missing tables; it never ALTERs existing ones. Add columns
+    # introduced after a table already existed in a live DB (idempotent; no-op once present).
+    with eng.begin() as conn:
+        conn.execute(text("ALTER TABLE claims ADD COLUMN IF NOT EXISTS dedup_key VARCHAR(64)"))
+        conn.execute(text("ALTER TABLE experiments ADD COLUMN IF NOT EXISTS dedup_key VARCHAR(64)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_claims_dedup_key ON claims (dedup_key)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_experiments_dedup_key ON experiments (dedup_key)"))
