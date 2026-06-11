@@ -14,7 +14,12 @@ from aletheia.db import create_all
 from aletheia.events.bus import make_event
 from aletheia.events.store import persist_event
 from aletheia.memory.service import create_run
-from aletheia.memory.usage import aggregate_run_usage, list_run_ids_with_usage, run_rate_limit
+from aletheia.memory.usage import (
+    aggregate_run_usage,
+    list_run_ids_with_usage,
+    recent_window_status,
+    run_rate_limit,
+)
 from aletheia.scheduler.budget import BudgetTracker
 
 
@@ -162,3 +167,92 @@ def test_token_cap_off_by_default():
     tracker = BudgetTracker(run_id)
     assert tracker.token_cap is None
     assert tracker.breaches() == []  # token cap off, cost 0, generous usd cap, fresh wall clock
+
+
+def _five_hour_repr(status: str, util: str) -> str:
+    return (
+        f"RateLimitEvent(rate_limit_info=RateLimitInfo(status='{status}', resets_at=1780989600, "
+        f"rate_limit_type='five_hour', utilization={util}, raw={{}}))"
+    )
+
+
+def _system_evt_at(run_id: str, repr_str: str, hours_ago: float) -> None:
+    """Insert a system event with an explicit ``ts`` so the time-filter (resume safety) is testable."""
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.db import session_scope
+    from aletheia.memory.ledger import Event
+
+    with session_scope() as s:
+        s.add(Event(
+            run_id=run_id, type="system", payload={"repr": repr_str},
+            ts=datetime.now(timezone.utc) - timedelta(hours=hours_ago),
+        ))
+
+
+def test_recent_window_status_takes_latest_recent_reading():
+    create_all()
+    run_id = create_run("recent latest", domain="materials", status="scoping")
+    _system_evt_at(run_id, _five_hour_repr("allowed_warning", "0.80"), hours_ago=0.3)  # ~18 min
+    _system_evt_at(run_id, _five_hour_repr("allowed_warning", "0.92"), hours_ago=0.05)  # ~3 min
+    status, util = recent_window_status(run_id)
+    assert status == "allowed_warning"
+    assert util == 0.92  # the later (more recent) reading wins, both within the recency window
+
+
+def test_recent_window_status_ignores_stale_prior_window():
+    # THE resume-safety invariant: a 'rejected' from a prior, already-reset window (>5h ago) must
+    # NOT be the live reading — only the fresh-window 'allowed' inside the rolling window counts.
+    create_all()
+    run_id = create_run("recent stale", domain="materials", status="scoping")
+    _system_evt_at(run_id, _five_hour_repr("rejected", "None"), hours_ago=8.0)
+    _system_evt_at(run_id, _five_hour_repr("allowed", "0.10"), hours_ago=0.02)
+    status, util = recent_window_status(run_id)
+    assert status == "allowed"
+    assert util == 0.10
+
+
+def test_recent_window_status_none_when_no_recent_sample():
+    create_all()
+    run_id = create_run("recent none", domain="materials", status="scoping")
+    _system_evt_at(run_id, _five_hour_repr("rejected", "None"), hours_ago=9.0)  # all stale
+    assert recent_window_status(run_id) == (None, None)
+
+
+def test_budget_window_stop_fires_on_high_util(monkeypatch):
+    create_all()
+    monkeypatch.setattr(get_settings(), "window_stop_utilization", 0.85)
+    run_id = create_run("win stop", domain="materials", status="scoping", budget_cap_usd=1000.0)
+    _system_evt_at(run_id, _five_hour_repr("allowed_warning", "0.90"), hours_ago=0.05)
+    tracker = BudgetTracker(run_id)
+    breaches = {b["kind"]: b for b in tracker.breaches()}
+    assert "five_hour_window" in breaches
+    assert breaches["five_hour_window"]["utilization"] == 0.90
+
+
+def test_budget_window_stop_fires_on_rejected_even_without_util(monkeypatch):
+    create_all()
+    monkeypatch.setattr(get_settings(), "window_stop_utilization", 0.85)
+    run_id = create_run("win rej", domain="materials", status="scoping", budget_cap_usd=1000.0)
+    _system_evt_at(run_id, _five_hour_repr("rejected", "None"), hours_ago=0.05)
+    assert "five_hour_window" in {b["kind"] for b in BudgetTracker(run_id).breaches()}
+
+
+def test_budget_window_stop_ignores_stale_rejection(monkeypatch):
+    # resume safety at the budget layer: a stale rejection (prior window) does not pause a run that
+    # has resumed into a FRESH, healthy window.
+    create_all()
+    monkeypatch.setattr(get_settings(), "window_stop_utilization", 0.85)
+    run_id = create_run("win resume", domain="materials", status="scoping", budget_cap_usd=1000.0)
+    _system_evt_at(run_id, _five_hour_repr("rejected", "None"), hours_ago=8.0)
+    _system_evt_at(run_id, _five_hour_repr("allowed", "0.05"), hours_ago=0.02)
+    assert "five_hour_window" not in {b["kind"] for b in BudgetTracker(run_id).breaches()}
+
+
+def test_budget_window_stop_off_by_default():
+    create_all()
+    run_id = create_run("win off", domain="materials", status="scoping", budget_cap_usd=1000.0)
+    _system_evt_at(run_id, _five_hour_repr("rejected", "None"), hours_ago=0.05)
+    tracker = BudgetTracker(run_id)
+    assert tracker.window_stop_util is None
+    assert tracker.breaches() == []  # window stop off by default -> a rejection does not pause

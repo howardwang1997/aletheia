@@ -197,6 +197,11 @@ class Settings(BaseSettings):
     max_concurrent_workers: int | None = None
     worker_max_attempts: int = 2
     worker_backoff_s: float = 8.0
+    # window-aware graceful stop: when the SDK's LIVE 5-hour-window reading reaches this fill (or is
+    # 'rejected'), pause+checkpoint BEFORE launching another expensive stage, instead of slamming the
+    # window to the wall and dying mid-stream. Resume on a fresh window replays the prefix for 0 tokens,
+    # so work spreads across windows rather than burning one. None = off (0..1, e.g. 0.85).
+    window_stop_utilization: float | None = None
     max_experiments_per_campaign: int = 3  # one Run -> up to N linked experiments (go/no-go decides)
     # K2 S3.5: a paradigm round that produces NO demonstration (e.g. the AI could not author a
     # threshold consistent with its own exploration) is an informative negative — the campaign may

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func
 
@@ -163,6 +164,43 @@ def run_rate_limit(run_id: str) -> RateLimitStatus:
                 if rl.peak_utilization is None or val > rl.peak_utilization:
                     rl.peak_utilization = val
     return rl
+
+
+def recent_window_status(
+    run_id: str, within_minutes: float = 30.0
+) -> tuple[str | None, float | None]:
+    """The MOST RECENT five_hour (status, utilization) the SDK reported in the last
+    ``within_minutes`` — i.e. a LIVE reading from this actively-running session.
+
+    The recency filter is the resume-safety hinge. An actively-executing run emits a RateLimitEvent
+    on essentially every call (minutes apart), so 30 min always captures the current state. But a
+    'rejected'/high reading from BEFORE a pause is hours old by the time the run resumes — it must
+    NOT trip the resumed run, which may have re-entered a freshly-reset window. So we look only at
+    readings recent enough to belong to live execution; the first live call after resume produces a
+    fresh reading the stop then acts on. Ordered by id so the last match is the live reading;
+    ``status`` is that latest reading and ``util`` the latest NUMERIC utilization (a 'rejected'
+    reading often carries utilization=None, so the last known number is kept). (None, None) if no
+    recent five_hour sample exists."""
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=within_minutes)
+    with session_scope() as s:
+        rows = (
+            s.query(Event.payload)
+            .filter(Event.run_id == run_id, Event.type == "system", Event.ts >= cutoff)
+            .order_by(Event.id.asc())
+            .all()
+        )
+    status: str | None = None
+    util: float | None = None
+    for (payload,) in rows:
+        rep = payload.get("repr") if isinstance(payload, dict) else None
+        if not rep or "five_hour" not in rep:
+            continue
+        for m in _FIVE_HOUR_RE.finditer(rep):
+            status = m.group("status")
+            u = m.group("util")
+            if u != "None":
+                util = float(u)
+    return status, util
 
 
 def list_run_ids_with_usage() -> list[str]:
