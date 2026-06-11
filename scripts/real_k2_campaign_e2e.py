@@ -37,6 +37,7 @@ final durable credences.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 
 from _e2e_common import RunRecorder, print_usage, tee_console, write_e2e_summary
@@ -140,13 +141,22 @@ def _k2_campaign_settings() -> None:
     # harness-verified verdict the campaign can fold into its belief (materials has no hand-built
     # fallback demonstration).
     get_settings().demonstration_prefer_authored = True
-    # WEAK-NETWORK MODE: this box reaches the API through a flaky proxy/tunnel that resets
-    # long-lived streams. Cap concurrent live streams (less pressure on the tunnel) and retry a
-    # failed call several patient outer attempts (each a fresh connection over the SDK's own
-    # retries). Combined with the resume cache, a reset costs at most one call's worth of work.
-    get_settings().max_concurrent_workers = 3
-    get_settings().worker_max_attempts = 4
+    # WEAK-NETWORK MODE (token-frugal): this box reaches the API through a flaky proxy that resets
+    # long-lived streams. Every reset re-sends the whole call's context, so a retry STORM silently
+    # burns the shared 5-hour window. Three layers bound that, cheapest first:
+    #   1) CLAUDE_CODE_MAX_RETRIES: the SDK-driven CLI's OWN retry depth defaults to 10 (re-sending
+    #      context each time). Cap it to 2 — the single biggest amplifier (last run: 61 api_retry,
+    #      6 calls hit 10/10). setdefault so a shell export can still override.
+    #   2) fewer concurrent long streams (less proxy pressure = fewer resets) + fewer OUTER attempts.
+    #      Combined depth is now ~2x2 instead of 4x10; the resume cache makes a reset cost ≤ one call.
+    #   3) a generous hard token backstop + a WINDOW-AWARE graceful stop (the precise guard): pause +
+    #      checkpoint once the live 5h reading hits 0.85, then resume on a fresh window for 0 tokens.
+    os.environ.setdefault("CLAUDE_CODE_MAX_RETRIES", "2")
+    get_settings().max_concurrent_workers = 2
+    get_settings().worker_max_attempts = 2
     get_settings().worker_backoff_s = 10.0
+    get_settings().token_cap_per_run = 1_200_000
+    get_settings().window_stop_utilization = 0.85
 
 
 async def resume(timestamp: str, run_id: str) -> None:
