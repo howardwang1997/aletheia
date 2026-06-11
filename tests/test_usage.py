@@ -116,17 +116,35 @@ def test_budget_breaches_on_real_cost_over_cap():
     assert breaches["usd"]["spent"] >= 0.09  # max(estimate=0, real=0.09)
 
 
-def test_budget_token_cap(monkeypatch):
+def test_budget_token_cap_fresh_run_counts_new_tokens(monkeypatch):
     create_all()
     monkeypatch.setattr(get_settings(), "token_cap_per_run", 10_000)
     run_id = create_run("budget tokens", domain="materials", status="scoping", budget_cap_usd=1000.0)
-    _result_evt(run_id, 0.0, out_tok=6000, cache_read=6000)  # 12k > 10k cap, cost 0 (subscription)
+    tracker = BudgetTracker(run_id)  # built first, like a real fresh run -> baseline 0
+    _result_evt(run_id, 0.0, out_tok=6000, cache_read=6000)  # 12k new > 10k cap, cost 0 (subscription)
 
-    tracker = BudgetTracker(run_id)
     breaches = {b["kind"]: b for b in tracker.breaches()}
     assert "tokens" in breaches
     assert breaches["tokens"]["spent"] == 12000
     assert "usd" not in breaches  # cost 0, generous usd cap
+
+
+def test_budget_token_cap_resume_ignores_inherited_tokens(monkeypatch):
+    # resume safety: a reused run_id already carries prior windows' tokens. The cap must measure
+    # only NEW spend since this session's tracker was built, not the inherited lifetime total —
+    # otherwise every resume of a long run trips the instant the cached prefix replays.
+    create_all()
+    monkeypatch.setattr(get_settings(), "token_cap_per_run", 10_000)
+    run_id = create_run("budget resume tok", domain="materials", status="scoping", budget_cap_usd=1000.0)
+    _result_evt(run_id, 0.0, out_tok=50_000, cache_read=50_000)  # 100k prior lifetime (>> cap)
+    tracker = BudgetTracker(run_id)  # resume: baseline = the 100k already spent
+    assert tracker.breaches() == []  # inherited tokens alone do NOT trip the cap
+
+    _result_evt(run_id, 0.0, out_tok=6000, cache_read=6000)  # +12k NEW this session > 10k cap
+    breaches = {b["kind"]: b for b in tracker.breaches()}
+    assert "tokens" in breaches
+    assert breaches["tokens"]["spent"] == 12000  # session tokens, NOT lifetime 112000
+    assert breaches["tokens"]["lifetime"] == 112000
 
 
 def _system_evt(run_id: str, repr_str: str) -> None:
