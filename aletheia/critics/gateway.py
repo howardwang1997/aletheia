@@ -352,14 +352,27 @@ class CriticGateway:
 
     async def _run_round_async(
         self, target: str, content: str, assignments: list[tuple[CriticProvider, str]],
-        mode: str = "performance",
+        mode: str = "performance", run_id: str | None = None,
     ) -> list[Critique]:
         results = await asyncio.gather(
             *[asyncio.to_thread(self._review_one, p, target, st, content, mode) for p, st in assignments],
             return_exceptions=True,
         )
-        # a reviewer that errored (vendor API hiccup) is dropped, not fatal to the gate
-        return [r for r in results if isinstance(r, Critique)]
+        # A reviewer that errored (vendor API hiccup) is dropped, not fatal to the gate — but make the
+        # drop VISIBLE. A silently-vanishing vendor can starve an AUDIT below its cross-vendor floor
+        # (n_auditors < min_vendors → infra_degraded) with no trace of WHY. Emit one event per drop so
+        # the cause (network-blocked / auth / timeout / parse) is diagnosable instead of guessed.
+        out: list[Critique] = []
+        for (prov, stance), r in zip(assignments, results):
+            if isinstance(r, Critique):
+                out.append(r)
+            elif isinstance(r, BaseException):
+                await get_bus().publish(make_event(
+                    "critic_vendor_error", run_id=run_id, agent=prov.critic_id,
+                    payload={"vendor": prov.critic_id, "stance": stance, "target": target,
+                             "error": f"{type(r).__name__}: {r}"[:300]},
+                ))
+        return out
 
     async def review(
         self, target: str, content_obj: dict[str, Any], target_ref: str,
@@ -395,7 +408,7 @@ class CriticGateway:
             r = 0
             while True:
                 r += 1
-                critiques = await self._run_round_async(target, base_content + extra, assignments, mode)
+                critiques = await self._run_round_async(target, base_content + extra, assignments, mode, run_id)
                 rounds.append(critiques)
                 await self._emit_round(target, target_ref, critiques, r, max_rounds, run_id)
                 if not policy.should_continue(
