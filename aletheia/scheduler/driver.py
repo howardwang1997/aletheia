@@ -1203,6 +1203,7 @@ class ExperimentDriver:
             text = await run_worker(
                 self.run_id, "coder", base_prompt + retry_note,
                 system=DEMO_SYSTEM, dry_run=self.dry_run,
+                max_attempts=get_settings().authoring_max_attempts,  # this long stream gets patient retries
                 dry_value="```python\n" + CANNED_DEMO + "```\n```json\n"
                 + json.dumps(CANNED_PREREGISTRATION) + "\n```",
             )

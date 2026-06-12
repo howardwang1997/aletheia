@@ -197,6 +197,11 @@ class Settings(BaseSettings):
     max_concurrent_workers: int | None = None
     worker_max_attempts: int = 2
     worker_backoff_s: float = 8.0
+    # per-call override for the discriminating-demonstration authoring — the longest, most critical
+    # stream and the one that degrades on a proxy reset. Give just that call more patient attempts to
+    # land one clean stream, while everything else keeps the frugal `worker_max_attempts`. None = use
+    # `worker_max_attempts` for it too.
+    authoring_max_attempts: int | None = None
     # window-aware graceful stop: when the SDK's LIVE 5-hour-window reading reaches this fill (or is
     # 'rejected'), pause+checkpoint BEFORE launching another expensive stage, instead of slamming the
     # window to the wall and dying mid-stream. Resume on a fresh window replays the prefix for 0 tokens,

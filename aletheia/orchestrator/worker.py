@@ -58,9 +58,13 @@ def _get_worker_sem(limit: int | None) -> asyncio.Semaphore | None:
 # returning only prose — then ``extract_code`` gets prose, not a fenced block, and the gate
 # rejects it. Text-only workers must return their answer INLINE. (mcp-tool workers opt back
 # in via ``allowed_tools``.)
+# ``AskUserQuestion`` is disallowed because these workers run HEADLESS (no human to answer): a
+# planner reasoning "let me ask the user" would emit a question tool_use that can only stall or
+# return empty, polluting the reasoning. The system prompts already say not to — this enforces it.
 _NO_TOOLS: list[str] = [
     "Write", "Edit", "MultiEdit", "NotebookEdit", "Read", "Bash", "BashOutput",
     "Glob", "Grep", "WebFetch", "WebSearch", "Task", "TodoWrite", "KillBash",
+    "AskUserQuestion",
 ]
 
 
@@ -110,6 +114,7 @@ async def run_worker(
     allowed_tools: list[str] | None = None,
     can_use_tool: Any = None,
     max_turns: int = 1,
+    max_attempts: int | None = None,
     dry_run: bool,
     dry_value: str | None = None,
 ) -> str:
@@ -166,7 +171,10 @@ async def run_worker(
     options = ClaudeAgentOptions(**opts)
 
     sem = _get_worker_sem(settings.max_concurrent_workers)
-    max_attempts = max(1, int(settings.worker_max_attempts))
+    # per-call override: the discriminating-demonstration authoring is the longest, most critical
+    # stream — give just THAT call more patient attempts to land one clean stream, without inflating
+    # retries (and token burn) on every other call. None => the global weak-network default.
+    max_attempts = max(1, int(max_attempts if max_attempts is not None else settings.worker_max_attempts))
     backoff = float(settings.worker_backoff_s)
 
     last = ""

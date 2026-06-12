@@ -102,3 +102,61 @@ async def test_unlimited_when_cap_unset(monkeypatch):
     worker._worker_sem = None
     worker._worker_sem_limit = None
     assert worker._get_worker_sem(get_settings().max_concurrent_workers) is None
+
+
+class _AlwaysReset:
+    """A fake SDK client that ECONNRESETs on every attempt, counting constructions."""
+
+    def __init__(self, counter):
+        self._counter = counter
+
+    def __call__(self, *a, **k):
+        self._counter["n"] += 1
+        return self
+
+    async def __aenter__(self):
+        raise ConnectionResetError("ECONNRESET (simulated)")
+
+    async def __aexit__(self, *a):
+        return False
+
+
+def _wire_failing_sdk(monkeypatch):
+    counter = {"n": 0}
+    monkeypatch.setattr(worker, "has_credentials", lambda _s: True)
+    monkeypatch.setattr("claude_agent_sdk.ClaudeSDKClient", _AlwaysReset(counter), raising=False)
+    monkeypatch.setattr(get_settings(), "worker_max_attempts", 2)  # frugal GLOBAL default
+    monkeypatch.setattr(get_settings(), "worker_backoff_s", 0.0)  # no real waiting in the test
+    monkeypatch.setattr(get_settings(), "max_concurrent_workers", None)
+    worker._worker_sem = None
+    worker._worker_sem_limit = None
+    return counter
+
+
+@pytest.mark.asyncio
+async def test_per_call_max_attempts_overrides_global(monkeypatch):
+    # the discriminating-demonstration authoring passes a higher per-call max_attempts; it must beat
+    # the frugal global default so the one critical long stream gets patient retries.
+    create_all()
+    run_id = create_run("retry override", domain="materials", status="scoping")
+    counter = _wire_failing_sdk(monkeypatch)
+    out = await worker.run_worker(run_id, "coder", "author it", max_attempts=5, dry_run=False)
+    assert worker.is_degraded(out)
+    assert counter["n"] == 5  # the per-call override, NOT the global 2
+
+
+@pytest.mark.asyncio
+async def test_max_attempts_none_falls_back_to_global(monkeypatch):
+    # every OTHER call passes None and must stay frugal at the global default.
+    create_all()
+    run_id = create_run("retry fallback", domain="materials", status="scoping")
+    counter = _wire_failing_sdk(monkeypatch)
+    out = await worker.run_worker(run_id, "coder", "author it", max_attempts=None, dry_run=False)
+    assert worker.is_degraded(out)
+    assert counter["n"] == 2  # None => global worker_max_attempts
+
+
+def test_headless_worker_disallows_askuserquestion():
+    # a headless worker (no human to answer) must never be able to call a question/UI tool — it would
+    # only stall or return empty and pollute the planner's reasoning. Enforced at the tool gate.
+    assert "AskUserQuestion" in worker._NO_TOOLS

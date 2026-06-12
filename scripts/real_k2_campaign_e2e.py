@@ -155,6 +155,9 @@ def _k2_campaign_settings() -> None:
     get_settings().max_concurrent_workers = 2
     get_settings().worker_max_attempts = 2
     get_settings().worker_backoff_s = 10.0
+    # the discriminating-demonstration authoring is the long stream that keeps degrading on a reset;
+    # give JUST that call more patient attempts to land one clean stream (everything else stays at 2).
+    get_settings().authoring_max_attempts = 5
     get_settings().token_cap_per_run = 1_200_000
     get_settings().window_stop_utilization = 0.85
 
