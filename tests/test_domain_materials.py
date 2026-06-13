@@ -67,3 +67,13 @@ def test_baselines_listed():
     bl = plug.baselines()
     assert len(bl) >= 2
     assert {b["model"] for b in bl} >= {"random_forest", "gradient_boosting"}
+
+
+def test_make_model_forces_single_thread_even_if_design_requests_all_cores():
+    # the sandbox caps RLIMIT_CPU (CPU-seconds summed across threads); a design asking n_jobs=-1
+    # would blow the budget and die with SIGXCPU (return code -24) before the wall-clock backstop.
+    # _make_model must clamp n_jobs to 1 regardless of what the design requests.
+    plug = MaterialsBandGapPlugin()
+    est = plug._make_model({"model": "random_forest",
+                            "model_params": {"n_jobs": -1, "n_estimators": 10}})
+    assert est.n_jobs == 1

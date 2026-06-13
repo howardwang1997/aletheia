@@ -113,7 +113,11 @@ class MaterialsBandGapPlugin(DomainPlugin):
         params = filter_estimator_params(RandomForestRegressor, params)
         params.setdefault("n_estimators", 100)
         params.setdefault("random_state", rs)
-        params.setdefault("n_jobs", -1)
+        # FORCE single-thread (override any design n_jobs): the sandbox caps RLIMIT_CPU and counts
+        # CPU-seconds summed across ALL threads, so n_jobs=-1 burns the budget cores× faster and the
+        # job dies with SIGXCPU (return code -24) long before the wall-clock backstop. Single-thread
+        # keeps CPU-time ≈ wall-time — matching the already-pinned featurizer/CV/BLAS threads.
+        params["n_jobs"] = 1
         return RandomForestRegressor(**params)
 
     def train_evaluate(

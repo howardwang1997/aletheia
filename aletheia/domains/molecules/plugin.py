@@ -97,7 +97,10 @@ class MoleculePropertyPlugin(DomainPlugin):
         params = filter_estimator_params(RandomForestRegressor, params)
         params.setdefault("n_estimators", 200)
         params.setdefault("random_state", rs)
-        params.setdefault("n_jobs", -1)
+        # FORCE single-thread (override any design n_jobs): the sandbox caps RLIMIT_CPU across all
+        # threads, so n_jobs=-1 burns CPU-seconds cores× faster and dies with SIGXCPU before the
+        # wall-clock backstop. Mirrors the pinned featurizer/CV/BLAS threads.
+        params["n_jobs"] = 1
         return RandomForestRegressor(**params)
 
     def _baseline_models(self, design: dict[str, Any]) -> dict[str, Any]:
@@ -114,7 +117,7 @@ class MoleculePropertyPlugin(DomainPlugin):
             # the integer fingerprint matrix; for a reference baseline we keep the panel
             # dtype-clean with the default metric.
             "knn": KNeighborsRegressor(),
-            "rf": RandomForestRegressor(n_estimators=200, random_state=rs, n_jobs=-1),
+            "rf": RandomForestRegressor(n_estimators=200, random_state=rs, n_jobs=1),
             "gbm": GradientBoostingRegressor(n_estimators=200, max_depth=3, random_state=rs),
         }
 
@@ -334,7 +337,7 @@ class MoleculePropertyPlugin(DomainPlugin):
         return {
             "ridge": lambda: Ridge(),
             "knn": lambda: KNeighborsRegressor(),
-            "rf": lambda: RandomForestRegressor(n_estimators=200, random_state=rs, n_jobs=-1),
+            "rf": lambda: RandomForestRegressor(n_estimators=200, random_state=rs, n_jobs=1),
             "gbm": lambda: GradientBoostingRegressor(n_estimators=200, max_depth=3, random_state=rs),
             "svr": lambda: SVR(),
         }
