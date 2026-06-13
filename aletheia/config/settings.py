@@ -202,6 +202,11 @@ class Settings(BaseSettings):
     # land one clean stream, while everything else keeps the frugal `worker_max_attempts`. None = use
     # `worker_max_attempts` for it too.
     authoring_max_attempts: int | None = None
+    # how many CONTENT rounds the demonstration authoring gets within one campaign round: each retry
+    # re-authors with the prior rejection reason (control-not-silent / threshold-doomed / runtime
+    # error) fed back, so more rounds = more chances to fix a flagged DESIGN flaw before the round is
+    # written off as undemonstrated. Distinct from `authoring_max_attempts` (network retries per call).
+    demonstration_authoring_rounds: int = 2
     # window-aware graceful stop: when the SDK's LIVE 5-hour-window reading reaches this fill (or is
     # 'rejected'), pause+checkpoint BEFORE launching another expensive stage, instead of slamming the
     # window to the wall and dying mid-stream. Resume on a fresh window replays the prefix for 0 tokens,

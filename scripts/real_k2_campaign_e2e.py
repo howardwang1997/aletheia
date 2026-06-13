@@ -158,6 +158,10 @@ def _k2_campaign_settings() -> None:
     # the discriminating-demonstration authoring is the long stream that keeps degrading on a reset;
     # give JUST that call more patient attempts to land one clean stream (everything else stays at 2).
     get_settings().authoring_max_attempts = 5
+    # the AI-authored demonstration is the stochastic step: give it more CONTENT rounds to fix a
+    # flagged design flaw (leaky control / doomed threshold / runtime error) with feedback before the
+    # round is written off as undemonstrated.
+    get_settings().demonstration_authoring_rounds = 4
     get_settings().token_cap_per_run = 1_200_000
     get_settings().window_stop_utilization = 0.85
 
@@ -182,9 +186,9 @@ async def main(timestamp: str) -> None:
     _k2_campaign_settings()
     create_all()
     run_id = create_run(
-        "Real e2e (K2 campaign): does a Magpie band-gap regressor have a structurally bounded "
-        "ability to extrapolate to UNSEEN chemical systems — and what does each round's outcome "
-        "teach the next?",
+        "Real e2e (K2 campaign): does a Magpie band-gap regressor make SYSTEMATICALLY LARGER errors "
+        "on materials built from chemically RARE elements (under-represented in training) — a "
+        "composition-space extrapolation ceiling — and what does each round's outcome teach the next?",
         domain="materials",
         status="scoping",
         budget_cap_usd=150.0,  # up to 3 rounds of authoring + audit + gates
@@ -196,10 +200,10 @@ async def main(timestamp: str) -> None:
     exp_id = finalize_plan(
         run_id,
         {
-            "objective": "Establish whether a Magpie-feature band-gap regressor has a STRUCTURALLY "
-            "BOUNDED ability to extrapolate to UNSEEN chemical systems: its predicted gap for a "
-            "held-out system is pinned near the gaps of its nearest training systems, so it cannot "
-            "represent chemistry-driven gap jumps. This is a multi-round PROGRAM: each round authors a "
+            "objective": "Establish whether a Magpie-feature band-gap regressor's prediction error "
+            "INFLATES for materials whose constituent elements are under-represented in training (a "
+            "composition-space extrapolation ceiling): where the training set thins out chemically, "
+            "predictions get systematically worse. This is a multi-round PROGRAM: each round authors a "
             "discriminating demonstration + a NEGATIVE CONTROL; the go/no-go step uses what the round "
             "learned (held / refuted / over-claimed / sample-starved) to choose the next experiment.",
             "domain": "materials",
@@ -207,23 +211,28 @@ async def main(timestamp: str) -> None:
             "program whose discriminating demonstrations the AI authors itself. The harness applies "
             "the AI's pre-registered decision rule + negative control; an independent cross-vendor "
             "audit (author excluded) reviews the code; the campaign LEARNS across rounds.",
-            "hypothesis": "When whole chemical systems are held out, the regressor's predicted "
-            "band-gap range collapses toward its training-neighbor gaps (a structural extrapolation "
-            "ceiling), so the predicted spread across held-out systems is far below the true spread; "
-            "the CONTROL — holding out random rows WITHIN seen systems — should show no such collapse "
-            "if the effect is genuinely about unseen chemistry rather than sample size.",
+            "hypothesis": "Prediction error rises with element rarity. Define each material's rarity "
+            "from the TRAINING-set frequency of its constituent elements (e.g. the inverse/-log "
+            "frequency of its rarest element, computed on the train split only). Then materials in the "
+            "TOP-rarity stratum have a substantially larger mean absolute residual than those in the "
+            "BOTTOM-rarity stratum — equivalently, |residual| rises monotonically with rarity. The "
+            "CONTROL — a PERMUTED pseudo-rarity (the rarity labels shuffled, so it is uncorrelated with "
+            "training frequency) — shows no such inflation, confirming the effect is specifically about "
+            "training under-representation, not an artifact of the stratification statistic.",
             "contribution_type": "paradigm",
-            "demonstration": "discriminating instance: under leave-chemical-system-out the model's "
-            "predicted band-gap spread on held-out systems is structurally compressed relative to the "
-            "true spread; on the within-system random-holdout control the compression vanishes. The AI "
-            "authors compute_demonstration to measure both spreads and pre-registers the decision rule.",
+            "demonstration": "discriminating instance: on a held-out split, stratify materials by "
+            "training-derived element rarity and show mean |residual| in the top-rarity stratum is "
+            "materially higher than in the bottom-rarity stratum (and/or rank-correlates with rarity); "
+            "on the permuted-rarity control the inflation vanishes. The AI authors compute_demonstration "
+            "and pre-registers the supported/refuted thresholds (a ratio or rank-correlation).",
             "dataset": "matbench_expt_gap",
-            "method": "Magpie composition features; an AI-authored compute_demonstration that splits "
-            "leave-chemical-system-out vs within-system random holdout (control), fits/queries a "
-            "regressor, and computes a predicted-vs-true spread/compression statistic on each",
-            "metrics": "the test statistic (predicted/true band-gap spread compression on held-out "
-            "chemical systems) vs the control statistic (same compression on the within-system random "
-            "holdout) — the AI pre-registers the supported/refuted thresholds",
+            "method": "Magpie composition features; an AI-authored compute_demonstration that fits a "
+            "regressor, derives per-material element rarity from TRAIN-split element frequencies, "
+            "stratifies the holdout by rarity, and computes an error-inflation statistic (top- vs "
+            "bottom-rarity stratum, or Spearman rho of rarity vs |residual|) plus a permuted-rarity control",
+            "metrics": "the test statistic (error inflation: mean-|residual| ratio of top- vs "
+            "bottom-rarity stratum, or Spearman rho of rarity vs |residual|) vs the control statistic "
+            "(the same on permuted rarity) — the AI pre-registers the supported/refuted thresholds",
             "success_criteria": "the program LEARNS: each round's confirm/refute reason shapes the "
             "next (narrow an over-claim, change a non-generalizing effect, scale a starved sample, or "
             "ablate a confirmed mechanism). A held + reproduced + audited demonstration is a win; an "

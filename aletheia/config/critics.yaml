@@ -34,8 +34,9 @@ panel:
     model: deepseek-chat      # latest DeepSeek (OpenAI-compatible API)
     base_url: https://api.deepseek.com
   - id: zhipu
-    enabled: false            # re-enable when the GLM Coding-Plan quota window recovers
-                              # (1113). Key is read from OpenCode's config.
+    enabled: true             # CHINA-reachable auditor for DIRECT runs (Western critics flake on
+                              # direct). If the GLM Coding-Plan quota is still out it 1113-fails-fast
+                              # (no retry) and drops cleanly — no worse than disabled. Key from OpenCode.
     transport: api
     model: glm-5.1            # latest GLM on the Coding Plan
     # the Coding Plan is served ONLY by the /coding/ endpoint; the standard

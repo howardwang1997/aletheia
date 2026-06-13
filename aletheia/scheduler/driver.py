@@ -1199,7 +1199,11 @@ class ExperimentDriver:
         reasons: list[str] = []
         consistency_reason = ""
         accepted = False
-        for attempt in range(2):
+        # bounded informed retry: each attempt re-authors with the PREVIOUS rejection reason
+        # (control-not-silent / threshold-doomed / runtime error) fed back. More rounds = more
+        # chances to fix a flagged DESIGN flaw within one campaign round (configurable for the
+        # frontier campaign, which leans hard on the AI-authored path).
+        for attempt in range(max(1, int(get_settings().demonstration_authoring_rounds))):
             text = await run_worker(
                 self.run_id, "coder", base_prompt + retry_note,
                 system=DEMO_SYSTEM, dry_run=self.dry_run,
