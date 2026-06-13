@@ -77,3 +77,30 @@ def test_make_model_forces_single_thread_even_if_design_requests_all_cores():
     est = plug._make_model({"model": "random_forest",
                             "model_params": {"n_jobs": -1, "n_estimators": 10}})
     assert est.n_jobs == 1
+
+
+def test_reseed_estimator_clamps_njobs_and_reseeds():
+    # the harness adopts a coder-authored pipeline: it must own BOTH the seed AND the thread budget
+    # (n_jobs=1) so the sandboxed solution_path estimator can't blow RLIMIT_CPU with n_jobs=-1.
+    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    from aletheia.domains.base import reseed_estimator
+
+    pipe = Pipeline([("sc", StandardScaler()),
+                     ("rf", RandomForestRegressor(n_jobs=-1, random_state=0))])
+    out = reseed_estimator(pipe, 7)
+    p = out.get_params(deep=True)
+    assert p["rf__n_jobs"] == 1        # thread budget clamped (sandbox CPU-seconds safety)
+    assert p["rf__random_state"] == 7  # harness owns the seed
+
+
+def test_reseed_estimator_clamps_njobs_even_without_seed():
+    from sklearn.ensemble import RandomForestRegressor
+
+    from aletheia.domains.base import reseed_estimator
+
+    est = reseed_estimator(RandomForestRegressor(n_jobs=-1, random_state=3), None)
+    assert est.n_jobs == 1       # clamped even when no reseed is requested
+    assert est.random_state == 3  # seed untouched when random_state is None

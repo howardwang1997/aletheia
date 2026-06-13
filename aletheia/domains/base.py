@@ -112,24 +112,34 @@ def filter_estimator_params(cls: type, params: dict[str, Any]) -> dict[str, Any]
 
 
 def reseed_estimator(est: Any, random_state: Any) -> Any:
-    """Override every ``random_state`` hyperparameter on a built (possibly nested) sklearn
-    estimator. The HARNESS owns the seed: a coder-authored ``build_pipeline()`` hardcodes its
-    own random_state, so without this the locked-code reproduction re-run (``random_state+1``)
-    is bit-identical to the original — "confirmed (rel Δ 0.0)" would be a VACUOUS check, and a
-    metric claim could reach ``strong`` on a reproduction that never re-computed anything.
-    Best-effort: an estimator without ``get_params``/seed params is returned unchanged."""
-    if random_state is None:
-        return est
+    """Normalize a built (possibly nested) coder-authored sklearn estimator so the HARNESS owns
+    two things on it: the SEED and the THREAD BUDGET.
+
+    SEED: override every ``random_state`` — a coder-authored ``build_pipeline()`` hardcodes its own,
+    so without this the locked-code reproduction re-run (``random_state+1``) is bit-identical to the
+    original ("confirmed (rel Δ 0.0)" would be VACUOUS and a metric claim could reach ``strong`` on a
+    reproduction that never re-computed).
+
+    THREAD BUDGET: clamp every ``n_jobs`` to 1. The sandbox caps ``RLIMIT_CPU`` and counts CPU-seconds
+    SUMMED across threads, so an AI pipeline left at ``n_jobs=-1`` burns the budget cores× faster and
+    the job dies with SIGXCPU (return code -24) long before the wall-clock backstop — exactly the
+    crash this guards. The structured-``model_params`` path is clamped at its builder; this covers the
+    coder-authored ``solution_path`` pipeline that bypasses it. Runs even when ``random_state is None``.
+    Best-effort: an estimator without ``get_params`` is returned unchanged."""
     try:
         params = est.get_params(deep=True)
-        seeds = {
-            k: int(random_state)
-            for k in params
-            if k == "random_state" or k.endswith("__random_state")
+        overrides: dict[str, Any] = {
+            k: 1 for k in params if k == "n_jobs" or k.endswith("__n_jobs")
         }
-        if seeds:
-            est.set_params(**seeds)
-    except Exception:  # noqa: BLE001 - reseeding is best-effort, never break model build
+        if random_state is not None:
+            overrides.update({
+                k: int(random_state)
+                for k in params
+                if k == "random_state" or k.endswith("__random_state")
+            })
+        if overrides:
+            est.set_params(**overrides)
+    except Exception:  # noqa: BLE001 - normalization is best-effort, never break model build
         pass
     return est
 
