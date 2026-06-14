@@ -58,13 +58,19 @@ def _get_worker_sem(limit: int | None) -> asyncio.Semaphore | None:
 # returning only prose — then ``extract_code`` gets prose, not a fenced block, and the gate
 # rejects it. Text-only workers must return their answer INLINE. (mcp-tool workers opt back
 # in via ``allowed_tools``.)
-# ``AskUserQuestion`` is disallowed because these workers run HEADLESS (no human to answer): a
-# planner reasoning "let me ask the user" would emit a question tool_use that can only stall or
-# return empty, polluting the reasoning. The system prompts already say not to — this enforces it.
+# The HARNESS ORCHESTRATION family (AskUserQuestion, ScheduleWakeup, Cron*, Monitor, plan/worktree
+# mode, Task*, push/remote signals) is disallowed because these workers run HEADLESS and SINGLE-SHOT:
+# their answer IS the return value. An agentic model that thinks it's in a loop "helpfully" reaches
+# for one of these instead of answering — e.g. ScheduleWakeup returned result=None and the direction
+# gate degraded across all retries; AskUserQuestion stalls waiting for a human. Forcing them off makes
+# the worker reply INLINE. The system prompts already say not to — this enforces it at the gate.
 _NO_TOOLS: list[str] = [
     "Write", "Edit", "MultiEdit", "NotebookEdit", "Read", "Bash", "BashOutput",
     "Glob", "Grep", "WebFetch", "WebSearch", "Task", "TodoWrite", "KillBash",
-    "AskUserQuestion",
+    "AskUserQuestion", "ScheduleWakeup", "Monitor", "PushNotification", "RemoteTrigger",
+    "CronCreate", "CronDelete", "CronList",
+    "EnterPlanMode", "ExitPlanMode", "EnterWorktree", "ExitWorktree",
+    "TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "TaskUpdate",
 ]
 
 

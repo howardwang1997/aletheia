@@ -156,7 +156,11 @@ async def test_max_attempts_none_falls_back_to_global(monkeypatch):
     assert counter["n"] == 2  # None => global worker_max_attempts
 
 
-def test_headless_worker_disallows_askuserquestion():
-    # a headless worker (no human to answer) must never be able to call a question/UI tool — it would
-    # only stall or return empty and pollute the planner's reasoning. Enforced at the tool gate.
-    assert "AskUserQuestion" in worker._NO_TOOLS
+def test_headless_worker_disallows_harness_orchestration_tools():
+    # a headless single-shot worker must never reach for a harness orchestration/scheduling/UI tool —
+    # an agentic model that thinks it's in a loop calls one instead of answering (ScheduleWakeup
+    # returned None and degraded the direction gate; AskUserQuestion stalls for a human). Enforced
+    # at the tool gate so the worker replies INLINE.
+    for tool in ("AskUserQuestion", "ScheduleWakeup", "Monitor", "CronCreate",
+                 "EnterPlanMode", "TaskCreate"):
+        assert tool in worker._NO_TOOLS, tool
