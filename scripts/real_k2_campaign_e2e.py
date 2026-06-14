@@ -153,10 +153,14 @@ def _k2_campaign_settings() -> None:
     #      checkpoint once the live 5h reading hits 0.85, then resume on a fresh window for 0 tokens.
     os.environ.setdefault("CLAUDE_CODE_MAX_RETRIES", "2")
     get_settings().max_concurrent_workers = 2
-    get_settings().worker_max_attempts = 2
+    # 3 OUTER attempts for every worker: on a stable direct link a single transient blip must not
+    # degrade a short orchestrator/critic call and fail a whole gate (observed: the direction gate
+    # paused on one empty-reason orchestrator degrade at attempts=2). Retries are cheap when calls
+    # rarely fail; the resume cache still caps a reset at one call's work.
+    get_settings().worker_max_attempts = 3
     get_settings().worker_backoff_s = 10.0
     # the discriminating-demonstration authoring is the long stream that keeps degrading on a reset;
-    # give JUST that call more patient attempts to land one clean stream (everything else stays at 2).
+    # give JUST that call more patient attempts to land one clean stream (everything else uses 3).
     get_settings().authoring_max_attempts = 5
     # the AI-authored demonstration is the stochastic step: give it more CONTENT rounds to fix a
     # flagged design flaw (leaky control / doomed threshold / runtime error) with feedback before the
