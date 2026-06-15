@@ -190,9 +190,10 @@ async def main(timestamp: str) -> None:
     _k2_campaign_settings()
     create_all()
     run_id = create_run(
-        "Real e2e (K2 campaign): does a Magpie band-gap regressor make SYSTEMATICALLY LARGER errors "
-        "on materials built from chemically RARE elements (under-represented in training) — a "
-        "composition-space extrapolation ceiling — and what does each round's outcome teach the next?",
+        "Real e2e (K2 campaign): does a chemical element E's training data carry ELEMENT-SPECIFIC, "
+        "NON-REDUNDANT information for band-gap prediction — measured by a support-AND-topology-matched "
+        "counterfactual REMOVAL estimand (delta_E) on an E-FREE holdout — beyond what generic, "
+        "equally-dense, equally-clustered training data supplies; and what does each round teach the next?",
         domain="materials",
         status="scoping",
         budget_cap_usd=150.0,  # up to 3 rounds of authoring + audit + gates
@@ -204,44 +205,60 @@ async def main(timestamp: str) -> None:
     exp_id = finalize_plan(
         run_id,
         {
-            "objective": "Establish whether a Magpie-feature band-gap regressor's prediction error "
-            "INFLATES for materials whose constituent elements are under-represented in training (a "
-            "composition-space extrapolation ceiling): where the training set thins out chemically, "
-            "predictions get systematically worse. This is a multi-round PROGRAM: each round authors a "
-            "discriminating demonstration + a NEGATIVE CONTROL; the go/no-go step uses what the round "
-            "learned (held / refuted / over-claimed / sample-starved) to choose the next experiment.",
+            "objective": "Quantify, per chemical element E, the ELEMENT-SPECIFIC NON-REDUNDANT "
+            "information E's training compounds carry for band-gap prediction, via a "
+            "SUPPORT-AND-TOPOLOGY-matched counterfactual REMOVAL estimand delta_E evaluated on an "
+            "E-FREE holdout — so it is a property of the TRAINING set's information structure, NOT "
+            "test-time extrapolation. This is a DIAGNOSTIC ESTIMAND (not a benchmark win, not a grand "
+            "paradigm): a multi-round PROGRAM where each round authors a discriminating demonstration "
+            "+ matched negative controls; the go/no-go step uses what the round learned (held / "
+            "refuted / over-claimed / sample-starved) to choose the next experiment.",
             "domain": "materials",
-            "direction": "a NEW EVALUATION FRAME (methodology), not a benchmark win — a paradigm "
-            "program whose discriminating demonstrations the AI authors itself. The harness applies "
-            "the AI's pre-registered decision rule + negative control; an independent cross-vendor "
-            "audit (author excluded) reviews the code; the campaign LEARNS across rounds.",
-            "hypothesis": "Prediction error rises with element rarity. Define each material's rarity "
-            "from the TRAINING-set frequency of its constituent elements (e.g. the inverse/-log "
-            "frequency of its rarest element, computed on the train split only). Then materials in the "
-            "TOP-rarity stratum have a substantially larger mean absolute residual than those in the "
-            "BOTTOM-rarity stratum — equivalently, |residual| rises monotonically with rarity. The "
-            "CONTROL — a PERMUTED pseudo-rarity (the rarity labels shuffled, so it is uncorrelated with "
-            "training frequency) — shows no such inflation, confirming the effect is specifically about "
-            "training under-representation, not an artifact of the stratification statistic.",
+            "direction": "a DIAGNOSTIC ESTIMAND / new measurement (methodology), not a benchmark win. "
+            "The AI authors the discriminating demonstration; the harness applies its pre-registered "
+            "decision rule + matched negative controls; an independent cross-vendor audit (author "
+            "excluded) reviews the code; the campaign LEARNS across rounds. Positioned relative to "
+            "leave-one-group-out CV, matching/stratification (causal inference), and group data "
+            "valuation (Data-Shapley / influence) — the specific contribution is the "
+            "support-AND-topology-matched null plus the E-free test restriction.",
+            "hypothesis": "For element E, define delta_E by support-and-topology-matched counterfactual "
+            "removal: fit the regressor, then measure the rise in held-out band-gap error — ON HOLDOUT "
+            "COMPOUNDS THAT DO NOT CONTAIN E — when E's training compounds are removed, MINUS the LARGER "
+            "of two matched-control rises that remove the SAME count of training compounds: (i) a RANDOM "
+            "subset matched on feature-space support density (k-NN density in standardized Magpie "
+            "space), and (ii) a spatially-COHERENT subset (one composition-space k-means cluster) "
+            "matched on local neighborhood structure so the removal has the SAME topology as carving "
+            "out an element. delta_E = (E-removal MAE rise) - max(control-i rise, control-ii rise). "
+            "CLAIM: delta_E is significantly > 0 for SOME elements and ~ 0 for others (heterogeneous, "
+            "non-redundant signal), while both matched controls' own excess (one matched removal vs "
+            "another) is ~ 0. The E-free test makes this a TRAINING-set information property, not "
+            "rarity, test-point distance, or generic ablation.",
             "contribution_type": "paradigm",
-            "demonstration": "discriminating instance: on a held-out split, stratify materials by "
-            "training-derived element rarity and show mean |residual| in the top-rarity stratum is "
-            "materially higher than in the bottom-rarity stratum (and/or rank-correlates with rarity); "
-            "on the permuted-rarity control the inflation vanishes. The AI authors compute_demonstration "
-            "and pre-registers the supported/refuted thresholds (a ratio or rank-correlation).",
+            "demonstration": "discriminating instance (kept tractable PER ROUND): pick ONE candidate "
+            "element E with adequate training support; on an E-FREE holdout, show the MAE rise from "
+            "removing E's training compounds materially EXCEEDS the rise from a TOPOLOGY-matched (one "
+            "composition-space k-means cluster) removal of the SAME size, and the CONTROL (one matched "
+            "removal vs another matched removal) shows ~ 0 excess. The AI authors compute_demonstration "
+            "and PRE-REGISTERS the supported/refuted thresholds (delta_E with a repeated-split bootstrap "
+            "CI lower bound > 0). All matching/clustering must be DETERMINISTIC (seeded).",
             "dataset": "matbench_expt_gap",
-            "method": "Magpie composition features; an AI-authored compute_demonstration that fits a "
-            "regressor, derives per-material element rarity from TRAIN-split element frequencies, "
-            "stratifies the holdout by rarity, and computes an error-inflation statistic (top- vs "
-            "bottom-rarity stratum, or Spearman rho of rarity vs |residual|) plus a permuted-rarity control",
-            "metrics": "the test statistic (error inflation: mean-|residual| ratio of top- vs "
-            "bottom-rarity stratum, or Spearman rho of rarity vs |residual|) vs the control statistic "
-            "(the same on permuted rarity) — the AI pre-registers the supported/refuted thresholds",
+            "method": "Magpie composition features (standardized); an AI-authored compute_demonstration "
+            "that (a) fits a regressor, (b) selects a target element E and an equal-size TOPOLOGY-matched "
+            "control set (one seeded k-means cluster in Magpie space) — optionally also a density-matched "
+            "random set (k-NN density) — (c) refits with each removal, (d) scores the MAE rise on the "
+            "E-FREE holdout, (e) computes delta_E = E-removal rise - matched-control rise with a "
+            "repeated-split bootstrap CI. Compute is BOUNDED: ONE element + ONE matched control per "
+            "demonstration round (the campaign scales breadth across rounds; Benjamini-Hochberg is "
+            "pre-specified once multiple elements are tested).",
+            "metrics": "test statistic = delta_E (E-removal MAE rise minus topology-matched-removal MAE "
+            "rise, on the E-free holdout); control statistic = matched-vs-matched excess (one matched "
+            "removal vs another), expected ~ 0. The AI pre-registers supported_if (delta_E >= threshold "
+            "with a bootstrap-CI lower bound > 0) and control_silent_if (|control| <= a small bound).",
             "success_criteria": "the program LEARNS: each round's confirm/refute reason shapes the "
             "next (narrow an over-claim, change a non-generalizing effect, scale a starved sample, or "
             "ablate a confirmed mechanism). A held + reproduced + audited demonstration is a win; an "
             "honest refute that moves the belief is ALSO a successful round.",
-            "est_compute": "CPU-only, minutes per round",
+            "est_compute": "CPU-only; minutes per round (one element + one matched control retrain + a bootstrap)",
         },
     )
     print(f"run_id={run_id} exp_id={exp_id}\n--- live events ---", flush=True)
