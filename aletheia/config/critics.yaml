@@ -11,11 +11,9 @@
 # Default panel = OpenAI + Gemini + DeepSeek (3 distinct models); Zhipu is an
 # available spare. Always pin to the latest generation per vendor.
 panel:
-  # TEMPORARY DEFAULT: Claude-only. Codex's subscription token is burned (needs
-  # `codex login`) and GLM's Coding-Plan quota window is exhausted, so both currently
-  # error every call and only slow the gate down. Run on the reliable machine Claude
-  # login for now; flip `openai`/`zhipu` back to enabled for true cross-vendor review
-  # once their credentials recover (NB: single-vendor = same-model self-review).
+  # Direct-run roster: keep the cross-vendor floor intact. Codex is disabled until
+  # `codex login` is refreshed; the API/CLI vendors below are attempted independently and
+  # dropped visibly via critic_vendor_error if their endpoint/credential is unavailable.
   - id: openai
     enabled: false           # re-enable after `codex login`
     transport: cli            # Codex CLI on the Coding Plan (api = OPENAI_API_KEY)

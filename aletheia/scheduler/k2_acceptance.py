@@ -47,6 +47,39 @@ def _last(events: list[dict], etype: str) -> dict:
     return found[-1] if found else {}
 
 
+def _final_confirm_verdicts(events: list[dict]) -> list[dict]:
+    """Return one final harness demonstration verdict per experiment round.
+
+    A live round can emit multiple ``demonstration`` events: the first compute result, a
+    reproduction recompute, and a post-audit re-publication that mutates ``holds`` to ``False`` when
+    the audit refutes the demonstration. K2 updates belief once per experiment outcome, so
+    acceptance must compare belief updates against the final verdict per round, not every
+    intermediate snapshot.
+
+    Demonstration payloads do not currently repeat ``exp_id``, so infer the active round from the
+    latest preceding ``experiment`` event. Historical/test streams without an ``experiment`` event
+    fall back to treating each demonstration as its own round.
+    """
+    latest_by_round: dict[str, dict] = {}
+    active_round: str | None = None
+    synthetic = 0
+    for e in events:
+        payload = e.get("payload") or {}
+        if e.get("type") == "experiment":
+            active_round = str(payload.get("exp_id") or payload.get("round") or "") or None
+        if e.get("type") != "demonstration":
+            continue
+        key = str(payload.get("exp_id") or active_round or "")
+        if not key:
+            synthetic += 1
+            key = f"demo-{synthetic}"
+        latest_by_round[key] = payload
+    return [
+        d for d in latest_by_round.values()
+        if d.get("computed") and d.get("exploration_applied") and isinstance(d.get("holds"), bool)
+    ]
+
+
 def score_k2(events: list[dict], credences: list[dict]) -> K2Result:
     """Score the K2 acceptance criteria from a run's ``events`` (each ``{"type","payload",...}``,
     in chronological order) and its ``credences`` (``list_credences(run_id)``)."""
@@ -55,14 +88,10 @@ def score_k2(events: list[dict], credences: list[dict]) -> K2Result:
     updates = _payloads(events, "belief_update")
     reasons = _payloads(events, "campaign_reason")
     plans = _payloads(events, "campaign_plan")
-    demos = _payloads(events, "demonstration")
     finished = _last(events, "campaign_finished")
-    # harness-verified confirm-split verdicts: a demonstration the HARNESS computed (computed=True),
-    # decided on the held-out confirm split (exploration_applied), with a real boolean holds.
-    confirm_verdicts = [
-        d for d in demos
-        if d.get("computed") and d.get("exploration_applied") and isinstance(d.get("holds"), bool)
-    ]
+    # Harness-verified confirm-split verdicts: one FINAL demonstration outcome per experiment round.
+    # Intermediate compute/reproduction/pre-audit snapshots are not separate campaign outcomes.
+    confirm_verdicts = _final_confirm_verdicts(events)
 
     checks: list[Check] = []
 

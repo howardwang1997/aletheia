@@ -108,6 +108,33 @@ def test_belief_moved_without_a_verdict_is_a_fail():
     assert result.verdict == "fail"  # updates(1) != confirm_verdicts(0): the spine check fails
 
 
+def test_duplicate_demonstration_events_count_as_one_final_round_verdict():
+    # Live 160232 shape: the same experiment emits the initial compute demonstration, the
+    # reproduction recompute, and then a post-audit re-publication with holds=False. K2 belief moves
+    # once on the final experiment outcome, so this is 1 verdict vs 1 update, not 3 verdicts.
+    qk = "lineage-a"
+    exp_id = "exp-1"
+    events = [
+        _evt("belief_prior", question_key=qk, mean=0.59, weak_prior=True),
+        _evt("belief_prediction", question_key=qk, predicted_p_holds=0.59),
+        _evt("experiment", round=1, exp_id=exp_id),
+        _evt("demonstration", computed=True, exploration_applied=True, holds=True),
+        _evt("demonstration", computed=True, exploration_applied=True, holds=True),
+        _evt("demonstration", computed=True, exploration_applied=True, holds=False, audit_refuted=True),
+        _evt("belief_update", question_key=qk, exp_id=exp_id, realized=0.0, surprise=0.59,
+             mean=0.39, n_updates=1),
+        _evt("campaign_reason", round=1, reason="audit_refuted", recoverable=True),
+        _evt("campaign_finished", calibration=None, n_belief_updates=1),
+    ]
+    creds = [{"question_key": qk, "alpha": 1.18, "beta": 1.82, "n_updates": 1}]
+    result = score_k2(events, creds)
+    assert result.n_confirm_verdicts == 1
+    assert result.n_updates == 1
+    by_name = {c.name: c.ok for c in result.checks}
+    assert by_name["credence moves ONLY on harness confirm-split verdicts (spine intact)"] is True
+    assert result.verdict == "partial"  # still not FULL: only one round and no campaign calibration
+
+
 def test_real_99c2_reference_run_scores_partial_if_present():
     """If the real 2026-06-09 no_demonstration run is in this DB, it must score PARTIAL (it would
     have been FULL under the old gate). Skips on a fresh DB so CI elsewhere is not data-dependent."""
