@@ -170,13 +170,22 @@ def smoke_test_solution(source: str, timeout_s: float = 30.0) -> tuple[bool, str
 
 def smoke_test_demonstration(source: str, timeout_s: float = 30.0) -> tuple[bool, str]:
     """Beyond the static gate: IMPORT the AI-authored demonstration and CALL
-    ``compute_demonstration`` on a tiny synthetic frame in an isolated subprocess, asserting
-    it returns a dict with FINITE ``test_statistic``/``control_statistic``. Catches a runtime
-    import/shape error before the real run, so a coder slip degrades to the registered-
-    capability fallback instead of crashing. Returns ``(ok, error)``.
+    ``compute_demonstration`` on a synthetic frame in an isolated subprocess, asserting it
+    returns a dict with FINITE ``test_statistic``/``control_statistic`` AND a NON-DEGENERATE
+    shape (``n_test``/``n_control`` present, whole, > 0, and <= the probe row count). Catches a
+    runtime import/shape error — and the recurring *0-sample / broken-selection* design bug —
+    BEFORE the real run, so the authoring loop gets an informed retry instead of burning the
+    whole round at confirm time (where the degeneracy is only caught by ``_demonstration_probes``
+    after the loop is over). Returns ``(ok, error)``.
 
-    Safe: ``source`` already passed ``check_code`` (allowlisted imports, no os/open/exec);
-    here it only runs on a 40x4 random matrix. Same CPU/memory rlimits as training."""
+    Scope note (anti-fakeability): this is a RUNNABILITY + shape check only. It NEVER judges
+    whether the statistic is large enough, whether the control is silent, or whether the effect
+    is real — a genuine NULL (adequate n, small statistic) passes here and is then honestly
+    refuted by the seals/probes on the held-out confirm split. We only reject what is
+    unambiguously BROKEN (empty/degenerate sample, impossible count, non-finite output).
+
+    Safe: ``source`` already passed ``check_code`` (allowlisted imports, no os/open/exec); here
+    it only runs on a 200x8 random matrix. Same CPU/memory rlimits as training."""
     import subprocess
     import sys
     import tempfile
@@ -190,11 +199,22 @@ def smoke_test_demonstration(source: str, timeout_s: float = 30.0) -> tuple[bool
             f"s=u.spec_from_file_location('demo', r'{sol}');"
             "m=u.module_from_spec(s);s.loader.exec_module(m);"
             "rng=np.random.default_rng(0);"
-            "X=rng.random((40,4));y=rng.random(40);g=np.array([i%5 for i in range(40)],dtype=object);"
+            "N=200;"
+            "X=rng.random((N,8));y=rng.random(N);g=np.array([i%10 for i in range(N)],dtype=object);"
             "r=m.compute_demonstration(X,y,g,{'random_state':0,'preregistration':{}});"
             "assert isinstance(r,dict),'compute_demonstration must return a dict';"
             "ts=float(r['test_statistic']);cs=float(r['control_statistic']);"
-            "assert math.isfinite(ts) and math.isfinite(cs),'statistics must be finite'"
+            "assert math.isfinite(ts) and math.isfinite(cs),'statistics must be finite';"
+            # NON-DEGENERACY shape check: catch a 0-sample / broken / impossible-count selection
+            # at pre-flight (it is a DESIGN bug, not a null result) so the bounded retry can fix it.
+            "nt=r.get('n_test');nc=r.get('n_control');"
+            "assert nt is not None and nc is not None,'must return n_test and n_control sample sizes';"
+            "nt=float(nt);nc=float(nc);"
+            "assert nt.is_integer() and nc.is_integer(),'n_test/n_control must be whole sample counts';"
+            "assert nt>0 and nc>0,('degenerate sample (n_test=%d, n_control=%d): a 0-sample test or "
+            "control means the selection is broken -- ensure BOTH conditions retain samples'%(nt,nc));"
+            "assert nt<=N and nc<=N,('n_test=%d/n_control=%d exceed the %d available rows -- the "
+            "selection double-counts or leaks samples'%(nt,nc,N))"
         )
         try:
             proc = subprocess.run(

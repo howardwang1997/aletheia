@@ -1200,10 +1200,11 @@ class ExperimentDriver:
         consistency_reason = ""
         accepted = False
         # bounded informed retry: each attempt re-authors with the PREVIOUS rejection reason
-        # (control-not-silent / threshold-doomed / runtime error) fed back. More rounds = more
-        # chances to fix a flagged DESIGN flaw within one campaign round (configurable for the
-        # frontier campaign, which leans hard on the AI-authored path).
-        for attempt in range(max(1, int(get_settings().demonstration_authoring_rounds))):
+        # (control-not-silent / threshold-doomed / runtime error / degenerate pre-flight sample)
+        # fed back. More rounds = more chances to fix a flagged DESIGN flaw within one campaign
+        # round (configurable for the frontier campaign, which leans hard on the AI-authored path).
+        auth_rounds = max(1, int(get_settings().demonstration_authoring_rounds))
+        for attempt in range(auth_rounds):
             text = await run_worker(
                 self.run_id, "coder", base_prompt + retry_note,
                 system=DEMO_SYSTEM, dry_run=self.dry_run,
@@ -1239,7 +1240,11 @@ class ExperimentDriver:
             # demonstration vs produce-nothing. Seen live: run b1993c7f died on a threshold
             # inconsistency (v1.1 covered it); run 5cdb9d60 died on a COMPOUND failure (the code
             # raised AND the control threshold was off) that v1.1's consistency-only retry missed.
-            if accepted or attempt == 1:
+            # break on acceptance OR after the LAST configured round. (Previously hard-capped at
+            # `attempt == 1`, which silently pinned the loop to 2 attempts and made
+            # `demonstration_authoring_rounds` > 2 a no-op — the informed retries it was bumped to
+            # buy never actually ran.)
+            if accepted or attempt >= auth_rounds - 1:
                 break
             await get_bus().publish(
                 make_event("demonstration_code", run_id=self.run_id, payload={

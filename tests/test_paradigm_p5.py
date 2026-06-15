@@ -123,6 +123,50 @@ def test_smoke_test_demonstration_runs_canned():
     assert not ok2
 
 
+def test_smoke_test_rejects_degenerate_sample_pre_flight():
+    """The pre-flight catches the recurring *0-sample / broken-selection* DESIGN bug EARLY (so the
+    authoring loop gets an informed retry) — NOT a genuine null, which it must let through."""
+    # n_test = 0 (empty test condition): an unambiguous broken selection -> rejected with a
+    # 'degenerate sample' message that feeds the bounded retry.
+    zero_test = (
+        "def compute_demonstration(X, y, groups, meta):\n"
+        "    import numpy as np\n"
+        "    return {'test_statistic': 0.5, 'control_statistic': 0.01, 'components': {},\n"
+        "            'detail': 'broken', 'n_test': 0, 'n_control': len(y)//2}\n"
+    )
+    ok, err = smoke_test_demonstration(zero_test)
+    assert not ok and "degenerate" in err.lower(), err
+
+    # missing n_test/n_control (malformed contract) -> rejected with an actionable message.
+    missing = (
+        "def compute_demonstration(X, y, groups, meta):\n"
+        "    return {'test_statistic': 0.5, 'control_statistic': 0.01, 'components': {}, 'detail': 'x'}\n"
+    )
+    ok2, err2 = smoke_test_demonstration(missing)
+    assert not ok2 and "n_test" in err2, err2
+
+    # an impossible count (n_test exceeds the available rows -> double-count/leak) -> rejected.
+    too_many = (
+        "def compute_demonstration(X, y, groups, meta):\n"
+        "    return {'test_statistic': 0.5, 'control_statistic': 0.01, 'components': {},\n"
+        "            'detail': 'leak', 'n_test': 10_000, 'n_control': 50}\n"
+    )
+    ok3, err3 = smoke_test_demonstration(too_many)
+    assert not ok3 and "exceed" in err3.lower(), err3
+
+    # a GENUINE-null-shaped demo (adequate n on BOTH sides, statistics merely close) must PASS the
+    # pre-flight — the honest verdict is the seals' job at confirm time, never the smoke test's.
+    null_shaped = (
+        "def compute_demonstration(X, y, groups, meta):\n"
+        "    import numpy as np\n"
+        "    n = len(y); h = n//2\n"
+        "    return {'test_statistic': 0.30, 'control_statistic': 0.29, 'components': {},\n"
+        "            'detail': 'no real effect', 'n_test': h, 'n_control': n-h}\n"
+    )
+    ok4, err4 = smoke_test_demonstration(null_shaped)
+    assert ok4, err4
+
+
 # --- the harness decision rule + probes (offline, no data) ---------------------------------
 def test_apply_rule_truth_table():
     f = DomainPlugin._apply_rule
