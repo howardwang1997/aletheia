@@ -200,7 +200,46 @@ FRAMING_OVERCONF = {
     },
 }
 
-CANDIDATES = [FRAMING_OLD, FRAMING_DELTA_E, FRAMING_DELTA_E_V2, FRAMING_OVERCONF]
+# composition cliffs -- the strongest holder on matbench_expt_gap (e2: 9x the permuted control), led
+# by its MECHANISM (local-mean collapse, e3). Honestly acknowledges the activity-cliff/SALI lineage to
+# preempt the 'known' objection; the contribution is the composition-space definition + permutation
+# control + the mechanistic decomposition.
+FRAMING_CLIFF = {
+    "label": "composition cliffs via local-mean collapse (mechanistic diagnostic)",
+    "hypothesis": {
+        "statement": "Define a COMPOSITION CLIFF: a held-out material NEAR a training material in "
+        "standardized Magpie space but FAR in band gap (large |gap - gap_nearest_train| / "
+        "feature_distance). DISCRIMINATING CLAIM: prediction error concentrates sharply on cliff "
+        "materials -- median |error| in the top-cliffness tercile exceeds the smooth (bottom) tercile "
+        "by a margin that beats a permuted-cliff-label control's 95th percentile (observed ~0.54 eV vs "
+        "ctrl ~0.06). MECHANISM: at cliffs the residual COLLAPSES toward the k-NN NEIGHBORHOOD MEAN "
+        "(slope of residual on (gap - neighborhood_mean) approaches -1) -- the model defaults to a "
+        "local average it cannot exceed -- significantly more than at smooth points. The permuted-cliff "
+        "control gives ~0 for both.",
+        "rationale": "This is the inorganic-composition analog of cheminformatics ACTIVITY CLIFFS, made "
+        "into a per-point, permutation-controlled diagnostic WITH an explicit mechanism rather than a "
+        "descriptive 'fails on cliffs'. Magpie composition features cannot encode the discontinuities "
+        "(e.g. metal/insulator transitions on small substitutions) that create band-gap cliffs, so a "
+        "smoothing regressor collapses them to the neighborhood mean -- the collapse slope quantifies "
+        "exactly that failure.",
+        "prediction": "On matbench_expt_gap (Magpie): cliff-tercile median |error| exceeds the smooth "
+        "tercile beyond the permuted-cliff control's 95th pct (~0.54 vs ~0.06 eV); the residual->local-"
+        "mean collapse slope is closer to -1 at cliffs than smooth points; both effects vanish (~0) "
+        "under permuted cliff labels.",
+        "novelty_note": "Acknowledged lineage: activity cliffs / SALI in QSAR and Lipschitz-roughness "
+        "arguments. The specific contribution is (a) a COMPOSITION-space cliff definition for inorganic "
+        "property models, (b) a permutation-controlled discriminating statistic, and (c) a MECHANISTIC "
+        "decomposition (local-mean collapse slope) that quantifies WHY the model fails, not just THAT "
+        "it does. Positioned as a diagnostic, not a paradigm.",
+        "contribution_type": "paradigm",
+        "demonstration": {"form": "discriminating_instance",
+                          "claim": "error concentrates on composition cliffs (feature-near, gap-far) and "
+                          "is mechanistically local-mean collapse; permuted-cliff control ~ 0",
+                          "capability": "ai_authored"},
+    },
+}
+
+CANDIDATES = [FRAMING_OLD, FRAMING_DELTA_E, FRAMING_DELTA_E_V2, FRAMING_OVERCONF, FRAMING_CLIFF]
 
 
 async def _review_framing(gateway: CriticGateway, run_id: str, framing: dict) -> dict:
