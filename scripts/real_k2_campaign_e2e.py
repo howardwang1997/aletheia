@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from pathlib import Path
 
 from _e2e_common import RunRecorder, print_usage, tee_console, write_e2e_summary
 
@@ -189,76 +190,95 @@ async def resume(timestamp: str, run_id: str) -> None:
 async def main(timestamp: str) -> None:
     _k2_campaign_settings()
     create_all()
+    # UCI superconductivity Tc (figshare is blocked on this box; the file is fetched from
+    # archive.ics.uci.edu and cached locally). Step 1 wired the upload path + composition_column.
+    csv = Path(__file__).resolve().parents[1] / "artifacts" / "datasets" / "superconduct_unique_m.csv"
+    if not csv.exists():
+        raise SystemExit(
+            f"missing dataset: {csv}\n"
+            "Fetch it from UCI (figshare is blocked here):\n"
+            "  curl -sSL -o /tmp/sc.zip "
+            "'https://archive.ics.uci.edu/static/public/464/superconductivty+data.zip'\n"
+            f"  unzip -o /tmp/sc.zip unique_m.csv && mkdir -p {csv.parent} && cp unique_m.csv {csv}"
+        )
     run_id = create_run(
-        "Real e2e (K2 campaign): does a chemical element E's training data carry ELEMENT-SPECIFIC, "
-        "NON-REDUNDANT information for band-gap prediction — measured by a support-AND-topology-matched "
-        "counterfactual REMOVAL estimand (delta_E) on an E-FREE holdout — beyond what generic, "
-        "equally-dense, equally-clustered training data supplies; and what does each round teach the next?",
+        "Real e2e (K2 campaign): does a composition-only Magpie/random-forest superconducting-Tc model "
+        "have a CHEMISTRY-SPECIFIC blind spot on multi-alkaline-earth CUPRATES — larger error there "
+        "than on non-cuprates matched for generic composition complexity — and what does each round "
+        "teach the next?",
         domain="materials",
         status="scoping",
         budget_cap_usd=150.0,  # up to 3 rounds of authoring + audit + gates
     )
+    # explicit, auditable upload spec (Step 1a): the formula column 'material' propagates through
+    # resolve_data_spec -> data_spec -> featurizer + authoring prompt; target 'critical_temp' (K).
     register_dataset(
-        run_id, "benchmark", ref="matbench_expt_gap",
-        target_column="gap expt", status="ready",
+        run_id, "upload", ref=str(csv), uri=str(csv),
+        target_column="critical_temp", composition_column="material",
+        feature_kind="composition", status="ready",
     )
     exp_id = finalize_plan(
         run_id,
         {
-            "objective": "Quantify, per chemical element E, the ELEMENT-SPECIFIC NON-REDUNDANT "
-            "information E's training compounds carry for band-gap prediction, via a "
-            "SUPPORT-AND-TOPOLOGY-matched counterfactual REMOVAL estimand delta_E evaluated on an "
-            "E-FREE holdout — so it is a property of the TRAINING set's information structure, NOT "
-            "test-time extrapolation. This is a DIAGNOSTIC ESTIMAND (not a benchmark win, not a grand "
-            "paradigm): a multi-round PROGRAM where each round authors a discriminating demonstration "
-            "+ matched negative controls; the go/no-go step uses what the round learned (held / "
-            "refuted / over-claimed / sample-starved) to choose the next experiment.",
+            "objective": "Establish whether a composition-only Magpie / random-forest superconducting-Tc "
+            "model has a CHEMISTRY-SPECIFIC blind spot on multi-alkaline-earth CUPRATES — the family "
+            "where Tc is governed by plane-specific hole doping that composition-AVERAGED features "
+            "cannot resolve. This is a DIAGNOSTIC characterization of a model failure mode (NOT a new "
+            "material, NOT a SOTA win): a multi-round PROGRAM where each round authors a discriminating "
+            "demonstration + a matched negative control; the go/no-go step uses what the round learned "
+            "(held / refuted / over-claimed / sample-starved) to choose the next experiment.",
             "domain": "materials",
-            "direction": "a DIAGNOSTIC ESTIMAND / new measurement (methodology), not a benchmark win. "
-            "The AI authors the discriminating demonstration; the harness applies its pre-registered "
-            "decision rule + matched negative controls; an independent cross-vendor audit (author "
-            "excluded) reviews the code; the campaign LEARNS across rounds. Positioned relative to "
-            "leave-one-group-out CV, matching/stratification (causal inference), and group data "
-            "valuation (Data-Shapley / influence) — the specific contribution is the "
-            "support-AND-topology-matched null plus the E-free test restriction.",
-            "hypothesis": "For element E, define delta_E by support-and-topology-matched counterfactual "
-            "removal: fit the regressor, then measure the rise in held-out band-gap error — ON HOLDOUT "
-            "COMPOUNDS THAT DO NOT CONTAIN E — when E's training compounds are removed, MINUS the LARGER "
-            "of two matched-control rises that remove the SAME count of training compounds: (i) a RANDOM "
-            "subset matched on feature-space support density (k-NN density in standardized Magpie "
-            "space), and (ii) a spatially-COHERENT subset (one composition-space k-means cluster) "
-            "matched on local neighborhood structure so the removal has the SAME topology as carving "
-            "out an element. delta_E = (E-removal MAE rise) - max(control-i rise, control-ii rise). "
-            "CLAIM: delta_E is significantly > 0 for SOME elements and ~ 0 for others (heterogeneous, "
-            "non-redundant signal), while both matched controls' own excess (one matched removal vs "
-            "another) is ~ 0. The E-free test makes this a TRAINING-set information property, not "
-            "rarity, test-point distance, or generic ablation.",
+            "direction": "a DIAGNOSTIC / model failure-mode characterization (methodology), not a "
+            "benchmark win and not a grand paradigm. The AI authors the discriminating demonstration; "
+            "the harness applies its pre-registered decision rule + matched negative control on a "
+            "held-out confirm split; an independent cross-vendor audit (author excluded) reviews the "
+            "code; the campaign LEARNS across rounds. Positioned relative to applicability-domain, "
+            "leave-one-group-out CV, and group data valuation — the specific contribution is the "
+            "CHEMISTRY-defined cuprate stratum plus a complexity-matched control that rules out generic "
+            "composition complexity.",
+            "hypothesis": "On the UCI superconductivity dataset (Magpie composition features), a "
+            "random-forest Tc model makes systematically LARGER errors on MULTI-ALKALINE-EARTH CUPRATES "
+            "(the composition contains Cu AND O AND >= 2 of {Ba,Sr,Ca,Mg}) than on non-cuprates MATCHED "
+            "on composition complexity (element count) and feature-space density. The stratum is defined "
+            "PURELY from elemental co-occurrence (NOT from Tc), so the test is non-circular and not "
+            "applicability-domain. MECHANISM: Tc in cuprates is set by plane-specific hole doping "
+            "(~0.16 holes per Cu) that composition averages cannot represent, so the model defaults to a "
+            "family mean and misses the doping-driven Tc variation. Reference probes (for calibration, "
+            "not asserted by the run): raw cuprate MAE ~11 K vs ~5 K on the rest; +5.6 K median excess "
+            "vs a permuted-strata null (p95 ~0.5 K); +3.58 K vs a complexity-matched control "
+            "(bootstrap 95% CI [+2.46, +4.72]).",
             "contribution_type": "paradigm",
-            "demonstration": "discriminating instance (kept tractable PER ROUND): pick ONE candidate "
-            "element E with adequate training support; on an E-FREE holdout, show the MAE rise from "
-            "removing E's training compounds materially EXCEEDS the rise from a TOPOLOGY-matched (one "
-            "composition-space k-means cluster) removal of the SAME size, and the CONTROL (one matched "
-            "removal vs another matched removal) shows ~ 0 excess. The AI authors compute_demonstration "
-            "and PRE-REGISTERS the supported/refuted thresholds (delta_E with a repeated-split bootstrap "
-            "CI lower bound > 0). All matching/clustering must be DETERMINISTIC (seeded).",
-            "dataset": "matbench_expt_gap",
-            "method": "Magpie composition features (standardized); an AI-authored compute_demonstration "
-            "that (a) fits a regressor, (b) selects a target element E and an equal-size TOPOLOGY-matched "
-            "control set (one seeded k-means cluster in Magpie space) — optionally also a density-matched "
-            "random set (k-NN density) — (c) refits with each removal, (d) scores the MAE rise on the "
-            "E-FREE holdout, (e) computes delta_E = E-removal rise - matched-control rise with a "
-            "repeated-split bootstrap CI. Compute is BOUNDED: ONE element + ONE matched control per "
-            "demonstration round (the campaign scales breadth across rounds; Benjamini-Hochberg is "
-            "pre-specified once multiple elements are tested).",
-            "metrics": "test statistic = delta_E (E-removal MAE rise minus topology-matched-removal MAE "
-            "rise, on the E-free holdout); control statistic = matched-vs-matched excess (one matched "
-            "removal vs another), expected ~ 0. The AI pre-registers supported_if (delta_E >= threshold "
-            "with a bootstrap-CI lower bound > 0) and control_silent_if (|control| <= a small bound).",
-            "success_criteria": "the program LEARNS: each round's confirm/refute reason shapes the "
-            "next (narrow an over-claim, change a non-generalizing effect, scale a starved sample, or "
-            "ablate a confirmed mechanism). A held + reproduced + audited demonstration is a win; an "
-            "honest refute that moves the belief is ALSO a successful round.",
-            "est_compute": "CPU-only; minutes per round (one element + one matched control retrain + a bootstrap)",
+            "demonstration": "discriminating instance using ONLY quantities derivable from the harness "
+            "inputs X (Magpie features), y (Tc), and groups (the chemical-system / element SET) — NOT "
+            "raw stoichiometry, which is not passed to the demonstration: (1) identify the "
+            "multi-alkaline-earth cuprate stratum from `groups` (Cu, O, and >= 2 alkaline earths); "
+            "(2) on a held-out confirm split, fit the Tc model and show its MAE on that stratum EXCEEDS "
+            "its MAE on an equal-size control matched on element count (from `groups`) + feature-space "
+            "density (from `X`), beyond a permuted-strata null. The AI authors compute_demonstration and "
+            "PRE-REGISTERS the supported/refuted thresholds (a positive matched excess with a "
+            "repeated-split bootstrap-CI lower bound > 0). Do NOT compute stoichiometric hole-count or "
+            "plane-doping proxies — formula fractions are unavailable; the mechanism only MOTIVATES the "
+            "claim. All matching must be DETERMINISTIC (seeded).",
+            "dataset": "UCI superconductivity (unique_m.csv, ~21k formulas + critical_temp; composition "
+            "column 'material')",
+            "method": "Magpie composition features; an AI-authored compute_demonstration that fits an RF "
+            "Tc regressor, derives the cuprate stratum + element count from the chemical-system "
+            "`groups`, builds an equal-size complexity-matched (element-count + feature-density) "
+            "non-cuprate control, and computes the cuprate-minus-matched-control MAE excess on the "
+            "confirm split with a repeated-split bootstrap CI; a permuted-strata reshuffle is the "
+            "negative control (expected ~ 0).",
+            "metrics": "test statistic = cuprate-minus-complexity-matched-control MAE excess (K) on the "
+            "confirm split; control statistic = permuted-strata excess (random equal-size subset), "
+            "expected ~ 0. The AI pre-registers supported_if (excess >= threshold with a bootstrap-CI "
+            "lower bound > 0) and control_silent_if (|control| <= a small bound).",
+            "success_criteria": "the program LEARNS: each round's confirm/refute reason shapes the next "
+            "(narrow an over-claim, change a non-generalizing effect, scale a starved sample, or ablate "
+            "a confirmed mechanism). A held + reproduced + audited demonstration is a win; an honest "
+            "refute that moves the belief is ALSO a successful round. NOTE: a single held cuprate "
+            "demonstration is NOT by itself K2 FULL — FULL also requires multi-round learning, >=1 "
+            "harness confirm-split verdict, a matching belief update, calibration surfaced in the "
+            "campaign synthesis, and the cross-vendor audit floor met.",
+            "est_compute": "CPU-only; minutes per round (RF fit + cuprate/matched-control MAE + a bootstrap)",
         },
     )
     print(f"run_id={run_id} exp_id={exp_id}\n--- live events ---", flush=True)
