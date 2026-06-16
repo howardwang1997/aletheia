@@ -68,5 +68,6 @@ def create_all() -> None:
     with eng.begin() as conn:
         conn.execute(text("ALTER TABLE claims ADD COLUMN IF NOT EXISTS dedup_key VARCHAR(64)"))
         conn.execute(text("ALTER TABLE experiments ADD COLUMN IF NOT EXISTS dedup_key VARCHAR(64)"))
+        conn.execute(text("ALTER TABLE data_assets ADD COLUMN IF NOT EXISTS composition_column VARCHAR(128)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_claims_dedup_key ON claims (dedup_key)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_experiments_dedup_key ON experiments (dedup_key)"))

@@ -20,13 +20,20 @@ def resolve_data_spec(run_id: str) -> dict[str, Any]:
     the canonical benchmark)."""
     for d in list_datasets(run_id):
         if d["status"] == "ready":
-            return {
+            spec = {
                 "source": d["source"],
                 "ref": d["ref"],
                 "uri": d["uri"],
                 "target_column": d["target_column"],
                 "feature_kind": d["feature_kind"],
             }
+            # explicit composition/feature column (e.g. UCI superconductivity 'material') so the
+            # domain featurizer resolves it deterministically instead of guessing the first
+            # non-numeric column — and so it is visible in the JSON-dumped data_spec the design /
+            # demonstration authoring prompts see.
+            if d.get("composition_column"):
+                spec["composition_column"] = d["composition_column"]
+            return spec
     return {"source": "benchmark", "ref": "matbench_expt_gap"}
 
 

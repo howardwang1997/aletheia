@@ -382,6 +382,10 @@ class DataAsset(Base):
     source: Mapped[str] = mapped_column(String(16))  # benchmark | upload | api
     ref: Mapped[str | None] = mapped_column(Text)  # benchmark name | file path | api dataset id
     target_column: Mapped[str | None] = mapped_column(String(128))
+    # explicit feature/composition column (e.g. UCI superconductivity 'material') so the domain
+    # featurizer does NOT fall back to the "first non-numeric column" heuristic — auditable + it
+    # reaches the AI authoring prompt via resolve_data_spec -> data_spec.
+    composition_column: Mapped[str | None] = mapped_column(String(128))
     feature_kind: Mapped[str | None] = mapped_column(String(32))  # e.g. "composition"
     description: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default="needed")  # needed | ready | error
