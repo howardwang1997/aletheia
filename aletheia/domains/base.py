@@ -181,8 +181,10 @@ class DomainPlugin(ABC):
         """Candidate model/feature specs the agent can choose among / compare."""
 
     @abstractmethod
-    def profile(self) -> DomainProfile:
-        """Domain vocabulary + canned dry-run content for the reasoning loop."""
+    def profile(self, target_column: str | None = None) -> DomainProfile:
+        """Domain vocabulary + canned dry-run content for the reasoning loop. ``target_column`` is an
+        optional hint for domains with multiple targets (e.g. materials band-gap vs Tc); plugins that
+        serve a single target may ignore it."""
 
     def run_experiment(
         self, design: dict[str, Any], data_spec: dict[str, Any], workdir: Path

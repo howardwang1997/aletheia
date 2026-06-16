@@ -579,7 +579,7 @@ class MoleculePropertyPlugin(DomainPlugin):
             },
         ]
 
-    def profile(self) -> DomainProfile:
+    def profile(self, target_column: str | None = None) -> DomainProfile:
         from aletheia.research.literature import Paper
 
         return DomainProfile(

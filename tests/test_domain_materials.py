@@ -91,6 +91,36 @@ def test_featurize_uses_explicit_composition_column_from_data_spec():
     assert "As-Ga" in set(groups)                           # GaAs -> chemical system As-Ga (alphabetical)
 
 
+def test_profile_is_target_aware():
+    """Step 1b: profile() selects target-aware semantics — band-gap (eV/gap) by default, Tc (K) for a
+    superconductivity run — so band-gap labels never leak into a Tc run's vocabulary."""
+    plug = MaterialsBandGapPlugin()
+    gap = plug.profile()                                   # default -> band gap
+    assert gap.units == "eV" and "gap" in gap.protocol_desc.lower()
+
+    tc = plug.profile(target_column="critical_temp")       # superconductivity Tc
+    assert tc.units == "K"
+    assert "tc" in tc.task.lower() or "superconduct" in tc.task.lower()
+    assert "gap" not in tc.protocol_desc.lower()            # no band-gap leakage
+    assert "eV" not in tc.dry_eval_summary and "K" in tc.dry_eval_summary
+    assert "superconduct" in tc.sota_reference.lower() or "Tc" in tc.sota_reference
+
+
+def test_train_evaluate_tc_reports_kelvin_not_ev(tmp_path):
+    """A Tc-target design routes train_evaluate through the K / Tc-range semantics (units + stratifier),
+    not the hardcoded eV / gap path."""
+    plug = MaterialsBandGapPlugin()
+    df = pd.DataFrame(_COMPS, columns=["composition", "critical_temp"])  # reuse toy compositions
+    design = {"model": "random_forest", "model_params": {"n_estimators": 30},
+              "target_column": "critical_temp", "composition_column": "composition",
+              "test_size": 0.25, "random_state": 0}
+    X, y, _names, groups = plug.featurize(df, design)
+    result = plug.train_evaluate(X, y, design, tmp_path, groups=groups)
+    summ = result.info["eval_summary"]
+    assert "eV" not in summ and " K," in summ               # Kelvin units, no band-gap leak
+    assert "errors by Tc" in summ and "errors by gap" not in summ   # Tc-range stratifier, not gap
+
+
 def test_baselines_listed():
     plug = MaterialsBandGapPlugin()
     bl = plug.baselines()

@@ -368,7 +368,8 @@ class ExperimentDriver:
         if self.profile is None:  # standalone call (tests); _run sets it before SURVEY
             run = await asyncio.to_thread(get_run, self.run_id)
             self.domain = (run or {}).get("domain")
-            self.profile = get_domain_plugin(self.domain).profile()
+            _tgt = resolve_data_spec(self.run_id).get("target_column")
+            self.profile = get_domain_plugin(self.domain).profile(target_column=_tgt)
         await self._status("surveying", "researching the literature")
         topic = " ".join(
             str(plan.get(k, "")).strip() for k in ("objective", "direction", "hypothesis")
@@ -1938,8 +1939,9 @@ class ExperimentDriver:
                            payload={"requested": domain, "ran": plugin.name})
             )
         self.plugin = plugin
-        self.profile = plugin.profile()  # the domain's vocabulary for every stage
         data_spec = resolve_data_spec(self.run_id)
+        # target-aware vocabulary: a Tc run reports K / Tc-range, not band-gap eV / 'gap'.
+        self.profile = plugin.profile(target_column=data_spec.get("target_column"))
         self.budget = await asyncio.to_thread(BudgetTracker, self.run_id)
 
         await asyncio.to_thread(set_run_status, self.run_id, "active")
