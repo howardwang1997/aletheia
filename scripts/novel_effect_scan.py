@@ -36,8 +36,12 @@ from aletheia.domains.materials.matbench_task import MaterialsBandGapPlugin
 import os as _os
 DATASET = _os.environ.get("SCAN_DATASET", "matbench_expt_gap")
 TARGET = _os.environ.get("SCAN_TARGET", "gap expt")
+# local CSV path (figshare downloads are blocked on this box; UCI etc. still work). When SCAN_CSV is
+# set we read it directly and featurize via the plugin, using SCAN_COMP_COL as the formula column.
+CSV = _os.environ.get("SCAN_CSV")
+COMP_COL = _os.environ.get("SCAN_COMP_COL", "composition")
 SEED = 0
-MAX_ROWS = 12000   # cap for a bounded single-threaded RF fit
+MAX_ROWS = 12000   # cap for a bounded single-threaded RF fit (subsample BEFORE featurizing)
 
 
 def main() -> int:
@@ -46,7 +50,15 @@ def main() -> int:
     print("=" * 88)
     t0 = time.time()
     plugin = MaterialsBandGapPlugin()
-    df = plugin.load_data({"source": "benchmark", "ref": DATASET, "target_column": TARGET})
+    if CSV:
+        import pandas as pd
+        df = pd.read_csv(CSV)
+        if len(df) > MAX_ROWS:                       # subsample BEFORE the (slow) Magpie featurization
+            df = df.sample(MAX_ROWS, random_state=SEED).reset_index(drop=True)
+        df.attrs["data_spec"] = {"composition_column": COMP_COL, "target_column": TARGET}
+        print(f"loaded local CSV {CSV}: {df.shape} (comp='{COMP_COL}', target='{TARGET}')")
+    else:
+        df = plugin.load_data({"source": "benchmark", "ref": DATASET, "target_column": TARGET})
     X, y_ser, _names, _groups = plugin.featurize(df, {})
     X = np.asarray(X, dtype=float)
     y = np.asarray(y_ser, dtype=float)
