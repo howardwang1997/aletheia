@@ -53,3 +53,36 @@ def test_profile_and_readiness(tmp_path):
     mark_ready(needed_id)
     assert all_ready(run_id) is True
     assert len(list_datasets(run_id)) == 2
+
+
+def test_composition_column_plumbs_to_data_spec():
+    """Step 1a: an explicit composition_column survives register -> _to_dict -> resolve_data_spec,
+    so the featurizer resolves it deterministically AND it appears in the JSON-dumped data_spec the
+    design/demonstration authoring prompts see (no first-non-numeric-column guessing)."""
+    from aletheia.compute.mcp_tools import resolve_data_spec
+
+    create_all()
+    run_id = create_run("comp-col plumbing", domain="materials", status="scoping")
+    aid = register_dataset(
+        run_id, source="upload", ref="superconduct_unique_m.csv",
+        uri="artifacts/datasets/superconduct_unique_m.csv",
+        target_column="critical_temp", composition_column="material",
+        feature_kind="composition", status="ready",
+    )
+    d = next(x for x in list_datasets(run_id) if x["id"] == aid)
+    assert d["composition_column"] == "material"          # carried through _to_dict
+    spec = resolve_data_spec(run_id)
+    assert spec["composition_column"] == "material"        # reaches the effective data_spec
+    assert spec["target_column"] == "critical_temp"
+
+
+def test_data_spec_omits_composition_column_when_absent():
+    """The band-gap/benchmark path is unaffected: no composition_column key is injected when unset."""
+    from aletheia.compute.mcp_tools import resolve_data_spec
+
+    create_all()
+    run_id = create_run("no comp-col", domain="materials", status="scoping")
+    register_dataset(run_id, source="benchmark", ref="matbench_expt_gap",
+                     target_column="gap expt", status="ready")
+    spec = resolve_data_spec(run_id)
+    assert "composition_column" not in spec

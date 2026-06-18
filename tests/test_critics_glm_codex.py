@@ -181,7 +181,8 @@ def test_vendor_gate_is_stable_per_vendor():
 def _fake_openai(create_fn):
     m = types.ModuleType("openai")
     m.RateLimitError = type("RateLimitError", (Exception,), {})
-    m.APITimeoutError = type("APITimeoutError", (Exception,), {})
+    m.APIConnectionError = type("APIConnectionError", (Exception,), {})
+    m.APITimeoutError = type("APITimeoutError", (m.APIConnectionError,), {})  # subclass, as in real openai
     m.APIStatusError = type("APIStatusError", (Exception,), {"status_code": 500})
     counter = {"n": 0}
 

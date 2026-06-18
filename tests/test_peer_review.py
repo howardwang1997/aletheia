@@ -41,7 +41,7 @@ def _gw(providers, *, max_rounds=5, rule="any_blocker", dynamic=True):
                             importance={"design": max_rounds, "default": 1}),
     )
     gw = CriticGateway(cfg)
-    gw._providers = lambda: providers  # inject stubs
+    gw._providers = lambda *a, **k: providers  # inject stubs (accepts exclude_vendors)
     return gw
 
 
@@ -126,3 +126,37 @@ def test_cap_honored_on_persistent_disagreement(monkeypatch):
     assert _rounds_run("exp-cap") == 3  # cap honored
     assert calls["n"] == 2  # author rebuttal runs between rounds, not after the last
     assert panel.gate_passed is False  # unrefuted blocker survives to the final round
+
+
+# --- vendor-failure visibility (a dropped auditor must be diagnosable, not silent) ---
+def test_failing_vendor_is_dropped_and_evented():
+    # a vendor that errors (e.g. unreachable on a direct link) is dropped from the panel — not fatal —
+    # but the drop must be VISIBLE so a starved audit (n_auditors < min_vendors) is diagnosable
+    # instead of guessed. Emit one critic_vendor_error per drop, naming the vendor + error.
+    create_all()
+    good = _Stub("grok", lambda c: _resp("approve"))
+
+    def _boom(_content):
+        raise RuntimeError("ECONNRESET (simulated direct-link drop)")
+
+    bad = _Stub("deepseek", _boom)
+    gw = _gw([good, bad])
+    assignments = [(good, "supportive"), (bad, "adversarial")]
+    critiques = asyncio.run(
+        gw._run_round_async("demonstration_audit", "{}", assignments, run_id="run-vdrop")
+    )
+    assert {c.critic_id for c in critiques} == {"grok"}  # failing vendor dropped, not fatal
+
+    from aletheia.memory.ledger import Event
+
+    with session_scope() as s:
+        rows = (
+            s.query(Event.payload)
+            .filter(Event.run_id == "run-vdrop", Event.type == "critic_vendor_error")
+            .all()
+        )
+    payloads = [r[0] for r in rows]
+    assert any(
+        p.get("vendor") == "deepseek" and "ECONNRESET" in (p.get("error") or "")
+        for p in payloads
+    )

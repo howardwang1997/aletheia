@@ -92,9 +92,16 @@ def test_capability_registry_is_explicit_and_empty_by_default():
     # molecules registers exactly its two computable demonstrations; materials registers
     # none (so a paradigm claim there stays unverified — honest fail-closed).
     mol = get_domain_plugin("molecules").demonstration_capabilities()
-    assert set(mol) == {"activity_cliff_lipschitz", "scaffold_generalization_gap"}
+    assert set(mol) == {
+        "activity_cliff_lipschitz", "scaffold_generalization_gap", "leakage_slope_law",
+        "ai_authored_demonstration",  # the frontier path: every domain gets this, merged from base
+    }
     assert all(c.description and callable(c.compute) for c in mol.values())
-    assert get_domain_plugin("materials").demonstration_capabilities() == {}
+    # materials adds no hand-built demos, but every domain still gets the AI-authored capability
+    # (reachable by explicit id only — an empty/untagged spec still fails closed).
+    assert set(get_domain_plugin("materials").demonstration_capabilities()) == {
+        "ai_authored_demonstration"
+    }
 
 
 def test_run_demonstration_dispatches_by_explicit_capability_id():
@@ -132,6 +139,80 @@ def test_unknown_capability_id_falls_back_then_fails_closed():
     assert demo is None
 
 
+# --- the leakage-slope LAW: the predictive frame, executed (not just the premise) ----
+def test_leakage_law_capability_registered():
+    caps = get_domain_plugin("molecules").demonstration_capabilities()
+    assert "leakage_slope_law" in caps
+    assert caps["leakage_slope_law"].reproduce_factor == 1.5  # tighter than the ratio capabilities
+
+
+def test_leakage_law_computes_real_grid_on_esol():
+    """The three-part law, COMPUTED on real ESOL across a five-model grid: a slope->penalty
+    rho with a bootstrap CI, a ranking-disagreement tau, and a counterfactual tau. Subsampled
+    + small bootstrap for test speed."""
+    p = get_domain_plugin("molecules")
+    demo = p.run_demonstration(
+        {"claim": "the random-split-only leakage slope forecasts each model's scaffold penalty",
+         "random_state": 42, "sample_n": 500, "n_boot": 150},
+        {"source": "benchmark", "ref": "esol"}, "/tmp/law_grid",
+    )
+    assert demo is not None and demo["form"] == "predictive_law"
+    assert isinstance(demo["holds"], bool)
+    assert set(demo["grid"]) == {"ridge", "knn", "rf", "gbm", "svr"}
+    for row in demo["grid"].values():
+        assert {"rmse_random", "rmse_scaffold", "penalty", "slope"} <= set(row)
+    assert demo["slope_penalty_rho"] is None or -1.0 <= demo["slope_penalty_rho"] <= 1.0
+    assert "rho=" in demo["detail"]
+    assert demo["capability"] == "leakage_slope_law" and demo["reproduce_factor"] == 1.5
+
+
+def test_leakage_law_dispatched_by_explicit_id():
+    # an explicit capability id routes to the law even with an opaque, keyword-free claim.
+    p = get_domain_plugin("molecules")
+    demo = p.run_demonstration(
+        {"claim": "an opaque restatement with no routing keywords", "sample_n": 200,
+         "n_boot": 50, "capability": "leakage_slope_law"},
+        {"source": "benchmark", "ref": "esol"}, "/tmp/law_id",
+    )
+    assert demo is not None and demo["form"] == "predictive_law"
+
+
+def test_leakage_law_keyword_fallback_beats_scaffold_premise():
+    # a law claim mentions "scaffold" too, but the law branch is checked FIRST so the
+    # predictive law wins over the scaffold-gap premise (untagged spec).
+    p = get_domain_plugin("molecules")
+    demo = p.run_demonstration(
+        {"claim": "the leakage-slope law predicts each model's scaffold penalty", "sample_n": 200,
+         "n_boot": 50},
+        {"source": "benchmark", "ref": "esol"}, "/tmp/law_kw",
+    )
+    assert demo["capability"] == "leakage_slope_law"
+
+
+def test_leakage_law_is_seed_perturbed_for_real_reproduction():
+    # different seeds reshuffle the random-split folds -> a different rho (the random part of
+    # the law genuinely re-computes), so demonstration_reproduced is a real stability check.
+    p = get_domain_plugin("molecules")
+    a = p.run_demonstration({"capability": "leakage_slope_law", "random_state": 1,
+                             "sample_n": 400, "n_boot": 80},
+                            {"source": "benchmark", "ref": "esol"}, "/tmp/law_s1")
+    b = p.run_demonstration({"capability": "leakage_slope_law", "random_state": 2,
+                             "sample_n": 400, "n_boot": 80},
+                            {"source": "benchmark", "ref": "esol"}, "/tmp/law_s2")
+    assert a["statistic"] != b["statistic"]  # seed genuinely perturbs the random-split half
+
+
+def test_leakage_law_fails_closed_on_degenerate_data():
+    # too few molecules/scaffolds for a grid + slope -> holds False, statistic None, no crash.
+    p = get_domain_plugin("molecules")
+    demo = p.run_demonstration(
+        {"capability": "leakage_slope_law", "sample_n": 40},
+        {"source": "benchmark", "ref": "esol"}, "/tmp/law_small",
+    )
+    assert demo["holds"] is False and demo["statistic"] is None
+    assert "Fail-closed" in demo["detail"]
+
+
 def test_results_payload_carries_computed_demonstration_result():
     # the cross-vendor critic must see the COMPUTED result, not just the proposed spec
     result = {"metrics": {}, "info": {"demonstration":
@@ -161,7 +242,10 @@ def test_paradigm_guard_passes_on_demonstration_without_model():
     assert asyncio.run(d._post_execution_guards(result, "exp1")) is True
 
 
-def test_paradigm_guard_blocks_without_demonstration():
+def test_paradigm_guard_does_not_block_without_demonstration():
+    # K2 S3.5: a missing demonstration is no longer hard-paused in the guard — guards pass
+    # (paradigm is verified by its demonstration, not artifacts), and the campaign loop turns
+    # the missing demonstration into a bounded PIVOT / fail-closed pause instead.
     from aletheia.db import create_all
     from aletheia.memory.service import create_run
 
@@ -172,7 +256,7 @@ def test_paradigm_guard_blocks_without_demonstration():
     d.hypothesis = {"contribution_type": "paradigm",
                     "demonstration": {"form": "x", "claim": "c"}}
     result = {"metrics": {}, "artifacts": [], "info": {}}  # demonstration never computed
-    assert asyncio.run(d._post_execution_guards(result, None)) is False
+    assert asyncio.run(d._post_execution_guards(result, None)) is True
 
 
 def test_capability_menu_lists_registered_capabilities():

@@ -9,10 +9,17 @@ import asyncio
 from types import SimpleNamespace
 
 from aletheia.db import create_all
+from aletheia.memory import belief
 from aletheia.memory.service import create_claim, create_run, list_claims
 from aletheia.scheduler.driver import ExperimentDriver
 
 CS = ExperimentDriver._claim_strength
+
+# K2-S5: a `strong` formulation now additionally requires a NON-weak credence (accumulated,
+# replicated belief — not one round). These P3 tests exercise the demonstration→strength wiring, so
+# the helper supplies an accumulated credence by default; the weak-prior CAP itself is covered in
+# tests/test_paradigm_p5.py. A credence with >=2 harness-verified updates clears the weak-prior bar.
+_ACCUMULATED_CREDENCE = belief.Credence(3.0, 1.0, n_updates=2)
 
 
 # --- the deterministic grounding rule -------------------------------------------
@@ -47,7 +54,8 @@ def _seed_formulation(run_id):
     )
 
 
-def _finalize(run_id, *, verdict, passed, demonstration, demo_reproduced=None):
+def _finalize(run_id, *, verdict, passed, demonstration, demo_reproduced=None,
+              credence=_ACCUMULATED_CREDENCE):
     d = ExperimentDriver(run_id, dry_run=True)
     d._claim_ids["formulation"] = _seed_formulation(run_id)
     # 2 distinct vendors -> cross-vendor (so we test the formulation logic, not the cap)
@@ -56,7 +64,8 @@ def _finalize(run_id, *, verdict, passed, demonstration, demo_reproduced=None):
                                         SimpleNamespace(critic_id="grok")])
     repro = {"attempted": True, "reproduced": True, "demonstration_reproduced": demo_reproduced} \
         if demo_reproduced is not None else {}
-    asyncio.run(d._finalize_claims(None, rpanel, repro, None, demonstration=demonstration))
+    asyncio.run(d._finalize_claims(None, rpanel, repro, None, demonstration=demonstration,
+                                   credence=credence))
     return next(c for c in list_claims(run_id) if c["claim_type"] == "formulation")
 
 
@@ -76,6 +85,21 @@ def test_finalize_supported_strong_when_demo_holds_and_reproduced():
         demo_reproduced=True,
     )
     assert f["status"] == "supported" and f["strength"] == "strong"
+
+
+def test_finalize_caps_strong_to_moderate_on_a_weak_prior_credence():
+    # K2-S5 at the finalize level: the SAME held+approved+reproduced demonstration is capped at
+    # `moderate` when the campaign's credence is still a weak prior — one round is not accumulated
+    # belief. The status is still `supported` (the demonstration objectively held); only the STRENGTH
+    # is honestly held back until the belief is replicated.
+    create_all()
+    run_id = create_run("p3 weak prior cap", domain="materials", status="planned")
+    f = _finalize(
+        run_id, verdict="approve", passed=True,
+        demonstration={"form": "discriminating_instance", "holds": True, "statistic": 0.3},
+        demo_reproduced=True, credence=belief.prior_from_scorecard({"novelty": 0.6}),  # weak prior
+    )
+    assert f["status"] == "supported" and f["strength"] == "moderate"
 
 
 def test_finalize_unverified_when_demo_holds_but_gate_rejects():

@@ -25,6 +25,7 @@ def _passthrough_rerank(monkeypatch):
         lambda q, papers, **kw: list(papers)[: (kw.get("top_k") or len(papers))],
     )
     literature._search_cache.clear()
+    literature._breaker_reset()  # module-level circuit-breaker state leaks across tests otherwise
 
 _ARXIV_XML = """<?xml version="1.0"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
@@ -133,6 +134,84 @@ def test_search_caches_repeated_query(monkeypatch):
     b = search("dup query", k=5)  # second call must hit the cache, not the sources
     assert n["arxiv"] == 1
     assert [p.title for p in a] == [p.title for p in b] == ["cached paper"]
+
+
+def test_circuit_breaker_skips_a_throttled_source(monkeypatch):
+    # a source that keeps failing across queries OPENS its circuit after _BREAKER_THRESHOLD
+    # consecutive failures and is then skipped (no more pace+retry hammering) — the survey
+    # stays best-effort on the healthy sources. Seen live: dozens of consecutive arXiv/S2 429s.
+    calls = {"arxiv": 0, "s2": 0}
+
+    def flaky_arxiv(q, k):
+        calls["arxiv"] += 1
+        raise RuntimeError("HTTP 429")
+
+    def ok_s2(q, k):
+        calls["s2"] += 1
+        return [Paper(title=f"s2 paper {q}", source="semanticscholar")]
+
+    monkeypatch.setattr(literature, "_arxiv", flaky_arxiv)
+    monkeypatch.setattr(literature, "_semantic_scholar", ok_s2)
+    monkeypatch.setattr(literature, "_openalex", lambda q, k: [])
+
+    # threshold consecutive failures open arXiv's circuit; distinct queries avoid the cache
+    for i in range(literature._BREAKER_THRESHOLD):
+        search(f"q{i}", k=5)
+    assert calls["arxiv"] == literature._BREAKER_THRESHOLD  # tried until the breaker opened
+
+    # further queries skip arXiv entirely (breaker open) but still hit the healthy source
+    s2_before = calls["s2"]
+    search("q-after-open", k=5)
+    assert calls["arxiv"] == literature._BREAKER_THRESHOLD  # NOT called again
+    assert calls["s2"] == s2_before + 1  # healthy source still queried
+
+
+def test_circuit_breaker_success_resets_failures(monkeypatch):
+    # an intermittent failure that recovers before the threshold must NOT trip the breaker:
+    # one success resets the consecutive-failure count.
+    seq = iter([RuntimeError("429"), None, RuntimeError("429")])  # fail, ok, fail
+    calls = {"arxiv": 0}
+
+    def intermittent_arxiv(q, k):
+        calls["arxiv"] += 1
+        exc = next(seq)
+        if exc:
+            raise exc
+        return [Paper(title="ok", source="arxiv")]
+
+    monkeypatch.setattr(literature, "_arxiv", intermittent_arxiv)
+    monkeypatch.setattr(literature, "_semantic_scholar", lambda q, k: [])
+    monkeypatch.setattr(literature, "_openalex", lambda q, k: [])
+    for i in range(3):
+        search(f"qq{i}", k=5)
+    # all three attempts ran (the success in the middle reset the count; breaker never opened)
+    assert calls["arxiv"] == 3
+
+
+def test_degraded_search_result_is_not_cached(monkeypatch):
+    # If a source failed/open-circuited, the merged result is incomplete. Do not cache that weak
+    # result for the process lifetime; after the source recovers, the same query should retry.
+    calls = {"arxiv": 0}
+    broken = {"value": True}
+
+    def arxiv(q, k):
+        calls["arxiv"] += 1
+        if broken["value"]:
+            raise RuntimeError("HTTP 429")
+        return [Paper(title="recovered arxiv", source="arxiv")]
+
+    monkeypatch.setattr(literature, "_arxiv", arxiv)
+    monkeypatch.setattr(literature, "_semantic_scholar", lambda q, k: [Paper(title="s2", source="s2")])
+    monkeypatch.setattr(literature, "_openalex", lambda q, k: [])
+
+    first = search("same query", k=5)
+    assert [p.title for p in first] == ["s2"]
+    assert calls["arxiv"] == 1
+
+    broken["value"] = False
+    second = search("same query", k=5)
+    assert calls["arxiv"] == 2  # retried instead of returning the degraded cached result
+    assert [p.title for p in second] == ["s2", "recovered arxiv"]
 
 
 def test_semantic_scholar_sends_api_key_header(monkeypatch):

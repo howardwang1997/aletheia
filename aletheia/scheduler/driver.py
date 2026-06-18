@@ -13,19 +13,37 @@ import json
 import re
 from typing import Any
 
-from aletheia.coder.sandbox import check_code, smoke_test_solution
+from aletheia.coder.demonstration import (
+    CANNED_EXPLORATION,
+    CANNED_PREREGISTRATION,
+    CANNED_DEMO,
+    DEMO_SYSTEM,
+    EXPLORE_SYSTEM,
+    demonstration_prompt,
+    exploration_prompt,
+    extract_preregistration,
+)
+from aletheia.coder.demonstration_runner import run_authored_exploration
+from aletheia.coder.sandbox import (
+    DEMO_REQUIRED_FUNCTION,
+    EXPLORE_REQUIRED_FUNCTION,
+    check_code,
+    smoke_test_demonstration,
+    smoke_test_solution,
+)
 from aletheia.coder.worker import CANNED_SOLUTION, CODER_SYSTEM, coder_prompt, extract_code
 from aletheia.compute.base import JobSpec
 from aletheia.compute.factory import get_compute_backend
 from aletheia.compute.mcp_tools import resolve_data_spec
 from aletheia.config import get_settings
 from aletheia.critics.gateway import CriticGateway
-from aletheia.domains.base import DomainProfile
+from aletheia.domains.base import DomainPlugin, DomainProfile
 from aletheia.domains.registry import get_domain_plugin
 from aletheia.events.bus import get_bus, make_event
 from aletheia.iam import policy
 from aletheia.iam.github_app import GitHubBackend, RepoResult, get_github_backend
 from aletheia.memory.service import (
+    attach_claim_evidence,
     create_claim,
     create_experiment,
     get_run,
@@ -39,8 +57,10 @@ from aletheia.memory.service import (
     set_experiment_repo,
     set_run_status,
     update_claim,
+    upsert_credence,
 )
 from aletheia.memory.vector import format_briefing, index_chunk, recall
+from aletheia.memory import belief
 from aletheia.orchestrator.gate import build_tool_gate
 from aletheia.orchestrator.tools import build_search_literature_tool
 from aletheia.research import literature
@@ -50,6 +70,7 @@ from aletheia.orchestrator.reasoner import reason_stage
 from aletheia.orchestrator.worker import is_degraded, run_worker
 from aletheia.paths import run_artifacts_dir
 from aletheia.scheduler.budget import BudgetPaused, BudgetTracker
+from aletheia.scheduler.outcome import classify_outcome
 from aletheia.scheduler.statemachine import LoopGuard, record_transition
 
 _JSON = re.compile(r"\{.*\}", re.DOTALL)
@@ -148,6 +169,13 @@ class ExperimentDriver:
         self.domain: str | None = None  # the run's domain name (materials | molecules | …)
         self._claim_ids: dict[str, str] = {}  # role -> claim id, reset per experiment round
         self._last_scores: dict[str, float] = {}  # latest hypothesis scorecard scores (campaign EIG)
+        # K2 (epistemic world model): per open-question lineage, a calibrated credence Beta(α,β) for
+        # "will this line hold on held-out data?". Seeded as a WEAK prior from the scorecard; moved
+        # ONLY by a harness-verified confirm-split verdict (S4). A planning aid, never a verdict.
+        self._belief: dict[str, belief.Credence] = {}
+        # K2-S4: per lineage, the forward P(holds) prediction committed BEFORE a round runs (a
+        # pre-registration) so the predicted−realized surprise can't be back-fitted.
+        self._pending_prediction: dict[str, float] = {}
 
     @staticmethod
     def _claim_strength(
@@ -161,6 +189,10 @@ class ExperimentDriver:
         reproduced: bool | None = None,
         demonstration_holds: bool | None = None,
         cross_vendor: bool = True,
+        audit_passed: bool | None = None,
+        audit_error: bool = False,
+        exploration_missing: bool = False,
+        weak_prior: bool = False,
     ) -> str:
         """Deterministic, harness-owned claim strength — never the LLM's self-rating.
         Keeps a report from implying stronger evidence than the ledger holds.
@@ -179,7 +211,24 @@ class ExperimentDriver:
         gate-derived claim cannot exceed `weak` on single-vendor (degraded) review — the
         cross-vendor adversarial panel is the load-bearing guarantee for moderate/strong,
         so a gate that survived on one vendor (e.g. same-vendor self-review) must not yield
-        a strong claim."""
+        a strong claim.
+
+        ``audit_passed`` / ``audit_error`` keep two DIFFERENT failure modes apart for a
+        formulation claim: ``audit_passed is False`` means the independent audit RAN and
+        refuted/failed the demonstration (caps to `weak`); ``audit_error is True`` means the
+        audit could NOT run (infrastructure error) so there is no independent verification —
+        also caps to `weak`, but this is missing evidence, NOT a refutation, and must not be
+        reported as one (the same not_evaluated/refuted distinction used elsewhere).
+
+        ``exploration_missing`` (K1): the AI-authored demonstration ran WITHOUT the explore->confirm
+        seal (blind fallback) — there is no verification its threshold wasn't fit to noise, so the
+        formulation claim is capped at `moderate` (never `strong`), even when held + reproduced.
+
+        ``weak_prior`` (K2): the campaign's calibrated credence for this line is still a weak prior
+        (too few harness-verified confirm-split rounds to trust). A single confirm-split hold IS a
+        weak prior, so it caps the formulation claim at `moderate` — a `strong` formulation must rest
+        on accumulated, replicated belief, not one round. Couples claim strength to the world model
+        (the epistemic state the spine actually earned), mirroring the ``exploration_missing`` cap."""
 
         def _s() -> str:
             if kind == "metric":
@@ -203,11 +252,17 @@ class ExperimentDriver:
             if kind == "formulation":
                 if demonstration_holds is None:
                     return "speculative"  # no discriminating demonstration executed -> a proposal
-                if not demonstration_holds or gate_passed is False:
-                    return "weak"  # demonstration did not hold, or the gate did not pass
-                if reproduced and gate_verdict == "approve":
-                    return "strong"  # held + clean approve + STABLE across an independent re-run
-                return "moderate"  # held + approved (approve_with_changes, or not reproduced)
+                if not demonstration_holds or gate_passed is False or audit_passed is False:
+                    return "weak"  # didn't hold, gate failed, OR the independent audit refuted it
+                if audit_error:
+                    return "weak"  # audit could NOT run -> no independent verification (not a refutation)
+                if reproduced and gate_verdict == "approve" and not exploration_missing and not weak_prior:
+                    return "strong"  # held + clean approve + STABLE re-run + seal + accumulated belief
+                # Capped at `moderate` when: the explore->confirm seal was NOT applied (K1, no
+                # verification the threshold wasn't fit to noise), OR the credence is still a weak
+                # prior (K2, one confirm-split hold isn't yet accumulated belief), OR review was only
+                # approve_with_changes / reproduction wasn't confirmed.
+                return "moderate"  # held + approved, but short of the `strong` bar
             return "weak"
 
         s = _s()
@@ -215,6 +270,49 @@ class ExperimentDriver:
         if not cross_vendor and {"speculative": 0, "weak": 1, "moderate": 2, "strong": 3}[s] > 1:
             return "weak"
         return s
+
+    @staticmethod
+    def _slug(text: str) -> str:
+        """Slugify free text into a stable lineage key (K2 belief state)."""
+        return re.sub(r"[^a-z0-9]+", "-", str(text or "").strip().lower()).strip("-")[:80] or "q"
+
+    def _question_key(self, plan: dict) -> str:
+        """A stable key for the open-question lineage a round belongs to (K2 belief state).
+
+        Continuations/pivots carry an ``open_question`` from the go/no-go step; round 1 falls back
+        to the objective. Slugified so the same lineage maps to the same credence across rounds —
+        the seam that lets a refute in round N move the SAME belief the next round reads.
+        """
+        return self._slug(self.hypothesis.get("open_question") or plan.get("objective") or "")
+
+    def _fold_verdict_into_belief(
+        self, qkey: str, demo: dict, audit_error: bool
+    ) -> tuple[belief.Credence, dict[str, Any]]:
+        """K2-S4: fold a harness verdict into the lineage credence and return ``(post_cred, signal)``.
+
+        The credence moves ONLY on a harness-verified confirm-split verdict (``belief.update`` no-ops
+        otherwise), so a not_evaluated / exploration-only / audit-degraded round produces NO update —
+        fail-closed. ``signal`` carries the predicted−realized surprise (against the pre-registered
+        forward prediction) + the realized / remaining information gain for the event, the outcome
+        dict, and the calibration metric. The belief NEVER set this verdict; it only learns from it.
+        """
+        prior_cred = self._belief.get(qkey) or belief.prior_from_scorecard(self._last_scores)
+        confirm_split = bool(demo.get("exploration_applied"))
+        post_cred = belief.update(
+            prior_cred, holds=demo.get("holds"), confirm_split=confirm_split, audit_error=audit_error,
+        )
+        self._belief[qkey] = post_cred
+        updated = post_cred != prior_cred
+        predicted = self._pending_prediction.get(qkey)
+        realized = (1.0 if demo.get("holds") else 0.0) if updated else None
+        surprise = abs(predicted - realized) if (updated and predicted is not None) else None
+        realized_eig = belief.entropy(prior_cred) - belief.entropy(post_cred) if updated else 0.0
+        # remaining information in THIS lineage after the update (normalized) — the convergence signal
+        remaining_eig = belief.normalized_information_gain(post_cred, belief.mean(post_cred))
+        return post_cred, {
+            "updated": updated, "predicted": predicted, "realized": realized,
+            "surprise": surprise, "realized_eig": realized_eig, "remaining_eig": remaining_eig,
+        }
 
     def _maximize(self) -> bool:
         """Does a BETTER headline mean a HIGHER value (F1/recall) vs lower (MAE/RMSE)?"""
@@ -270,7 +368,8 @@ class ExperimentDriver:
         if self.profile is None:  # standalone call (tests); _run sets it before SURVEY
             run = await asyncio.to_thread(get_run, self.run_id)
             self.domain = (run or {}).get("domain")
-            self.profile = get_domain_plugin(self.domain).profile()
+            _tgt = resolve_data_spec(self.run_id).get("target_column")
+            self.profile = get_domain_plugin(self.domain).profile(target_column=_tgt)
         await self._status("surveying", "researching the literature")
         topic = " ".join(
             str(plan.get(k, "")).strip() for k in ("objective", "direction", "hypothesis")
@@ -498,6 +597,10 @@ class ExperimentDriver:
         try:
             plug = self.plugin or (get_domain_plugin(self.domain) if self.domain else None)
             caps = plug.demonstration_capabilities() if plug is not None else {}
+            # the AI-authored capability is NOT an IDEATE-selectable menu item: the driver
+            # decides to author a demonstration (when no registered capability fits), so it
+            # never appears here. IDEATE only picks among hand-built, registered computations.
+            caps = {k: v for k, v in caps.items() if k != getattr(plug, "AI_AUTHORED_CAPABILITY_ID", None)}
         except Exception:  # noqa: BLE001 - menu is best-effort context, never fatal
             caps = {}
         if not caps:
@@ -755,6 +858,62 @@ class ExperimentDriver:
             if stmt and exp_id:
                 await asyncio.to_thread(set_experiment_hypothesis, exp_id, stmt)
 
+    @staticmethod
+    def _writeup_claim_policy(claims: list[dict[str, Any]]) -> dict[str, str]:
+        """Classify ledger claims for WRITE_UP.
+
+        The report is a view over the ledger. Supported moderate/strong non-limitation claims are
+        the only positive findings; supported limitations are required limitations; everything else
+        must be downgraded in prose with its exact status/strength.
+        """
+        rank = {"speculative": 0, "weak": 1, "moderate": 2, "strong": 3}
+        allowed: list[str] = []
+        limitations: list[str] = []
+        restricted: list[str] = []
+        table: list[str] = []
+
+        for c in claims:
+            ctype = str(c.get("claim_type") or "claim")
+            status = str(c.get("status") or "proposed")
+            strength = str(c.get("strength") or "speculative")
+            text = str(c.get("claim_text") or "").strip()
+            prefix = f"[{ctype}] status={status} strength={strength}"
+            row = f"- {prefix}: {text}"
+            if status == "supported" and rank.get(strength, 0) >= 2 and ctype != "limitation":
+                allowed.append(row)
+                tag = "FINDING_ALLOWED"
+            elif ctype == "limitation" and status == "supported":
+                limitations.append(row)
+                tag = "REQUIRED_LIMITATION"
+            else:
+                restricted.append(row)
+                tag = "NOT_FINDING"
+            table.append(f"- {tag} {prefix}: {text}")
+
+        return {
+            "allowed": "\n".join(allowed) or "- (none; no claim reached finding-grade support)",
+            "limitations": "\n".join(limitations) or "- (none recorded)",
+            "restricted": "\n".join(restricted) or "- (none)",
+            "table": "\n".join(table) or "- (no claims recorded)",
+        }
+
+    @staticmethod
+    def _dry_writeup_ledger_text(claim_policy: dict[str, str]) -> str:
+        """Dry-run report paragraph derived from the claim policy, not free-form analysis."""
+        allowed = claim_policy.get("allowed", "")
+        limitations = claim_policy.get("limitations", "")
+        restricted = claim_policy.get("restricted", "")
+        parts: list[str] = []
+        if "(none;" in allowed:
+            parts.append("No claim reached finding-grade support in the claim ledger.")
+        else:
+            parts.append("Finding-grade claims from the ledger: " + allowed.replace("\n", " "))
+        if "(none recorded)" not in limitations:
+            parts.append("Required limitations: " + limitations.replace("\n", " "))
+        if "(none)" not in restricted:
+            parts.append("Claims not eligible as findings: " + restricted.replace("\n", " "))
+        return " ".join(parts)
+
     # --- hypothesis scorecard (gate low-value experiments before spending compute) ---
     _SCORE_DIMS = (
         "novelty", "feasibility", "expected_information_gain", "sota_relevance",
@@ -837,6 +996,28 @@ class ExperimentDriver:
             )
             if proceed:
                 self._last_scores = scores
+                # K2-S1: seed this lineage's belief as a WEAK prior from the scorecard (once per
+                # open-question lineage). The credence only ever moves on a harness-verified
+                # confirm-split verdict (S4); the prior never asserts belief, it just sizes it.
+                qkey = self._question_key(plan)
+                if qkey not in self._belief:
+                    cred = belief.prior_from_scorecard(scores)
+                    self._belief[qkey] = cred
+                    await asyncio.to_thread(
+                        upsert_credence, self.run_id, qkey, cred.alpha, cred.beta, cred.n_updates)
+                    await get_bus().publish(make_event(
+                        "belief_prior", run_id=self.run_id, payload={
+                            "question_key": qkey, "alpha": cred.alpha, "beta": cred.beta,
+                            "mean": belief.mean(cred), "weak_prior": belief.is_weak_prior(cred)}))
+                # K2-S4: commit the forward P(holds) prediction NOW — before EXECUTE — as an
+                # immutable pre-registration. A continuation reads its accumulated credence (so the
+                # prediction reflects prior learning); a fresh lineage reads its weak prior. The
+                # predicted−realized surprise (computed post-verdict) can't be back-fitted.
+                predicted = belief.mean(self._belief[qkey])
+                self._pending_prediction[qkey] = predicted
+                await get_bus().publish(make_event(
+                    "belief_prediction", run_id=self.run_id, payload={
+                        "question_key": qkey, "predicted_p_holds": predicted}))
                 # the novelty claim (from IDEATE) is now SCORED + grounded in structured
                 # prior work — upgrade it from speculative (still LLM-judged → only weak).
                 if (
@@ -920,6 +1101,305 @@ class ExperimentDriver:
             return None
         await self._index("design_rationale", f"coder solution:\n{code[:400]}", exp_id)
         return code
+
+    @staticmethod
+    def _valid_preregistration(prereg: Any) -> bool:
+        """A committable pre-registration carries all descriptive keys AND both decision rules
+        well-formed (op + finite threshold) — the structured rule is what lets the harness derive
+        ``holds`` with NO LLM assertion. Reuses the base-class rule validator."""
+        if not isinstance(prereg, dict):
+            return False
+        for k in ("statistic_name", "computation", "control_description", "expected_control"):
+            if not str(prereg.get(k, "")).strip():
+                return False
+        return DomainPlugin._valid_decision_rules(prereg)
+
+    def _read_committed_preregistration(self) -> dict | None:
+        """Read the IMMUTABLE pre-registration back from the LEDGER (not driver memory), so the
+        rule applied at compute time is provably the one committed BEFORE results existed — the
+        central anti-fakeability guard. Returns None if none was committed."""
+        fid = self._claim_ids.get("formulation")
+        if not fid:
+            return None
+        try:
+            for c in list_claims(self.run_id):
+                if c.get("id") != fid:
+                    continue
+                for e in c.get("evidence", []):
+                    if e.get("evidence_kind") == "preregistration" and e.get("note"):
+                        return json.loads(e["note"])
+        except Exception:  # noqa: BLE001 - ledger read best-effort; missing -> fail closed
+            return None
+        return None
+
+    @staticmethod
+    def _prefer_authored_demonstration(demo: dict) -> bool:
+        """The frontier OVERRIDE to registered-first routing: author the demonstration even when
+        a registered capability keyword-matches. True when the global ``demonstration_prefer_authored``
+        setting is on, OR the demonstration spec is explicitly tagged (``authoring == "ai"`` or a
+        truthy ``ai_authored``). Default False -> registered-first stands."""
+        if getattr(get_settings(), "demonstration_prefer_authored", False):
+            return True
+        if not isinstance(demo, dict):
+            return False
+        return str(demo.get("authoring", "")).strip().lower() == "ai" or bool(demo.get("ai_authored"))
+
+    async def _demonstration_code(self, design: dict, data_spec: dict, exp_id: str | None) -> None:
+        """DEMONSTRATION CODE stage (paradigm frontier): Opus authors ``compute_demonstration``
+        + a STRUCTURED pre-registration. Both are statically gated + smoke-tested; the
+        pre-registration is committed IMMUTABLY to the formulation claim BEFORE execution (so it
+        cannot be tuned to the observed statistic). On success, stashes the code on ``design`` so
+        ``_compute_demonstration`` routes to the AI-authored capability. ANY failure -> no commit,
+        fall back to the registered-capability path (fail closed). Never raises."""
+        if not get_settings().coder_enabled or not getattr(
+            get_settings(), "ai_demonstration_enabled", True
+        ):
+            return
+        fid = self._claim_ids.get("formulation")
+        demo = self._paradigm_demonstration()
+        if not fid or not demo:
+            return
+        # Registered-first (default): if a trusted, hand-built capability already grounds this
+        # claim, use it (deterministic + already audited) — the AI-authored path is for claims
+        # NOTHING can currently ground (Codex gap #3: "arbitrary AI-proposed demonstrations out of
+        # reach"). The frontier OVERRIDE: a ``demonstration_prefer_authored`` setting or a spec
+        # tagged ``authoring="ai"`` forces the AI to author even when a registered capability fits
+        # (the full anti-fakeability spine — prereg + control + audit + probes — still applies).
+        plugin = self.plugin or (get_domain_plugin(self.domain) if self.domain else None)
+        if plugin is not None and not self._prefer_authored_demonstration(demo):
+            caps = plugin.demonstration_capabilities()
+            registered = {k: v for k, v in caps.items() if k != plugin.AI_AUTHORED_CAPABILITY_ID}
+            if plugin._select_capability(demo, registered) is not None:
+                return  # a registered capability fits; don't AI-author
+        feature_desc = self.profile.feature_desc if self.profile else "a dense numeric feature matrix"
+        min_n = int(getattr(get_settings(), "demonstration_min_samples", 20))
+        rs = int(design.get("random_state", 42))
+
+        # K1 EXPLORE phase (the explore->confirm seal): author + run an exploration probe on a
+        # DISJOINT explore subset so the threshold is CALIBRATED to observed data, then have the
+        # harness CONFIRM on a held-out subset the authoring never saw. Best-effort: any failure
+        # (disabled, dry-run, infeasible split, worker/sandbox error) -> blind authoring, with the
+        # formulation claim capped below `strong` (no seal = no verification it isn't fit to noise).
+        exploration_obs: dict | None = None
+        confirm_index: list[int] | None = None
+        split_meta: dict | None = None
+        if (getattr(get_settings(), "demonstration_explore_confirm_enabled", True)
+                and plugin is not None and not self.dry_run):
+            exploration_obs, confirm_index, split_meta = await self._explore_for_demonstration(
+                plugin, demo, data_spec, feature_desc, rs, exp_id
+            )
+
+        await self._status("coding", "authoring the discriminating demonstration")
+        base_prompt = demonstration_prompt(
+            self.hypothesis, demo, data_spec,
+            feature_desc=feature_desc, min_samples=min_n, exploration=exploration_obs,
+        )
+        retry_note = ""
+        code, prereg = "", None
+        ok, valid_prereg, consistent = False, False, True
+        reasons: list[str] = []
+        consistency_reason = ""
+        accepted = False
+        # bounded informed retry: each attempt re-authors with the PREVIOUS rejection reason
+        # (control-not-silent / threshold-doomed / runtime error / degenerate pre-flight sample)
+        # fed back. More rounds = more chances to fix a flagged DESIGN flaw within one campaign
+        # round (configurable for the frontier campaign, which leans hard on the AI-authored path).
+        auth_rounds = max(1, int(get_settings().demonstration_authoring_rounds))
+        for attempt in range(auth_rounds):
+            text = await run_worker(
+                self.run_id, "coder", base_prompt + retry_note,
+                system=DEMO_SYSTEM, dry_run=self.dry_run,
+                max_attempts=get_settings().authoring_max_attempts,  # this long stream gets patient retries
+                dry_value="```python\n" + CANNED_DEMO + "```\n```json\n"
+                + json.dumps(CANNED_PREREGISTRATION) + "\n```",
+            )
+            if is_degraded(text):
+                return  # worker unavailable -> fall back to registered capability
+            code = extract_code(text)
+            prereg = extract_preregistration(text)
+            ok, reasons = check_code(code, required_function=DEMO_REQUIRED_FUNCTION)
+            if ok:
+                smoke_ok, smoke_err = await asyncio.to_thread(smoke_test_demonstration, code)
+                if not smoke_ok:
+                    ok, reasons = False, [*reasons, f"import/run failed: {smoke_err}"]
+            valid_prereg = self._valid_preregistration(prereg)
+            # K1 seal #5 (DETERMINISTIC, pre-commit): a threshold inconsistent with what the AI
+            # observed on the explore subset (doom-to-zero / control-not-silent / trivially-easy)
+            # is NOT committed.
+            consistent, consistency_reason = True, ""
+            if exploration_obs is not None and valid_prereg:
+                consistent, consistency_reason = self._prereg_consistent_with_exploration(
+                    prereg, exploration_obs)
+                if not consistent:
+                    reasons = [*reasons, consistency_reason]
+            accepted = bool(ok and valid_prereg and consistent)
+            # K1 v1.2: ONE bounded INFORMED retry on ANY actionable authoring rejection — a code-gate
+            # reject, a smoke-test runtime error, a malformed pre-registration, OR a threshold
+            # inconsistent with the AI's OWN exploration. The retried output goes through the EXACT
+            # SAME gates (nothing relaxed); it just gives one informed second attempt before falling
+            # back. On a domain with NO registered fallback (materials), that is produce-a-verifiable-
+            # demonstration vs produce-nothing. Seen live: run b1993c7f died on a threshold
+            # inconsistency (v1.1 covered it); run 5cdb9d60 died on a COMPOUND failure (the code
+            # raised AND the control threshold was off) that v1.1's consistency-only retry missed.
+            # break on acceptance OR after the LAST configured round. (Previously hard-capped at
+            # `attempt == 1`, which silently pinned the loop to 2 attempts and made
+            # `demonstration_authoring_rounds` > 2 a no-op — the informed retries it was bumped to
+            # buy never actually ran.)
+            if accepted or attempt >= auth_rounds - 1:
+                break
+            await get_bus().publish(
+                make_event("demonstration_code", run_id=self.run_id, payload={
+                    "accepted": False, "lines": code.count("\n") + 1, "reasons": reasons[:5],
+                    "preregistration_valid": valid_prereg,
+                    "exploration_applied": confirm_index is not None,
+                    "exploration_consistent": consistent, "retrying": True})
+            )
+            await self._status("coding", "revising the demonstration (bounded retry)")
+            retry_note = (
+                "\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED PRE-COMMIT by the harness. Fix ALL of these "
+                "and resubmit the SAME two fenced blocks (python + json), keeping the same "
+                "discriminating idea:\n"
+                + "\n".join(f"  - {r}" for r in reasons[:5])
+                + "\nIf a threshold was inconsistent with your exploration observations, recalibrate "
+                "it to what those observations support (a supported_if your expected_test_statistic "
+                "meets, a control_silent_if your expected_control_statistic satisfies, and thresholds "
+                "that still DISCRIMINATE test from control). If the code raised at import/run, fix the "
+                "runtime error. If the pre-registration was malformed, return both decision rules as "
+                "{op, threshold}."
+            )
+        await get_bus().publish(
+            make_event("demonstration_code", run_id=self.run_id, payload={
+                "accepted": accepted, "lines": code.count("\n") + 1, "reasons": reasons[:5],
+                "preregistration_valid": valid_prereg,
+                "exploration_applied": confirm_index is not None,
+                "exploration_consistent": consistent})
+        )
+        if not accepted:
+            await record_transition(
+                self.run_id, exp_id, "experiment_design", "experiment_design",
+                f"AI demonstration not accepted (code_ok={ok}, prereg_ok={valid_prereg}, "
+                f"explore_consistent={consistent}); falling back to a registered capability",
+            )
+            return
+        # immutable commit BEFORE execution — the pre-registration cannot be revised post-hoc.
+        await asyncio.to_thread(
+            attach_claim_evidence, fid, "preregistration",
+            str(prereg.get("statistic_name", "statistic")), json.dumps(prereg),
+        )
+        await get_bus().publish(
+            make_event("preregistration", run_id=self.run_id, payload={
+                "statistic": prereg.get("statistic_name"),
+                "supported_if": prereg.get("supported_if"),
+                "control_silent_if": prereg.get("control_silent_if")})
+        )
+        design["demonstration_code"] = code
+        # K1: carry the held-out CONFIRM partition (+ its audit meta) so the compute step runs the
+        # demonstration ONLY on data the authoring never saw — the partition is evidence, like the
+        # prereg. Absent -> the compute path stays full-data (backward compatible) and the claim is
+        # capped below `strong` (the seal could not be applied).
+        if confirm_index is not None and split_meta is not None:
+            design["demonstration_confirm_index"] = confirm_index
+            design["demonstration_split_meta"] = split_meta
+            design["demonstration_exploration"] = exploration_obs  # for the audit's seal-#5 check
+            await asyncio.to_thread(
+                attach_claim_evidence, fid, "split",
+                f"explore/confirm seal (algo v{split_meta.get('split_algo_version')})",
+                json.dumps(split_meta),
+            )
+        await self._index("design_rationale", f"AI-authored demonstration:\n{code[:400]}", exp_id)
+
+    async def _explore_for_demonstration(
+        self, plugin, demo: dict, data_spec: dict, feature_desc: str, rs: int, exp_id: str | None,
+    ) -> tuple[dict | None, list[int] | None, dict | None]:
+        """K1 EXPLORE phase: author + run an ``explore_demonstration`` probe on a DISJOINT explore
+        subset and return ``(observations, confirm_index, split_meta)`` for calibrating + sealing
+        the confirmatory demonstration. Returns ``(None, None, None)`` on any failure (infeasible
+        split, worker degraded, gate reject, sandbox error) so the caller degrades to blind
+        authoring. The exploration output is DESCRIPTIVE only and never enters the verdict."""
+        try:
+            staged = await asyncio.to_thread(self._stage_explore_arrays, plugin, demo, data_spec, rs)
+        except Exception:  # noqa: BLE001 - staging best-effort -> blind fallback
+            staged = None
+        if staged is None:
+            return None, None, None
+        x_explore, y_explore, groups_explore, confirm_index, split_meta = staged
+
+        await self._status("coding", "authoring the exploration probe")
+        text = await run_worker(
+            self.run_id, "coder",
+            exploration_prompt(self.hypothesis, demo, data_spec, feature_desc=feature_desc),
+            system=EXPLORE_SYSTEM, dry_run=self.dry_run,
+            dry_value="```python\n" + CANNED_EXPLORATION + "```",
+        )
+        if is_degraded(text):
+            return None, None, None
+        code = extract_code(text)
+        ok, _reasons = check_code(code, required_function=EXPLORE_REQUIRED_FUNCTION)
+        if not ok:
+            return None, None, None
+        obs = await asyncio.to_thread(
+            run_authored_exploration, code, x_explore, y_explore, groups_explore, {"random_state": rs},
+        )
+        if obs is None:
+            return None, None, None
+        await get_bus().publish(make_event("demonstration_exploration", run_id=self.run_id, payload={
+            "observations": obs.get("observations"), "n_explore": obs.get("n"),
+            "n_confirm": split_meta.get("n_confirm"), "split": split_meta}))
+        return obs, confirm_index, split_meta
+
+    @staticmethod
+    def _stage_explore_arrays(plugin, demo: dict, data_spec: dict, rs: int):
+        """Load + featurize (the SAME way the compute step does) and return the EXPLORE-subset
+        arrays + the held-out confirm index + split meta, or ``None`` when the data cannot support
+        an honest 4-way split. Pure/sync (run in a thread)."""
+        import numpy as np
+
+        df = plugin.load_data(data_spec)
+        sample_n = demo.get("sample_n") or data_spec.get("sample_n")
+        if sample_n:
+            df = df.head(int(sample_n))
+            try:
+                df.attrs["data_spec"] = data_spec
+            except Exception:  # noqa: BLE001 - not all frames carry attrs
+                pass
+        X, y, _names, groups = plugin.featurize(df, {"random_state": rs})
+        split = plugin._split_explore_confirm(groups, len(y), rs)
+        if split is None:
+            return None
+        ex = split["explore_idx"]
+        X = np.asarray(X)
+        y = np.asarray(y)
+        groups_explore = (np.asarray(groups, dtype=object)[ex] if groups is not None else None)
+        confirm_index = [int(i) for i in split["confirm_idx"].tolist()]
+        return X[ex], y[ex], groups_explore, confirm_index, split["meta"]
+
+    @staticmethod
+    def _prereg_consistent_with_exploration(prereg: dict, exploration: dict) -> tuple[bool, str]:
+        """K1 seal #5 (DETERMINISTIC, harness-owned): is the committed threshold consistent with what
+        the AI observed on the explore subset? Fails closed on a threshold that is doom-to-zero (its
+        own explore estimate of the test statistic does not satisfy ``supported_if``), a control that
+        is already not silent on explore, or a trivially-easy threshold (the control estimate ALSO
+        satisfies ``supported_if`` — not discriminating). Lenient (passes) when the exploration did
+        not report the expected statistics — the cross-vendor audit is then the only seal-#5 layer.
+        This runs FIRST; the LLM auditor is the second, softer layer (never the only guard)."""
+        obs = (exploration or {}).get("observations") or {}
+        sup = prereg.get("supported_if") or {}
+        sil = prereg.get("control_silent_if") or {}
+        et = obs.get("expected_test_statistic")
+        ec = obs.get("expected_control_statistic")
+        try:
+            if et is not None and not DomainPlugin._apply_rule(float(et), sup):
+                return False, (f"threshold doom-to-zero: supported_if {sup} unmet by the explore-"
+                               f"estimated test statistic ({et})")
+            if ec is not None and not DomainPlugin._apply_rule(float(ec), sil):
+                return False, (f"control not silent on explore: control_silent_if {sil} violated by "
+                               f"the explore-estimated control statistic ({ec})")
+            if ec is not None and DomainPlugin._apply_rule(float(ec), sup):
+                return False, (f"threshold trivially easy: supported_if {sup} is also met by the "
+                               f"control statistic ({ec}) — not discriminating")
+        except (TypeError, ValueError):
+            return True, ""  # un-parseable estimates -> defer to the LLM auditor
+        return True, ""
 
     async def _code_rag(self, design: dict, exp_id: str | None) -> None:
         """RAG-aware coder: author the GENERATION STRATEGY (answer prompt + retrieval
@@ -1072,15 +1552,12 @@ class ExperimentDriver:
         info = result.get("info") or {}
         kinds = {a.get("kind") for a in (result.get("artifacts") or [])}
         # a PARADIGM run is verifiable through its discriminating DEMONSTRATION, not a
-        # fitted model — gate on the demonstration; a failed/timed-out performance eval is
-        # a limitation (recorded in write-up), NOT a blocker.
+        # fitted model — a failed/timed-out performance eval is a limitation (recorded in
+        # write-up), NOT a blocker. A MISSING demonstration is no longer hard-paused here:
+        # K2 S3.5 turns it into a bounded campaign PIVOT (an informative negative), decided
+        # in the campaign loop — _run_experiment surfaces it as an "undemonstrated" outcome.
         if self._contribution_type() == "paradigm":
-            if not info.get("demonstration"):
-                await self._block_run(
-                    exp_id, "paradigm run produced no discriminating demonstration; "
-                    "pausing before analysis",
-                )
-                return False
+            pass  # skip the fitted-artifact requirement; the loop handles a missing demonstration
         else:
             required = set(self.profile.required_artifacts) if self.profile else {"eval", "model"}
             missing = required - kinds
@@ -1147,19 +1624,43 @@ class ExperimentDriver:
         orig_demo = (result.get("info") or {}).get("demonstration")
         repro_demo = (repro_result.get("info") or {}).get("demonstration")
         if isinstance(orig_demo, dict):
-            # a demonstration is REPRODUCED iff it still HOLDS on the seed-perturbed re-run
-            # AND its statistic stays within the capability's own reproduction tolerance
-            # (Codex #5 — per-capability ``reproduce_factor``, default 2x): qualitatively
-            # robust, not bit-identical; the strict metric tolerance would wrongly fail an
-            # honestly-noisy ratio, and a hard-coded 2x would over/under-constrain a
-            # capability whose statistic is tighter or looser than an order-of-magnitude.
+            # DECOMPOSED stability (review Finding 5 — one opaque bool hid WHICH kind of
+            # reproduction was achieved; seen live: the statistic swung 20x across seeds and
+            # the payload couldn't show it):
+            #   verdict_stable    — QUALITATIVE: the harness verdict (holds) is the same on the
+            #                       seed-perturbed re-run (True for a twice-refuted demo too);
+            #   statistic_stable  — STATISTICAL: the statistic stays within the capability's
+            #                       own ``reproduce_factor`` (Codex #5, default 2x; None when
+            #                       either run produced no statistic).
+            # ``demonstration_reproduced`` (the strength-escalation gate to `strong`) stays
+            # STRICT: held on BOTH runs AND the statistic did not swing beyond tolerance.
+            # Both samples + seeds are persisted so a reviewer can audit the swing directly.
             s1, s2 = orig_demo.get("statistic"), (repro_demo or {}).get("statistic")
-            demo_repro = bool(orig_demo.get("holds")) and bool((repro_demo or {}).get("holds"))
-            if demo_repro and s1 is not None and s2 is not None:
-                factor = max(1.0, float(orig_demo.get("reproduce_factor", 2.0)))
+            h1, h2 = orig_demo.get("holds"), (repro_demo or {}).get("holds")
+            verdict_stable = (h2 is not None) and (bool(h1) == bool(h2))
+            factor = max(1.0, float(orig_demo.get("reproduce_factor", 2.0)))
+            statistic_stable: bool | None = None
+            if s1 is not None and s2 is not None:
                 lo, hi = sorted((abs(float(s1)), abs(float(s2))))
-                demo_repro = hi <= 1e-9 or (lo / hi) >= 1.0 / factor
-            payload["demonstration_reproduced"] = demo_repro
+                statistic_stable = hi <= 1e-9 or (lo / hi) >= 1.0 / factor
+            # K1: the re-run must recompute on the SAME held-out CONFIRM partition (same
+            # explore->confirm seal). A missing confirm statistic (s2 None -> statistic_stable not
+            # True) or a mismatched split (different index_hash) is NOT a reproduction.
+            sm1 = orig_demo.get("split_meta") or {}
+            sm2 = (repro_demo or {}).get("split_meta") or {}
+            split_match = (not sm1) or (sm1.get("index_hash") == sm2.get("index_hash"))
+            payload["demonstration_reproduced"] = (
+                bool(h1) and bool(h2) and statistic_stable is True and split_match
+            )
+            payload["demonstration_verdict_stable"] = verdict_stable
+            payload["demonstration_statistic_stable"] = statistic_stable
+            payload["demonstration_split_match"] = split_match
+            payload["demonstration_original_statistic"] = s1
+            payload["demonstration_repro_statistic"] = s2
+            payload["demonstration_reproduce_factor"] = factor
+            payload["demonstration_seeds"] = [
+                int(design.get("random_state", 42)), int(repro_design["random_state"]),
+            ]
         await get_bus().publish(make_event("reproduction", run_id=self.run_id, payload=payload))
         await record_transition(
             self.run_id, exp_id, "analysis", "analysis",
@@ -1208,6 +1709,8 @@ class ExperimentDriver:
         self, protocol_status: str | None, rpanel, reproduction: dict | None = None,
         exp_id: str | None = None, ablation: dict | None = None,
         method_not_instantiated: bool = False, demonstration: dict | None = None,
+        audit_passed: bool | None = None, audit_error: bool = False,
+        credence: belief.Credence | None = None,
     ) -> None:
         """After the results gate, set the final strength + status of the proposed
         metric/mechanism claims from the (harness-owned) evidence rule, and record a
@@ -1259,6 +1762,13 @@ class ExperimentDriver:
             demo = demonstration if isinstance(demonstration, dict) else {}
             holds = demo.get("holds")  # True | False | None(not executed)
             demo_repro = repro.get("demonstration_reproduced") if repro.get("attempted") else None
+            # K1: an AI-authored demonstration that ran WITHOUT the explore->confirm seal (blind
+            # fallback) cannot reach `strong` — see _claim_strength. Registered capabilities (a
+            # different `capability`) are unaffected.
+            exploration_missing = (
+                demo.get("capability") == DomainPlugin.AI_AUTHORED_CAPABILITY_ID
+                and not demo.get("exploration_applied")
+            )
             # `refuted` is reserved for a demonstration that was TESTED and did NOT hold —
             # NOT for one that held but the gate didn't endorse (that is `unverified`),
             # mirroring the not_evaluated/refuted distinction elsewhere.
@@ -1270,28 +1780,53 @@ class ExperimentDriver:
                 form_status = "supported"
             else:
                 form_status = "unverified"  # demonstration held, but peer review didn't endorse it
+            # K2-S5: a credence still a weak prior (too few harness-verified confirm-split rounds)
+            # cannot yield a `strong` formulation claim — strong requires accumulated, replicated
+            # belief, not one round. Fail-closed: no credence supplied => treated as weak.
+            weak_prior = belief.is_weak_prior(credence) if credence is not None else True
             await asyncio.to_thread(
                 update_claim, self._claim_ids["formulation"],
                 strength=self._claim_strength(
                     "formulation", gate_passed=passed, gate_verdict=verdict,
                     reproduced=demo_repro, demonstration_holds=holds, cross_vendor=cross_vendor,
+                    audit_passed=audit_passed, audit_error=audit_error,
+                    exploration_missing=exploration_missing, weak_prior=weak_prior,
                 ),
                 status=form_status,
             )
+            # record the calibrated credence behind that strength, so the cap is auditable.
+            if credence is not None:
+                await asyncio.to_thread(
+                    attach_claim_evidence, self._claim_ids["formulation"], "credence",
+                    f"Beta(alpha={credence.alpha:.2f}, beta={credence.beta:.2f})",
+                    note=(f"mean P(holds)={belief.mean(credence):.3f}; n_updates={credence.n_updates}; "
+                          f"weak_prior={weak_prior}"),
+                )
         # a reproducibility claim: did an independent re-run confirm the headline?
         if repro.get("attempted"):
             confirmed = bool(repro.get("reproduced"))
+            # rel Δ None means NO comparison ever happened (no headline value on the
+            # original and/or the re-run, or the re-run errored). That is ``not_evaluated``
+            # — ``refuted`` is reserved for a comparison that RAN and contradicted the
+            # headline (the same refuted/not-evaluated distinction as elsewhere).
+            compared = repro.get("delta") is not None
             await asyncio.to_thread(
                 create_claim, self.run_id,
                 claim_text=(
                     f"An independent re-run ({repro.get('mode', 'rerun')}) "
-                    f"{'confirmed' if confirmed else 'did NOT confirm'} the headline "
-                    f"{repro.get('metric', '')} (original={repro.get('original')}, "
-                    f"reproduced={repro.get('repro')}, rel Δ {repro.get('delta')})."
+                    + (
+                        f"{'confirmed' if confirmed else 'did NOT confirm'} the headline "
+                        f"{repro.get('metric', '')} (original={repro.get('original')}, "
+                        f"reproduced={repro.get('repro')}, rel Δ {repro.get('delta')})."
+                        if compared
+                        else f"could not evaluate the headline {repro.get('metric', '')} "
+                        f"(original={repro.get('original')}, reproduced={repro.get('repro')} "
+                        f"— no comparable value on both runs)."
+                    )
                 ),
                 claim_type="reproducibility",
                 strength="moderate" if confirmed else "weak",
-                status="supported" if confirmed else "refuted",
+                status=("supported" if confirmed else ("refuted" if compared else "not_evaluated")),
                 experiment_id=exp_id, created_by="reproduction", stage="analysis",
                 evidence=[
                     {"evidence_kind": "reproduction", "evidence_ref": repro.get("mode", "rerun"),
@@ -1323,6 +1858,23 @@ class ExperimentDriver:
                     {"evidence_kind": "artifact", "evidence_ref": "ablation.json", "note": "controlled comparison"},
                 ],
             )
+        # surface the verification spine's outcome: the final claim ledger (type/status/strength
+        # + which evidence kinds grounded each) so the UI can show what was actually established,
+        # refuted, or left unverified — not just the headline metric.
+        try:
+            ledger = await asyncio.to_thread(list_claims, self.run_id)
+            await get_bus().publish(make_event(
+                "claims", run_id=self.run_id,
+                payload={"claims": [
+                    {"claim_type": c.get("claim_type"), "status": c.get("status"),
+                     "strength": c.get("strength"),
+                     "evidence_kinds": sorted({e.get("evidence_kind")
+                                               for e in (c.get("evidence") or [])
+                                               if e.get("evidence_kind")}),
+                     "claim_text": str(c.get("claim_text", ""))[:240]}
+                    for c in ledger]}))
+        except Exception:  # noqa: BLE001 - the claims summary is a best-effort UI signal
+            pass
 
     async def _guard_budget(self, kind: str, amount: float) -> None:
         """Charge an estimated cost and auto-pause + notify if a cap is breached."""
@@ -1356,8 +1908,12 @@ class ExperimentDriver:
         except BudgetPaused:
             return  # already paused + notified; a clean stop, not a failure
         except Exception as exc:  # noqa: BLE001
+            import traceback
+
+            tb = traceback.format_exc()
             await get_bus().publish(
-                make_event("error", run_id=self.run_id, payload={"error": str(exc)})
+                make_event("error", run_id=self.run_id,
+                           payload={"error": str(exc), "traceback": tb[-1500:]})
             )
             await asyncio.to_thread(set_run_status, self.run_id, "failed")
             await self._status("failed", str(exc))
@@ -1383,8 +1939,9 @@ class ExperimentDriver:
                            payload={"requested": domain, "ran": plugin.name})
             )
         self.plugin = plugin
-        self.profile = plugin.profile()  # the domain's vocabulary for every stage
         data_spec = resolve_data_spec(self.run_id)
+        # target-aware vocabulary: a Tc run reports K / Tc-range, not band-gap eV / 'gap'.
+        self.profile = plugin.profile(target_column=data_spec.get("target_column"))
         self.budget = await asyncio.to_thread(BudgetTracker, self.run_id)
 
         await asyncio.to_thread(set_run_status, self.run_id, "active")
@@ -1413,10 +1970,12 @@ class ExperimentDriver:
         # hypothesis, runs the full experiment, then a go/no-go step decides whether
         # the next experiment is worth running (and what it should test).
         max_exps = max(1, get_settings().max_experiments_per_campaign)
+        max_pivots = max(0, int(get_settings().campaign_max_pivots))
         outcomes: list[dict[str, Any]] = []
         cur_exp_id = exp_id
         next_hint: dict[str, Any] | None = None
         round_idx = 1
+        pivots_used = 0  # K2 S3.5: undemonstrated rounds that triggered a bounded pivot
         while True:
             # per-round guard isolation so design/direction revision counters don't
             # bleed across experiments
@@ -1428,9 +1987,9 @@ class ExperimentDriver:
                 make_event("experiment", run_id=self.run_id,
                            payload={"round": round_idx, "exp_id": cur_exp_id, "of": max_exps})
             )
-            # IDEATE this round's hypothesis: round 1 from the survey; later rounds
-            # adopt the go/no-go step's proposed next hypothesis.
-            if round_idx == 1:
+            # IDEATE the first hypothesis from the survey; every later attempt — a campaign
+            # CONTINUATION or a bounded PIVOT (K2 S3.5) — adopts the go/no-go step's proposal.
+            if next_hint is None:
                 await self._ideate(plan, cur_exp_id)
             else:
                 await self._adopt_hypothesis(next_hint or {}, cur_exp_id)
@@ -1448,6 +2007,38 @@ class ExperimentDriver:
                 return  # a gate rejected past the loop limit -> paused + escalated
             outcomes.append(outcome)
 
+            # K2 S3.5: a PARADIGM round that produced no demonstration is an informative negative.
+            # PIVOT to a different hypothesis (bounded by campaign_max_pivots) instead of aborting;
+            # fail CLOSED (pause) only when the pivot budget is spent or the planner finds no viable
+            # alternative. A pivot does NOT consume the max_exps budget (round_idx is unchanged).
+            if outcome.get("undemonstrated"):
+                if pivots_used >= max_pivots:
+                    await self._block_run(
+                        cur_exp_id,
+                        f"paradigm run produced no discriminating demonstration after "
+                        f"{pivots_used} pivot(s); pausing before analysis",
+                    )
+                    return
+                decision = await self._campaign_step(plan, outcomes, round_idx, max_exps)
+                if not decision.get("continue"):
+                    await self._block_run(
+                        cur_exp_id,
+                        "paradigm run produced no discriminating demonstration and the campaign "
+                        "found no viable pivot; pausing before analysis",
+                    )
+                    return
+                pivots_used += 1
+                next_hint = decision.get("next_hypothesis") or {}
+                cur_exp_id = await asyncio.to_thread(
+                    create_experiment, self.run_id, plan, parent_experiment_id=cur_exp_id
+                )
+                await get_bus().publish(
+                    make_event("campaign", run_id=self.run_id, payload={
+                        "decision": "pivot", "pivots_used": pivots_used, "max_pivots": max_pivots,
+                        "rationale": decision.get("rationale", "")})
+                )
+                continue  # re-attempt at the same round_idx with a different hypothesis
+
             if round_idx >= max_exps:
                 break
             decision = await self._campaign_step(plan, outcomes, round_idx, max_exps)
@@ -1463,17 +2054,21 @@ class ExperimentDriver:
             )
             round_idx += 1
 
-        # campaign-level synthesis across the experiments (only when >1 ran)
-        if len(outcomes) > 1:
-            await self._campaign_synthesis(plan, outcomes, exp_id)
+        # synthesis / archive consider only DEMONSTRATED rounds — an undemonstrated pivot carries no
+        # metrics and finalized no claims, so it must not drive the run-level verdict or synthesis.
+        demonstrated = [o for o in outcomes if not o.get("undemonstrated")]
+
+        # campaign-level synthesis across the experiments (only when >1 demonstrated)
+        if len(demonstrated) > 1:
+            await self._campaign_synthesis(plan, demonstrated, exp_id)
 
         # ARCHIVE -------------------------------------------------------------
         # A run whose concluding experiment's results gate REJECTED is distinguished
         # from a clean completion: it ran to the end and is archived, but peer review
         # did not endorse the result. The claims already carry the refutation; this
         # makes the run-level outcome legible too.
-        last_exp_id = outcomes[-1]["exp_id"] if outcomes else cur_exp_id
-        results_rejected = bool(outcomes) and outcomes[-1].get("verdict") == "reject"
+        last_exp_id = demonstrated[-1]["exp_id"] if demonstrated else cur_exp_id
+        results_rejected = bool(demonstrated) and demonstrated[-1].get("verdict") == "reject"
         final_status = "results_rejected" if results_rejected else "completed"
         await record_transition(self.run_id, last_exp_id, "write_up", "archive", "campaign complete")
         await asyncio.to_thread(set_run_status, self.run_id, final_status)
@@ -1484,14 +2079,15 @@ class ExperimentDriver:
                 payload={
                     "status": final_status,
                     "results_gate": "rejected" if results_rejected else "passed",
-                    "experiments": len(outcomes),
-                    "metrics": outcomes[-1].get("metrics") if outcomes else None,
+                    "experiments": len(demonstrated),
+                    "pivots": pivots_used,
+                    "metrics": demonstrated[-1].get("metrics") if demonstrated else None,
                 },
             )
         )
         detail = (
-            f"campaign complete ({len(outcomes)} experiment(s)) — results rejected by peer review"
-            if results_rejected else f"campaign complete ({len(outcomes)} experiment(s))"
+            f"campaign complete ({len(demonstrated)} experiment(s)) — results rejected by peer review"
+            if results_rejected else f"campaign complete ({len(demonstrated)} experiment(s))"
         )
         await self._status("archived", detail)
 
@@ -1525,6 +2121,12 @@ class ExperimentDriver:
             if solution_code:
                 design["solution_code"] = solution_code
 
+        # 2c) DEMONSTRATION CODE (paradigm only, the frontier path): the AI authors the
+        # DISCRIMINATING COMPUTATION itself + pre-registers its decision rule, committed
+        # immutably BEFORE execution so it can't be tuned to the result.
+        if self._contribution_type() == "paradigm":
+            await self._demonstration_code(design, data_spec, exp_id)
+
         # 3) EXECUTION
         await record_transition(self.run_id, exp_id, "experiment_design", "execution", "design approved; running")
         await self._status("executing")
@@ -1539,6 +2141,16 @@ class ExperimentDriver:
         # (KFold-fallback) headline is surfaced, not hidden.
         if not await self._post_execution_guards(result, exp_id):
             return None
+
+        # 3b') K2 S3.5: a PARADIGM round that produced NO discriminating demonstration (e.g. the
+        # AI could not author a threshold consistent with its own exploration — seal #5 doom-to-
+        # zero) is an informative negative, not a dead end. Surface it as an "undemonstrated"
+        # outcome so the campaign loop can PIVOT to a different hypothesis (bounded) rather than
+        # abort. The round is honestly NOT evaluated (no claims finalized, no metrics) — the spine
+        # is unchanged; only the response to it (pivot vs hard-pause) moved up to the loop.
+        if (not self.dry_run and self._contribution_type() == "paradigm"
+                and not (result.get("info") or {}).get("demonstration")):
+            return await self._undemonstrated_outcome(round_idx, exp_id)
 
         # plan↔execution drift: did the executed model match the family the hypothesis
         # names? If not, the hypothesis mechanism was never instantiated (so its claim
@@ -1591,9 +2203,14 @@ class ExperimentDriver:
         await self._status("analyzing")
         analysis = await self._analyze(design, result, exp_id)
 
+        # 4b) INDEPENDENT AUDIT of an AI-authored demonstration (author vendor excluded) —
+        # runs before the results gate so a refuting audit (forced holds=False) is reflected
+        # in the demonstration result the gate + claim finalization read.
+        info = result.get("info") or {}
+        audit_passed, audit_error = await self._audit_demonstration(design, info.get("demonstration"))
+
         # 5) review_results gate — the critics see the CLAIMS + evidence (proposed in
         # analysis) + the protocol status + the reproduction, so they review evidence.
-        info = result.get("info") or {}
         claims = await asyncio.to_thread(list_claims, self.run_id, exp_id)
         contribution_type = self._contribution_type()
         rpanel = await self.gateway.review(
@@ -1612,14 +2229,34 @@ class ExperimentDriver:
             f"results reviewed: {rpanel.consensus_verdict} (gate_passed={rpanel.gate_passed})",
             actor="critic",
         )
-        # finalize the proposed claims now that the gate has spoken (harness-owned
-        # strength: a metric claim only reaches `strong` with grouped CV + a clean
-        # approve + a CONFIRMED reproduction).
+        # K2-S4: fold THIS round's harness verdict into the lineage credence BEFORE finalizing claims
+        # (the only thing that moves the belief). A confirm-split hold/refute updates it; a
+        # not_evaluated / exploration-only / audit-degraded round folds in nothing (fail-closed). The
+        # belief is a planning aid — it never set this verdict, it only learns from it.
+        qkey = self._question_key(plan)
+        post_cred, sig = self._fold_verdict_into_belief(qkey, info.get("demonstration") or {}, audit_error)
+        if sig["updated"]:
+            await asyncio.to_thread(
+                upsert_credence, self.run_id, qkey, post_cred.alpha, post_cred.beta, post_cred.n_updates)
+            await get_bus().publish(make_event(
+                "belief_update", run_id=self.run_id, payload={
+                    "round": round_idx, "exp_id": exp_id, "question_key": qkey,
+                    "alpha": post_cred.alpha, "beta": post_cred.beta, "mean": belief.mean(post_cred),
+                    "n_updates": post_cred.n_updates, "weak_prior": belief.is_weak_prior(post_cred),
+                    "predicted_p_holds": sig["predicted"], "realized": sig["realized"],
+                    "surprise": sig["surprise"], "realized_eig_bits": sig["realized_eig"],
+                    "remaining_eig": sig["remaining_eig"]}))
+        # finalize the proposed claims now that the gate has spoken (harness-owned strength: a metric
+        # claim only reaches `strong` with grouped CV + a clean approve + a CONFIRMED reproduction; a
+        # formulation claim additionally needs the explore->confirm seal AND a non-weak credence, K2-S5).
         await self._finalize_claims(
             info.get("protocol_status"), rpanel, info.get("reproduction") or {}, exp_id,
             ablation=info.get("ablation"),
             method_not_instantiated=bool(info.get("method_drift")),
             demonstration=info.get("demonstration"),
+            audit_passed=audit_passed,
+            audit_error=audit_error,
+            credence=post_cred,
         )
 
         # 6) OPTIMIZE (<=1 iteration) — skipped when the results gate rejected, since
@@ -1637,6 +2274,25 @@ class ExperimentDriver:
 
         metrics = best_result.get("metrics", {})
         hk = self.profile.headline_metric if self.profile else "mae"
+        # K2: classify WHY the demonstration held/failed (deterministic, harness-owned) so the
+        # next campaign round is shaped by this round's reason, not a fresh blind guess. Read the
+        # POST-audit demonstration in ``info`` (the same dict the audit mutated + claims read);
+        # it never decides holds/strength.
+        demo_outcome = classify_outcome(
+            info.get("demonstration"),
+            info.get("reproduction"),
+            audit_passed=audit_passed,
+            audit_error=audit_error,
+            gate_passed=rpanel.gate_passed,
+            verdict=rpanel.consensus_verdict,
+            min_confirm_n=2 * int(getattr(get_settings(), "demonstration_min_samples", 20)),
+        )
+        await get_bus().publish(
+            make_event("campaign_reason", run_id=self.run_id, payload={
+                "round": round_idx, "exp_id": exp_id, "reason": demo_outcome["reason"],
+                "recoverable": demo_outcome["recoverable"], "detail": demo_outcome["detail"]})
+        )
+        # the belief was already folded (above, before claim finalization); reuse post_cred/sig.
         return {
             "round": round_idx,
             "exp_id": exp_id,
@@ -1651,6 +2307,47 @@ class ExperimentDriver:
             # what the planner intended this round to be (round 1 = the baseline)
             "experiment_type": str(self.hypothesis.get("experiment_type") or ("baseline" if round_idx == 1 else "")),
             "open_question": str(self.hypothesis.get("open_question") or ""),
+            # K2 outcome-reason classification (feeds _campaign_step's reasoned trajectory)
+            "reason": demo_outcome["reason"],
+            "narrowing_hint": demo_outcome["narrowing_hint"],
+            "recoverable": demo_outcome["recoverable"],
+            "outcome_detail": demo_outcome["detail"],
+            # K2-S4: the belief signal this round produced (read by _campaign_step + the synthesis)
+            "question_key": qkey,
+            "belief_mean": belief.mean(post_cred),
+            "belief_weak_prior": belief.is_weak_prior(post_cred),
+            "belief_updated": sig["updated"],
+            "belief_surprise": sig["surprise"],
+            "belief_remaining_eig": sig["remaining_eig"],
+            "belief_predicted_p_holds": sig["predicted"],
+        }
+
+    async def _undemonstrated_outcome(self, round_idx: int, exp_id: str | None) -> dict[str, Any]:
+        """K2 S3.5: build the campaign outcome for a paradigm round that produced no committable
+        demonstration. Carries reason=authoring_failed + a PIVOT hint so the campaign loop steers
+        the next attempt to a different effect/statistic/question. ``undemonstrated`` marks it so
+        the loop pivots (bounded) rather than treating it as a normal completed round, and so it is
+        excluded from the campaign synthesis / archive (it has no metrics, no finalized claims)."""
+        hint = (
+            "the AI could not author a demonstration whose pre-registered threshold was consistent "
+            "with its OWN exploration (e.g. the explore-estimated effect was ~0, so any positive "
+            "threshold is doom-to-zero, or the authored code failed the gate twice). Do NOT re-tune "
+            "the same threshold — PIVOT: choose a different effect/statistic the exploration "
+            "actually reveals, or a different open question."
+        )
+        await get_bus().publish(make_event("campaign_reason", run_id=self.run_id, payload={
+            "round": round_idx, "exp_id": exp_id, "reason": "authoring_failed",
+            "recoverable": True, "detail": "paradigm round produced no discriminating demonstration"}))
+        return {
+            "round": round_idx, "exp_id": exp_id, "undemonstrated": True,
+            "model": None, "metrics": {}, "headline_metric": (self.profile.headline_metric if self.profile else "mae"),
+            "headline": None, "units": self.profile.units if self.profile else "",
+            "analysis": "", "verdict": "blocked",
+            "hypothesis": str(self.hypothesis.get("statement", "")).strip(),
+            "experiment_type": str(self.hypothesis.get("experiment_type") or ("baseline" if round_idx == 1 else "")),
+            "open_question": str(self.hypothesis.get("open_question") or ""),
+            "reason": "authoring_failed", "narrowing_hint": hint,
+            "recoverable": True, "outcome_detail": "no discriminating demonstration produced",
         }
 
     async def _adopt_hypothesis(self, hypo: dict[str, Any], exp_id: str | None) -> None:
@@ -1682,11 +2379,44 @@ class ExperimentDriver:
         {"continue": bool, "next_hypothesis": {...}, "rationale": str, "candidates": [...]}.
         """
         await self._status("planning", "planning the next experiment")
-        trajectory = "\n".join(
-            f"- round {o['round']} [{o.get('experiment_type') or '?'}]: '{o['hypothesis']}' -> "
-            f"{o.get('headline_metric')} {o.get('headline')} [{o.get('model')}], verdict {o.get('verdict')}"
-            for o in outcomes
-        )
+
+        # K2: a REASONED trajectory — each round carries WHY its demonstration held/failed (the
+        # deterministic outcome-reason classification) + a concrete narrowing hint, not just a
+        # metric + an approve/reject token. This is the seam that makes the next round provably
+        # shaped by the last round's reason instead of a fresh blind guess.
+        def _line(o: dict[str, Any]) -> str:
+            base = (
+                f"- round {o['round']} [{o.get('experiment_type') or '?'}]: '{o['hypothesis']}' -> "
+                f"{o.get('headline_metric')} {o.get('headline')} [{o.get('model')}], "
+                f"verdict {o.get('verdict')}"
+            )
+            reason = o.get("reason")
+            if reason and reason != "no_demonstration":
+                hint = str(o.get("narrowing_hint") or "").strip()
+                base += f"\n    WHY [{reason}]: {hint}"
+            return base
+
+        trajectory = "\n".join(_line(o) for o in outcomes)
+
+        # A hard directive built from the MOST RECENT round's reason: the next candidates must act
+        # on it. When the effect itself did not appear on held-out data (recoverable is False),
+        # re-tuning the same effect is forbidden — pivot to a different open question.
+        last = outcomes[-1] if outcomes else {}
+        last_reason = str(last.get("reason") or "")
+        learning = ""
+        if last_reason and last_reason != "no_demonstration":
+            hint = str(last.get("narrowing_hint") or "").strip()
+            pivot = (
+                " The effect did NOT hold on held-out data, so re-tuning the SAME effect/threshold "
+                "is unacceptable — at least one candidate must pivot to a DIFFERENT open question."
+                if last.get("recoverable") is False else
+                " At least one candidate must directly act on this hint rather than re-guess blind."
+            )
+            learning = (
+                f"WHAT THE LAST ROUND LEARNED (reason: {last_reason}):\n  {hint}\n"
+                f"  REQUIREMENT:{pivot}\n\n"
+            )
+
         gaps = ("OPEN GAPS:\n- " + "\n- ".join(self.survey_gaps) + "\n\n") if self.survey_gaps else ""
         budget_line = ""
         if self.budget is not None:
@@ -1697,7 +2427,7 @@ class ExperimentDriver:
         prompt = (
             f"You are PLANNING the next experiment in a research campaign (objective: "
             f"{plan.get('objective', '')}). {round_idx} of at most {max_exps} have run:\n{trajectory}\n\n"
-            f"{gaps}{budget_line}\n"
+            f"{learning}{gaps}{budget_line}\n"
             "Propose 2-3 candidate NEXT experiments. Each must answer a NAMED open question, be a "
             f"distinct angle from the rounds above, and have a type from: {types}. Estimate each "
             "candidate's expected_information_gain (0..1) honestly — an experiment that would barely "
@@ -1719,28 +2449,45 @@ class ExperimentDriver:
         parsed = _parse_json(text, _JSON, {"candidates": []})
         candidates = [c for c in (parsed.get("candidates") or []) if isinstance(c, dict)]
         floor = get_settings().campaign_min_eig
-        # deterministic selection: the best candidate that clears the EIG floor wins;
-        # if none does, the program has converged. Also honor the backward-looking
-        # floor on the just-run hypothesis (a low-gain last round signals convergence).
-        viable = [c for c in candidates if float(c.get("expected_information_gain", 0.0) or 0.0) >= floor]
-        last_eig = float(self._last_scores.get("expected_information_gain", 1.0))
-        if not viable or last_eig < floor:
+        # K2-S4: each candidate's information gain is the harness-MEASURED expected entropy reduction
+        # of its lineage credence (normalized 0..1); the LLM's self-reported number can only LOSE to
+        # it (effective = min(llm, measured)). A fresh/weak lineage measures ~1.0 (no cap → today's
+        # behavior, fail-closed); an ACCUMULATED belief measures low, so re-confirming a near-certain
+        # line scores low and the program converges. The harness recomputes EIG — the LLM can't
+        # inflate a candidate above what its belief state says there is to learn.
+        for c in candidates:
+            llm = float(c.get("expected_information_gain", 0.0) or 0.0)
+            cred = self._belief.get(self._slug(c.get("open_question"))) or belief.prior_from_scorecard({})
+            measured = belief.normalized_information_gain(cred, belief.mean(cred))
+            c["measured_eig"] = measured
+            c["effective_eig"] = min(llm, measured)
+        viable = [c for c in candidates if float(c.get("effective_eig", 0.0)) >= floor]
+        # backward-looking convergence on the just-run hypothesis. When its belief actually updated
+        # this round, use the MEASURED remaining information of that lineage (a near-saturated belief
+        # => converge); otherwise fall back to the LLM scorecard EIG (fail-closed on no belief signal,
+        # so non-paradigm / dry-run campaigns behave exactly as before).
+        if last.get("belief_updated"):
+            last_gain = float(last.get("belief_remaining_eig", 1.0))
+            backward_desc = f"belief on the last line is near-saturated (remaining EIG {last_gain:.2f} < {floor})"
+        else:
+            last_gain = float(self._last_scores.get("expected_information_gain", 1.0))
+            backward_desc = f"last experiment's expected information gain {last_gain:.2f} below floor {floor}"
+        if not viable or last_gain < floor:
             reason = (
-                f"no proposed experiment clears the EIG floor {floor}"
-                if not viable else
-                f"last experiment's expected information gain {last_eig:.2f} below floor {floor}"
+                f"no proposed experiment clears the measured EIG floor {floor}"
+                if not viable else backward_desc
             )
             decision = {"continue": False, "rationale": f"{reason}; program converged", "candidates": candidates}
         else:
-            best = max(viable, key=lambda c: float(c.get("expected_information_gain", 0.0) or 0.0))
+            best = max(viable, key=lambda c: float(c.get("effective_eig", 0.0)))
             nxt = dict(best.get("hypothesis") or {})
             nxt["experiment_type"] = best.get("experiment_type")
             nxt["open_question"] = best.get("open_question")
             decision = {
                 "continue": True,
                 "rationale": (
-                    f"chose a {best.get('experiment_type')} (EIG "
-                    f"{float(best.get('expected_information_gain', 0.0)):.2f}) to answer: "
+                    f"chose a {best.get('experiment_type')} (measured EIG "
+                    f"{float(best.get('effective_eig', 0.0)):.2f}) to answer: "
                     f"{best.get('open_question')}"
                 ),
                 "next_hypothesis": nxt,
@@ -1753,7 +2500,8 @@ class ExperimentDriver:
                 "rationale": decision.get("rationale", ""),
                 "candidates": [
                     {"experiment_type": c.get("experiment_type"), "open_question": c.get("open_question"),
-                     "eig": c.get("expected_information_gain")}
+                     "eig": c.get("expected_information_gain"),
+                     "measured_eig": c.get("measured_eig"), "effective_eig": c.get("effective_eig")}
                     for c in candidates
                 ],
             })
@@ -1785,18 +2533,46 @@ class ExperimentDriver:
             (max if self._maximize() else min)(scored, key=lambda o: o["headline"])
             if scored else outcomes[-1]
         )
+        # K2-S5: the BELIEF trajectory + calibration — the north-star progress signal, surfaced
+        # HONESTLY as early/weak. A credence is calibrated only by harness-verified confirm-split
+        # verdicts, so few updates => a weak prior, never a hard probability. Calibration =
+        # mean |predicted − realized| surprise over the rounds that actually moved the belief.
+        belief_rows = [o for o in outcomes if o.get("belief_mean") is not None]
+        n_updates = sum(1 for o in outcomes if o.get("belief_updated"))
+        surprises = [o["belief_surprise"] for o in outcomes if o.get("belief_surprise") is not None]
+        calibration = (sum(surprises) / len(surprises)) if surprises else None
+        belief_block = ""
+        if belief_rows:
+            traj = "\n".join(
+                f"- round {o['round']}: P(holds)={o['belief_mean']:.2f}"
+                + (f", surprise {o['belief_surprise']:.2f}" if o.get("belief_surprise") is not None else "")
+                + (f" [{o.get('reason')}]" if o.get("reason") and o.get("reason") != "no_demonstration" else "")
+                for o in belief_rows
+            )
+            cal = (
+                f"mean predicted−realized surprise {calibration:.2f} over {n_updates} harness-verified "
+                f"update(s) — EARLY/WEAK, not a calibrated probability"
+                if calibration is not None else
+                "no harness-verified confirm-split update yet — credences are weak priors"
+            )
+            belief_block = (
+                "\n\n## Belief trajectory (calibrated only by held-out verdicts; early/weak)\n\n"
+                f"{traj}\n\n**Calibration:** {cal}\n"
+            )
         prompt = (
             f"Summarize this research campaign (objective: {plan.get('objective', '')}) as a short markdown "
-            f"brief. Experiments:\n{rows}\n\nThe best {hk} was {best.get('headline')} in round "
+            f"brief. Experiments:\n{rows}\n{belief_block}\nThe best {hk} was {best.get('headline')} in round "
             f"{best.get('round')}. Write: the trajectory (how each experiment informed the next), which "
             "experiment won and why, what the program learned, and the most important still-open gap. "
-            f"Ground every claim in the {hk} numbers above; do not invent results."
+            f"Ground every claim in the {hk} numbers above; do not invent results. If a belief trajectory "
+            "is shown, report it + its calibration as given and label credences as early/weak — never as "
+            "hard probabilities."
         )
         summary = await reason_stage(
             self.run_id, "campaign", prompt, dry_run=self.dry_run,
             dry_text=(
                 f"# Campaign Summary\n\n**Objective:** {plan.get('objective', 'n/a')}\n\n"
-                f"## Trajectory\n\n{rows}\n\n"
+                f"## Trajectory\n\n{rows}\n{belief_block}\n"
                 f"## Outcome\n\nThe best {hk} was {best.get('headline')}{usfx} in "
                 f"round {best.get('round')} ({best.get('model')}). Across {len(outcomes)} experiments the "
                 f"program refined its hypothesis from the survey gaps toward the most informative test.\n\n"
@@ -1819,6 +2595,13 @@ class ExperimentDriver:
             make_event("campaign_finished", run_id=self.run_id, payload={
                 "uri": str(path), "experiments": len(outcomes),
                 "best_round": best.get("round"), "best_headline": best.get("headline"),
+                # K2-S5: the belief trajectory + calibration (honest north-star progress signal)
+                "belief_trajectory": [
+                    {"round": o["round"], "mean": o["belief_mean"],
+                     "surprise": o.get("belief_surprise"), "reason": o.get("reason")}
+                    for o in belief_rows
+                ],
+                "calibration": calibration, "n_belief_updates": n_updates,
             })
         )
 
@@ -1977,6 +2760,23 @@ class ExperimentDriver:
         # an identical recompute (see _demo_activity_cliff_lipschitz).
         spec = {**(self._paradigm_demonstration() or {}),
                 "random_state": int(design.get("random_state", 42))}
+        # FRONTIER PATH: if the AI authored a demonstration this experiment, route to the
+        # AI-authored capability by EXPLICIT id and attach the sandboxed code + the pre-
+        # registration READ BACK FROM THE LEDGER (the committed-before-results version — the
+        # anti-fakeability guard). If authoring didn't happen, the spec is untagged and dispatch
+        # falls back to the domain's registered capabilities exactly as before.
+        if design.get("demonstration_code"):
+            prereg = self._read_committed_preregistration()
+            if prereg:
+                spec["capability"] = plugin.AI_AUTHORED_CAPABILITY_ID
+                spec["demonstration_code"] = design["demonstration_code"]
+                spec["preregistration"] = prereg
+                # K1: route the demonstration onto the held-out CONFIRM partition (the
+                # explore->confirm seal). Reproduction reseeds the design but reuses this exact
+                # index, so the re-run is a genuine recompute on the same held-out data.
+                if design.get("demonstration_confirm_index") is not None:
+                    spec["confirm_index"] = design["demonstration_confirm_index"]
+                    spec["split_meta"] = design.get("demonstration_split_meta")
         try:
             demo = await asyncio.to_thread(
                 plugin.run_demonstration, spec, data_spec,
@@ -1992,9 +2792,166 @@ class ExperimentDriver:
             await get_bus().publish(
                 make_event("demonstration", run_id=self.run_id,
                            payload={"computed": True, "form": demo.get("form"),
-                                    "holds": demo.get("holds"), "statistic": demo.get("statistic")})
+                                    "holds": demo.get("holds"), "statistic": demo.get("statistic"),
+                                    "capability": demo.get("capability"),
+                                    # the negative-control split (AI-authored path) — what makes
+                                    # `holds` honest: the effect must fire on test AND vanish on control
+                                    "test_statistic": demo.get("test_statistic"),
+                                    "control_statistic": demo.get("control_statistic"),
+                                    "audit_refuted": demo.get("audit_refuted"),
+                                    # K1 explore->confirm seal: was it applied, and on what split?
+                                    "exploration_applied": demo.get("exploration_applied"),
+                                    "n_confirm": demo.get("n_confirm"),
+                                    "split_meta": demo.get("split_meta")})
             )
         return demo
+
+    async def _audit_demonstration(
+        self, design: dict, demo_result: dict | None
+    ) -> tuple[bool | None, bool]:
+        """Independently AUDIT an AI-authored demonstration with the AUTHOR vendor EXCLUDED
+        (genuine cross-vendor independence, not Opus reviewing its own code). A refuting audit
+        (gate did not pass) FORCES ``holds=False`` on the result — the auditor's adversarial
+        finding cannot be overridden by the author — so the formulation claim becomes
+        ``refuted``.
+
+        Returns ``(audit_passed, audit_error)``, keeping the distinct states apart:
+        - ``(True, False)``  — audit ran and PASSED with >= the vendor floor of auditors;
+        - ``(False, False)`` — audit ran and REFUTED / was not independent (forces holds=False);
+        - ``(None, True)``   — NO USABLE independent verification: the audit infrastructure
+          errored, OR it approved with fewer distinct auditors than ``min_review_vendors``
+          (a one-survivor approval is not adequate independent verification). ``holds`` is
+          left untouched (missing verification is NOT a refutation), strength caps at `weak`;
+        - ``(None, False)``  — no audit applicable (not an AI-authored demo, disabled, dry-run,
+          or no formulation claim).
+
+        A refuting audit keeps its fail-closed force regardless of panel size — one adversarial
+        finding is enough to block, but one approval is not enough to verify.
+
+        Mutates ``demo_result`` in place (the same dict ``_finalize_claims`` reads)."""
+        if self.dry_run:
+            return None, False
+        if not isinstance(demo_result, dict) or not demo_result.get("preregistration"):
+            return None, False  # only AI-authored demonstrations carry a pre-registration
+        fid = self._claim_ids.get("formulation")
+        # K1 seal #5 (DETERMINISTIC, runs FIRST, harness-owned): refute a pre-registered threshold
+        # that is inconsistent with the AI's OWN exploration observations (doom-to-zero /
+        # control-not-silent / trivially-easy) WITHOUT the LLM. The cross-vendor auditor below is
+        # the second, softer layer — never the only seal-#5 guard.
+        exploration = design.get("demonstration_exploration")
+        prereg_rule = demo_result.get("preregistration") or {}
+        if exploration and prereg_rule:
+            consistent, reason = self._prereg_consistent_with_exploration(prereg_rule, exploration)
+            if not consistent:
+                demo_result["holds"] = False
+                demo_result["audit_refuted"] = True
+                if fid:
+                    await asyncio.to_thread(
+                        attach_claim_evidence, fid, "audit", "reject",
+                        f"deterministic seal #5 refutation: {reason}",
+                    )
+                await get_bus().publish(make_event("demonstration_audit", run_id=self.run_id, payload={
+                    "verdict": "reject", "gate_passed": False, "auditors": [],
+                    "deterministic": True, "reason": reason}))
+                await get_bus().publish(make_event("demonstration", run_id=self.run_id, payload={
+                    "computed": True, "form": demo_result.get("form"), "holds": False,
+                    "statistic": demo_result.get("statistic"),
+                    "capability": demo_result.get("capability"),
+                    "test_statistic": demo_result.get("test_statistic"),
+                    "control_statistic": demo_result.get("control_statistic"),
+                    "audit_refuted": True,
+                    "exploration_applied": demo_result.get("exploration_applied"),
+                    "n_confirm": demo_result.get("n_confirm"),
+                    "split_meta": demo_result.get("split_meta")}))
+                return False, False
+        if not getattr(get_settings(), "demonstration_audit_enabled", True):
+            # AI-authored demonstration, but audit explicitly disabled: not a refutation, but
+            # also not independently verified. Cap strength the same way as an audit infra error.
+            if fid:
+                await asyncio.to_thread(
+                    attach_claim_evidence, fid, "audit", "disabled",
+                    "independent demonstration audit disabled; strength capped",
+                )
+            await get_bus().publish(make_event("demonstration_audit", run_id=self.run_id, payload={
+                "verdict": "disabled", "gate_passed": None, "auditors": []}))
+            return None, True
+        payload = {
+            "demonstration_code": str(design.get("demonstration_code", ""))[:20000],
+            "test_statistic": demo_result.get("test_statistic"),
+            "control_statistic": demo_result.get("control_statistic"),
+            "preregistration": demo_result.get("preregistration"),
+            "probes": demo_result.get("probes"),
+            "detail": demo_result.get("detail"),
+        }
+        try:
+            panel = await self.gateway.review(
+                "demonstration_audit", payload, self.run_id, run_id=self.run_id,
+                dry_run=self.dry_run, exclude_vendors={"anthropic"},  # exclude the Opus AUTHOR
+            )
+        except Exception as exc:  # noqa: BLE001 - the audit must never kill the run
+            # The audit INFRASTRUCTURE errored — the demonstration was never independently
+            # reviewed, which is NOT a refutation (the refuted/not-evaluated distinction):
+            # leave ``holds`` untouched, but fail closed on STRENGTH via ``audit_error=True``
+            # (``_claim_strength`` caps the formulation claim to ``weak`` — an unaudited
+            # AI-authored demonstration must not carry independent-verification strength —
+            # yet the claim is NOT marked ``refuted``, since the audit never ran).
+            await get_bus().publish(make_event("demonstration_audit", run_id=self.run_id, payload={
+                "verdict": "error", "gate_passed": None, "auditors": [],
+                "error": str(exc)[:200]}))
+            if fid:
+                await asyncio.to_thread(
+                    attach_claim_evidence, fid, "audit", "error",
+                    f"independent demonstration audit could not run: {str(exc)[:200]}",
+                )
+            return None, True
+        audit_passed = bool(panel.gate_passed)
+        # independence guard: if the Anthropic author somehow appears in the panel, treat the
+        # audit as NOT independent -> fail closed (cannot be trusted as a real audit).
+        auditors = {c.critic_id for c in (getattr(panel, "critiques", None) or [])}
+        if "anthropic" in auditors:
+            audit_passed = False
+        # vendor floor (mirrors the results gate's min_review_vendors): a PASSING audit on
+        # fewer distinct auditors — e.g. every provider but one errored out — is NOT adequate
+        # independent verification. Degrade (strength caps at `weak` via audit_error) WITHOUT
+        # refuting; only a genuine adversarial rejection forces holds=False.
+        min_vendors = int(getattr(get_settings(), "min_review_vendors", 2))
+        if audit_passed and len(auditors) < min_vendors:
+            if fid:
+                await asyncio.to_thread(
+                    attach_claim_evidence, fid, "audit", "degraded",
+                    f"audit approved but with only {len(auditors)} independent auditor(s) "
+                    f"(< {min_vendors}) — not adequate verification; strength capped",
+                )
+            await get_bus().publish(make_event("demonstration_audit", run_id=self.run_id, payload={
+                "verdict": "degraded", "gate_passed": None, "auditors": sorted(auditors),
+                "n_auditors": len(auditors), "min_vendors": min_vendors}))
+            return None, True
+        if not audit_passed:
+            demo_result["holds"] = False  # a refuting/non-independent audit -> refuted
+            demo_result["audit_refuted"] = True
+            # re-publish the demonstration with the audit's mutation applied, so the event
+            # stream / e2e summary / UI reflect the POST-audit verdict instead of the stale
+            # snapshot emitted at compute time (seen live: summary showed audit_refuted=null
+            # while the audit verdict was reject).
+            await get_bus().publish(make_event("demonstration", run_id=self.run_id, payload={
+                "computed": True, "form": demo_result.get("form"),
+                "holds": False, "statistic": demo_result.get("statistic"),
+                "capability": demo_result.get("capability"),
+                "test_statistic": demo_result.get("test_statistic"),
+                "control_statistic": demo_result.get("control_statistic"),
+                "audit_refuted": True,
+                "exploration_applied": demo_result.get("exploration_applied"),
+                "n_confirm": demo_result.get("n_confirm"),
+                "split_meta": demo_result.get("split_meta")}))
+        if fid:
+            await asyncio.to_thread(
+                attach_claim_evidence, fid, "audit", str(panel.consensus_verdict),
+                f"independent demonstration audit (author-excluded): {panel.consensus_verdict}",
+            )
+        await get_bus().publish(make_event("demonstration_audit", run_id=self.run_id, payload={
+            "verdict": panel.consensus_verdict, "gate_passed": panel.gate_passed,
+            "auditors": sorted(auditors)}))
+        return audit_passed, False
 
     _DEFAULT_RAG_PROMPT = (
         "Answer the question using ONLY the context. Be concise (a short phrase). "
@@ -2362,8 +3319,15 @@ class ExperimentDriver:
         # SOTA claim now stands on STRUCTURED rows (Phase H): find the best comparable
         # published number on the headline metric family and compute a real win/loss.
         best_sota, comparable, beat = self._compare_to_sota(hk, hv)
-        if not comparable:
-            sota_text = f"No structured SOTA row comparable on {hk}; known reference: {sota}."
+        if not comparable or best_sota is None:
+            # best_sota is None with comparable rows when there is NO headline value to
+            # compare (the performance eval produced no metrics) — no comparison happened.
+            sota_text = (
+                f"No structured SOTA row comparable on {hk}; known reference: {sota}."
+                if not comparable
+                else f"No headline {hk} was measured (performance eval produced no metrics); "
+                f"{len(comparable)} comparable SOTA row(s) exist but no comparison is possible."
+            )
             sota_strength = "weak"
         else:
             rel = "beats" if beat else "does not beat"
@@ -2388,7 +3352,7 @@ class ExperimentDriver:
         await asyncio.to_thread(
             create_claim, self.run_id,
             claim_text=sota_text, claim_type="sota", strength=sota_strength,
-            status=("supported" if comparable else "unverified"),
+            status=("supported" if (comparable and best_sota is not None) else "unverified"),
             experiment_id=exp_id, created_by="write_up", stage="write_up",
             evidence=sota_evidence,
         )
@@ -2456,13 +3420,12 @@ class ExperimentDriver:
                 update_claim, self._claim_ids["metric"],
                 claim_text=f"Under grouped CV, {design.get('model')} attains {hk}={hv}{usfx}.",
             )
-        # the claim table the writer must obey (only supported & ≥moderate claims may
-        # be stated strongly; speculative / unverified / weak ones must be labeled).
+        # the claim table the writer must obey. The ledger is the source of truth: analysis text
+        # can suggest interpretations, but only ledger-supported, sufficiently strong claims can
+        # be written as findings.
         claims = await asyncio.to_thread(list_claims, self.run_id, exp_id)
-        claim_table = "\n".join(
-            f"- [{c['claim_type']}] strength={c['strength']} status={c['status']}: {c['claim_text']}"
-            for c in claims
-        ) or "- (no claims recorded)"
+        claim_policy = self._writeup_claim_policy(claims)
+        claim_table = claim_policy["table"]
         degraded_note = (
             "The headline rests on a DEGRADED (plain-KFold) protocol — do NOT state the grouped-CV "
             "result as a strong/headline generalization claim; describe it as preliminary.\n"
@@ -2511,21 +3474,25 @@ class ExperimentDriver:
             "number. Do NOT write a References section — it is appended automatically.\n"
             "In the Method, state the model that ACTUALLY ran (EXECUTED IMPLEMENTATION below); if it differs "
             "from the requested method, say so plainly — never claim a method that was not executed.\n\n"
-            "CLAIM RULES (obey strictly — the report must not imply more than the evidence): only claims with "
-            "status=supported AND strength in {moderate, strong} may be stated as findings; mark weak claims as "
-            "preliminary, and speculative/unverified claims (e.g. novelty) explicitly as such (e.g. 'we did not "
-            "verify novelty against a structured literature search'). Do not assert SOTA superiority beyond the "
-            "curated KNOWN SOTA string. A claim with status=not_evaluated must be reported as not evaluated, "
-            "never as a finding or a refutation.\n"
+            "CLAIM LEDGER IS AUTHORITATIVE: the prose must be a view over the claim ledger, not over the "
+            "analysis narrative alone. State as research findings ONLY the claims listed under ALLOWED FINDINGS. "
+            "If ALLOWED FINDINGS is empty, explicitly say no claim reached finding-grade support. Claims under "
+            "REQUIRED LIMITATIONS must appear as limitations. Claims under NOT FINDINGS may be mentioned only "
+            "with their ledger status/strength: weak=say preliminary, unverified=say unverified, not_evaluated="
+            "say not evaluated, refuted=say refuted. Never convert a NOT FINDING into a positive result.\n"
             f"{degraded_note}{repro_note}{drift_note}{paradigm_note}"
-            f"CLAIM TABLE:\n{claim_table}\n\n"
+            f"ALLOWED FINDINGS:\n{claim_policy['allowed']}\n\n"
+            f"REQUIRED LIMITATIONS:\n{claim_policy['limitations']}\n\n"
+            f"NOT FINDINGS / MUST DOWNGRADE:\n{claim_policy['restricted']}\n\n"
+            f"FULL CLAIM TABLE:\n{claim_table}\n\n"
             f"HYPOTHESIS: {json.dumps(self.hypothesis)}\n"
             f"PLAN: {json.dumps(plan)}\nDESIGN: {json.dumps(design)}\nMETRICS: {json.dumps(metrics)}\n"
             f"REQUESTED METHOD: {requested or 'n/a'}\nEXECUTED IMPLEMENTATION: {impl or 'n/a'}\n"
             f"EVAL PROTOCOL SUMMARY: {eval_summary}\nKNOWN SOTA: {sota}\n"
-            f"ANALYSIS: {analysis}\nCRITIC VERDICT: {rpanel.consensus_verdict}\n\n"
+            f"ANALYSIS (subordinate to the claim ledger): {analysis}\nCRITIC VERDICT: {rpanel.consensus_verdict}\n\n"
             f"CITABLE REFERENCES (cite inline as [n]):\n{cite_list or '(none retrieved)'}"
         )
+        dry_ledger = self._dry_writeup_ledger_text(claim_policy)
         cite_a = "[1]" if refs else ""
         cite_b = "[2]" if len(refs) > 1 else cite_a
         body = await reason_stage(
@@ -2557,7 +3524,7 @@ class ExperimentDriver:
                 f"MAE={metrics.get('mae_holdout')}, RMSE={metrics.get('rmse_holdout')}. See "
                 f"`figures/parity.png`. Protocol: {eval_summary}\n\n"
                 f"## 5. Discussion & Limitations\n\n"
-                f"{analysis or 'The pipeline ran end-to-end under a leakage-aware protocol.'} Known SOTA: {sota}."
+                f"{dry_ledger} Known SOTA: {sota}."
             ),
         )
         report = body.rstrip() + (("\n\n" + references_md) if references_md else "")

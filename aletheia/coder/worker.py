@@ -46,7 +46,7 @@ Return ONLY the code in a single ```python ... ``` block."""
 CANNED_SOLUTION = (
     "def build_pipeline():\n"
     "    from sklearn.ensemble import RandomForestRegressor\n"
-    "    return RandomForestRegressor(n_estimators=200, random_state=42, n_jobs=-1)\n"
+    "    return RandomForestRegressor(n_estimators=200, random_state=42, n_jobs=1)\n"
 )
 
 _CODE_BLOCK = re.compile(r"```(?:python)?\s*(.*?)```", re.DOTALL)

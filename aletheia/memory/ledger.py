@@ -98,6 +98,7 @@ EVIDENCE_KINDS = (
     "dataset",
     "code",
     "reproduction",
+    "credence",  # K2: the campaign's calibrated Beta credence behind a formulation claim's strength
 )
 
 # how a dataset is connected:
@@ -141,6 +142,9 @@ class Experiment(Base):
     code_repo: Mapped[str | None] = mapped_column(String(256))
     code_branch: Mapped[str | None] = mapped_column(String(256))
     parent_experiment_id: Mapped[str | None] = mapped_column(ForeignKey("experiments.id"))
+    # stable content identity so a resumed run REUSES this row instead of inserting a duplicate
+    # (idempotent create). Computed from (run_id, parent, plan, stage). See create_experiment.
+    dedup_key: Mapped[str | None] = mapped_column(String(64), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -191,7 +195,7 @@ class CritiquePanel(Base):
     __tablename__ = "critique_panels"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    target: Mapped[str] = mapped_column(String(32))  # design | direction | results
+    target: Mapped[str] = mapped_column(String(32))  # design | direction | results | demonstration_audit
     target_ref: Mapped[str | None] = mapped_column(String(32))  # ledger id
     consensus_verdict: Mapped[str | None] = mapped_column(String(32))
     gate_passed: Mapped[bool | None] = mapped_column()
@@ -216,6 +220,9 @@ class Claim(Base):
     status: Mapped[str] = mapped_column(String(16), default="proposed")  # CLAIM_STATUSES
     created_by: Mapped[str | None] = mapped_column(String(64))  # stage / actor
     stage: Mapped[str | None] = mapped_column(String(32))
+    # stable content identity so a resumed run UPDATES this claim instead of inserting a duplicate
+    # (idempotent create). Computed from (run_id, experiment_id, claim_type, claim_text).
+    dedup_key: Mapped[str | None] = mapped_column(String(64), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     evidence: Mapped[list["ClaimEvidence"]] = relationship(back_populates="claim")
@@ -234,6 +241,29 @@ class ClaimEvidence(Base):
     note: Mapped[str | None] = mapped_column(Text)
 
     claim: Mapped[Claim] = relationship(back_populates="evidence")
+
+
+class BeliefState(Base):
+    """K2 (epistemic world model): the campaign's calibrated credence ``Beta(alpha, beta)`` for an
+    open-question lineage — "will this line hold on held-out data?". Seeded as a WEAK prior from the
+    scorecard; moved ONLY by a harness-verified confirm-split verdict. A planning aid + an honest
+    progress signal, NEVER a verdict (it never sets ``holds``/``supported``/strength). One row per
+    ``(run_id, question_key)``; the hot path is in-memory on the driver, this is the durable mirror
+    + the cross-round audit trail (alongside the ``belief_prior``/``belief_update`` events)."""
+
+    __tablename__ = "belief_states"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    question_key: Mapped[str] = mapped_column(String(96), index=True)
+    alpha: Mapped[float] = mapped_column(Float)
+    beta: Mapped[float] = mapped_column(Float)
+    n_updates: Mapped[int] = mapped_column(default=0)  # harness-verified confirm-split updates folded in
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (UniqueConstraint("run_id", "question_key", name="uq_belief_run_question"),)
 
 
 class HypothesisScorecard(Base):
@@ -305,6 +335,24 @@ class BudgetEvent(Base):
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class WorkerCache(Base):
+    """A persisted LLM worker result, keyed by (run_id, content hash of the call). Lets a
+    RESUMED run replay the driver and skip every already-completed Claude call (0 tokens,
+    instant), fast-forwarding to the first call that never finished. Only successful results
+    are stored, so a network-failed call re-runs on resume. See aletheia.orchestrator.worker."""
+
+    __tablename__ = "worker_cache"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    cache_key: Mapped[str] = mapped_column(String(64))  # sha256(label|system|model|prompt)
+    label: Mapped[str | None] = mapped_column(String(128))
+    result: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("run_id", "cache_key", name="uq_worker_cache_run_key"),)
+
+
 class ComputeJob(Base):
     __tablename__ = "compute_jobs"
 
@@ -334,6 +382,10 @@ class DataAsset(Base):
     source: Mapped[str] = mapped_column(String(16))  # benchmark | upload | api
     ref: Mapped[str | None] = mapped_column(Text)  # benchmark name | file path | api dataset id
     target_column: Mapped[str | None] = mapped_column(String(128))
+    # explicit feature/composition column (e.g. UCI superconductivity 'material') so the domain
+    # featurizer does NOT fall back to the "first non-numeric column" heuristic — auditable + it
+    # reaches the AI authoring prompt via resolve_data_spec -> data_spec.
+    composition_column: Mapped[str | None] = mapped_column(String(128))
     feature_kind: Mapped[str | None] = mapped_column(String(32))  # e.g. "composition"
     description: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default="needed")  # needed | ready | error

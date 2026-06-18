@@ -101,7 +101,8 @@ def test_openai_compatible_builds_client_with_key_and_base_url(monkeypatch):
     fake_openai = types.ModuleType("openai")
     fake_openai.OpenAI = _FakeClient
     fake_openai.RateLimitError = type("RateLimitError", (Exception,), {})
-    fake_openai.APITimeoutError = type("APITimeoutError", (Exception,), {})
+    fake_openai.APIConnectionError = type("APIConnectionError", (Exception,), {})
+    fake_openai.APITimeoutError = type("APITimeoutError", (fake_openai.APIConnectionError,), {})
     fake_openai.APIStatusError = type("APIStatusError", (Exception,), {"status_code": 500})
     monkeypatch.setitem(sys.modules, "openai", fake_openai)
     fake_settings = types.SimpleNamespace(
@@ -131,3 +132,47 @@ def test_gemini_requires_key(monkeypatch):
     prov = GeminiAPIProvider(CriticConfig(id="gemini", model="gemini-latest"))
     with pytest.raises(RuntimeError, match="GOOGLE_API_KEY"):
         prov.review("instruction", "content")
+
+
+def test_critic_retries_transient_connection_error(monkeypatch):
+    # a momentary APIConnectionError on a flaky direct link must be RETRIED, not drop the vendor
+    # below the audit's cross-vendor floor (this was why grok vanished and the audit fail-closed).
+    import aletheia.critics.providers.openai_compatible as mod
+
+    APIConnErr = type("APIConnectionError", (Exception,), {})
+    fake_openai = types.ModuleType("openai")
+    fake_openai.RateLimitError = type("RateLimitError", (Exception,), {})
+    fake_openai.APIConnectionError = APIConnErr
+    fake_openai.APITimeoutError = type("APITimeoutError", (APIConnErr,), {})  # subclass, as in real openai
+    fake_openai.APIStatusError = type("APIStatusError", (Exception,), {"status_code": 500})
+
+    calls = {"n": 0}
+
+    class _FlakyCompletions:
+        def create(self, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise APIConnErr("Connection error.")  # transient blip on the first attempt
+            msg = types.SimpleNamespace(
+                content='{"verdict":"approve","confidence":0.8,"summary":"ok","findings":[]}'
+            )
+            return types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)])
+
+    class _FakeClient:
+        def __init__(self, api_key, base_url, **kwargs):
+            self.chat = types.SimpleNamespace(completions=_FlakyCompletions())
+
+    fake_openai.OpenAI = _FakeClient
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+    monkeypatch.setattr(mod.time, "sleep", lambda *_a: None)  # no real backoff wait
+    monkeypatch.setattr(mod, "get_settings", lambda: types.SimpleNamespace(
+        vendor_key=lambda _id: "k", vendor_base_url=lambda _id: None,
+        critic_vendor_min_interval_s=0.0,
+    ))
+
+    prov = DeepSeekAPIProvider(
+        CriticConfig(id="deepseek", model="deepseek-chat", base_url="https://api.deepseek.com")
+    )
+    resp = prov.review("instr", "content")
+    assert resp.verdict == "approve"  # recovered on retry instead of dropping the vendor
+    assert calls["n"] == 2            # retried exactly once after the connection blip

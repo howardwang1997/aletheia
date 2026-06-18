@@ -78,9 +78,9 @@ class OpenAICompatibleProvider(CriticProvider):
     def _complete(self, client, instruction: str, content: str) -> CriticResponse:
         # JSON mode is the portable structured-output path across OpenAI-compatible
         # endpoints; the instruction already asks for the JSON schema by field. Retry
-        # transient rate-limit / server errors with backoff — EXCEPT a quota-exhausted
-        # 429 (e.g. GLM 1113), which won't recover in-window, so fail fast.
-        from openai import APIStatusError, APITimeoutError, RateLimitError
+        # transient rate-limit / connection / server errors with backoff — EXCEPT a
+        # quota-exhausted 429 (e.g. GLM 1113), which won't recover in-window, so fail fast.
+        from openai import APIConnectionError, APIStatusError, RateLimitError
 
         delay = 2.0
         last_exc: Exception | None = None
@@ -100,7 +100,10 @@ class OpenAICompatibleProvider(CriticProvider):
                 if _is_quota_exhausted(exc):  # 1113: futile to retry, don't burn the window
                     raise
                 last_exc = exc
-            except APITimeoutError as exc:
+            except APIConnectionError as exc:
+                # APITimeoutError subclasses this, so it covers BOTH timeouts and plain connection
+                # errors (ConnectionRefused / "Connection error"). On a flaky direct link a momentary
+                # blip must be retried, not drop the vendor below the audit's cross-vendor floor.
                 last_exc = exc
             except APIStatusError as exc:
                 if exc.status_code < 500:  # non-transient client error -> don't retry

@@ -14,7 +14,7 @@ Category = Literal[
     "validity", "leakage", "stats", "baseline", "reproducibility", "novelty", "scope", "cost"
 ]
 Verdict = Literal["approve", "approve_with_changes", "reject"]
-Target = Literal["design", "direction", "results"]
+Target = Literal["design", "direction", "results", "demonstration_audit"]
 Stance = Literal["supportive", "adversarial"]
 
 

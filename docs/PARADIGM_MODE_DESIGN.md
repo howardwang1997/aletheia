@@ -165,6 +165,61 @@ All four are concrete artifacts the harness can re-run — so they plug into the
   intermittently-erroring) OpenAI Codex critic being available — the fail-closed fix correctly
   PAUSES such a run rather than fabricating an approval.
 
+- **P5 — the AI-AUTHORED demonstration EXECUTOR: DONE (PRs #59–#61).** P4's executor was limited
+  to hand-coded registered capabilities (one or two per domain). P5 lets the AI AUTHOR the
+  discriminating computation itself while the **harness still owns the verdict** — the frontier
+  move toward general paradigm discovery. The AI writes code; it never decides `holds`.
+
+  The full path (`aletheia/scheduler/driver.py` unless noted):
+
+  ```text
+  IDEATE demonstration spec
+    -> optional frontier override (demonstration_prefer_authored / spec authoring="ai")
+       — default is REGISTERED-FIRST: a registered capability pre-empts authoring (_prefer_authored_demonstration)
+    -> _demonstration_code: the coder authors compute_demonstration(X, y, groups, meta)
+       + a JSON PRE-REGISTRATION (statistic, supported_if, control_silent_if) — committed BEFORE results exist
+    -> static gate: check_code (AST allowlist, required compute_demonstration) + smoke_test_demonstration (dummy data)
+    -> the pre-registration is committed IMMUTABLY to the formulation claim's evidence ledger
+    -> _compute_demonstration: the pre-registration is read BACK from the ledger (not memory),
+       the domain harness stages data (load_data -> featurize -> X,y,groups) and runs the code in a
+       resource-limited subprocess (aletheia/coder/demonstration_runner.py)
+    -> harness applies the decision rule + NEGATIVE CONTROL + leakage/degeneracy probes
+       (domains/base.py: holds = test_triggers AND control_silent AND probes_clean) — never an LLM 'holds'
+    -> _audit_demonstration: an INDEPENDENT cross-vendor audit with the Opus AUTHOR EXCLUDED reviews the code;
+       a refuting / non-independent audit FORCES holds=False (the author cannot override an adversarial finding)
+    -> results gate (paradigm mode)
+    -> _finalize_claims: harness-owned formulation strength + status
+    -> a `claims` event surfaces the final ledger to the UI
+  ```
+
+  Anti-fakeability spine (four independent guards): (1) the pre-registration is committed before
+  any result and read back immutably; (2) a mandatory negative control must stay silent; (3)
+  harness-side leakage/degeneracy probes reject sham/empty controls and non-finite statistics; (4)
+  an author-excluded cross-vendor audit can refute. The AI-authored capability is reachable ONLY by
+  explicit id (`ai_authored_demonstration`), never keyword-matched, and a missing pre-registration
+  or a sandbox failure fails closed to `not_evaluated` — never a silent pass.
+
+  **Audit status is a distinct state, not a bare bool.** `_audit_demonstration` returns
+  `(audit_passed, audit_error)` so the ledger never confuses two different things: an audit that
+  RAN and refuted (`audit_passed is False` → forces `holds=False`, formulation `refuted`) versus an
+  audit that COULD NOT run (`audit_error is True` → `holds` untouched, strength capped at `weak`,
+  but NOT marked refuted — missing independent verification is not evidence against the claim). This
+  mirrors the `not_evaluated` vs `refuted` distinction enforced elsewhere.
+
+  **Domain generality.** The executor is domain-agnostic: any `DomainPlugin` that implements the
+  `load_data` + `featurize` → `(X, y, groups)` contract inherits the AI-authored capability for
+  free. Proven on **molecules** (real ESOL) and on **materials** (Magpie composition features,
+  chemical-system groups — `tests/test_paradigm_p5_materials.py`; real e2e in
+  `scripts/real_ai_demonstration_e2e_materials.py`). **RAG is intentionally out of scope:** its
+  plugin owns a retrieve→answer→score pipeline and deliberately raises `NotImplementedError` in
+  `featurize` (`aletheia/domains/rag/plugin.py`), so it cannot ground an AI-authored demonstration
+  without a separate eval-only path — a known limitation, not a TODO to paper over.
+
+  **Auditability.** A real run leaves a single machine-readable summary under `artifacts/`
+  (`scripts/_e2e_common.py`) recording which route fired (AI-authored vs a registered fallback),
+  the demonstration payload, the audit verdict, and the final claim ledger — so a reviewer can tell
+  whether the frontier path actually fired without scraping the console.
+
 ## What this is NOT
 
 Not a license to pass ungrounded grandiosity. The bar in paradigm mode is arguably *higher*

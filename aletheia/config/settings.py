@@ -143,6 +143,27 @@ class Settings(BaseSettings):
     sandbox_max_memory_mb: int = 4096  # RLIMIT_AS (best-effort on macOS)
     coder_enabled: bool = True  # author a solution.py each run (falls back if it fails the gate)
 
+    # --- AI-authored demonstration (the frontier path) ---
+    # The AI writes the discriminating computation itself (compute_demonstration); the harness
+    # applies its pre-registered decision rule + negative control. Falls back to a registered
+    # capability when disabled or when authoring/gating fails (fail closed).
+    ai_demonstration_enabled: bool = True
+    demonstration_min_samples: int = 20  # min n on BOTH the test and control sides (probe)
+    demonstration_timeout_s: float = 120.0  # wall-clock for the AI demonstration subprocess
+    demonstration_audit_enabled: bool = True  # independent cross-vendor audit of the AI demo
+    # Default routing is REGISTERED-FIRST: a hand-built, already-audited capability grounds the
+    # claim when one keyword-matches, and the AI-authored path is reserved for claims nothing can
+    # currently ground. Set True (or tag a demonstration spec with ``authoring="ai"``) to PREFER
+    # the AI-authored path even when a registered capability matches — the frontier override.
+    # Authoring failure still falls back to the registered capability (fail closed).
+    demonstration_prefer_authored: bool = False
+    # K1 explore->confirm seal: the AI authors an EXPLORATION probe on a disjoint explore subset,
+    # calibrates its pre-registered threshold to what it observed, then the harness CONFIRMS on a
+    # held-out confirm subset the authoring never saw. On any failure (infeasible split, exploration
+    # worker/sandbox error) the run degrades to the blind authoring path, but the formulation claim
+    # is then capped below `strong` (no seal = no independent-of-noise verification).
+    demonstration_explore_confirm_enabled: bool = True
+
     # --- compute backend ---
     # "local"  = restricted subprocess on the host (soft guardrails).
     # "docker" = HARD sandbox: host featurizes + stages X/y, a light no-network
@@ -159,7 +180,43 @@ class Settings(BaseSettings):
     max_concurrent_jobs: int = 2
     wall_clock_hours: float = 24.0
     est_stage_cost_usd: float = 0.10  # estimated cost charged per Opus reasoning stage
+    # optional hard cap on a run's TOTAL tokens (in+out+cache). None = off. Tokens — not USD —
+    # are what the rolling subscription usage window meters (cost reads ~0 under subscription
+    # auth), so this is the knob that bounds a run's contribution to the 5-hour limit.
+    token_cap_per_run: int | None = None
+    # checkpoint / resume: persist each successful worker (Claude) result keyed by content hash so a
+    # re-run of the SAME run_id can replay for free. `enabled` controls WRITING the cache (harmless
+    # always-on — a fresh run_id has an empty cache); `read` is set True only by a resume launch, so a
+    # normal run never short-circuits on the cache (no within-run collisions).
+    resume_cache_enabled: bool = True
+    resume_cache_read: bool = False
+    # weak-network resilience: cap how many live Claude (SDK) calls stream CONCURRENTLY, so a fragile
+    # proxy/tunnel isn't asked to hold many long-lived streams at once (the main ECONNRESET trigger).
+    # None = unlimited (default). And retry a failed call this many OUTER attempts (each opens a fresh
+    # connection and wraps the SDK's own internal retries), with linear backoff between attempts.
+    max_concurrent_workers: int | None = None
+    worker_max_attempts: int = 2
+    worker_backoff_s: float = 8.0
+    # per-call override for the discriminating-demonstration authoring — the longest, most critical
+    # stream and the one that degrades on a proxy reset. Give just that call more patient attempts to
+    # land one clean stream, while everything else keeps the frugal `worker_max_attempts`. None = use
+    # `worker_max_attempts` for it too.
+    authoring_max_attempts: int | None = None
+    # how many CONTENT rounds the demonstration authoring gets within one campaign round: each retry
+    # re-authors with the prior rejection reason (control-not-silent / threshold-doomed / runtime
+    # error) fed back, so more rounds = more chances to fix a flagged DESIGN flaw before the round is
+    # written off as undemonstrated. Distinct from `authoring_max_attempts` (network retries per call).
+    demonstration_authoring_rounds: int = 2
+    # window-aware graceful stop: when the SDK's LIVE 5-hour-window reading reaches this fill (or is
+    # 'rejected'), pause+checkpoint BEFORE launching another expensive stage, instead of slamming the
+    # window to the wall and dying mid-stream. Resume on a fresh window replays the prefix for 0 tokens,
+    # so work spreads across windows rather than burning one. None = off (0..1, e.g. 0.85).
+    window_stop_utilization: float | None = None
     max_experiments_per_campaign: int = 3  # one Run -> up to N linked experiments (go/no-go decides)
+    # K2 S3.5: a paradigm round that produces NO demonstration (e.g. the AI could not author a
+    # threshold consistent with its own exploration) is an informative negative — the campaign may
+    # PIVOT to a different hypothesis this many times before failing closed (pausing the run).
+    campaign_max_pivots: int = 2
 
     # --- hypothesis scorecard (gate low-value experiments before spending compute) ---
     # scores are 0..1; a hypothesis is blocked if it scores below these on the two

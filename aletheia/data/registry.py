@@ -25,6 +25,7 @@ def _to_dict(a: DataAsset) -> dict[str, Any]:
         "source": a.source,
         "ref": a.ref,
         "target_column": a.target_column,
+        "composition_column": a.composition_column,
         "feature_kind": a.feature_kind,
         "description": a.description,
         "status": a.status,
@@ -41,6 +42,7 @@ def register_dataset(
     *,
     ref: str | None = None,
     target_column: str | None = None,
+    composition_column: str | None = None,
     feature_kind: str | None = None,
     description: str | None = None,
     uri: str | None = None,
@@ -55,6 +57,7 @@ def register_dataset(
             source=source,
             ref=ref,
             target_column=target_column,
+            composition_column=composition_column,
             feature_kind=feature_kind,
             description=description,
             uri=uri,
@@ -127,6 +130,7 @@ def attach_local(
     *,
     asset_id: str | None = None,
     target_column: str | None = None,
+    composition_column: str | None = None,
     feature_kind: str | None = "composition",
     description: str | None = None,
 ) -> dict[str, Any] | None:
@@ -151,6 +155,7 @@ def attach_local(
             ref=path,
             profile_json=profile,
             target_column=target_column,
+            composition_column=composition_column,
             feature_kind=feature_kind,
             description=description,
         )
@@ -160,6 +165,7 @@ def attach_local(
         ref=path,
         uri=path,
         target_column=target_column,
+        composition_column=composition_column,
         feature_kind=feature_kind,
         description=description,
         status="ready",
@@ -175,6 +181,7 @@ def attach_url(
     *,
     asset_id: str | None = None,
     target_column: str | None = None,
+    composition_column: str | None = None,
     feature_kind: str | None = "composition",
     description: str | None = None,
 ) -> dict[str, Any] | None:
@@ -195,6 +202,7 @@ def attach_url(
             uri=str(local),
             profile_json=profile,
             target_column=target_column,
+            composition_column=composition_column,
             feature_kind=feature_kind,
             description=description,
         )
@@ -204,6 +212,7 @@ def attach_url(
         ref=url,
         uri=str(local),
         target_column=target_column,
+        composition_column=composition_column,
         feature_kind=feature_kind,
         description=description,
         status="ready",
@@ -219,6 +228,7 @@ def attach_upload(
     *,
     asset_id: str | None = None,
     target_column: str | None = None,
+    composition_column: str | None = None,
     feature_kind: str | None = "composition",
     description: str | None = None,
 ) -> dict[str, Any] | None:
@@ -228,6 +238,7 @@ def attach_upload(
         path,
         asset_id=asset_id,
         target_column=target_column,
+        composition_column=composition_column,
         feature_kind=feature_kind,
         description=description,
     )

@@ -3,11 +3,14 @@ tool so agents persist work-log entries to the single source of truth."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 from aletheia.db import session_scope
 from aletheia.memory.ledger import (
     Artifact,
+    BeliefState,
     BudgetEvent,
     Claim,
     ClaimEvidence,
@@ -20,7 +23,14 @@ from aletheia.memory.ledger import (
     Metric,
     Run,
     SOTAResult,
+    WorkerCache,
 )
+
+
+def _dedup_hash(*parts: Any) -> str:
+    """A stable content fingerprint for idempotent (resume-safe) row creation."""
+    raw = "\0".join("" if p is None else str(p) for p in parts)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def create_run(
@@ -109,8 +119,21 @@ def create_experiment(
 ) -> str:
     """Create an additional Experiment for a campaign round, linked to the prior
     round via ``parent_experiment_id``. Round 1 reuses ``finalize_plan``'s
-    experiment; rounds 2..N use this. Returns the new experiment id."""
+    experiment; rounds 2..N use this. Returns the new experiment id.
+
+    Idempotent: keyed on a content fingerprint of (run_id, parent, plan, stage), so a
+    RESUMED run that replays this round REUSES the existing experiment instead of
+    inserting a duplicate."""
+    key = _dedup_hash(run_id, parent_experiment_id, stage,
+                      json.dumps(plan, sort_keys=True, default=str))
     with session_scope() as s:
+        existing = (
+            s.query(Experiment)
+            .filter(Experiment.run_id == run_id, Experiment.dedup_key == key)
+            .first()
+        )
+        if existing is not None:
+            return existing.id
         exp = Experiment(
             run_id=run_id,
             hypothesis=hypothesis or plan.get("hypothesis"),
@@ -118,6 +141,7 @@ def create_experiment(
             stage=stage,
             status=status,
             parent_experiment_id=parent_experiment_id,
+            dedup_key=key,
         )
         s.add(exp)
         s.flush()
@@ -238,17 +262,27 @@ def get_compute_job(job_id: str) -> dict[str, Any] | None:
 def record_metrics(
     experiment_id: str, metrics: dict[str, float], split: str | None = "test", step: int | None = None
 ) -> None:
+    """Idempotent on the natural key (experiment_id, name, split, step): a resumed run that
+    recomputes the same metrics UPDATES the value in place rather than inserting duplicates."""
     with session_scope() as s:
         for name, value in metrics.items():
-            s.add(
-                Metric(
-                    experiment_id=experiment_id,
-                    name=name,
-                    value=float(value),
-                    split=split,
-                    step=step,
+            existing = (
+                s.query(Metric)
+                .filter(
+                    Metric.experiment_id == experiment_id,
+                    Metric.name == name,
+                    Metric.split == split,
+                    Metric.step == step,
                 )
+                .first()
             )
+            if existing is not None:
+                existing.value = float(value)
+            else:
+                s.add(
+                    Metric(experiment_id=experiment_id, name=name, value=float(value),
+                           split=split, step=step)
+                )
 
 
 def record_artifacts(experiment_id: str, artifacts: list[dict[str, Any]]) -> None:
@@ -309,6 +343,34 @@ def budget_spent(run_id: str, kind: str = "usd") -> float:
         return float(last.cumulative) if last and last.cumulative is not None else 0.0
 
 
+# --- worker result cache (resume / checkpoint) --------------------------------
+
+
+def get_cached_worker(run_id: str, cache_key: str) -> str | None:
+    """Return a previously-stored worker result for this (run, call), or None."""
+    with session_scope() as s:
+        row = (
+            s.query(WorkerCache)
+            .filter(WorkerCache.run_id == run_id, WorkerCache.cache_key == cache_key)
+            .first()
+        )
+        return row.result if row is not None else None
+
+
+def put_cached_worker(run_id: str, cache_key: str, label: str | None, result: str) -> None:
+    """Store a successful worker result, idempotent on (run_id, cache_key)."""
+    with session_scope() as s:
+        existing = (
+            s.query(WorkerCache)
+            .filter(WorkerCache.run_id == run_id, WorkerCache.cache_key == cache_key)
+            .first()
+        )
+        if existing is not None:
+            existing.result = result
+        else:
+            s.add(WorkerCache(run_id=run_id, cache_key=cache_key, label=label, result=result))
+
+
 # --- critic panels (Phase 1) ----------------------------------------------
 
 
@@ -348,8 +410,25 @@ def create_claim(
     evidence: list[dict[str, Any]] | None = None,
 ) -> str:
     """Record a scientific claim + (optionally) attach its evidence in one call.
-    ``evidence`` items: {evidence_kind, evidence_ref, note?}."""
+    ``evidence`` items: {evidence_kind, evidence_ref, note?}.
+
+    Idempotent: keyed on a content fingerprint of (run_id, experiment_id, claim_type,
+    claim_text), so a RESUMED run that replays a stage UPDATES the existing claim (and
+    skips re-attaching its evidence) instead of inserting a duplicate. The returned id is
+    stable across attempts, so the driver's later ``update_claim`` lands on the same row."""
+    key = _dedup_hash(run_id, experiment_id, claim_type, claim_text)
     with session_scope() as s:
+        existing = (
+            s.query(Claim)
+            .filter(Claim.run_id == run_id, Claim.dedup_key == key)
+            .first()
+        )
+        if existing is not None:
+            existing.strength = strength
+            existing.status = status
+            if stage is not None:
+                existing.stage = stage
+            return existing.id
         claim = Claim(
             run_id=run_id,
             experiment_id=experiment_id,
@@ -359,6 +438,7 @@ def create_claim(
             status=status,
             created_by=created_by,
             stage=stage,
+            dedup_key=key,
         )
         s.add(claim)
         s.flush()
@@ -406,6 +486,58 @@ def attach_claim_evidence(
                 note=note,
             )
         )
+
+
+# --- K2 belief state: durable mirror of the campaign's calibrated credences ----------------
+
+def upsert_credence(
+    run_id: str, question_key: str, alpha: float, beta: float, n_updates: int = 0
+) -> None:
+    """Write-through the in-memory credence for an open-question lineage. Upsert by
+    ``(run_id, question_key)`` so the durable row always reflects the latest belief — the credence
+    is a planning aid, never a verdict, so this stores state only (it sets no claim strength)."""
+    with session_scope() as s:
+        row = (
+            s.query(BeliefState)
+            .filter(BeliefState.run_id == run_id, BeliefState.question_key == question_key)
+            .one_or_none()
+        )
+        if row is None:
+            s.add(BeliefState(
+                run_id=run_id, question_key=question_key,
+                alpha=float(alpha), beta=float(beta), n_updates=int(n_updates),
+            ))
+        else:
+            row.alpha = float(alpha)
+            row.beta = float(beta)
+            row.n_updates = int(n_updates)
+
+
+def get_credence(run_id: str, question_key: str) -> dict[str, Any] | None:
+    with session_scope() as s:
+        row = (
+            s.query(BeliefState)
+            .filter(BeliefState.run_id == run_id, BeliefState.question_key == question_key)
+            .one_or_none()
+        )
+        if row is None:
+            return None
+        return {"question_key": row.question_key, "alpha": row.alpha, "beta": row.beta,
+                "n_updates": row.n_updates}
+
+
+def list_credences(run_id: str) -> list[dict[str, Any]]:
+    with session_scope() as s:
+        rows = (
+            s.query(BeliefState)
+            .filter(BeliefState.run_id == run_id)
+            .order_by(BeliefState.updated_at.asc())
+            .all()
+        )
+        return [
+            {"question_key": r.question_key, "alpha": r.alpha, "beta": r.beta, "n_updates": r.n_updates}
+            for r in rows
+        ]
 
 
 def list_claims(run_id: str, experiment_id: str | None = None) -> list[dict[str, Any]]:

@@ -10,6 +10,15 @@ from pathlib import Path
 
 # aletheia/paths.py -> parents[1] == repo root
 WORKSPACES_ROOT = Path(__file__).resolve().parents[1] / "workspaces"
+# repo-level, gitignored home for human-inspectable run reports (e.g. e2e summaries, generated
+# papers) — distinct from per-run scratch under ``workspaces/`` and from source docs under ``docs/``.
+ARTIFACTS_ROOT = Path(__file__).resolve().parents[1] / "artifacts"
+
+
+def artifacts_dir() -> Path:
+    """Repo-level artifacts directory for human-inspectable reports (created on demand)."""
+    ARTIFACTS_ROOT.mkdir(parents=True, exist_ok=True)
+    return ARTIFACTS_ROOT
 
 
 def run_workspace(run_id: str) -> Path:

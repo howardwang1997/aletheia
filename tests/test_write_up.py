@@ -9,7 +9,7 @@ import asyncio
 import types
 
 from aletheia.db import create_all
-from aletheia.memory.service import create_run, finalize_plan
+from aletheia.memory.service import create_claim, create_run, finalize_plan
 from aletheia.paths import run_artifacts_dir
 from aletheia.research.citations import numbered_references, to_bibtex
 from aletheia.research.literature import Paper
@@ -57,6 +57,26 @@ def test_references_dedupe_by_key():
     assert len(refs) == 2  # same DOI collapses
 
 
+def test_writeup_claim_policy_separates_findings_limitations_and_nonfindings():
+    policy = ExperimentDriver._writeup_claim_policy([
+        {"claim_type": "metric", "status": "supported", "strength": "moderate",
+         "claim_text": "Grouped CV improved."},
+        {"claim_type": "limitation", "status": "supported", "strength": "moderate",
+         "claim_text": "The requested method did not run."},
+        {"claim_type": "novelty", "status": "unverified", "strength": "speculative",
+         "claim_text": "Novelty was not verified."},
+        {"claim_type": "formulation", "status": "supported", "strength": "weak",
+         "claim_text": "The formulation is preliminary."},
+    ])
+    assert "Grouped CV improved" in policy["allowed"]
+    assert "requested method did not run" in policy["limitations"]
+    assert "Novelty was not verified" in policy["restricted"]
+    assert "formulation" in policy["restricted"] and "preliminary" in policy["restricted"]
+    assert "FINDING_ALLOWED" in policy["table"]
+    assert "REQUIRED_LIMITATION" in policy["table"]
+    assert "NOT_FINDING" in policy["table"]
+
+
 # --- WRITE_UP produces a structured cited paper ---------------------------
 def test_write_up_dry_produces_cited_paper():
     create_all()
@@ -96,3 +116,53 @@ def test_write_up_dry_produces_cited_paper():
 
     bib = (adir / "references.bib").read_text()
     assert "@article{" in bib
+
+
+def test_write_up_dry_uses_claim_ledger_not_analysis_as_verdict():
+    create_all()
+    run_id = create_run("write-up claim ledger test", domain="materials", status="planned")
+    exp_id = finalize_plan(run_id, {"objective": "predict band gap", "domain": "materials"})
+
+    create_claim(
+        run_id,
+        claim_text="The method shows only preliminary grouped-CV evidence.",
+        claim_type="metric",
+        strength="weak",
+        status="supported",
+        experiment_id=exp_id,
+        created_by="test",
+        stage="analysis",
+    )
+    create_claim(
+        run_id,
+        claim_text="Novelty was not verified against structured prior work.",
+        claim_type="novelty",
+        strength="speculative",
+        status="unverified",
+        experiment_id=exp_id,
+        created_by="test",
+        stage="survey",
+    )
+
+    d = ExperimentDriver(run_id, dry_run=True)
+    from aletheia.domains.registry import get_domain_plugin
+    d.profile = get_domain_plugin("materials").profile()
+    d.survey_papers = _papers()
+    d.hypothesis = {"statement": "GBM beats an LCSO baseline", "prediction": "lower LCSO MAE"}
+    result = {
+        "metrics": {"mae": 0.47, "r2": 0.6, "mae_cv_mean": 0.45, "mae_cv_std": 0.03,
+                    "mae_holdout": 0.40, "rmse_holdout": 0.7},
+        "info": {"eval_summary": "LCSO GroupKFold", "model_impl": "RandomForestRegressor"},
+    }
+    rpanel = types.SimpleNamespace(consensus_verdict="approve", gate_passed=True)
+    asyncio.run(d._write_up(
+        {"objective": "predict band gap"}, {"model": "random_forest"},
+        result, "Hypothesis supported; this free-form analysis must not become the verdict.",
+        rpanel, exp_id,
+    ))
+
+    report = (run_artifacts_dir(run_id) / "report.md").read_text()
+    assert "No claim reached finding-grade support" in report
+    assert "The method shows only preliminary grouped-CV evidence" in report
+    assert "Novelty was not verified" in report
+    assert "Hypothesis supported" not in report

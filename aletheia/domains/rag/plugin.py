@@ -142,7 +142,7 @@ class RagEvalPlugin(DomainPlugin):
             {"model": "lexical_k5", "k": 5},
         ]
 
-    def profile(self) -> DomainProfile:
+    def profile(self, target_column: str | None = None) -> DomainProfile:
         from aletheia.research.literature import Paper
 
         return DomainProfile(
