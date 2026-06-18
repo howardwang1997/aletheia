@@ -31,23 +31,28 @@ reliable autonomous frontier scientist.
 2. **AI-authored demonstration harness — mostly done, still hardening.** The AI can author a
    `compute_demonstration`, but the harness owns `holds` through pre-registration, negative
    controls, probes, audit, and claim finalization. Molecules and materials exercise this path.
-3. **Exploratory -> confirmatory demonstrations — next keystone.** The AI should calibrate on an
-   exploration partition, commit a pre-registered threshold, then be judged only on a disjoint
-   confirmation partition. This makes a real holding result reachable without weakening the
-   anti-fakeability spine.
-4. **Campaign learning loop — missing.** A refuted or unstable demonstration should feed back into
-   the next hypothesis/design instead of starting from a fresh blind guess. This is the transition
-   from one-shot automation to a research program.
-5. **Strong novelty/SOTA grounding — partial.** Literature retrieval, structured findings, and SOTA
-   rows exist, but novelty and SOTA claims still need stronger health checks and prior-work mapping
-   before the system can reliably tell new science from a rephrased known idea.
+3. **Exploratory -> confirmatory demonstrations (K1) — built, hardening.** The AI calibrates a
+   threshold on an exploration partition, commits a pre-registration, then is judged ONLY on a
+   disjoint confirmation partition; a deterministic seal rejects doom-to-zero / control-not-silent /
+   trivially-easy thresholds. A real holding result is reachable without weakening the spine.
+4. **Campaign learning loop (K2) — built, hardening.** A refuted or unstable demonstration's *typed
+   outcome reason* feeds the next round's hypothesis/design (no fresh blind guess); a calibrated
+   belief credence moves ONLY on a harness confirm-split verdict; acceptance scores one final verdict
+   per round. This is the transition from one-shot automation to a research *program*.
+5. **Strong novelty/SOTA grounding — partial, improving.** Literature retrieval, structured findings,
+   SOTA rows, and a cross-vendor *direction gate* (which rejects "repackaged applicability-domain"-type
+   claims) exist; a staged probe pipeline now triangulates *novel-and-holds* candidates cheaply before
+   a live run. Still needs stronger automated prior-work mapping to tell new science from a rephrased
+   known idea — and discovery is still human-screened, not autonomous (see Status).
 6. **Reproducible research bundle — partial.** The final output should be a stable bundle containing
    the question, literature, data card, split metadata, code, artifacts, metrics, claims, audits,
    reproduction, limitations, paper, and reproducibility package/PR.
 
-Roughly: keystones 1-2 are substantially built, keystone 3 is the next implementation target, and
-keystones 4-6 are the remaining large steps before Aletheia can credibly claim autonomous frontier
-science rather than a well-guarded research execution system.
+Roughly: keystones 1-4 are substantially built (the evidence spine, the AI-authored demonstration
+harness, the explore->confirm seal, and the campaign learning loop, all offline-green); 5-6 are
+partial. The owed milestone is a **live end-to-end FULL run** that lands a harness-verified,
+cross-vendor-audited, belief-moving result on a real dataset — a cuprate-Tc diagnostic is wired and
+verified offline, awaiting its live run.
 
 ## Invariants (the safety/quality spine — never traded for a feature)
 
@@ -146,14 +151,22 @@ conda run -n aletheia python scripts/export_transcript.py --all      # every run
 
 ## Status
 
-The full deterministic research lifecycle runs end-to-end in **dry-run** (DB → event-bus
-→ SSE, no model calls) and is exercised by the test suite. Built out through Phases G–P:
-fail-closed guardrails, an evidence/claims ledger, structured literature + SOTA tables,
-hypothesis scorecards, a reproduction pass, an EIG-ranked experiment planner, and the first
-AI-application domain (RAG: lexical & dense retrieval, host-side LLM generation,
-cross-vendor faithfulness) alongside the materials and molecules regression domains.
+The deterministic lifecycle runs end-to-end (dry-run + real), exercised by the test suite
+(**~420 tests, offline-green**). On top of Phases G–P (fail-closed guardrails, evidence/claims
+ledger, literature + SOTA tables, scorecards, reproduction, EIG-ranked planner, the RAG / materials
+/ molecules domains), the **anti-fakeability spine** is built and hardened: the AI authors a
+sandboxed `compute_demonstration`, but the harness owns `holds` via pre-registration + negative
+control + leakage probes + an independent **cross-vendor audit** (author vendor excluded); the
+**explore→confirm seal (K1)** and the **campaign learning loop (K2)** are in. Real runs have
+happened (live Opus + real cross-vendor critics + real training on matbench / ESOL / UCI
+superconductivity); a verified, novel-*and*-holds diagnostic (a cuprate-Tc model blind spot) is
+wired for a live K2 campaign.
 
-**Honest caveat:** this is breadth of *machinery*, not yet depth of *result*. Every domain
-has so far been exercised on small / synthetic data; a substantive real run (real models,
-real dataset, confronting real failure) is the next milestone — not more breadth. See
-`docs/PROJECT_REVIEW.md` and `docs/AUTONOMOUS_RESEARCH_ROADMAP.md`.
+**Honest caveat:** a clean **live FULL** — a harness-verified, reproduced, cross-vendor-audited,
+belief-moving result in a single multi-round run — has **not yet landed** (it is the owed next
+milestone; runs go in a separate terminal, see `docs/CLAUDE_CODE_AUP_FALSE_POSITIVE_NOTES_2026_06_04.md`).
+And the cuprate effect was **pre-screened** by the probe pipeline, so a successful FULL would
+demonstrate a *guarded, audited research loop on a real dataset* — **not yet autonomous discovery**.
+The next maturity gap is to move from "run a pre-screened verified candidate" to "autonomously
+discover, justify, test, and refine candidates." See `docs/PROJECT_REVIEW.md`,
+`docs/AUTONOMOUS_RESEARCH_ROADMAP.md`, and `docs/K2_CUPRATE_CAMPAIGN_PLAN_2026_06_16.md`.
