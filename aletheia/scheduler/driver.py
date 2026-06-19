@@ -164,6 +164,7 @@ class ExperimentDriver:
         self.survey_sota: list[dict[str, Any]] = []  # structured SOTAResult rows (curated + extracted)
         self.survey_weak: bool = False  # retrieval health: too few citable papers to ground novelty
         self.hypothesis: dict[str, Any] = {}  # the hypothesis chosen by IDEATE
+        self._discovered_demo: dict[str, Any] | None = None  # {code, prereg} from the discovery stage
         self.profile: DomainProfile | None = None  # the domain's vocabulary (set in _run)
         self.plugin: Any = None  # the resolved DomainPlugin (set in _run)
         self.domain: str | None = None  # the run's domain name (materials | molecules | …)
@@ -612,10 +613,77 @@ class ExperimentDriver:
             f"{lines}\n\n"
         )
 
+    async def _discover(self, plan: dict, exp_id: str | None) -> bool:
+        """Autonomous discovery STAGE (gated by ``discovery_enabled``): run the divergent ideate ->
+        self-triage loop (aletheia.research.discovery). On a survivor, ADOPT its hypothesis + its
+        already-screened demonstration (set ``self.hypothesis`` + ``self._discovered_demo``) and return
+        True; the direction gate is then skipped (the loop already cleared the cross-vendor novelty
+        gate) and ``_demonstration_code`` reuses the survivor's code. Best-effort: ANY failure -> False
+        (the caller falls back to single-shot ideation). Claude-free (non-author ideator + audit)."""
+        import numpy as _np
+
+        from aletheia.research.discovery import discover, make_vendor_ideator, materials_ideate_context
+
+        s = get_settings()
+        try:
+            await self._status("discovering", "generating + self-screening candidates")
+            plugin = self.plugin or (get_domain_plugin(self.domain) if self.domain else None)
+            if plugin is None:
+                return False
+            data_spec = resolve_data_spec(self.run_id)
+            df = await asyncio.to_thread(plugin.load_data, data_spec)
+            X, y, _names, groups = await asyncio.to_thread(plugin.featurize, df, {"random_state": 42})
+            X = _np.asarray(X, dtype=float)
+            y = _np.asarray(y, dtype=float)
+            vid = s.discovery_ideator_vendor
+            vc = next((c for c in s.critics.active if c.id == vid and c.transport == "api"), None)
+            key = s.vendor_key(vid) if vc else None
+            if not vc or not key:
+                await get_bus().publish(make_event("discovery", run_id=self.run_id,
+                                                   payload={"status": "no_ideator", "vendor": vid}))
+                return False
+            ideate = make_vendor_ideator(
+                vc.model, s.vendor_base_url(vid) or vc.base_url, key,
+                context=materials_ideate_context(6, str(data_spec.get("target_column") or "the target")))
+            survivors, rows = await asyncio.to_thread(
+                discover, ideate_fn=ideate, plugin=plugin, X=X, y=y, groups=groups,
+                gateway=self.gateway, run_id=self.run_id,
+                k_survivors=int(s.discovery_k_survivors), max_rounds=int(s.discovery_max_rounds),
+                log=lambda *_a: None)
+            await get_bus().publish(make_event("discovery", run_id=self.run_id, payload={
+                "status": "done", "screened": len(rows), "n_survivors": len(survivors),
+                "survivors": [r["title"] for r in survivors]}))
+            if not survivors:
+                return False
+            cand = survivors[0]["candidate"]
+            claim = str(cand.get("claim") or cand.get("title") or "discovered effect")
+            self.hypothesis = {
+                "statement": claim, "rationale": str(cand.get("insight", "")),
+                "novelty_note": str(cand.get("insight", "")), "contribution_type": "paradigm",
+                "demonstration": {"form": "discriminating_instance", "claim": claim, "capability": "ai_authored"},
+                "discovery_sourced": True,
+            }
+            self._discovered_demo = {"code": cand["code"], "prereg": cand["prereg"]}
+            if exp_id:
+                await asyncio.to_thread(set_experiment_hypothesis, exp_id, claim)
+            await self._index("hypothesis", claim, exp_id)
+            return True
+        except Exception as exc:  # noqa: BLE001 - discovery is best-effort; fall back to ideation
+            await get_bus().publish(make_event("discovery", run_id=self.run_id,
+                                               payload={"status": "error", "error": str(exc)[:200]}))
+            return False
+
     async def _ideate(self, plan: dict, exp_id: str | None) -> dict:
         """IDEATE: from the survey + gaps, generate testable hypotheses and pick the
         most novel + feasible one. Persist it to the experiment. Mirrors the
-        hypothesis-generation workflow."""
+        hypothesis-generation workflow.
+
+        When ``discovery_enabled``, run the autonomous discovery loop (divergent ideate -> self-triage)
+        IN PLACE OF single-shot ideation; if it banks a survivor, adopt its hypothesis + verified
+        demonstration and skip the normal path (the loop already cleared the novelty gate). If discovery
+        yields nothing, fall through to single-shot ideation."""
+        if get_settings().discovery_enabled and await self._discover(plan, exp_id):
+            return self.hypothesis
         await self._status("ideating", "forming a hypothesis")
         prompt = (
             f"PLAN:\n{json.dumps(plan, indent=2)}\n\n"
@@ -816,6 +884,12 @@ class ExperimentDriver:
     async def _direction_gate(self, plan: dict, exp_id: str | None) -> bool:
         """Novelty + feasibility gate on the chosen hypothesis (cross-model peer review,
         target='direction'). Bounded re-ideation on reject; escalate + pause past the limit."""
+        if self.hypothesis.get("discovery_sourced"):
+            # the autonomous discovery loop already cleared the cross-vendor novelty gate (author
+            # excluded) on this hypothesis — don't re-gate it. (Only reachable when discovery_enabled.)
+            await get_bus().publish(make_event("direction_gate_skipped", run_id=self.run_id, payload={
+                "reason": "discovery-sourced hypothesis already cleared the cross-vendor novelty gate"}))
+            return True
         while True:
             content = {
                 "hypothesis": self.hypothesis, "gaps": self.survey_gaps, "literature": self.survey_brief,
@@ -1206,17 +1280,24 @@ class ExperimentDriver:
         # round (configurable for the frontier campaign, which leans hard on the AI-authored path).
         auth_rounds = max(1, int(get_settings().demonstration_authoring_rounds))
         for attempt in range(auth_rounds):
-            text = await run_worker(
-                self.run_id, "coder", base_prompt + retry_note,
-                system=DEMO_SYSTEM, dry_run=self.dry_run,
-                max_attempts=get_settings().authoring_max_attempts,  # this long stream gets patient retries
-                dry_value="```python\n" + CANNED_DEMO + "```\n```json\n"
-                + json.dumps(CANNED_PREREGISTRATION) + "\n```",
-            )
-            if is_degraded(text):
-                return  # worker unavailable -> fall back to registered capability
-            code = extract_code(text)
-            prereg = extract_preregistration(text)
+            disc = getattr(self, "_discovered_demo", None) if attempt == 0 else None
+            if disc:
+                # autonomous-discovery STAGE: use the survivor's already-screened demonstration code
+                # instead of authoring one. It STILL goes through the same gates below (code-gate,
+                # smoke, valid-prereg, explore/confirm seal, commit) — just sourced from discovery.
+                code, prereg = disc["code"], disc["prereg"]
+            else:
+                text = await run_worker(
+                    self.run_id, "coder", base_prompt + retry_note,
+                    system=DEMO_SYSTEM, dry_run=self.dry_run,
+                    max_attempts=get_settings().authoring_max_attempts,  # the long stream gets patient retries
+                    dry_value="```python\n" + CANNED_DEMO + "```\n```json\n"
+                    + json.dumps(CANNED_PREREGISTRATION) + "\n```",
+                )
+                if is_degraded(text):
+                    return  # worker unavailable -> fall back to registered capability
+                code = extract_code(text)
+                prereg = extract_preregistration(text)
             ok, reasons = check_code(code, required_function=DEMO_REQUIRED_FUNCTION)
             if ok:
                 smoke_ok, smoke_err = await asyncio.to_thread(smoke_test_demonstration, code)

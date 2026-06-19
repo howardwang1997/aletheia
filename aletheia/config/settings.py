@@ -207,6 +207,15 @@ class Settings(BaseSettings):
     # error) fed back, so more rounds = more chances to fix a flagged DESIGN flaw before the round is
     # written off as undemonstrated. Distinct from `authoring_max_attempts` (network retries per call).
     demonstration_authoring_rounds: int = 2
+    # AUTONOMOUS DISCOVERY stage (off by default): when enabled, the driver runs the divergent
+    # ideate -> self-triage loop (aletheia.research.discovery) IN PLACE OF single-shot ideation —
+    # it generates bold candidates with code, self-screens them (code/run/hold/non-trivial/grounded/
+    # novel), and adopts a survivor's hypothesis + its already-verified demonstration code. A
+    # discovery-sourced hypothesis skips the direction gate (the loop already cleared the novelty gate).
+    discovery_enabled: bool = False
+    discovery_k_survivors: int = 1
+    discovery_max_rounds: int = 4
+    discovery_ideator_vendor: str = "grok"  # the (non-author) vendor that proposes candidates+code
     # window-aware graceful stop: when the SDK's LIVE 5-hour-window reading reaches this fill (or is
     # 'rejected'), pause+checkpoint BEFORE launching another expensive stage, instead of slamming the
     # window to the wall and dying mid-stream. Resume on a fresh window replays the prefix for 0 tokens,
