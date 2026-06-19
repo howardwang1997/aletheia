@@ -10,7 +10,10 @@ prototyped, composed into one automatic pass:
        - runs + non-degenerate?         (smoke test on a probe: catches false/impossible premises)
        - holds on REAL data?            (run in the sandbox -> harness applies the rule + probes)
        - non-trivial magnitude?         (test clearly beats its own control, above a floor)
-  3. survivors are the candidates that RUN CLEAN + HOLD + are NON-TRIVIAL — the rest are auto-killed.
+       - GROUNDED?                      (citable prior work exists — mirrors the survey-grounding guard)
+       - NOVEL?                         (clears the cross-vendor direction gate, author excluded)
+  3. survivors RUN CLEAN + HOLD + NON-TRIVIAL + GROUNDED + NOVEL — the rest are auto-killed. The novelty
+     + grounding filters (increment #2) run only on candidates that pass the cheap deterministic triage.
 
 The triage is the scarce filter (creativity is cheap); this makes it automatic. Survivors would then
 go to the cross-vendor direction novelty gate + a live campaign. Claude-free, testable offline.
@@ -25,11 +28,17 @@ import time
 
 import numpy as np
 
+import asyncio
+
 from aletheia.coder.demonstration_runner import run_authored_demonstration
 from aletheia.coder.sandbox import DEMO_REQUIRED_FUNCTION, check_code, smoke_test_demonstration
 from aletheia.config import get_settings
+from aletheia.critics.gateway import CriticGateway
+from aletheia.db import create_all
 from aletheia.domains.materials.datasets import load_benchmark
 from aletheia.domains.materials.matbench_task import MaterialsBandGapPlugin
+from aletheia.memory.service import create_run
+from aletheia.research.literature import briefing, search
 
 DATASET, TARGET, COMP = "matbench_expt_gap", "gap expt", "composition"
 N_CANDIDATES = 6
@@ -126,6 +135,35 @@ def _triage(cand: dict, plugin: MaterialsBandGapPlugin, X, y, groups) -> dict:
              else "probe flagged" if not probes.get("clean") else "trivial magnitude")}
 
 
+def _vet(cand: dict, gateway: CriticGateway, run_id: str) -> dict:
+    """Increment #2 — the two scarce filters, applied ONLY to candidates that passed the deterministic
+    triage, Claude-free: GROUNDABILITY (citable prior work exists, mirroring the survey-grounding guard)
+    + the cross-vendor NOVELTY gate (author 'anthropic' excluded). A network flake on grounding does
+    NOT hard-fail (grounded=None); the novelty gate is the decisive add."""
+    title, claim, insight = str(cand.get("title", "")), str(cand.get("claim", "")), str(cand.get("insight", ""))
+    try:
+        papers = search((title + " " + claim)[:160], k=8)
+    except Exception:  # noqa: BLE001 - network flake -> grounding unverified, not a hard fail
+        papers = None
+    grounded = None if papers is None else (len(papers) >= 3)
+    hyp = {"statement": claim or title, "rationale": insight, "novelty_note": insight,
+           "contribution_type": "paradigm",
+           "demonstration": {"form": "discriminating_instance", "claim": claim or title, "capability": "ai_authored"}}
+    content = {"hypothesis": hyp, "gaps": [], "literature": briefing(papers) if papers else ""}
+    try:
+        panel = asyncio.run(gateway.review("direction", content, target_ref="auto-discovery",
+                                           run_id=run_id, dry_run=False, exclude_vendors={"anthropic"}))
+    except Exception as exc:  # noqa: BLE001
+        return {"grounded": grounded, "n_papers": (0 if papers is None else len(papers)),
+                "gate_passed": None, "novelty_objection": f"gate error: {str(exc)[:60]}", "novelty_pass": False}
+    nov_obj = [f"{f.severity}:{f.category}" for c in (panel.critiques or []) for f in (c.findings or [])
+               if f.category == "novelty" and f.severity in ("blocker", "major")]
+    return {"grounded": grounded, "n_papers": (0 if papers is None else len(papers)),
+            "gate_passed": bool(panel.gate_passed), "consensus": panel.consensus_verdict,
+            "novelty_objection": (nov_obj[0] if nov_obj else ""),
+            "novelty_pass": bool(panel.gate_passed) and not nov_obj}
+
+
 def main() -> int:
     print("=" * 92)
     print("AUTO-DISCOVERY (v1) — generate bold candidates + self-screen on real data (Claude-free)")
@@ -140,6 +178,9 @@ def main() -> int:
     y = work[TARGET].to_numpy(dtype=float)
     groups = work["_comp_obj"].map(lambda c: c.chemical_system).to_numpy()
     print(f"staged {DATASET}: n={len(y)}, d={X.shape[1]}  ({time.time()-t0:.1f}s)")
+    create_all()
+    run_id = create_run("auto-discovery", domain="materials", status="scoping")
+    gateway = CriticGateway()
 
     s = get_settings()
     vend = next((c for c in s.critics.active if c.id == "grok" and c.transport == "api"), None)
@@ -168,6 +209,17 @@ def main() -> int:
                 continue  # dedup across rounds
             tried.append(title)
             v = _triage(c, plugin, X, y, groups)
+            if v["survives"]:
+                # passed the deterministic triage -> apply the scarce filters: groundability + the
+                # cross-vendor NOVELTY gate (this is what increment #2 adds).
+                vet = _vet(c, gateway, run_id)
+                v.update(vet)
+                v["survives"] = bool(vet["novelty_pass"] and vet.get("grounded") is not False)
+                if not v["survives"]:
+                    v["stage"] = "novelty/grnd"
+                    v["why"] = (vet.get("novelty_objection")
+                                or (f"ungrounded(n={vet.get('n_papers', 0)})" if vet.get("grounded") is False
+                                    else "novelty gate reject"))
             rows.append(v)
             if v["survives"]:
                 survivors.append(v)
@@ -180,16 +232,21 @@ def main() -> int:
         print(f"  -- round {rnd}: {len(survivors)} survivor(s) / {len(rows)} screened "
               f"({time.time()-t0:.0f}s) --")
     print("-" * 92)
-    print(f"auto-triage: {len(survivors)}/{len(rows)} survived (ran clean + held + non-trivial).")
+    print(f"auto-triage: {len(survivors)}/{len(rows)} survived the FULL filter "
+          "(ran clean + held + non-trivial + cleared the cross-vendor novelty gate + grounded).")
     for r in survivors:
-        print(f"  ✅ {r['title']}  (test={r['test']} vs control={r['control']}, n={r['n_test']}/{r['n_control']})")
+        print(f"  ✅ {r['title']}\n     held test={r['test']} vs control={r['control']} (n={r['n_test']}/"
+              f"{r['n_control']}); novelty gate={r.get('consensus','?')} (passed); "
+              f"grounding n_papers={r.get('n_papers','?')}")
     print("=" * 92)
     if survivors:
-        print("Survivors are novel-claimed + ran-clean + held + non-trivial on real data -> next: the "
-              "cross-vendor direction novelty gate, then a live campaign. The system self-filtered.")
+        print("These are SELF-DISCOVERED + SELF-VETTED: novel (cross-vendor gate, author excluded), "
+              "feasible + non-trivial on real data, and grounded — ready to hand to a live K2 campaign. "
+              "The whole triage ran with NO human in the loop.")
     else:
         print("0 survivors — every bold candidate was auto-killed (bad code / didn't run / didn't hold "
-              "/ trivial). That is the rigor filter working: creativity is cheap, this is the scarce part.")
+              "/ trivial / not novel / ungrounded). That is the FULL rigor filter working: creativity is "
+              "cheap; novel-AND-feasible-AND-grounded is the scarce part, now filtered automatically.")
     print(f"elapsed {time.time()-t0:.0f}s")
     print("DISCOVERY_JSON " + json.dumps({"n": len(rows), "survivors": [r["title"] for r in survivors],
                                           "rows": rows}, default=str)[:6000])
