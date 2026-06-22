@@ -32,7 +32,9 @@ from real_k2_campaign_e2e import _drive_and_report, _k2_campaign_settings
 
 async def main(timestamp: str) -> None:
     _k2_campaign_settings()
-    get_settings().discovery_enabled = True   # the IDEATE stage runs the discovery loop
+    get_settings().discovery_enabled = True    # the IDEATE stage runs the discovery loop
+    get_settings().discovery_coauthor = True   # grok proposes the ANGLE, Claude writes the CODE
+    #                                            (live-Claude in discovery; this script is OUTSIDE-session)
     create_all()
     run_id = create_run(
         "Real e2e (AUTONOMOUS DISCOVERY): the system generates bold candidates, self-screens them "
@@ -58,7 +60,8 @@ async def main(timestamp: str) -> None:
         "belief is ALSO a successful round. (A single round is a strong PARTIAL, not FULL.)",
         "est_compute": "CPU-only; minutes per round (discovery loop + RF demonstrations + audit)",
     })
-    print(f"run_id={run_id} exp_id={exp_id} discovery_enabled=True\n--- live events ---", flush=True)
+    print(f"run_id={run_id} exp_id={exp_id} discovery_enabled=True discovery_coauthor=True"
+          "\n--- live events ---", flush=True)
     await _drive_and_report(run_id, exp_id, timestamp)
 
 

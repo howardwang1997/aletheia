@@ -168,15 +168,22 @@ def smoke_test_solution(source: str, timeout_s: float = 30.0) -> tuple[bool, str
         return True, ""
 
 
-def smoke_test_demonstration(source: str, timeout_s: float = 30.0) -> tuple[bool, str]:
+def smoke_test_demonstration(source: str, timeout_s: float = 30.0, sample=None) -> tuple[bool, str]:
     """Beyond the static gate: IMPORT the AI-authored demonstration and CALL
-    ``compute_demonstration`` on a synthetic frame in an isolated subprocess, asserting it
+    ``compute_demonstration`` on a small data frame in an isolated subprocess, asserting it
     returns a dict with FINITE ``test_statistic``/``control_statistic`` AND a NON-DEGENERATE
     shape (``n_test``/``n_control`` present, whole, > 0, and <= the probe row count). Catches a
     runtime import/shape error — and the recurring *0-sample / broken-selection* design bug —
     BEFORE the real run, so the authoring loop gets an informed retry instead of burning the
     whole round at confirm time (where the degeneracy is only caught by ``_demonstration_probes``
     after the loop is over). Returns ``(ok, error)``.
+
+    ``sample`` = an optional ``(X, y, groups)`` slice of the REAL data. PASS IT whenever you have
+    the data: the synthetic fallback (200x8 random floats, INTEGER groups) contradicts a domain's
+    actual contract — e.g. materials candidates are told ``groups`` are chemical-system STRINGS
+    ('As-Ga') and parse them (``group.split('-')``), so on integer groups they raise AttributeError
+    or select nothing (degenerate) and get FALSE-KILLED here before ever reaching real data. A real
+    slice gives the true feature dims + group dtype, so only genuinely-broken code is rejected.
 
     Scope note (anti-fakeability): this is a RUNNABILITY + shape check only. It NEVER judges
     whether the statistic is large enough, whether the control is silent, or whether the effect
@@ -185,7 +192,7 @@ def smoke_test_demonstration(source: str, timeout_s: float = 30.0) -> tuple[bool
     unambiguously BROKEN (empty/degenerate sample, impossible count, non-finite output).
 
     Safe: ``source`` already passed ``check_code`` (allowlisted imports, no os/open/exec); here
-    it only runs on a 200x8 random matrix. Same CPU/memory rlimits as training."""
+    it only runs on a small matrix in a subprocess. Same CPU/memory rlimits as training."""
     import subprocess
     import sys
     import tempfile
@@ -194,13 +201,23 @@ def smoke_test_demonstration(source: str, timeout_s: float = 30.0) -> tuple[bool
     with tempfile.TemporaryDirectory() as td:
         sol = Path(td) / "demo.py"
         sol.write_text(source)
+        if sample is not None:
+            import numpy as _np
+            Xs, ys, gs = sample
+            npz = Path(td) / "probe.npz"
+            _np.savez(npz, X=_np.asarray(Xs, dtype=float), y=_np.asarray(ys, dtype=float),
+                      g=_np.asarray(gs, dtype=str))
+            data_setup = (f"d=np.load(r'{npz}', allow_pickle=True);"
+                          "X=d['X'];y=d['y'];g=d['g'];N=len(y);")
+        else:
+            data_setup = ("rng=np.random.default_rng(0);N=200;"
+                          "X=rng.random((N,8));y=rng.random(N);"
+                          "g=np.array([i%10 for i in range(N)],dtype=object);")
         probe = (
             "import importlib.util as u, numpy as np, math;"
             f"s=u.spec_from_file_location('demo', r'{sol}');"
             "m=u.module_from_spec(s);s.loader.exec_module(m);"
-            "rng=np.random.default_rng(0);"
-            "N=200;"
-            "X=rng.random((N,8));y=rng.random(N);g=np.array([i%10 for i in range(N)],dtype=object);"
+            + data_setup +
             "r=m.compute_demonstration(X,y,g,{'random_state':0,'preregistration':{}});"
             "assert isinstance(r,dict),'compute_demonstration must return a dict';"
             "ts=float(r['test_statistic']);cs=float(r['control_statistic']);"

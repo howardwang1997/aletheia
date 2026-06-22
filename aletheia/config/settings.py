@@ -216,6 +216,8 @@ class Settings(BaseSettings):
     discovery_k_survivors: int = 1
     discovery_max_rounds: int = 4
     discovery_ideator_vendor: str = "grok"  # the (non-author) vendor that proposes candidates+code
+    discovery_coauthor: bool = False  # grok proposes the ANGLE, Claude writes the code (live-Claude;
+    #                                   run OUTSIDE-session per AUP). novelty gate then excludes BOTH authors.
     # window-aware graceful stop: when the SDK's LIVE 5-hour-window reading reaches this fill (or is
     # 'rejected'), pause+checkpoint BEFORE launching another expensive stage, instead of slamming the
     # window to the wall and dying mid-stream. Resume on a fresh window replays the prefix for 0 tokens,

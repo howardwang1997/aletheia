@@ -42,5 +42,13 @@ else
 fi
 
 # 3) launch the e2e in the conda env, passing through any args (e.g. --resume <id>).
-echo "[direct] launching e2e (direct) ..."
-exec conda run -n aletheia python scripts/real_k2_campaign_e2e.py "$@"
+#    DEFAULT = the AUTONOMOUS-DISCOVERY ARC (real_discovery_campaign_e2e.py, discovery_enabled=True).
+#    Set CUPRATE=1 to run the cuprate Tc campaign instead. The banner + the header line
+#    ("discovery_enabled=True" for the arc) tell you which one is running.
+if [[ "${CUPRATE:-}" == "1" ]]; then
+  echo "[direct] launching the CUPRATE Tc campaign (CUPRATE=1) ..."
+  exec conda run -n aletheia python scripts/real_k2_campaign_e2e.py "$@"
+else
+  echo "[direct] launching the AUTONOMOUS-DISCOVERY ARC (default — set CUPRATE=1 for the cuprate campaign) ..."
+  exec conda run -n aletheia python scripts/real_discovery_campaign_e2e.py "$@"
+fi

@@ -89,6 +89,151 @@ def make_vendor_ideator(model: str, base_url: str, key: str, *, system: str = ID
     return ideate
 
 
+def materials_angle_context(n: int, target_desc: str = "band gap, eV", gaps=None) -> str:
+    """Like ``materials_ideate_context`` but asks for ANGLES ONLY (no code). Used in CO-AUTHOR mode:
+    grok proposes the oblique angle + pre-registration; a separate expert (Claude) writes the code.
+
+    Tuned against the two empirical failure modes (live run d02df7ee: 16/20 angles NULL, 1 real-but-known):
+    demand a concrete PHYSICAL MECHANISM (abstract feature-statistic fishing is null on the data) and,
+    when given, seed the survey ``gaps`` so angles target unexplored (likelier-novel) territory."""
+    gap_block = ""
+    if gaps:
+        gap_block = ("\n\nThe field's OPEN GAPS from our literature survey — TARGET these (unexplored "
+                     "territory is far likelier to clear the NOVELTY gate):\n- "
+                     + "\n- ".join(str(g)[:160] for g in list(gaps)[:6]))
+    return (
+        f"Propose {n} EXTREMELY NOVEL, oblique research ANGLES about a composition->property MODEL "
+        f"(Magpie composition features -> {target_desc}). DO NOT write code — an expert engineer "
+        "implements each.\n"
+        "TWO failure modes wreck most proposals (observed empirically — avoid BOTH):\n"
+        "  (1) NULL angles: an abstract feature-statistic pattern (e.g. 'kurtosis of feature X on "
+        "subset Y') with NO physical reason shows NO real effect on the data. EVERY angle MUST name a "
+        "concrete PHYSICAL/CHEMICAL MECHANISM — a real reason a composition-AVERAGED model fails on a "
+        "specific, chemically-defined stratum (a structural / electronic / bonding / site-specific "
+        "effect that permutation-invariant composition aggregates provably CANNOT resolve). No "
+        "mechanism => NULL => do not propose it.\n"
+        "  (2) KNOWN effects: a real effect the literature already characterizes fails the novelty gate. "
+        "In particular the TEXTBOOK limitation — 'composition-average / Magpie descriptors cannot encode "
+        "local / site / coordination / structural information' — is KNOWN (it is the exact reason graph "
+        "neural networks like CGCNN were invented); the gate WILL reject any angle that is an instance of "
+        "it, however dressed up (apical-vs-equatorial sites, dimers, lone pairs, hybridization asymmetry "
+        "are ALL this). Do NOT propose 'the model misses [structural/site/local/bonding] effect X'.\n"
+        "Your novelty must instead be SPECIFIC and SURPRISING: a NAMED chemical family (e.g. "
+        "'multi-alkaline-earth cuprates', NOT 'oxides') + a QUANTIFIED mechanism (an actual number — a "
+        "doping level, a bond-length or electron-count threshold, a stoichiometric ratio) that even a "
+        "structure-aware practitioner would NOT predict. Frame it as a rigorously-mapped SPECIFIC failure "
+        "CASE, never a general principle.\n"
+        "EACH angle is JSON: {\"title\": str, \"insight\": str (the PHYSICAL MECHANISM + why composition "
+        "averaging misses it), \"claim\": str (a falsifiable, checkable statement), \"prereg\": "
+        "{\"supported_if\": {\"op\": \">=\"|\">\"|\"<=\"|\"<\", \"threshold\": float}, \"control_silent_if\": "
+        "{\"op\": \"<\"|\"<=\", \"threshold\": float}}}.\n"
+        "The implementer receives X (Magpie composition features, ~132 dims, PERMUTATION-INVARIANT "
+        "aggregates), y (" + target_desc + "), groups (chemical-system STRING per row, e.g. 'As-Ga' = "
+        "the sorted element set), and produces a test_statistic capturing your mechanism on the relevant "
+        "stratum AND a control_statistic that VANISHES (~0) under a permuted-label/strata null.\n"
+        "DO NOT propose (tried, dead): applicability-domain / distance-to-training; error-vs-rarity; "
+        "cliffs; epistemic-vs-aleatoric / Bayes-floor; OR any premise depending on formula STRING ORDER "
+        "(X is permutation-invariant -> NULL)." + gap_block
+        + "\nReturn STRICT JSON: {\"candidates\": [ ... ]}."
+    )
+
+
+CODE_AUTHOR_SYSTEM = (
+    "You are an expert ML-for-science engineer. A colleague hands you a discriminating research ANGLE "
+    "and the exact data contract; you write the CORRECT, ROBUST code that tests it. You are obsessive "
+    "about: (1) the negative control genuinely VANISHING under the null, (2) NEVER returning a 0-sample "
+    "test or control, (3) finite statistics (guard divisions/variances), (4) using ONLY allowed imports. "
+    "Output ONLY one ```python code block."
+)
+
+
+def code_author_prompt(angle: dict, target_desc: str = "band gap, eV") -> str:
+    """The prompt that has Claude implement ``compute_demonstration`` for ONE grok angle, matching the
+    exact contract the harness screens (the same data shape + return dict as ``materials_ideate_context``)."""
+    import json as _json
+    title, insight = str(angle.get("title", "")), str(angle.get("insight", ""))
+    claim, prereg = str(angle.get("claim", "")), angle.get("prereg") or {}
+    return (
+        "Implement EXACTLY `def compute_demonstration(X, y, groups, meta): ...` for this colleague's angle.\n\n"
+        f"TITLE: {title}\nINSIGHT (mechanism): {insight}\nCLAIM (falsifiable): {claim}\n"
+        f"PRE-REGISTERED DECISION RULE (do NOT change it; your statistics must be on its scale): "
+        f"{_json.dumps(prereg)}\n\n"
+        "DATA CONTRACT: X = Magpie composition features (~132 dims, PERMUTATION-INVARIANT aggregates); "
+        "y = " + target_desc + "; groups = a chemical-system STRING per row, e.g. 'As-Ga' (the sorted "
+        "element set — recover elements with group.split('-')); meta = {random_state, preregistration}.\n"
+        "RETURN a dict: {\"test_statistic\": float, \"control_statistic\": float, \"n_test\": int>0, "
+        "\"n_control\": int>0, \"components\": dict, \"detail\": str}. HOLDS is decided by the HARNESS "
+        "(supported_if on test_statistic AND control_silent_if on control_statistic AND probes-clean); "
+        "NEVER return 'holds'.\n"
+        "The control MUST be a real permuted-label/strata negative control that ~vanishes if the effect "
+        "is null. Ensure BOTH n_test and n_control are > 0 on real data (guard empty selections). Make "
+        "statistics finite (guard zero variance / division). Use meta['random_state'] for any split.\n"
+        "HARD RULES (statically checked): import ONLY from sklearn, numpy, scipy, pandas, math, statistics, "
+        "collections, itertools, functools, random, warnings. No file/network/process, no eval/exec/open/"
+        "__import__. Output ONLY the ```python block."
+    )
+
+
+def make_claude_code_author(run_id: str, *, target_desc: str = "band gap, eV", model: str | None = None,
+                            dry_run: bool = False, loop=None, worker=None, extract=None):
+    """Return a SYNC ``author_fn(angle) -> code`` that has CLAUDE write ``compute_demonstration`` for a
+    grok angle (the high-quality path: grok finds the oblique angle, Claude writes correct code).
+
+    The Claude SDK's subprocess transport only works on the MAIN-thread event loop, NOT a fresh loop
+    spun inside a worker thread (unlike the httpx novelty gate). Since ``discover`` runs in a worker
+    thread under the driver (``asyncio.to_thread``), pass the driver's running ``loop`` and the
+    authoring is submitted to it via ``run_coroutine_threadsafe`` (the worker thread blocks on the
+    result). When ``loop is None`` (the fully-synchronous standalone CLI, already on the main thread)
+    it falls back to ``asyncio.run``. Brings live-Claude into discovery -> run OUTSIDE-session per AUP.
+    ``loop``/``worker``/``extract`` injectable for offline tests."""
+    import asyncio as _asyncio
+
+    def author(angle: dict) -> str:
+        _worker, _extract = worker, extract
+        if _worker is None:
+            from aletheia.orchestrator.worker import run_worker as _worker
+        if _extract is None:
+            from aletheia.coder.worker import extract_code as _extract
+        coro = _worker(run_id, "discovery-coder", code_author_prompt(angle, target_desc),
+                       system=CODE_AUTHOR_SYSTEM, model=model, dry_run=dry_run)
+        if loop is not None:  # submit to the driver's main loop (the SDK needs the main thread)
+            text = _asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=600)
+        else:                 # standalone CLI: already on the main thread
+            text = _asyncio.run(coro)
+        return _extract(text) or ""
+
+    return author
+
+
+def make_coauthor_ideator(angle_ideate_fn: IdeateFn, author_fn, log=None) -> IdeateFn:
+    """Combine a grok ANGLE-ideator with a Claude CODE-author into one ``ideate_fn``: grok proposes the
+    oblique angle, Claude writes the code, the harness screens the result. One angle's authoring failing
+    drops only that candidate. Returns candidate dicts carrying both the angle fields AND ``code``.
+
+    ``log`` (default no-op) is called per angle with a progress line — pass ``print`` so the otherwise
+    silent ~6-24 authoring calls keep emitting output (visibility + it stops a stall watcher firing)."""
+    _log = log or (lambda *_a: None)
+
+    def ideate(avoid_titles: list[str], lessons: list[str]) -> list[dict[str, Any]]:
+        angles = [a for a in angle_ideate_fn(avoid_titles, lessons) if isinstance(a, dict)]
+        _log(f"[coauthor] grok proposed {len(angles)} angle(s); Claude authoring code...")
+        out: list[dict[str, Any]] = []
+        for i, a in enumerate(angles):
+            try:
+                code = author_fn(a)
+            except Exception as exc:  # noqa: BLE001 - one angle's authoring failing shouldn't kill the round
+                code, exc_note = "", f" ({type(exc).__name__})"
+            else:
+                exc_note = ""
+            _log(f"[coauthor] {i + 1}/{len(angles)} {'authored' if code else 'FAILED' + exc_note}: "
+                 f"{str(a.get('title', '?'))[:54]}")
+            if code:
+                out.append({**a, "code": code})
+        return out
+
+    return ideate
+
+
 @dataclass
 class Screened:
     title: str
@@ -106,9 +251,18 @@ class Screened:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
+# How far the test effect must dominate its (vanishing) control for the discovery PRE-FILTER to
+# promote a candidate. Decoupled from grok's blind supported_if threshold; the campaign's
+# explore/confirm sets the rigorous bar downstream.
+_DISCOVERY_SEP_RATIO = 3.0
+
+
 def screen_deterministic(cand: dict, plugin, X, y, groups) -> Screened:
     """Cheap, deterministic, Claude-free: prereg-valid -> code-gate -> runnable/non-degenerate ->
-    runs+holds on REAL data -> non-trivial magnitude. Returns a Screened (survives = passed all)."""
+    runs on REAL data -> the effect SEPARATES from a vanishing control. Returns a Screened (survives =
+    passed all). The promote-or-not decision is judged on OBSERVED separation, NOT grok's blind
+    supported_if threshold (guessed before seeing data) — that bar mis-killed real effects with clean
+    controls. The candidate's prereg is still carried for the campaign's rigorous explore/confirm."""
     title = str(cand.get("title", "?"))
     code = cand.get("code") or ""
     prereg = cand.get("prereg") or {}
@@ -117,7 +271,18 @@ def screen_deterministic(cand: dict, plugin, X, y, groups) -> Screened:
     ok, reasons = check_code(code, required_function=DEMO_REQUIRED_FUNCTION)
     if not ok:
         return Screened(title, "code_gate", False, str(reasons[:2]))
-    smoke_ok, smoke_err = smoke_test_demonstration(code)
+    # Smoke-test on a REAL-data slice (true feature dims + group dtype), NOT the synthetic
+    # 8-col/integer-group fallback: candidates parse `groups` as chemical-system strings, so the
+    # fallback would false-kill them (AttributeError / degenerate selection) before the real run.
+    import numpy as _np
+    _ya = _np.asarray(y)
+    _n = len(_ya)
+    if _n > 1024:
+        _idx = _np.random.default_rng(0).choice(_n, size=1024, replace=False)
+        _sample = (_np.asarray(X)[_idx], _ya[_idx], _np.asarray(groups, dtype=str)[_idx])
+    else:
+        _sample = (_np.asarray(X), _ya, _np.asarray(groups, dtype=str))
+    smoke_ok, smoke_err = smoke_test_demonstration(code, sample=_sample)
     if not smoke_ok:
         return Screened(title, "runnability", False, smoke_err[:120])
     res = run_authored_demonstration(code, X, y, groups, {"random_state": 0, "preregistration": prereg})
@@ -125,20 +290,27 @@ def screen_deterministic(cand: dict, plugin, X, y, groups) -> Screened:
         return Screened(title, "run_real", False, "did not run on real data")
     probes = plugin._demonstration_probes(res)
     ts, cs = float(res.get("test_statistic")), float(res.get("control_statistic"))
-    triggers = plugin._apply_rule(ts, prereg["supported_if"])
     silent = plugin._apply_rule(cs, prereg["control_silent_if"])
-    holds = bool(triggers and silent and probes.get("clean"))
-    nontrivial = abs(ts - cs) >= max(1e-9, 0.5 * abs(float(prereg["supported_if"]["threshold"]) or 1e-9))
-    why = "" if (holds and nontrivial) else (
-        "control fired" if not silent else "test did not trigger" if not triggers
-        else "probe flagged" if not probes.get("clean") else "trivial magnitude")
-    return Screened(title, "scored", holds and nontrivial, why, round(ts, 4), round(cs, 4),
-                    int(res.get("n_test", 0)), int(res.get("n_control", 0)), holds)
+    # Decoupled from grok's blind supported_if: a candidate is worth promoting if its control VANISHES
+    # (silent) AND the test effect DOMINATES that vanishing control by >= _DISCOVERY_SEP_RATIOx. Uses
+    # the control's own scale (its observed magnitude, floored by the silent-bar) so it is scale-free.
+    control_bar = abs(float(prereg["control_silent_if"].get("threshold", 0.0) or 0.0)) or 1e-9
+    separated = abs(ts) >= _DISCOVERY_SEP_RATIO * max(abs(cs), control_bar)
+    clean = bool(probes.get("clean"))
+    survives = bool(silent and separated and clean)
+    why = "" if survives else (
+        "control fired" if not silent
+        else "effect too small vs control" if not separated
+        else "probe flagged")
+    return Screened(title, "scored", survives, why, round(ts, 4), round(cs, 4),
+                    int(res.get("n_test", 0)), int(res.get("n_control", 0)), survives)
 
 
-def screen_novelty_grounding(cand: dict, gateway, run_id: str, *, search_fn, briefing_fn) -> dict:
-    """The two scarce filters, Claude-free: GROUNDABILITY (citable prior work) + the cross-vendor
-    NOVELTY gate (author 'anthropic' excluded). A network flake -> grounded=None (not a hard fail)."""
+def screen_novelty_grounding(cand: dict, gateway, run_id: str, *, search_fn, briefing_fn,
+                             exclude_vendors: set | None = None) -> dict:
+    """The two scarce filters: GROUNDABILITY (citable prior work) + the cross-vendor NOVELTY gate.
+    ``exclude_vendors`` = the AUTHORS to exclude from the novelty panel (default {'anthropic'}; in
+    co-author mode also the idea-author, e.g. {'anthropic','grok'}). A network flake -> grounded=None."""
     title, claim, insight = str(cand.get("title", "")), str(cand.get("claim", "")), str(cand.get("insight", ""))
     try:
         papers = search_fn((title + " " + claim)[:160], 8)
@@ -151,21 +323,42 @@ def screen_novelty_grounding(cand: dict, gateway, run_id: str, *, search_fn, bri
     content = {"hypothesis": hyp, "gaps": [], "literature": briefing_fn(papers) if papers else ""}
     try:
         panel = asyncio.run(gateway.review("direction", content, target_ref="auto-discovery",
-                                           run_id=run_id, dry_run=False, exclude_vendors={"anthropic"}))
+                                           run_id=run_id, dry_run=False,
+                                           exclude_vendors=exclude_vendors or {"anthropic"}))
     except Exception as exc:  # noqa: BLE001
         return {"grounded": grounded, "n_papers": (0 if papers is None else len(papers)),
                 "gate_passed": None, "consensus": "error", "novelty_objection": str(exc)[:60], "novelty_pass": False}
-    nov_obj = [f"{f.severity}:{f.category}" for c in (panel.critiques or []) for f in (c.findings or [])
-               if f.category == "novelty" and f.severity in ("blocker", "major")]
+    nov_findings = [f for c in (panel.critiques or []) for f in (c.findings or [])
+                    if f.category == "novelty" and f.severity in ("blocker", "major")]
+    # capture the critic's EVIDENCE (why it's known), not just a "major:novelty" tag, so the lesson
+    # fed back next round teaches grok the specific known-territory to avoid.
+    def _obj_text(f):
+        return str(getattr(f, "evidence", "") or getattr(f, "claim", "")
+                   or getattr(f, "suggestion", "") or "novelty")[:200]
     return {"grounded": grounded, "n_papers": (0 if papers is None else len(papers)),
             "gate_passed": bool(panel.gate_passed), "consensus": panel.consensus_verdict,
-            "novelty_objection": (nov_obj[0] if nov_obj else ""),
-            "novelty_pass": bool(panel.gate_passed) and not nov_obj}
+            "novelty_objection": (_obj_text(nov_findings[0]) if nov_findings else ""),
+            "novelty_pass": bool(panel.gate_passed) and not nov_findings}
+
+
+def _lesson_from(row: dict) -> str:
+    """An actionable, failure-mode-specific lesson fed back to the ideator next round — so it learns
+    the RIGHT correction (a null effect needs a real mechanism; a known effect needs more novelty)."""
+    title, why = str(row.get("title", "?"))[:50], row.get("why", "")
+    if row.get("stage") == "novelty/grnd" and row.get("holds"):
+        return (f"'{title}' HELD but was judged NOT NOVEL — known because: {why}. Avoid this territory; "
+                "be SPECIFIC (a NAMED chemical family + a QUANTIFIED mechanism), not a general principle")
+    if why == "effect too small vs control":
+        return f"'{title}' had a clean control but the effect was too WEAK to separate — needs a larger, more stratum-specific mechanism"
+    if why == "control fired":
+        return f"'{title}' had a non-vanishing control (confounded) — design a clean permuted-strata null"
+    return f"'{title}': {why}"
 
 
 def discover(*, ideate_fn: IdeateFn, plugin, X, y, groups, gateway, run_id: str,
              k_survivors: int = 2, max_rounds: int = 3,
-             search_fn=None, briefing_fn=None, log=print) -> tuple[list[dict], list[dict]]:
+             search_fn=None, briefing_fn=None, novelty_exclude: set | None = None,
+             log=print) -> tuple[list[dict], list[dict]]:
     """Run the discovery loop: up to ``max_rounds`` ideation rounds (each LEARNS from prior
     rejections) or until ``k_survivors`` banked. Returns (survivors, all_screened) as dicts.
     A survivor RAN-CLEAN + HELD + NON-TRIVIAL + GROUNDED + NOVEL. ``cand`` dicts of survivors carry
@@ -196,7 +389,8 @@ def discover(*, ideate_fn: IdeateFn, plugin, X, y, groups, gateway, run_id: str,
                    "test": sc.test, "control": sc.control, "n_test": sc.n_test, "n_control": sc.n_control,
                    "holds": sc.holds}
             if sc.survives:  # passed the cheap pass -> apply the scarce filters
-                vet = screen_novelty_grounding(cand, gateway, run_id, search_fn=search_fn, briefing_fn=briefing_fn)
+                vet = screen_novelty_grounding(cand, gateway, run_id, search_fn=search_fn,
+                                               briefing_fn=briefing_fn, exclude_vendors=novelty_exclude)
                 row.update(vet)
                 row["survives"] = bool(vet["novelty_pass"] and vet.get("grounded") is not False)
                 if not row["survives"]:
@@ -209,7 +403,7 @@ def discover(*, ideate_fn: IdeateFn, plugin, X, y, groups, gateway, run_id: str,
             if row["survives"]:
                 survivors.append(row)
             elif row.get("why"):
-                lessons.append(row["why"])
+                lessons.append(_lesson_from(row))
             log(f"[discover] r{rnd} {'SURVIVE' if row['survives'] else 'killed':<8} {sc.stage:<12} "
                 f"{title[:46]}  {('' if row['survives'] else row.get('why', ''))[:30]}")
         log(f"[discover] round {rnd}: {len(survivors)} survivor(s) / {len(all_rows)} screened")

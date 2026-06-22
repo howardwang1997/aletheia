@@ -622,7 +622,10 @@ class ExperimentDriver:
         (the caller falls back to single-shot ideation). Claude-free (non-author ideator + audit)."""
         import numpy as _np
 
-        from aletheia.research.discovery import discover, make_vendor_ideator, materials_ideate_context
+        from aletheia.research.discovery import (
+            discover, make_claude_code_author, make_coauthor_ideator, make_vendor_ideator,
+            materials_angle_context, materials_ideate_context,
+        )
 
         s = get_settings()
         try:
@@ -642,17 +645,41 @@ class ExperimentDriver:
                 await get_bus().publish(make_event("discovery", run_id=self.run_id,
                                                    payload={"status": "no_ideator", "vendor": vid}))
                 return False
-            ideate = make_vendor_ideator(
-                vc.model, s.vendor_base_url(vid) or vc.base_url, key,
-                context=materials_ideate_context(6, str(data_spec.get("target_column") or "the target")))
+            target = str(data_spec.get("target_column") or "the target")
+            novelty_exclude = {"anthropic"}
+            if s.discovery_coauthor:
+                # CO-AUTHOR: grok proposes the ANGLE, Claude writes the code (live-Claude -> the arc
+                # runs OUTSIDE-session per AUP). The novelty panel then excludes BOTH authors.
+                angle_ideate = make_vendor_ideator(
+                    vc.model, s.vendor_base_url(vid) or vc.base_url, key,
+                    context=materials_angle_context(6, target, gaps=getattr(self, "survey_gaps", None)))
+                author = make_claude_code_author(self.run_id, target_desc=target, dry_run=self.dry_run,
+                                                 loop=asyncio.get_running_loop())
+                ideate = make_coauthor_ideator(angle_ideate, author, log=print)
+                novelty_exclude = {"anthropic", vid}
+            else:
+                ideate = make_vendor_ideator(
+                    vc.model, s.vendor_base_url(vid) or vc.base_url, key,
+                    context=materials_ideate_context(6, target))
             survivors, rows = await asyncio.to_thread(
                 discover, ideate_fn=ideate, plugin=plugin, X=X, y=y, groups=groups,
                 gateway=self.gateway, run_id=self.run_id,
                 k_survivors=int(s.discovery_k_survivors), max_rounds=int(s.discovery_max_rounds),
-                log=lambda *_a: None)
+                novelty_exclude=novelty_exclude, log=lambda *_a: None)
+            # Surface WHY each candidate died (the driver used to discard the per-row detail):
+            # kill_tally is small + console-visible; breakdown carries the full per-candidate record
+            # (stage it died at, why, test/control statistics, grounding + novelty verdict) to the jsonl.
+            from collections import Counter as _Counter
+            kill_tally = dict(_Counter(("SURVIVED" if r["survives"] else r["stage"]) for r in rows))
+            breakdown = [{"title": r["title"][:64], "stage": r["stage"], "survives": r["survives"],
+                          "why": r.get("why", ""), "test": r.get("test"), "control": r.get("control"),
+                          "holds": r.get("holds"), "grounded": r.get("grounded"),
+                          "n_papers": r.get("n_papers"), "consensus": r.get("consensus"),
+                          "novelty_objection": r.get("novelty_objection")} for r in rows]
             await get_bus().publish(make_event("discovery", run_id=self.run_id, payload={
                 "status": "done", "screened": len(rows), "n_survivors": len(survivors),
-                "survivors": [r["title"] for r in survivors]}))
+                "kill_tally": kill_tally, "survivors": [r["title"] for r in survivors],
+                "breakdown": breakdown}))
             if not survivors:
                 return False
             cand = survivors[0]["candidate"]

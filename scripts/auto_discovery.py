@@ -5,11 +5,14 @@ Claude-free): generate bold candidates with code -> self-screen each on real dat
 sandbox run -> hold -> non-trivial -> grounded -> novel) -> surface survivors, learning across rounds.
 The logic lives in the package module (driver-importable); this is just the wiring + print.
 
-    conda run -n aletheia python scripts/auto_discovery.py
+    conda run -n aletheia python scripts/auto_discovery.py            # pure grok (Claude-free, in-session OK)
+    conda run -n aletheia python scripts/auto_discovery.py --coauthor # grok ANGLE + Claude CODE (live-Claude!
+                                                                      # run OUTSIDE the Claude Code session)
 """
 
 from __future__ import annotations
 
+import sys
 import time
 
 import numpy as np
@@ -21,7 +24,10 @@ from aletheia.domains.materials.datasets import load_benchmark
 from aletheia.domains.materials.featurizers import magpie_features
 from aletheia.domains.materials.matbench_task import MaterialsBandGapPlugin
 from aletheia.memory.service import create_run
-from aletheia.research.discovery import discover, make_vendor_ideator, materials_ideate_context
+from aletheia.research.discovery import (
+    discover, make_claude_code_author, make_coauthor_ideator, make_vendor_ideator,
+    materials_angle_context, materials_ideate_context,
+)
 
 K_SURVIVORS, MAX_ROUNDS = 2, 3
 
@@ -46,13 +52,24 @@ def main() -> int:
     if vend is None or not s.vendor_key("grok"):
         print("no grok credentials; cannot ideate")
         return 1
-    ideate = make_vendor_ideator(vend.model, s.vendor_base_url("grok") or vend.base_url, s.vendor_key("grok"),
-                                 context=materials_ideate_context(6))
+    coauthor = "--coauthor" in sys.argv
+    base = (vend.model, s.vendor_base_url("grok") or vend.base_url, s.vendor_key("grok"))
+    if coauthor:
+        # grok proposes the ANGLE, Claude writes the code; novelty panel excludes BOTH authors.
+        angle_ideate = make_vendor_ideator(*base, context=materials_angle_context(6))
+        author = make_claude_code_author(run_id, dry_run=False)
+        ideate = make_coauthor_ideator(angle_ideate, author, log=print)
+        novelty_exclude = {"anthropic", "grok"}
+        print("MODE: CO-AUTHOR (grok ANGLE + Claude CODE) — live-Claude in the loop.")
+    else:
+        ideate = make_vendor_ideator(*base, context=materials_ideate_context(6))
+        novelty_exclude = {"anthropic"}
     print(f"\nLOOP: ideate -> auto-triage, up to {MAX_ROUNDS} rounds or {K_SURVIVORS} survivors "
           "(each round LEARNS from prior rejections).")
     survivors, rows = discover(ideate_fn=ideate, plugin=plugin, X=X, y=y, groups=groups,
                                gateway=CriticGateway(), run_id=run_id,
-                               k_survivors=K_SURVIVORS, max_rounds=MAX_ROUNDS)
+                               k_survivors=K_SURVIVORS, max_rounds=MAX_ROUNDS,
+                               novelty_exclude=novelty_exclude)
 
     print("-" * 92)
     print(f"auto-triage: {len(survivors)}/{len(rows)} survived the FULL filter "

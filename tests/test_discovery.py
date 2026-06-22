@@ -78,9 +78,28 @@ def test_discovery_full_filter_keeps_only_the_real_novel_grounded_candidate():
     assert by_title["GOOD effect"]["candidate"]["code"]  # survivor carries its code for the campaign
     # each other candidate died at the right gate
     assert by_title["buggy code"]["stage"] == "runnability" and not by_title["buggy code"]["survives"]
-    assert by_title["trivial magnitude"]["stage"] == "scored" and "trivial" in by_title["trivial magnitude"]["why"]
+    assert by_title["trivial magnitude"]["stage"] == "scored" and not by_title["trivial magnitude"]["survives"]
+    assert "too small" in by_title["trivial magnitude"]["why"]  # 0.6 vs a 0.55 control -> no separation
     assert by_title["not novel"]["stage"] == "novelty/grnd" and not by_title["not novel"]["survives"]
     assert by_title["ungrounded"]["stage"] == "novelty/grnd" and by_title["ungrounded"]["grounded"] is False
+
+
+def test_discovery_promotes_real_effect_below_groks_blind_threshold():
+    """The decoupling fix: a real effect with a CLEAN vanishing control survives the screen even though
+    its test statistic is far BELOW grok's blind supported_if threshold (which used to mis-kill it)."""
+    rng = np.random.default_rng(2)
+    X, y = rng.random((120, 6)), rng.random(120)
+    groups = np.array(["A-B"] * 60 + ["C-D"] * 60, dtype=object)
+    cand = {"title": "real but under the blind bar", "insight": "x", "claim": "a real grounded effect",
+            "code": _const_demo(0.7, 0.001),  # test 0.7 << supported_if 2.0, but control 0.001 vanishes
+            "prereg": {"statistic_name": "s", "supported_if": {"op": ">=", "threshold": 2.0},
+                       "control_silent_if": {"op": "<=", "threshold": 0.05}}}
+    survivors, rows = discover(
+        ideate_fn=lambda avoid, lessons: [cand], plugin=MaterialsBandGapPlugin(), X=X, y=y, groups=groups,
+        gateway=_FakeGateway(), run_id="t", k_survivors=1, max_rounds=1,
+        search_fn=_fake_search, briefing_fn=lambda p: "", log=lambda *a: None)
+    assert rows[0]["survives"]  # promoted despite test (0.7) < grok's blind supported_if (2.0)
+    assert [s["title"] for s in survivors] == ["real but under the blind bar"]
 
 
 def test_discovery_stops_at_k_survivors():
