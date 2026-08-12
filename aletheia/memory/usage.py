@@ -1,18 +1,13 @@
-"""Real token + cost accounting for a run, aggregated from the persisted event ledger.
+"""Provider-reported token + cost accounting, aggregated from the persisted event ledger.
 
-Every Claude Agent SDK call — the orchestrator AND every isolated worker
-(:func:`aletheia.orchestrator.worker.run_worker`) — streams a ``ResultMessage`` that
-:func:`aletheia.events.normalizer.normalize_message` turns into a ``result`` event
-carrying the SDK's own ``total_cost_usd`` and ``usage`` token counts, which the event
-bus persists to the ``events`` table. So the ground truth already lives in the ledger;
-this module just SUMS it per run. No hot-path instrumentation and no estimate — the
-numbers are exactly what the SDK reported.
+Every orchestrator and isolated worker call emits a canonical ``result`` event carrying
+provider token usage. Claude's normalizer also records SDK-reported ``total_cost_usd``;
+the OpenAI Responses and Codex CLI adapters record tokens without calculated API cost. The event bus
+persists these records, and this module sums them per run.
 
-Note on subscription auth: when the box is logged into a Claude subscription (rather
-than a metered API key) the SDK often reports ``total_cost_usd == 0`` even though real
-tokens were spent, so ``cost_usd`` can read low while the token counts are the honest
-signal. Tokens — especially ``cache_read_input_tokens`` — are what the rolling usage
-window actually meters, so they are the number to watch when a run eats the limit.
+Note on subscription auth: Claude may report ``total_cost_usd == 0`` and the Codex adapter records
+zero dollars because those calls consume plan allowance rather than metered API spend. Token counts
+are the honest workload signal even when ``cost_usd`` reads zero.
 """
 
 from __future__ import annotations
@@ -29,7 +24,7 @@ from aletheia.memory.ledger import Event
 
 @dataclass
 class RunUsage:
-    """SDK-reported cost + token totals for one run, summed across its ``result`` events."""
+    """Provider-reported cost + token totals, summed across a run's ``result`` events."""
 
     run_id: str
     n_calls: int = 0  # result events carrying a usage payload (~= SDK queries)

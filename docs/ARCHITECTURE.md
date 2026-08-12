@@ -19,9 +19,11 @@ autonomously, within guardrails. Every increment is weighed against that goal.
    claims must be grounded in cited literature.
 4. **Full provenance.** Every transition, decision, metric, critique, and artifact is persisted to the
    Postgres ledger; every claim traces to artifacts + code (a per-experiment PR).
-5. **Budget guardrails + sandboxed code.** Per-run caps with auto-pause; AI-authored code runs behind an
-   AST allowlist gate and a no-network, read-only, capability-dropped, resource-capped Docker sandbox.
-6. **Latest models always.**
+5. **Budget guardrails + sandboxed code.** Per-run caps with auto-pause; production authored code must
+   run in a no-network, read-only, capability-dropped, resource-capped Docker sandbox. The current host
+   subprocess fallback is soft isolation and remains a P0 gap.
+6. **Evaluated frontier models.** Track frontier aliases for exploration, but record and pin an
+   explicit model identifier for benchmark and reproduction runs.
 7. **Human role.** The human sets the domain/direction and connects data/keys; the AI does the science
    lights-out within the guardrails. Irreversible/outward actions (repo creation, purchases, publishing)
    stay gated.
@@ -55,13 +57,17 @@ Next.js dashboard  ⇄  FastAPI (session auth + RBAC)  ⇄  event bus → SSE
                                   │
    ┌──────────────┬──────────────┼───────────────┬──────────────┐
    orchestrator    critic gateway   memory/ledger    scheduler/FSM   compute + IAM
-   (Opus workers,  (cross-vendor    (Postgres +      (driver:        (local subprocess
+   (Claude or GPT, (cross-vendor    (Postgres +      (driver:        (local subprocess
     isolated per    peer review)     pgvector recall)  stages+gates)   / Docker sandbox;
     stage)                                                            GitHub App repos)
 ```
 
-- **orchestrator** (`aletheia/orchestrator/`): isolated `run_worker` per stage; the main loop holds only
-  structured results, never sub-task transcripts.
+- **orchestrator** (`aletheia/orchestrator/`): isolated `run_worker` per stage, selected globally via
+  `ALETHEIA_ORCHESTRATOR_PROVIDER=claude|openai`. OpenAI additionally selects
+  `ALETHEIA_OPENAI_AUTH_MODE=subscription|api_key`: subscription calls the official non-interactive
+  Codex CLI with the cached ChatGPT login, while API-key mode calls Responses directly.
+  Provider-neutral local tools are adapted to Claude MCP, strict Responses functions, or a strict
+  Codex control loop; the main loop retains only structured results.
 - **critic gateway** (`aletheia/critics/`): distinct-vendor reviewers, dynamic rebuttal rounds, rule-based
   consensus.
 - **memory** (`aletheia/memory/`): the ledger is the source of truth; pgvector `recall` surfaces relevant

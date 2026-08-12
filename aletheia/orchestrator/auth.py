@@ -1,8 +1,7 @@
-"""Claude auth resolution for the orchestrator.
+"""Provider-aware auth resolution for the research orchestrator.
 
-Auth is a config switch (subscription token vs API key), with automatic
-inheritance of an existing machine login (so on a dev box already logged into
-Claude Code, no token is needed in `.env`).
+Auth is a provider-specific switch (subscription login vs API key), with automatic inheritance of
+existing Claude Code and Codex CLI machine logins.
 """
 
 from __future__ import annotations
@@ -14,6 +13,7 @@ import subprocess
 from pathlib import Path
 
 from aletheia.config import Settings
+from aletheia.orchestrator.codex_cli import machine_has_codex_subscription
 
 
 def configure_auth(settings: Settings) -> None:
@@ -59,7 +59,12 @@ def machine_has_claude_login() -> bool:
     return False
 
 
-def has_credentials(settings: Settings) -> bool:
+def has_credentials(settings: Settings, provider: str | None = None) -> bool:
+    selected = provider or settings.orchestrator_provider
+    if selected == "openai":
+        if settings.openai_auth_mode == "subscription":
+            return machine_has_codex_subscription(settings.codex_command)
+        return bool(settings.openai_api_key)
     if settings.claude_auth_mode == "subscription":
         return bool(settings.claude_code_oauth_token) or machine_has_claude_login()
     return bool(settings.anthropic_api_key)

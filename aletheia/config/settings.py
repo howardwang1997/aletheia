@@ -95,11 +95,22 @@ class Settings(BaseSettings):
     embedding_dim: int = 384
     recall_k: int = 5  # default neighbours returned by memory.recall
 
-    # --- Claude runtime ---
+    # --- orchestrator runtime (the scientist/author, independent from critic vendors) ---
+    orchestrator_provider: Literal["claude", "openai"] = "claude"
+
+    # Claude Agent SDK path (subscription login or API key).
     claude_auth_mode: Literal["subscription", "api_key"] = "subscription"
     claude_model: str = "claude-opus-4-8"
 
-    # --- Codex CLI (critic transport "cli": GPT-5.5 on the OpenAI Coding Plan) ---
+    # OpenAI supports the same two auth choices as Claude: a ChatGPT subscription through the
+    # official Codex CLI, or a metered API key through the Responses API. GPT-5.6 Sol is the
+    # frontier-capability default; keep the model configurable so evals can pin another model.
+    openai_auth_mode: Literal["subscription", "api_key"] = "subscription"
+    openai_model: str = "gpt-5.6-sol"
+    openai_reasoning_effort: Literal["none", "low", "medium", "high", "xhigh", "max"] = "high"
+    openai_max_output_tokens: int = 16_384
+
+    # --- Codex CLI (OpenAI subscription orchestrator + critic transport "cli") ---
     codex_command: str = "codex"
     codex_timeout_s: float = 240.0
 
@@ -137,7 +148,7 @@ class Settings(BaseSettings):
     # --- coder sandbox (executing AI-authored model code) ---
     # NB: the AST allowlist + rlimits are a guardrail against runaway/accidental
     # code, NOT a hard boundary against truly adversarial code (Docker is the
-    # later, stronger option). The code is authored by the trusted Opus coder.
+    # stronger option). The code is authored by the configured orchestrator model.
     sandbox_timeout_s: float = 600.0  # wall-clock kill for a training subprocess
     sandbox_cpu_seconds: int = 600  # RLIMIT_CPU
     sandbox_max_memory_mb: int = 4096  # RLIMIT_AS (best-effort on macOS)
@@ -179,18 +190,18 @@ class Settings(BaseSettings):
     budget_gpu_hours: float = 4.0
     max_concurrent_jobs: int = 2
     wall_clock_hours: float = 24.0
-    est_stage_cost_usd: float = 0.10  # estimated cost charged per Opus reasoning stage
+    est_stage_cost_usd: float = 0.10  # fallback estimate when the provider reports no cost
     # optional hard cap on a run's TOTAL tokens (in+out+cache). None = off. Tokens — not USD —
     # are what the rolling subscription usage window meters (cost reads ~0 under subscription
     # auth), so this is the knob that bounds a run's contribution to the 5-hour limit.
     token_cap_per_run: int | None = None
-    # checkpoint / resume: persist each successful worker (Claude) result keyed by content hash so a
+    # checkpoint / resume: persist each successful worker result keyed by provider + content hash so a
     # re-run of the SAME run_id can replay for free. `enabled` controls WRITING the cache (harmless
     # always-on — a fresh run_id has an empty cache); `read` is set True only by a resume launch, so a
     # normal run never short-circuits on the cache (no within-run collisions).
     resume_cache_enabled: bool = True
     resume_cache_read: bool = False
-    # weak-network resilience: cap how many live Claude (SDK) calls stream CONCURRENTLY, so a fragile
+    # weak-network resilience: cap how many live provider calls run CONCURRENTLY, so a fragile
     # proxy/tunnel isn't asked to hold many long-lived streams at once (the main ECONNRESET trigger).
     # None = unlimited (default). And retry a failed call this many OUTER attempts (each opens a fresh
     # connection and wraps the SDK's own internal retries), with linear backoff between attempts.
@@ -207,6 +218,17 @@ class Settings(BaseSettings):
     # error) fed back, so more rounds = more chances to fix a flagged DESIGN flaw before the round is
     # written off as undemonstrated. Distinct from `authoring_max_attempts` (network retries per call).
     demonstration_authoring_rounds: int = 2
+    # AUTONOMOUS DISCOVERY stage (off by default): when enabled, the driver runs the divergent
+    # ideate -> self-triage loop (aletheia.research.discovery) IN PLACE OF single-shot ideation —
+    # it generates bold candidates with code, self-screens them (code/run/hold/non-trivial/grounded/
+    # novel), and adopts a survivor's hypothesis + its already-verified demonstration code. A
+    # discovery-sourced hypothesis skips the direction gate (the loop already cleared the novelty gate).
+    discovery_enabled: bool = False
+    discovery_k_survivors: int = 1
+    discovery_max_rounds: int = 4
+    discovery_ideator_vendor: str = "grok"  # the (non-author) vendor that proposes candidates+code
+    discovery_coauthor: bool = False  # grok proposes the ANGLE; the orchestrator writes the code.
+    # novelty review excludes BOTH author vendors.
     # window-aware graceful stop: when the SDK's LIVE 5-hour-window reading reaches this fill (or is
     # 'rejected'), pause+checkpoint BEFORE launching another expensive stage, instead of slamming the
     # window to the wall and dying mid-stream. Resume on a fresh window replays the prefix for 0 tokens,
@@ -233,6 +255,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     claude_code_oauth_token: str | None = Field(default=None, alias="CLAUDE_CODE_OAUTH_TOKEN")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    openai_base_url: str | None = Field(default=None, alias="OPENAI_BASE_URL")
     google_api_key: str | None = Field(default=None, alias="GOOGLE_API_KEY")
     deepseek_api_key: str | None = Field(default=None, alias="DEEPSEEK_API_KEY")
     zhipu_api_key: str | None = Field(default=None, alias="ZHIPU_API_KEY")
@@ -287,6 +310,21 @@ class Settings(BaseSettings):
     @property
     def critics(self) -> CriticsConfig:
         return CriticsConfig.load()
+
+    @property
+    def orchestrator_model(self) -> str:
+        return self.openai_model if self.orchestrator_provider == "openai" else self.claude_model
+
+    @property
+    def orchestrator_transport(self) -> str:
+        """Stable cache/provenance label for the selected provider and auth transport."""
+        if self.orchestrator_provider == "openai":
+            return "codex_cli" if self.openai_auth_mode == "subscription" else "responses_api"
+        return "claude_agent_sdk"
+
+    @property
+    def orchestrator_vendor(self) -> str:
+        return "openai" if self.orchestrator_provider == "openai" else "anthropic"
 
     @property
     def github_configured(self) -> bool:

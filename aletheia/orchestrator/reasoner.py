@@ -1,4 +1,4 @@
-"""Focused, single-turn Claude (Opus) reasoning for one lifecycle stage.
+"""Focused, single-turn provider-selected reasoning for one lifecycle stage.
 
 Thin shim over :func:`aletheia.orchestrator.worker.run_worker` — kept for the
 driver's existing call sites and tests. A reasoning stage is just an isolated
@@ -22,7 +22,7 @@ async def reason_stage(
     dry_text: str | None = None,
     agent: str = "orchestrator",
 ) -> str:
-    """Run one isolated Opus turn for ``stage`` and return its text."""
+    """Run one isolated orchestrator-model turn for ``stage`` and return its text."""
     return await run_worker(
         run_id, agent, prompt, system=STAGE_SYSTEM, dry_run=dry_run, dry_value=dry_text
     )

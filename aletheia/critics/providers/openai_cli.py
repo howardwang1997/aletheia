@@ -14,13 +14,13 @@ from __future__ import annotations
 import json
 import subprocess
 import tempfile
-import threading
 import time
 from pathlib import Path
 
 from aletheia.config import get_settings
 from aletheia.critics.providers.base import CriticProvider
 from aletheia.critics.schemas import CriticResponse
+from aletheia.orchestrator.codex_cli import CODEX_LOCK, subscription_environment
 
 # Serialize all `codex exec` calls process-wide. The critic panel fans out concurrently
 # (e.g. one model running both an adversarial AND a supportive stance), but every codex
@@ -29,7 +29,7 @@ from aletheia.critics.schemas import CriticResponse
 # with the same refresh token; the server honors the first and invalidates it, failing the
 # loser with "refresh token was already used" — and a stale write can burn the token on
 # disk. Serializing means the first call refreshes once; the rest reuse the fresh token.
-_CODEX_LOCK = threading.Lock()
+_CODEX_LOCK = CODEX_LOCK
 
 # JSON Schema keywords OpenAI's strict structured-output mode rejects.
 _UNSUPPORTED = (
@@ -101,6 +101,8 @@ class OpenAICodexProvider(CriticProvider):
                 "read-only",
                 "--color",
                 "never",
+                "-c",
+                'forced_login_method="chatgpt"',
                 "-C",
                 str(tdp),
                 "--output-schema",
@@ -122,6 +124,7 @@ class OpenAICodexProvider(CriticProvider):
                     text=True,
                     stdin=subprocess.DEVNULL,
                     timeout=settings.codex_timeout_s,
+                    env=subscription_environment(),
                 )
             if out_path.exists() and out_path.read_text().strip():
                 return self._parse(out_path.read_text())

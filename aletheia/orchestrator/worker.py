@@ -1,7 +1,7 @@
-"""Isolated worker: one focused Claude (Opus) task in its own context.
+"""Isolated worker: one focused model task in its own context.
 
 A *worker* runs a single, relatively-independent unit of reasoning in a **fresh,
-isolated** ``ClaudeSDKClient`` session and returns only its text. Because each call
+isolated** provider session and returns only its text. Because each call
 is isolated, the FSM driver's main context never accumulates a worker's internal
 turns — it keeps only the structured result. Independent workers are plain
 coroutines, so callers fan them out with ``asyncio.gather`` for parallel,
@@ -22,6 +22,7 @@ from aletheia.config import get_settings
 from aletheia.events.bus import get_bus, make_event
 from aletheia.events.normalizer import normalize_message
 from aletheia.orchestrator.auth import configure_auth, has_credentials
+from aletheia.orchestrator.tools import ToolSpec, to_claude_tool
 from aletheia.memory.service import get_cached_worker, put_cached_worker
 
 STAGE_SYSTEM = (
@@ -117,6 +118,8 @@ async def run_worker(
     system: str = STAGE_SYSTEM,
     model: str | None = None,
     mcp_servers: dict[str, Any] | None = None,
+    tools: list[ToolSpec] | None = None,
+    tool_namespace: str = "aletheia",
     allowed_tools: list[str] | None = None,
     can_use_tool: Any = None,
     max_turns: int = 1,
@@ -135,11 +138,15 @@ async def run_worker(
         return text
 
     # Resume cache: a stable fingerprint of this exact call. On a RESUMED run (read mode) a prior
-    # successful result short-circuits the Claude call entirely (0 tokens). A fresh run never reads
+    # successful result short-circuits the provider call entirely (0 tokens). A fresh run never reads
     # (no within-run collisions) but still WRITES, so a later resume can fast-forward.
-    model_resolved = model or settings.claude_model
+    provider = settings.orchestrator_provider
+    model_resolved = model or settings.orchestrator_model
     cache_key = hashlib.sha256(
-        "\0".join([label, system, model_resolved, prompt, ",".join(sorted(allowed_tools or []))])
+        "\0".join([
+            provider, settings.orchestrator_transport, label, system, model_resolved, prompt,
+            ",".join(sorted(allowed_tools or [])),
+        ])
         .encode("utf-8")
     ).hexdigest()
     if settings.resume_cache_enabled and settings.resume_cache_read:
@@ -151,30 +158,46 @@ async def run_worker(
             )
             return cached
 
-    from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+    options = None
+    claude_client = None
+    if provider == "claude":
+        from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
-    configure_auth(settings)
-    opts: dict[str, Any] = dict(
-        model=model or settings.claude_model,
-        system_prompt=system,
-        setting_sources=[],
-        max_turns=max_turns,
-        max_budget_usd=settings.budget_usd,
-    )
-    if mcp_servers:
-        opts["mcp_servers"] = mcp_servers
-        opts["allowed_tools"] = allowed_tools or []
-        # gated (no human prompt) when a tool gate is supplied; else autonomous
-        opts["permission_mode"] = "default" if can_use_tool else "bypassPermissions"
-        if can_use_tool:
-            opts["can_use_tool"] = can_use_tool
-    else:
-        # text-only worker: no tools. Force an INLINE reply so ``extract_code`` /
-        # ``_parse_json`` see the actual answer instead of prose left after a Write tool call.
-        opts["permission_mode"] = "bypassPermissions"
-        opts["allowed_tools"] = []
-        opts["disallowed_tools"] = list(_NO_TOOLS)
-    options = ClaudeAgentOptions(**opts)
+        configure_auth(settings)
+        if tools:
+            from claude_agent_sdk import create_sdk_mcp_server
+
+            server = create_sdk_mcp_server(
+                name=tool_namespace, version="0.0.1",
+                tools=[to_claude_tool(spec) for spec in tools],
+            )
+            mcp_servers = {tool_namespace: server}
+            if allowed_tools is None:
+                allowed_tools = [f"mcp__{tool_namespace}__{spec.name}" for spec in tools]
+        opts: dict[str, Any] = dict(
+            model=model or settings.claude_model,
+            system_prompt=system,
+            setting_sources=[],
+            max_turns=max_turns,
+            max_budget_usd=settings.budget_usd,
+        )
+        if mcp_servers:
+            opts["mcp_servers"] = mcp_servers
+            opts["allowed_tools"] = allowed_tools or []
+            # gated (no human prompt) when a tool gate is supplied; else autonomous
+            opts["permission_mode"] = "default" if can_use_tool else "bypassPermissions"
+            if can_use_tool:
+                opts["can_use_tool"] = can_use_tool
+        else:
+            # text-only worker: no tools. Force an INLINE reply so ``extract_code`` /
+            # ``_parse_json`` see the actual answer instead of prose left after a Write tool call.
+            opts["permission_mode"] = "bypassPermissions"
+            opts["allowed_tools"] = []
+            opts["disallowed_tools"] = list(_NO_TOOLS)
+        options = ClaudeAgentOptions(**opts)
+        claude_client = ClaudeSDKClient
+    elif provider == "openai" and mcp_servers and not tools:
+        raise ValueError("OpenAI workers require provider-neutral tools=, not Claude MCP servers")
 
     sem = _get_worker_sem(settings.max_concurrent_workers)
     # per-call override: the discriminating-demonstration authoring is the longest, most critical
@@ -191,14 +214,34 @@ async def run_worker(
         if sem is not None:
             await sem.acquire()
         try:
-            async with ClaudeSDKClient(options=options) as client:
-                await client.query(prompt)
-                async for msg in client.receive_response():
-                    for evt in normalize_message(msg, run_id, agent=label):
-                        await get_bus().publish(evt)
-                        if evt["type"] == "assistant_text":
-                            chunks.append((evt.get("payload") or {}).get("text", ""))
-            last = "\n".join(chunks).strip()
+            if provider == "openai":
+                if settings.openai_auth_mode == "subscription":
+                    from aletheia.orchestrator.codex_runtime import run_codex_turn
+
+                    result = await run_codex_turn(
+                        run_id, label, prompt, system=system, settings=settings,
+                        model=model, tools=tools, allowed_tools=allowed_tools,
+                        can_use_tool=can_use_tool, max_turns=max_turns,
+                    )
+                else:
+                    from aletheia.orchestrator.openai_runtime import run_responses_turn
+
+                    result = await run_responses_turn(
+                        run_id, label, prompt, system=system, settings=settings,
+                        model=model, tools=tools, allowed_tools=allowed_tools,
+                        can_use_tool=can_use_tool, max_turns=max_turns,
+                    )
+                last = result.text
+            else:
+                assert claude_client is not None and options is not None
+                async with claude_client(options=options) as client:
+                    await client.query(prompt)
+                    async for msg in client.receive_response():
+                        for evt in normalize_message(msg, run_id, agent=label):
+                            await get_bus().publish(evt)
+                            if evt["type"] == "assistant_text":
+                                chunks.append((evt.get("payload") or {}).get("text", ""))
+                last = "\n".join(chunks).strip()
         except Exception as exc:  # noqa: BLE001 - transient client/transport failures
             last = f"API Error: {exc}"
         finally:

@@ -10,11 +10,11 @@ Two artifacts per run, under ``artifacts/``:
   - ``transcript_<stem>.jsonl`` — LOSSLESS: every event, in chronological order, full payload.
     The archive (machine-readable, re-ingestible).
   - ``transcript_<stem>.md`` — READABLE: a chronological transcript tagged by lane (each isolated
-    worker is its own Claude session), with a token/cost header. Conversational events render in
+    worker is its own isolated provider session), with a token/cost header. Conversational events render in
     full; other events collapse to compact one-liners so nothing is hidden but the narrative reads.
 
 A run's conversation is NOT one linear thread: the orchestrator plus many isolated workers
-(``coder``, ``critic``, ``survey:*``, ``analysis:*`` …) each run a fresh Claude session, tagged by
+(``coder``, ``critic``, ``survey:*``, ``analysis:*`` …) each run a fresh provider session, tagged by
 the event ``agent`` (lane). The transcript preserves the true chronological interleaving and tags
 every turn with its lane.
 """
@@ -101,7 +101,7 @@ def render_markdown(run_id: str, events: list[dict]) -> str:
         f"- token/cost: {format_usage(usage)}",
         f"- {format_rate_limit(run_rate_limit(run_id))}",
         "",
-        "> A run is many isolated Claude sessions (one per lane) interleaved in time. Each turn below",
+        "> A run is many isolated model sessions (one per lane) interleaved in time. Each turn below",
         "> is tagged with its lane. The lossless event dump is the sibling `.jsonl`.",
         "",
         "---",

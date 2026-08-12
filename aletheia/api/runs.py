@@ -89,7 +89,7 @@ async def get_run_scorecards(run_id: str, experiment_id: str | None = None) -> l
 
 
 class LaunchRequest(BaseModel):
-    dry_run: bool | None = None  # None -> auto (dry-run if no Claude credentials)
+    dry_run: bool | None = None  # None -> auto (dry-run if selected provider lacks credentials)
 
 
 class LaunchResponse(BaseModel):

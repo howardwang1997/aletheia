@@ -164,6 +164,8 @@ class ExperimentDriver:
         self.survey_sota: list[dict[str, Any]] = []  # structured SOTAResult rows (curated + extracted)
         self.survey_weak: bool = False  # retrieval health: too few citable papers to ground novelty
         self.hypothesis: dict[str, Any] = {}  # the hypothesis chosen by IDEATE
+        self._discovered_demo: dict[str, Any] | None = None  # {code, prereg} from the discovery stage
+        self._discovery_split_meta: dict[str, Any] | None = None  # immutable explore/confirm seal
         self.profile: DomainProfile | None = None  # the domain's vocabulary (set in _run)
         self.plugin: Any = None  # the resolved DomainPlugin (set in _run)
         self.domain: str | None = None  # the run's domain name (materials | molecules | …)
@@ -510,11 +512,6 @@ class ExperimentDriver:
         return subqs or [topic]
 
     async def _librarian(self, topic: str, subq: str) -> str:
-        from claude_agent_sdk import create_sdk_mcp_server
-
-        server = create_sdk_mcp_server(
-            name="research", version="0.0.1", tools=[build_search_literature_tool(self.run_id)]
-        )
         allow = {"mcp__research__search_literature"}
         return await run_worker(
             self.run_id, f"survey:{subq[:24]}",
@@ -523,7 +520,8 @@ class ExperimentDriver:
             "strongest / state-of-the-art METHODS the field uses, the prior work they come from, and any "
             "gap you notice.",
             system="You are a meticulous research librarian; ground claims in retrieved papers, never invent.",
-            mcp_servers={"research": server}, allowed_tools=list(allow),
+            tools=[build_search_literature_tool(self.run_id)], tool_namespace="research",
+            allowed_tools=list(allow),
             can_use_tool=build_tool_gate(allow, self.run_id), max_turns=5, dry_run=False,
         )
 
@@ -612,10 +610,131 @@ class ExperimentDriver:
             f"{lines}\n\n"
         )
 
+    async def _discover(self, plan: dict, exp_id: str | None) -> bool:
+        """Autonomous discovery STAGE (gated by ``discovery_enabled``): run the divergent ideate ->
+        self-triage loop (aletheia.research.discovery). On a survivor, ADOPT its hypothesis + its
+        already-screened demonstration (set ``self.hypothesis`` + ``self._discovered_demo``) and return
+        True; the direction gate is then skipped (the loop already cleared the cross-vendor novelty
+        gate) and ``_demonstration_code`` reuses the survivor's code. Best-effort: ANY failure -> False
+        (the caller falls back to single-shot ideation)."""
+        import numpy as _np
+
+        from aletheia.research.discovery import (
+            discover, make_coauthor_ideator, make_vendor_ideator, make_worker_code_author,
+            materials_angle_context, materials_ideate_context,
+        )
+
+        s = get_settings()
+        try:
+            await self._status("discovering", "generating + self-screening candidates")
+            plugin = self.plugin or (get_domain_plugin(self.domain) if self.domain else None)
+            if plugin is None:
+                return False
+            # The discovery prompt/code contract is currently materials-specific. Refuse to run it
+            # against another plugin instead of silently applying the wrong scientific semantics.
+            if plugin.name != "materials":
+                await get_bus().publish(make_event(
+                    "discovery", run_id=self.run_id,
+                    payload={"status": "unsupported_domain", "domain": plugin.name},
+                ))
+                return False
+            if not s.demonstration_explore_confirm_enabled:
+                await get_bus().publish(make_event(
+                    "discovery", run_id=self.run_id,
+                    payload={"status": "seal_required", "reason": "explore/confirm is disabled"},
+                ))
+                return False
+            data_spec = resolve_data_spec(self.run_id)
+            # Discovery may inspect ONLY EXPLORE. The CONFIRM rows are sealed before the first
+            # candidate is generated or screened, so selection cannot contaminate confirmation.
+            staged = await asyncio.to_thread(
+                self._stage_explore_arrays, plugin, {}, data_spec, 42,
+            )
+            if staged is None:
+                await get_bus().publish(make_event(
+                    "discovery", run_id=self.run_id,
+                    payload={"status": "no_honest_split", "reason": "data cannot support sealed discovery"},
+                ))
+                return False
+            X, y, groups, _confirm_index, split_meta = staged
+            X = _np.asarray(X, dtype=float)
+            y = _np.asarray(y, dtype=float)
+            self._discovery_split_meta = dict(split_meta)
+            vid = s.discovery_ideator_vendor
+            vc = next((c for c in s.critics.active if c.id == vid and c.transport == "api"), None)
+            key = s.vendor_key(vid) if vc else None
+            if not vc or not key:
+                await get_bus().publish(make_event("discovery", run_id=self.run_id,
+                                                   payload={"status": "no_ideator", "vendor": vid}))
+                return False
+            target = str(data_spec.get("target_column") or "the target")
+            novelty_exclude = {vid}
+            if s.discovery_coauthor:
+                # CO-AUTHOR: one vendor proposes the angle and the configured orchestrator writes
+                # the code. The novelty panel excludes BOTH author vendors.
+                angle_ideate = make_vendor_ideator(
+                    vc.model, s.vendor_base_url(vid) or vc.base_url, key,
+                    context=materials_angle_context(6, target, gaps=getattr(self, "survey_gaps", None)))
+                author = make_worker_code_author(
+                    self.run_id, target_desc=target, dry_run=self.dry_run,
+                    loop=asyncio.get_running_loop(),
+                )
+                ideate = make_coauthor_ideator(angle_ideate, author, log=print)
+                novelty_exclude.add(s.orchestrator_vendor)
+            else:
+                ideate = make_vendor_ideator(
+                    vc.model, s.vendor_base_url(vid) or vc.base_url, key,
+                    context=materials_ideate_context(6, target))
+            survivors, rows = await asyncio.to_thread(
+                discover, ideate_fn=ideate, plugin=plugin, X=X, y=y, groups=groups,
+                gateway=self.gateway, run_id=self.run_id,
+                k_survivors=int(s.discovery_k_survivors), max_rounds=int(s.discovery_max_rounds),
+                novelty_exclude=novelty_exclude, log=lambda *_a: None)
+            # Surface WHY each candidate died (the driver used to discard the per-row detail):
+            # kill_tally is small + console-visible; breakdown carries the full per-candidate record
+            # (stage it died at, why, test/control statistics, grounding + novelty verdict) to the jsonl.
+            from collections import Counter as _Counter
+            kill_tally = dict(_Counter(("SURVIVED" if r["survives"] else r["stage"]) for r in rows))
+            breakdown = [{"title": r["title"][:64], "stage": r["stage"], "survives": r["survives"],
+                          "why": r.get("why", ""), "test": r.get("test"), "control": r.get("control"),
+                          "holds": r.get("holds"), "grounded": r.get("grounded"),
+                          "n_papers": r.get("n_papers"), "consensus": r.get("consensus"),
+                          "novelty_objection": r.get("novelty_objection")} for r in rows]
+            await get_bus().publish(make_event("discovery", run_id=self.run_id, payload={
+                "status": "done", "screened": len(rows), "n_survivors": len(survivors),
+                "kill_tally": kill_tally, "survivors": [r["title"] for r in survivors],
+                "breakdown": breakdown, "split": split_meta}))
+            if not survivors:
+                return False
+            cand = survivors[0]["candidate"]
+            claim = str(cand.get("claim") or cand.get("title") or "discovered effect")
+            self.hypothesis = {
+                "statement": claim, "rationale": str(cand.get("insight", "")),
+                "novelty_note": str(cand.get("insight", "")), "contribution_type": "paradigm",
+                "demonstration": {"form": "discriminating_instance", "claim": claim, "capability": "ai_authored"},
+                "discovery_sourced": True,
+            }
+            self._discovered_demo = {"code": cand["code"], "prereg": cand["prereg"]}
+            if exp_id:
+                await asyncio.to_thread(set_experiment_hypothesis, exp_id, claim)
+            await self._index("hypothesis", claim, exp_id)
+            return True
+        except Exception as exc:  # noqa: BLE001 - discovery is best-effort; fall back to ideation
+            await get_bus().publish(make_event("discovery", run_id=self.run_id,
+                                               payload={"status": "error", "error": str(exc)[:200]}))
+            return False
+
     async def _ideate(self, plan: dict, exp_id: str | None) -> dict:
         """IDEATE: from the survey + gaps, generate testable hypotheses and pick the
         most novel + feasible one. Persist it to the experiment. Mirrors the
-        hypothesis-generation workflow."""
+        hypothesis-generation workflow.
+
+        When ``discovery_enabled``, run the autonomous discovery loop (divergent ideate -> self-triage)
+        IN PLACE OF single-shot ideation; if it banks a survivor, adopt its hypothesis + verified
+        demonstration and skip the normal path (the loop already cleared the novelty gate). If discovery
+        yields nothing, fall through to single-shot ideation."""
+        if get_settings().discovery_enabled and await self._discover(plan, exp_id):
+            return self.hypothesis
         await self._status("ideating", "forming a hypothesis")
         prompt = (
             f"PLAN:\n{json.dumps(plan, indent=2)}\n\n"
@@ -816,6 +935,12 @@ class ExperimentDriver:
     async def _direction_gate(self, plan: dict, exp_id: str | None) -> bool:
         """Novelty + feasibility gate on the chosen hypothesis (cross-model peer review,
         target='direction'). Bounded re-ideation on reject; escalate + pause past the limit."""
+        if self.hypothesis.get("discovery_sourced"):
+            # the autonomous discovery loop already cleared the cross-vendor novelty gate (author
+            # excluded) on this hypothesis — don't re-gate it. (Only reachable when discovery_enabled.)
+            await get_bus().publish(make_event("direction_gate_skipped", run_id=self.run_id, payload={
+                "reason": "discovery-sourced hypothesis already cleared the cross-vendor novelty gate"}))
+            return True
         while True:
             content = {
                 "hypothesis": self.hypothesis, "gaps": self.survey_gaps, "literature": self.survey_brief,
@@ -1145,7 +1270,7 @@ class ExperimentDriver:
         return str(demo.get("authoring", "")).strip().lower() == "ai" or bool(demo.get("ai_authored"))
 
     async def _demonstration_code(self, design: dict, data_spec: dict, exp_id: str | None) -> None:
-        """DEMONSTRATION CODE stage (paradigm frontier): Opus authors ``compute_demonstration``
+        """DEMONSTRATION CODE stage (paradigm frontier): the orchestrator authors ``compute_demonstration``
         + a STRUCTURED pre-registration. Both are statically gated + smoke-tested; the
         pre-registration is committed IMMUTABLY to the formulation claim BEFORE execution (so it
         cannot be tuned to the observed statistic). On success, stashes the code on ``design`` so
@@ -1188,6 +1313,14 @@ class ExperimentDriver:
             exploration_obs, confirm_index, split_meta = await self._explore_for_demonstration(
                 plugin, demo, data_spec, feature_desc, rs, exp_id
             )
+        if self.hypothesis.get("discovery_sourced") and confirm_index is None:
+            # A discovery candidate was selected after looking at EXPLORE. Running it on full data
+            # would mix those selection rows into the verdict. Never degrade this path to blind/full.
+            await get_bus().publish(make_event(
+                "demonstration_rejected", run_id=self.run_id,
+                payload={"reason": "discovery requires an intact explore/confirm seal"},
+            ))
+            return
 
         await self._status("coding", "authoring the discriminating demonstration")
         base_prompt = demonstration_prompt(
@@ -1206,17 +1339,24 @@ class ExperimentDriver:
         # round (configurable for the frontier campaign, which leans hard on the AI-authored path).
         auth_rounds = max(1, int(get_settings().demonstration_authoring_rounds))
         for attempt in range(auth_rounds):
-            text = await run_worker(
-                self.run_id, "coder", base_prompt + retry_note,
-                system=DEMO_SYSTEM, dry_run=self.dry_run,
-                max_attempts=get_settings().authoring_max_attempts,  # this long stream gets patient retries
-                dry_value="```python\n" + CANNED_DEMO + "```\n```json\n"
-                + json.dumps(CANNED_PREREGISTRATION) + "\n```",
-            )
-            if is_degraded(text):
-                return  # worker unavailable -> fall back to registered capability
-            code = extract_code(text)
-            prereg = extract_preregistration(text)
+            disc = getattr(self, "_discovered_demo", None) if attempt == 0 else None
+            if disc:
+                # autonomous-discovery STAGE: use the survivor's already-screened demonstration code
+                # instead of authoring one. It STILL goes through the same gates below (code-gate,
+                # smoke, valid-prereg, explore/confirm seal, commit) — just sourced from discovery.
+                code, prereg = disc["code"], disc["prereg"]
+            else:
+                text = await run_worker(
+                    self.run_id, "coder", base_prompt + retry_note,
+                    system=DEMO_SYSTEM, dry_run=self.dry_run,
+                    max_attempts=get_settings().authoring_max_attempts,  # the long stream gets patient retries
+                    dry_value="```python\n" + CANNED_DEMO + "```\n```json\n"
+                    + json.dumps(CANNED_PREREGISTRATION) + "\n```",
+                )
+                if is_degraded(text):
+                    return  # worker unavailable -> fall back to registered capability
+                code = extract_code(text)
+                prereg = extract_preregistration(text)
             ok, reasons = check_code(code, required_function=DEMO_REQUIRED_FUNCTION)
             if ok:
                 smoke_ok, smoke_err = await asyncio.to_thread(smoke_test_demonstration, code)
@@ -1316,13 +1456,23 @@ class ExperimentDriver:
         the confirmatory demonstration. Returns ``(None, None, None)`` on any failure (infeasible
         split, worker degraded, gate reject, sandbox error) so the caller degrades to blind
         authoring. The exploration output is DESCRIPTIVE only and never enters the verdict."""
+        expected_split = self._discovery_split_meta if self.hypothesis.get("discovery_sourced") else None
+        split_seed = int(expected_split.get("seed", rs)) if expected_split else rs
         try:
-            staged = await asyncio.to_thread(self._stage_explore_arrays, plugin, demo, data_spec, rs)
+            staged = await asyncio.to_thread(
+                self._stage_explore_arrays, plugin, demo, data_spec, split_seed,
+            )
         except Exception:  # noqa: BLE001 - staging best-effort -> blind fallback
             staged = None
         if staged is None:
             return None, None, None
         x_explore, y_explore, groups_explore, confirm_index, split_meta = staged
+        if expected_split and split_meta.get("index_hash") != expected_split.get("index_hash"):
+            await get_bus().publish(make_event(
+                "demonstration_split_mismatch", run_id=self.run_id,
+                payload={"discovery": expected_split, "demonstration": split_meta},
+            ))
+            return None, None, None
 
         await self._status("coding", "authoring the exploration probe")
         text = await run_worker(
@@ -2810,7 +2960,7 @@ class ExperimentDriver:
         self, design: dict, demo_result: dict | None
     ) -> tuple[bool | None, bool]:
         """Independently AUDIT an AI-authored demonstration with the AUTHOR vendor EXCLUDED
-        (genuine cross-vendor independence, not Opus reviewing its own code). A refuting audit
+        (genuine cross-vendor independence, not the orchestrator reviewing its own code). A refuting audit
         (gate did not pass) FORCES ``holds=False`` on the result — the auditor's adversarial
         finding cannot be overridden by the author — so the formulation claim becomes
         ``refuted``.
@@ -2883,10 +3033,11 @@ class ExperimentDriver:
             "probes": demo_result.get("probes"),
             "detail": demo_result.get("detail"),
         }
+        author_vendor = get_settings().orchestrator_vendor
         try:
             panel = await self.gateway.review(
                 "demonstration_audit", payload, self.run_id, run_id=self.run_id,
-                dry_run=self.dry_run, exclude_vendors={"anthropic"},  # exclude the Opus AUTHOR
+                dry_run=self.dry_run, exclude_vendors={author_vendor},
             )
         except Exception as exc:  # noqa: BLE001 - the audit must never kill the run
             # The audit INFRASTRUCTURE errored — the demonstration was never independently
@@ -2905,10 +3056,10 @@ class ExperimentDriver:
                 )
             return None, True
         audit_passed = bool(panel.gate_passed)
-        # independence guard: if the Anthropic author somehow appears in the panel, treat the
+        # Independence guard: if the selected author vendor somehow appears in the panel, treat the
         # audit as NOT independent -> fail closed (cannot be trusted as a real audit).
         auditors = {c.critic_id for c in (getattr(panel, "critiques", None) or [])}
-        if "anthropic" in auditors:
+        if author_vendor in auditors:
             audit_passed = False
         # vendor floor (mirrors the results gate's min_review_vendors): a PASSING audit on
         # fewer distinct auditors — e.g. every provider but one errored out — is NOT adequate
@@ -2960,7 +3111,7 @@ class ExperimentDriver:
     )
 
     async def _rag_generate(self, question: str, contexts: list[str], prompt: str) -> str:
-        """Generate one answer HOST-SIDE. Real run → a Claude call (trusted; the no-network
+        """Generate one answer HOST-SIDE. Real run → an orchestrator-model call (trusted; the no-network
         sandbox is untouched). Dry-run / no creds → the offline extractive baseline."""
         from aletheia.domains.rag.retriever import extractive_answerer
 
@@ -3010,7 +3161,7 @@ class ExperimentDriver:
         corpus, cases = data["corpus"], data["cases"]
         k = int(design.get("k", 5))
         prompt = str(design.get("answer_prompt") or self._DEFAULT_RAG_PROMPT)
-        model = get_settings().claude_model
+        model = get_settings().orchestrator_model
         retriever_fn, retriever_label = self._make_retriever(design)
         requested_dense = str(design.get("retriever", "lexical")).lower() == "dense"
         dense_fellback = requested_dense and retriever_label.startswith("lexical")

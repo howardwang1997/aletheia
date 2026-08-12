@@ -8,11 +8,34 @@ agreed, structured experiment plan — the hand-off artifact for Phase 1.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 from aletheia.data.registry import get_dataset, list_datasets, register_dataset
 from aletheia.events.bus import get_bus, make_event
 from aletheia.memory.service import finalize_plan, log_note
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    """Provider-neutral local tool contract.
+
+    Claude converts it to an in-process SDK MCP tool; OpenAI converts the same schema to a strict
+    Responses function tool. The handler and side effects remain identical across providers.
+    """
+
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+    handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
+def to_claude_tool(spec: ToolSpec):
+    """Adapt a provider-neutral tool to the Claude Agent SDK lazily."""
+    from claude_agent_sdk import tool
+
+    return tool(spec.name, spec.description, spec.input_schema)(spec.handler)
 
 # finalize_goal input schema — a complete, structured experiment plan.
 FINALIZE_GOAL_FIELDS: dict[str, Any] = {
@@ -31,14 +54,7 @@ FINALIZE_GOAL_FIELDS: dict[str, Any] = {
 
 
 def build_memory_tool(run_id: str):
-    """A ``memory_log`` MCP tool bound to this run via closure."""
-    from claude_agent_sdk import tool
-
-    @tool(
-        "memory_log",
-        "Append a concise note to the experiment work log (persisted to the ledger).",
-        {"note": str},
-    )
+    """A provider-neutral ``memory_log`` tool bound to this run via closure."""
     async def memory_log(args: dict[str, Any]) -> dict[str, Any]:
         note = str(args.get("note", "")).strip()
         decision_id = await asyncio.to_thread(log_note, run_id, note, "orchestrator")
@@ -47,21 +63,17 @@ def build_memory_tool(run_id: str):
         )
         return {"content": [{"type": "text", "text": f"Logged work-log entry #{decision_id}."}]}
 
-    return memory_log
+    return ToolSpec(
+        "memory_log",
+        "Append a concise note to the experiment work log (persisted to the ledger).",
+        {"note": str},
+        memory_log,
+    )
 
 
 def build_search_literature_tool(run_id: str):
     """A ``search_literature`` MCP tool: search arXiv + OpenAlex for prior work and
     ingest the results into the recall store. Granted ONLY to the SURVEY worker."""
-    from claude_agent_sdk import tool
-
-    @tool(
-        "search_literature",
-        "Search academic literature (arXiv + OpenAlex) for prior work relevant to a "
-        "query. Results are ingested into memory and the top papers are returned. Call "
-        "this a few times with focused queries to map the prior work before designing.",
-        {"query": str},
-    )
     async def search_literature(args: dict[str, Any]) -> dict[str, Any]:
         from aletheia.research import literature
 
@@ -73,25 +85,21 @@ def build_search_literature_tool(run_id: str):
         )
         return {"content": [{"type": "text", "text": literature.briefing(papers) or "No papers found."}]}
 
-    return search_literature
+    return ToolSpec(
+        "search_literature",
+        "Search academic literature (arXiv + OpenAlex) for prior work relevant to a query. "
+        "Results are ingested into memory and the top papers are returned. Call this a few "
+        "times with focused queries to map the prior work before designing.",
+        {"query": str},
+        search_literature,
+    )
 
 
 def build_recall_tool(run_id: str):
     """A ``memory_recall`` MCP tool: semantic search over past research (across all
     runs) so scoping plans against prior hypotheses, designs, critiques, and
     conclusions instead of re-running dead ends."""
-    from claude_agent_sdk import tool
-
     from aletheia.memory.vector import recall
-
-    @tool(
-        "memory_recall",
-        "Search past research memory (all runs) for work relevant to a query — "
-        "prior hypotheses, designs, critic findings, and conclusions. Use this "
-        "while scoping to avoid repeating approaches that already failed or "
-        "converged. Returns the most similar fragments.",
-        {"query": str},
-    )
     async def memory_recall(args: dict[str, Any]) -> dict[str, Any]:
         query = str(args.get("query", "")).strip()
         hits = await asyncio.to_thread(recall, query, run_id=None)
@@ -108,19 +116,18 @@ def build_recall_tool(run_id: str):
         )
         return {"content": [{"type": "text", "text": text}]}
 
-    return memory_recall
+    return ToolSpec(
+        "memory_recall",
+        "Search past research memory (all runs) for work relevant to a query — prior "
+        "hypotheses, designs, critic findings, and conclusions. Use this while scoping "
+        "to avoid repeating approaches that already failed or converged.",
+        {"query": str},
+        memory_recall,
+    )
 
 
 def build_finalize_goal_tool(run_id: str):
     """A ``finalize_goal`` MCP tool: record the agreed experiment plan."""
-    from claude_agent_sdk import tool
-
-    @tool(
-        "finalize_goal",
-        "Record the agreed, concrete experiment plan once the user has confirmed "
-        "the research goal. Call this exactly once when scoping is complete.",
-        FINALIZE_GOAL_FIELDS,
-    )
     async def finalize_goal(args: dict[str, Any]) -> dict[str, Any]:
         plan = {k: str(args.get(k, "")).strip() for k in FINALIZE_GOAL_FIELDS}
         experiment_id = await asyncio.to_thread(finalize_plan, run_id, plan)
@@ -143,7 +150,13 @@ def build_finalize_goal_tool(run_id: str):
             ]
         }
 
-    return finalize_goal
+    return ToolSpec(
+        "finalize_goal",
+        "Record the agreed, concrete experiment plan once the user has confirmed the "
+        "research goal. Call this exactly once when scoping is complete.",
+        FINALIZE_GOAL_FIELDS,
+        finalize_goal,
+    )
 
 
 # --- data provisioning tools (scoping phase) -------------------------------
@@ -161,17 +174,6 @@ REQUEST_DATA_FIELDS: dict[str, Any] = {
 def build_request_data_tool(run_id: str):
     """``request_data``: Aletheia declares a dataset it needs. Creates a 'needed'
     DataAsset that surfaces on the dashboard for the human to satisfy."""
-    from claude_agent_sdk import tool
-
-    @tool(
-        "request_data",
-        "Declare a dataset you need to run the experiment. source is one of: "
-        "'benchmark' (a known public dataset — give its name as ref), 'upload' (ask "
-        "the human for a file), 'directory' (a folder of files), 'url' (an online "
-        "file or .zip/.tar.gz — give the link as ref), or 'api' (a keyed source). "
-        "The human satisfies it before launch.",
-        REQUEST_DATA_FIELDS,
-    )
     async def request_data(args: dict[str, Any]) -> dict[str, Any]:
         source = (str(args.get("source", "")).strip() or "benchmark").lower()
         asset_id = await asyncio.to_thread(
@@ -210,20 +212,19 @@ def build_request_data_tool(run_id: str):
             ]
         }
 
-    return request_data
+    return ToolSpec(
+        "request_data",
+        "Declare a dataset you need to run the experiment. source is one of: 'benchmark' "
+        "(a known public dataset), 'upload', 'directory', 'url', or 'api'. The human "
+        "satisfies it before launch.",
+        REQUEST_DATA_FIELDS,
+        request_data,
+    )
 
 
 def build_inspect_dataset_tool(run_id: str):
     """``inspect_dataset``: read the profile of registered datasets (push scenario)
     so the agent designs against the real columns/target."""
-    from claude_agent_sdk import tool
-
-    @tool(
-        "inspect_dataset",
-        "Inspect datasets already provided for this run (columns, dtypes, row count, "
-        "target candidates). Pass asset_id to inspect one, or leave empty for all.",
-        {"asset_id": str},
-    )
     async def inspect_dataset(args: dict[str, Any]) -> dict[str, Any]:
         asset_id = str(args.get("asset_id", "")).strip()
         if asset_id:
@@ -246,4 +247,10 @@ def build_inspect_dataset_tool(run_id: str):
             text = "Registered datasets:\n" + "\n".join(lines)
         return {"content": [{"type": "text", "text": text}]}
 
-    return inspect_dataset
+    return ToolSpec(
+        "inspect_dataset",
+        "Inspect datasets already provided for this run (columns, dtypes, row count, target "
+        "candidates). Pass asset_id to inspect one, or leave empty for all.",
+        {"asset_id": str},
+        inspect_dataset,
+    )
