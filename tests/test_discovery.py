@@ -68,6 +68,7 @@ def test_discovery_full_filter_keeps_only_the_real_novel_grounded_candidate():
         ideate_fn=lambda avoid, lessons: [c for c in _CANDS if c["title"] not in set(avoid)],
         plugin=plugin, X=X, y=y, groups=groups, gateway=_FakeGateway(), run_id="t",
         k_survivors=99, max_rounds=1, search_fn=_fake_search, briefing_fn=lambda p: "", log=lambda *a: None,
+        novelty_exclude={"test-author"},
     )
 
     assert len(rows) == 5
@@ -97,9 +98,48 @@ def test_discovery_promotes_real_effect_below_groks_blind_threshold():
     survivors, rows = discover(
         ideate_fn=lambda avoid, lessons: [cand], plugin=MaterialsBandGapPlugin(), X=X, y=y, groups=groups,
         gateway=_FakeGateway(), run_id="t", k_survivors=1, max_rounds=1,
-        search_fn=_fake_search, briefing_fn=lambda p: "", log=lambda *a: None)
-    assert rows[0]["survives"]  # promoted despite test (0.7) < grok's blind supported_if (2.0)
+        search_fn=_fake_search, briefing_fn=lambda p: "", log=lambda *a: None,
+        novelty_exclude={"test-author"})
+    assert rows[0]["survives"]  # promoted as an EXPLORATORY signal despite the blind threshold
+    assert rows[0]["holds"] is False  # never misreported as satisfying its pre-registration
     assert [s["title"] for s in survivors] == ["real but under the blind bar"]
+
+
+def test_discovery_fails_closed_when_grounding_search_errors():
+    rng = np.random.default_rng(3)
+    X, y = rng.random((120, 6)), rng.random(120)
+    groups = np.array(["A-B"] * 60 + ["C-D"] * 60, dtype=object)
+    cand = {"title": "search outage", "insight": "x", "claim": "a possibly novel effect",
+            "code": _const_demo(1.0, 0.0), "prereg": _PREREG}
+
+    def broken_search(_query, _k):
+        raise ConnectionError("literature backend unavailable")
+
+    survivors, rows = discover(
+        ideate_fn=lambda avoid, lessons: [cand], plugin=MaterialsBandGapPlugin(), X=X, y=y,
+        groups=groups, gateway=_FakeGateway(), run_id="t", k_survivors=1, max_rounds=1,
+        search_fn=broken_search, briefing_fn=lambda p: "", log=lambda *a: None,
+        novelty_exclude={"test-author"},
+    )
+
+    assert survivors == []
+    assert rows[0]["grounded"] is None
+    assert rows[0]["stage"] == "novelty/grnd"
+
+
+def test_discovery_fails_closed_when_author_vendor_is_not_declared():
+    rng = np.random.default_rng(4)
+    X, y = rng.random((120, 6)), rng.random(120)
+    groups = np.array(["A-B"] * 60 + ["C-D"] * 60, dtype=object)
+    cand = {"title": "unknown author", "insight": "x", "claim": "effect",
+            "code": _const_demo(1.0, 0.0), "prereg": _PREREG}
+    survivors, rows = discover(
+        ideate_fn=lambda avoid, lessons: [cand], plugin=MaterialsBandGapPlugin(), X=X, y=y,
+        groups=groups, gateway=_FakeGateway(), run_id="t", k_survivors=1, max_rounds=1,
+        search_fn=_fake_search, briefing_fn=lambda p: "", log=lambda *a: None,
+    )
+    assert survivors == []
+    assert "author vendors" in rows[0]["why"]
 
 
 def test_discovery_stops_at_k_survivors():
@@ -111,5 +151,6 @@ def test_discovery_stops_at_k_survivors():
         ideate_fn=lambda avoid, lessons: [dict(good, title=f"g{len(avoid)}")],  # a fresh survivor each round
         plugin=MaterialsBandGapPlugin(), X=X, y=y, groups=groups, gateway=_FakeGateway(), run_id="t",
         k_survivors=2, max_rounds=5, search_fn=_fake_search, briefing_fn=lambda p: "", log=lambda *a: None,
+        novelty_exclude={"test-author"},
     )
     assert len(survivors) == 2  # stopped as soon as 2 banked, not all 5 rounds

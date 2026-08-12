@@ -1,12 +1,11 @@
-"""One-shot orchestrator runtime (Phase 0).
+"""One-shot provider-neutral orchestrator runtime (Phase 0).
 
-A ``ClaudeSDKClient`` (Opus 4.8) that runs a single task and streams every message
-to the event bus, exposing a ``memory_log`` MCP tool. The multi-turn scoping
+A selected Claude or OpenAI model runs a single task and streams canonical events
+to the event bus, exposing the same provider-neutral ``memory_log`` tool. The multi-turn scoping
 conversation lives in :mod:`aletheia.orchestrator.session`.
 
 Auth, tools, and the tool gate are shared modules (``auth`` / ``tools`` / ``gate``).
-``has_credentials`` and ``machine_has_claude_login`` are re-exported here for
-backward compatibility.
+Credential helpers are re-exported here for backward compatibility.
 """
 
 from __future__ import annotations
@@ -15,14 +14,14 @@ import asyncio
 
 from aletheia.config import get_settings
 from aletheia.events.bus import get_bus, make_event
-from aletheia.events.normalizer import normalize_message
 from aletheia.memory.service import log_note
 from aletheia.orchestrator.auth import (  # noqa: F401 (re-exported)
-    configure_auth,
     has_credentials,
     machine_has_claude_login,
 )
+from aletheia.orchestrator.codex_cli import machine_has_codex_subscription  # noqa: F401
 from aletheia.orchestrator.tools import build_memory_tool
+from aletheia.orchestrator.worker import is_degraded, run_worker
 
 __all__ = [
     "run_task",
@@ -30,6 +29,7 @@ __all__ = [
     "run_dryrun",
     "has_credentials",
     "machine_has_claude_login",
+    "machine_has_codex_subscription",
 ]
 
 SYSTEM_PROMPT = (
@@ -41,32 +41,30 @@ SYSTEM_PROMPT = (
 
 
 async def run_real(run_id: str, prompt: str) -> None:
-    from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, create_sdk_mcp_server
-
     settings = get_settings()
-    configure_auth(settings)
     bus = get_bus()
 
-    server = create_sdk_mcp_server(
-        name="aletheia", version="0.0.1", tools=[build_memory_tool(run_id)]
-    )
-    options = ClaudeAgentOptions(
-        model=settings.claude_model,
-        system_prompt=SYSTEM_PROMPT,
-        mcp_servers={"aletheia": server},
-        allowed_tools=["mcp__aletheia__memory_log"],
-        permission_mode="bypassPermissions",  # lights-out
-        setting_sources=[],  # do not load the host's CLAUDE.md / .claude config
-        max_budget_usd=settings.budget_usd,  # hard per-run guardrail
-    )
-
-    await bus.publish(make_event("run_started", run_id=run_id, payload={"prompt": prompt, "mode": "real"}))
+    await bus.publish(make_event(
+        "run_started", run_id=run_id,
+        payload={
+            "prompt": prompt,
+            "mode": "real",
+            "provider": settings.orchestrator_provider,
+            "transport": settings.orchestrator_transport,
+            "model": settings.orchestrator_model,
+        },
+    ))
     try:
-        async with ClaudeSDKClient(options=options) as client:
-            await client.query(prompt)
-            async for msg in client.receive_response():
-                for evt in normalize_message(msg, run_id):
-                    await bus.publish(evt)
+        result = await run_worker(
+            run_id, "orchestrator", prompt,
+            system=SYSTEM_PROMPT,
+            tools=[build_memory_tool(run_id)],
+            allowed_tools=["mcp__aletheia__memory_log"],
+            max_turns=5,
+            dry_run=False,
+        )
+        if is_degraded(result):
+            raise RuntimeError(result)
         await bus.publish(make_event("run_finished", run_id=run_id, payload={"status": "completed"}))
     except Exception as exc:  # noqa: BLE001 — record then re-raise
         await bus.publish(make_event("error", run_id=run_id, payload={"error": str(exc)}))

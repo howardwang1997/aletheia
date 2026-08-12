@@ -4,8 +4,8 @@
 (imports, dangerous builtins, dunder-escape patterns). ``resource_limits``
 returns a ``preexec_fn`` that caps CPU + address space for the training
 subprocess. These are guardrails against runaway/accidental code on a personal
-machine — NOT a hard sandbox against a determined adversary (that is Docker,
-later). The code is authored by the trusted Opus coder; this catches mistakes
+machine — NOT a hard sandbox against a determined adversary (that is Docker).
+The code is authored by the configured orchestrator; this catches mistakes
 and obvious foot-guns and keeps the surface honest.
 """
 

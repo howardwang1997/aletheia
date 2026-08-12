@@ -345,7 +345,7 @@ class WorkerCache(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
-    cache_key: Mapped[str] = mapped_column(String(64))  # sha256(label|system|model|prompt)
+    cache_key: Mapped[str] = mapped_column(String(64))  # sha256(provider|label|system|model|prompt)
     label: Mapped[str | None] = mapped_column(String(128))
     result: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

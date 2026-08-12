@@ -4,7 +4,7 @@ scripts/auto_discovery.py into a tested package module so the driver can run it 
 
 The triage is the scarce filter ("creativity is cheap"). Each candidate carries runnable
 `compute_demonstration` code; the harness screens it deterministically (prereg-valid -> code-gate ->
-runnable/non-degenerate -> runs+holds on real data -> non-trivial magnitude), then applies the two
+runnable/non-degenerate -> an exploratory signal on the exploration partition), then applies the two
 scarce filters (GROUNDABILITY + the cross-vendor NOVELTY gate, author excluded) only to the survivors
 of the cheap pass. All dependencies (ideator, gateway, literature search) are injectable so the loop
 is unit-testable offline with fakes.
@@ -91,7 +91,7 @@ def make_vendor_ideator(model: str, base_url: str, key: str, *, system: str = ID
 
 def materials_angle_context(n: int, target_desc: str = "band gap, eV", gaps=None) -> str:
     """Like ``materials_ideate_context`` but asks for ANGLES ONLY (no code). Used in CO-AUTHOR mode:
-    grok proposes the oblique angle + pre-registration; a separate expert (Claude) writes the code.
+    grok proposes the oblique angle + pre-registration; a separate orchestrator model writes the code.
 
     Tuned against the two empirical failure modes (live run d02df7ee: 16/20 angles NULL, 1 real-but-known):
     demand a concrete PHYSICAL MECHANISM (abstract feature-statistic fishing is null on the data) and,
@@ -148,7 +148,7 @@ CODE_AUTHOR_SYSTEM = (
 
 
 def code_author_prompt(angle: dict, target_desc: str = "band gap, eV") -> str:
-    """The prompt that has Claude implement ``compute_demonstration`` for ONE grok angle, matching the
+    """Prompt the configured orchestrator to implement ``compute_demonstration`` for one angle, matching the
     exact contract the harness screens (the same data shape + return dict as ``materials_ideate_context``)."""
     import json as _json
     title, insight = str(angle.get("title", "")), str(angle.get("insight", ""))
@@ -174,18 +174,16 @@ def code_author_prompt(angle: dict, target_desc: str = "band gap, eV") -> str:
     )
 
 
-def make_claude_code_author(run_id: str, *, target_desc: str = "band gap, eV", model: str | None = None,
+def make_worker_code_author(run_id: str, *, target_desc: str = "band gap, eV", model: str | None = None,
                             dry_run: bool = False, loop=None, worker=None, extract=None):
-    """Return a SYNC ``author_fn(angle) -> code`` that has CLAUDE write ``compute_demonstration`` for a
-    grok angle (the high-quality path: grok finds the oblique angle, Claude writes correct code).
+    """Return a SYNC ``author_fn(angle) -> code`` that uses the configured orchestrator provider to
+    write ``compute_demonstration`` for a vendor-proposed angle.
 
-    The Claude SDK's subprocess transport only works on the MAIN-thread event loop, NOT a fresh loop
-    spun inside a worker thread (unlike the httpx novelty gate). Since ``discover`` runs in a worker
-    thread under the driver (``asyncio.to_thread``), pass the driver's running ``loop`` and the
-    authoring is submitted to it via ``run_coroutine_threadsafe`` (the worker thread blocks on the
-    result). When ``loop is None`` (the fully-synchronous standalone CLI, already on the main thread)
-    it falls back to ``asyncio.run``. Brings live-Claude into discovery -> run OUTSIDE-session per AUP.
-    ``loop``/``worker``/``extract`` injectable for offline tests."""
+    Some transports require the MAIN-thread event loop rather than a fresh loop inside a worker
+    thread. Since ``discover`` runs in ``asyncio.to_thread``, pass the driver's running ``loop`` and
+    authoring is submitted via ``run_coroutine_threadsafe``. When ``loop is None`` (the synchronous
+    standalone CLI), it falls back to ``asyncio.run``. ``loop``/``worker``/``extract`` are injectable
+    for offline tests."""
     import asyncio as _asyncio
 
     def author(angle: dict) -> str:
@@ -205,9 +203,13 @@ def make_claude_code_author(run_id: str, *, target_desc: str = "band gap, eV", m
     return author
 
 
+# Backward compatibility for callers written before orchestrator providers were pluggable.
+make_claude_code_author = make_worker_code_author
+
+
 def make_coauthor_ideator(angle_ideate_fn: IdeateFn, author_fn, log=None) -> IdeateFn:
-    """Combine a grok ANGLE-ideator with a Claude CODE-author into one ``ideate_fn``: grok proposes the
-    oblique angle, Claude writes the code, the harness screens the result. One angle's authoring failing
+    """Combine a grok angle ideator with an orchestrator code author: grok proposes the
+    oblique angle, the configured model writes the code, and the harness screens it. One angle's authoring failing
     drops only that candidate. Returns candidate dicts carrying both the angle fields AND ``code``.
 
     ``log`` (default no-op) is called per angle with a progress line — pass ``print`` so the otherwise
@@ -216,7 +218,7 @@ def make_coauthor_ideator(angle_ideate_fn: IdeateFn, author_fn, log=None) -> Ide
 
     def ideate(avoid_titles: list[str], lessons: list[str]) -> list[dict[str, Any]]:
         angles = [a for a in angle_ideate_fn(avoid_titles, lessons) if isinstance(a, dict)]
-        _log(f"[coauthor] grok proposed {len(angles)} angle(s); Claude authoring code...")
+        _log(f"[coauthor] grok proposed {len(angles)} angle(s); orchestrator authoring code...")
         out: list[dict[str, Any]] = []
         for i, a in enumerate(angles):
             try:
@@ -258,11 +260,10 @@ _DISCOVERY_SEP_RATIO = 3.0
 
 
 def screen_deterministic(cand: dict, plugin, X, y, groups) -> Screened:
-    """Cheap, deterministic, Claude-free: prereg-valid -> code-gate -> runnable/non-degenerate ->
-    runs on REAL data -> the effect SEPARATES from a vanishing control. Returns a Screened (survives =
-    passed all). The promote-or-not decision is judged on OBSERVED separation, NOT grok's blind
-    supported_if threshold (guessed before seeing data) — that bar mis-killed real effects with clean
-    controls. The candidate's prereg is still carried for the campaign's rigorous explore/confirm."""
+    """Cheap, deterministic pre-filter: prereg-valid -> code-gate -> runnable/non-degenerate ->
+    runs on the harness-provided EXPLORATION partition -> the effect separates from a vanishing
+    control. ``survives`` means promising enough to promote, not confirmatory support. ``holds``
+    separately records whether the candidate's original pre-registered rule actually fired."""
     title = str(cand.get("title", "?"))
     code = cand.get("code") or ""
     prereg = cand.get("prereg") or {}
@@ -291,6 +292,7 @@ def screen_deterministic(cand: dict, plugin, X, y, groups) -> Screened:
     probes = plugin._demonstration_probes(res)
     ts, cs = float(res.get("test_statistic")), float(res.get("control_statistic"))
     silent = plugin._apply_rule(cs, prereg["control_silent_if"])
+    prereg_triggers = plugin._apply_rule(ts, prereg["supported_if"])
     # Decoupled from grok's blind supported_if: a candidate is worth promoting if its control VANISHES
     # (silent) AND the test effect DOMINATES that vanishing control by >= _DISCOVERY_SEP_RATIOx. Uses
     # the control's own scale (its observed magnitude, floored by the silent-bar) so it is scale-free.
@@ -302,21 +304,44 @@ def screen_deterministic(cand: dict, plugin, X, y, groups) -> Screened:
         "control fired" if not silent
         else "effect too small vs control" if not separated
         else "probe flagged")
+    prereg_holds = bool(prereg_triggers and silent and clean)
     return Screened(title, "scored", survives, why, round(ts, 4), round(cs, 4),
-                    int(res.get("n_test", 0)), int(res.get("n_control", 0)), survives)
+                    int(res.get("n_test", 0)), int(res.get("n_control", 0)), prereg_holds)
 
 
 def screen_novelty_grounding(cand: dict, gateway, run_id: str, *, search_fn, briefing_fn,
                              exclude_vendors: set | None = None) -> dict:
     """The two scarce filters: GROUNDABILITY (citable prior work) + the cross-vendor NOVELTY gate.
-    ``exclude_vendors`` = the AUTHORS to exclude from the novelty panel (default {'anthropic'}; in
-    co-author mode also the idea-author, e.g. {'anthropic','grok'}). A network flake -> grounded=None."""
+    ``exclude_vendors`` lists all author vendors that must be absent from the novelty panel.
+    A network failure yields ``grounded=None`` and therefore fails closed."""
+    if not exclude_vendors:
+        return {
+            "grounded": None,
+            "n_papers": 0,
+            "gate_passed": None,
+            "consensus": "error",
+            "novelty_objection": "author vendors were not declared for independent review",
+            "novelty_pass": False,
+        }
     title, claim, insight = str(cand.get("title", "")), str(cand.get("claim", "")), str(cand.get("insight", ""))
     try:
         papers = search_fn((title + " " + claim)[:160], 8)
     except Exception:  # noqa: BLE001
         papers = None
     grounded = None if papers is None else (len(papers) >= 3)
+    if grounded is not True:
+        return {
+            "grounded": grounded,
+            "n_papers": 0 if papers is None else len(papers),
+            "gate_passed": None,
+            "consensus": "not_reviewed",
+            "novelty_objection": (
+                "literature retrieval unavailable"
+                if papers is None
+                else f"insufficient literature grounding (n={len(papers)})"
+            ),
+            "novelty_pass": False,
+        }
     hyp = {"statement": claim or title, "rationale": insight, "novelty_note": insight,
            "contribution_type": "paradigm",
            "demonstration": {"form": "discriminating_instance", "claim": claim or title, "capability": "ai_authored"}}
@@ -324,12 +349,14 @@ def screen_novelty_grounding(cand: dict, gateway, run_id: str, *, search_fn, bri
     try:
         panel = asyncio.run(gateway.review("direction", content, target_ref="auto-discovery",
                                            run_id=run_id, dry_run=False,
-                                           exclude_vendors=exclude_vendors or {"anthropic"}))
+                                           exclude_vendors=exclude_vendors))
     except Exception as exc:  # noqa: BLE001
         return {"grounded": grounded, "n_papers": (0 if papers is None else len(papers)),
                 "gate_passed": None, "consensus": "error", "novelty_objection": str(exc)[:60], "novelty_pass": False}
     nov_findings = [f for c in (panel.critiques or []) for f in (c.findings or [])
                     if f.category == "novelty" and f.severity in ("blocker", "major")]
+    reviewers = {str(getattr(c, "critic_id", "")) for c in (panel.critiques or [])}
+    author_leak = reviewers & set(exclude_vendors)
     # capture the critic's EVIDENCE (why it's known), not just a "major:novelty" tag, so the lesson
     # fed back next round teaches grok the specific known-territory to avoid.
     def _obj_text(f):
@@ -337,8 +364,11 @@ def screen_novelty_grounding(cand: dict, gateway, run_id: str, *, search_fn, bri
                    or getattr(f, "suggestion", "") or "novelty")[:200]
     return {"grounded": grounded, "n_papers": (0 if papers is None else len(papers)),
             "gate_passed": bool(panel.gate_passed), "consensus": panel.consensus_verdict,
-            "novelty_objection": (_obj_text(nov_findings[0]) if nov_findings else ""),
-            "novelty_pass": bool(panel.gate_passed) and not nov_findings}
+            "novelty_objection": (
+                f"author vendor leaked into novelty panel: {', '.join(sorted(author_leak))}"
+                if author_leak else _obj_text(nov_findings[0]) if nov_findings else ""
+            ),
+            "novelty_pass": bool(panel.gate_passed) and not nov_findings and not author_leak}
 
 
 def _lesson_from(row: dict) -> str:
@@ -361,7 +391,8 @@ def discover(*, ideate_fn: IdeateFn, plugin, X, y, groups, gateway, run_id: str,
              log=print) -> tuple[list[dict], list[dict]]:
     """Run the discovery loop: up to ``max_rounds`` ideation rounds (each LEARNS from prior
     rejections) or until ``k_survivors`` banked. Returns (survivors, all_screened) as dicts.
-    A survivor RAN-CLEAN + HELD + NON-TRIVIAL + GROUNDED + NOVEL. ``cand`` dicts of survivors carry
+    A survivor ran clean, showed a non-trivial exploratory signal, and was grounded + novel.
+    It is not confirmatory support until the sealed confirmation stage. ``cand`` dicts carry
     their `code`/`prereg`, so the driver can hand the demonstration straight to the campaign."""
     if search_fn is None or briefing_fn is None:
         from aletheia.research.literature import briefing as _b, search as _s
@@ -392,11 +423,16 @@ def discover(*, ideate_fn: IdeateFn, plugin, X, y, groups, gateway, run_id: str,
                 vet = screen_novelty_grounding(cand, gateway, run_id, search_fn=search_fn,
                                                briefing_fn=briefing_fn, exclude_vendors=novelty_exclude)
                 row.update(vet)
-                row["survives"] = bool(vet["novelty_pass"] and vet.get("grounded") is not False)
+                # A retrieval error yields grounded=None; absence of evidence must never pass.
+                row["survives"] = bool(vet["novelty_pass"] and vet.get("grounded") is True)
                 if not row["survives"]:
                     row["stage"] = "novelty/grnd"
                     row["why"] = vet.get("novelty_objection") or (
-                        f"ungrounded(n={vet.get('n_papers', 0)})" if vet.get("grounded") is False else "novelty gate")
+                        "literature retrieval unavailable" if vet.get("grounded") is None
+                        else f"ungrounded(n={vet.get('n_papers', 0)})"
+                        if vet.get("grounded") is False
+                        else "novelty gate"
+                    )
                 else:
                     row["candidate"] = cand  # carry code/prereg for the campaign
             all_rows.append(row)
@@ -406,5 +442,7 @@ def discover(*, ideate_fn: IdeateFn, plugin, X, y, groups, gateway, run_id: str,
                 lessons.append(_lesson_from(row))
             log(f"[discover] r{rnd} {'SURVIVE' if row['survives'] else 'killed':<8} {sc.stage:<12} "
                 f"{title[:46]}  {('' if row['survives'] else row.get('why', ''))[:30]}")
+            if len(survivors) >= k_survivors:
+                break
         log(f"[discover] round {rnd}: {len(survivors)} survivor(s) / {len(all_rows)} screened")
     return survivors, all_rows

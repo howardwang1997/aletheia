@@ -106,8 +106,18 @@ async def test_run_worker_returns_cached_on_resume(monkeypatch):
     create_all()
     run_id = create_run("worker cache", domain="materials", status="scoping")
     label, system, prompt = "coder", worker.STAGE_SYSTEM, "author the demonstration"
-    model = get_settings().claude_model
-    key = hashlib.sha256("\0".join([label, system, model, prompt, ""]).encode("utf-8")).hexdigest()
+    settings = get_settings()
+    key = hashlib.sha256(
+        "\0".join([
+            settings.orchestrator_provider,
+            settings.orchestrator_transport,
+            label,
+            system,
+            settings.orchestrator_model,
+            prompt,
+            "",
+        ]).encode("utf-8")
+    ).hexdigest()
     put_cached_worker(run_id, key, label, "CACHED-DEMO-CODE")
 
     # pretend we have creds (so run_worker doesn't take the dry-run early return) + enable resume read

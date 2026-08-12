@@ -516,6 +516,25 @@ def test_audit_not_independent_if_author_present_fails_closed():
     assert passed is False and err is False and demo["holds"] is False  # not independent -> fail closed
 
 
+def test_gpt_author_vendor_is_excluded_from_audit(monkeypatch):
+    from aletheia.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "orchestrator_provider", "openai")
+    d = ExperimentDriver("rid-audit-gpt", dry_run=False)
+    d._claim_ids = {}
+    captured = {}
+
+    async def fake_review(*args, **kwargs):
+        captured.update(kwargs)
+        return _fake_panel("approve", True, ["gemini", "deepseek"])
+
+    d.gateway = SimpleNamespace(review=fake_review)
+    demo = {"holds": True, "preregistration": _PREREG, "test_statistic": 5.0, "control_statistic": 0.0}
+    passed, err = asyncio.run(d._audit_demonstration({"demonstration_code": _HOLDS}, demo))
+    assert passed is True and err is False
+    assert captured["exclude_vendors"] == {"openai"}
+
+
 def test_audit_infra_error_is_not_refutation():
     # the audit INFRASTRUCTURE errors (gateway raises). This is missing verification, NOT a
     # refutation: ``holds`` is left untouched (no audit_refuted) and the call signals

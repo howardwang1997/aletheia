@@ -3,9 +3,9 @@
 Autonomous researcher — a personal, lights-out AI Scientist. All you need is deploy and make dataset.
 
 Aletheia plans research directions, designs & runs experiments, analyzes & optimizes,
-and writes up results — autonomously, within budget guardrails. A **Claude Opus 4.8**
-orchestrator (on the Claude Agent SDK) coordinates Claude worker subagents and a
-**cross-vendor critic panel** (GPT-5.5 · latest Gemini · latest DeepSeek · latest Zhipu GLM)
+and writes up results — autonomously, within budget guardrails. A configurable **Claude or GPT**
+orchestrator coordinates isolated worker contexts through the Claude Agent SDK or OpenAI Responses
+API, alongside a **cross-vendor critic panel**
 that reviews designs/results from supportive and adversarial angles. A Postgres
 **experiment ledger** is the source-of-truth work log; a **Next.js + FastAPI** dashboard
 streams live activity and lets you steer the lab. See the full design in
@@ -31,13 +31,12 @@ reliable autonomous frontier scientist.
 2. **AI-authored demonstration harness — mostly done, still hardening.** The AI can author a
    `compute_demonstration`, but the harness owns `holds` through pre-registration, negative
    controls, probes, audit, and claim finalization. Molecules and materials exercise this path.
-3. **Exploratory -> confirmatory demonstrations — next keystone.** The AI should calibrate on an
-   exploration partition, commit a pre-registered threshold, then be judged only on a disjoint
-   confirmation partition. This makes a real holding result reachable without weakening the
-   anti-fakeability spine.
-4. **Campaign learning loop — missing.** A refuted or unstable demonstration should feed back into
-   the next hypothesis/design instead of starting from a fresh blind guess. This is the transition
-   from one-shot automation to a research program.
+3. **Exploratory -> confirmatory demonstrations — built.** The AI calibrates on an exploration
+   partition, commits a pre-registered threshold, and is judged only on a disjoint confirmation
+   partition. Discovery now screens only the exploration side of the same immutable split.
+4. **Campaign learning loop — built offline, live validation owed.** Harness verdicts update a
+   belief ledger and feed typed failure reasons into the next EIG-ranked experiment. A substantive
+   multi-round live campaign is still needed to validate the complete behavior.
 5. **Strong novelty/SOTA grounding — partial.** Literature retrieval, structured findings, and SOTA
    rows exist, but novelty and SOTA claims still need stronger health checks and prior-work mapping
    before the system can reliably tell new science from a rephrased known idea.
@@ -45,9 +44,8 @@ reliable autonomous frontier scientist.
    the question, literature, data card, split metadata, code, artifacts, metrics, claims, audits,
    reproduction, limitations, paper, and reproducibility package/PR.
 
-Roughly: keystones 1-2 are substantially built, keystone 3 is the next implementation target, and
-keystones 4-6 are the remaining large steps before Aletheia can credibly claim autonomous frontier
-science rather than a well-guarded research execution system.
+The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
+of causal/mechanistic experiments, independent external replication, and a complete evidence bundle.
 
 ## Invariants (the safety/quality spine — never traded for a feature)
 
@@ -55,13 +53,15 @@ science rather than a well-guarded research execution system.
 2. **Honest evaluation** — a fixed, leakage-aware harness computes metrics; the agent never grades its own homework (independent re-compute when it authors training code).
 3. **Adversarial cross-model peer review** — ≥1 distinct-vendor red-team reviewer per gate; novelty/SOTA claims must cite literature.
 4. **Full provenance** — every transition/decision/metric/critique/artifact is in the ledger; every claim traces to code (a PR).
-5. **Budget guardrails + sandboxed code** — per-run caps; AI-authored code runs behind an AST gate + a no-network Docker hard sandbox.
-6. **Latest models always.**
+5. **Budget guardrails + sandboxed code** — per-run caps and a Docker hard-sandbox path exist. Host
+   subprocess execution remains a known P0 gap and must not be treated as hard isolation.
+6. **Evaluated frontier models.** Defaults may track current frontier models; benchmark and
+   reproduction runs pin an explicit model identifier and record it in provenance.
 7. **Human role** — set the domain/direction + connect data/keys; the AI does the science lights-out within the guardrails (irreversible/outward actions stay gated).
 
 ## Architecture (one-liner)
 
-`Next.js dashboard ⇄ FastAPI ⇄ {orchestrator (Opus 4.8), critic gateway, memory/ledger,
+`Next.js dashboard ⇄ FastAPI ⇄ {orchestrator (Claude or GPT), critic gateway, memory/ledger,
 scheduler, compute, IAM}`, with every message flowing through an **event bus → SSE**.
 
 ## Quickstart (Phase 0 — walking skeleton)
@@ -88,24 +88,41 @@ cd frontend && npm install && npm run dev    # http://localhost:3000
 
 Open http://localhost:3000, type a goal, click **Start run**.
 
-**On a machine already logged into Claude Code, real runs fire automatically** — the
-orchestrator inherits your existing subscription login (macOS Keychain / `claude`
-CLI), and the OpenAI critic likewise reuses your `codex login`. No keys or tokens in
-`.env` are needed; one distinct-vendor critic (OpenAI via Codex) already satisfies the
-peer-review gate. Runs fall back to **dry-run** (full DB → event-bus → SSE path, no
-model calls) only when *no* Claude login is detected at all.
-
-To point at different auth (e.g. a remote/headless box with no machine login, or to
-force an API key):
+The default provider is Claude. Both Claude and OpenAI support subscription login or API-key
+authentication. To use GPT with the ChatGPT subscription already logged into Codex CLI, run
+`codex login` once and select the OpenAI provider:
 
 ```bash
-# subscription (default, cheaper): only needed headless — run `claude setup-token`
+# Claude subscription (default): only needed headless — run `claude setup-token`
+ALETHEIA_ORCHESTRATOR_PROVIDER=claude
 ALETHEIA_CLAUDE_AUTH_MODE=subscription
 CLAUDE_CODE_OAUTH_TOKEN=...            # leave BLANK to inherit the machine login
 # or API key:
 # ALETHEIA_CLAUDE_AUTH_MODE=api_key
 # ANTHROPIC_API_KEY=...
+
+# GPT via ChatGPT/Codex subscription (no OPENAI_API_KEY):
+# ALETHEIA_ORCHESTRATOR_PROVIDER=openai
+# ALETHEIA_OPENAI_AUTH_MODE=subscription
+# ALETHEIA_OPENAI_MODEL=gpt-5.6-sol
+# `codex login status` must say: Logged in using ChatGPT
+
+# GPT via the metered OpenAI Responses API:
+# ALETHEIA_ORCHESTRATOR_PROVIDER=openai
+# ALETHEIA_OPENAI_AUTH_MODE=api_key
+# OPENAI_API_KEY=...
+# ALETHEIA_OPENAI_MODEL=gpt-5.6-sol
+# ALETHEIA_OPENAI_REASONING_EFFORT=high
 ```
+
+If the selected provider has no usable credentials, Aletheia falls back to **dry-run**. Local tools
+share one provider-neutral contract. Claude receives MCP adapters; OpenAI API mode receives strict
+Responses functions; subscription mode uses strict Codex CLI control objects and executes only
+Aletheia's allowlisted local tools. Subscription calls run in an empty temporary directory with a
+read-only sandbox and built-in Codex tools/config disabled. Both GPT paths keep session history
+locally and persist canonical events to Aletheia's ledger. See OpenAI's official
+[authentication](https://learn.chatgpt.com/docs/auth) and
+[non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode) documentation.
 
 ## Verify
 
@@ -115,10 +132,10 @@ conda run -n aletheia python -m pytest        # Phase 0 skeleton tests (needs Po
 
 ## Token / cost usage
 
-Every Claude SDK call persists its real `total_cost_usd` + token `usage`; these are summed
-per run from the ledger (no estimate). A live run is dominated by `cache_read` tokens — that,
-not USD, is what meters the rolling subscription window (`cost_usd` reads ~0 under a
-subscription login).
+Every provider call persists token `usage` in the event ledger. Claude SDK calls also persist the
+reported `total_cost_usd`; OpenAI Responses and Codex CLI persist exact tokens but no calculated
+dollar amount, so the configured per-stage estimate remains the OpenAI USD guardrail until a pricing
+calculator is added. Subscription runs may report zero USD despite consuming plan allowance.
 
 ```bash
 conda run -n aletheia python scripts/usage_report.py             # all runs + grand total
@@ -126,10 +143,8 @@ conda run -n aletheia python scripts/usage_report.py --top 10    # priciest runs
 conda run -n aletheia python scripts/usage_report.py <run_id>    # full breakdown for one run
 ```
 
-Each e2e summary also carries a `usage` block (incl. `five_hour_window`: the SDK-reported
-pressure on the 5-hour rolling limit during the run — peak utilization + whether it was
-throttled), and `token_cap_per_run` (off by default) bounds a run's total tokens. The budget
-cap now binds on the SDK's real reported cost, not a flat per-stage estimate.
+Each e2e summary also carries a `usage` block. For Claude it includes the SDK-reported five-hour
+window pressure; `token_cap_per_run` (off by default) bounds either provider's total tokens.
 
 ## Conversation records
 
@@ -153,7 +168,7 @@ hypothesis scorecards, a reproduction pass, an EIG-ranked experiment planner, an
 AI-application domain (RAG: lexical & dense retrieval, host-side LLM generation,
 cross-vendor faithfulness) alongside the materials and molecules regression domains.
 
-**Honest caveat:** this is breadth of *machinery*, not yet depth of *result*. Every domain
-has so far been exercised on small / synthetic data; a substantive real run (real models,
-real dataset, confronting real failure) is the next milestone — not more breadth. See
-`docs/PROJECT_REVIEW.md` and `docs/AUTONOMOUS_RESEARCH_ROADMAP.md`.
+**Honest caveat:** this is breadth of *machinery*, not yet depth of *result*. A substantive,
+externally replicated live campaign is the next milestone — not more workflow breadth. See
+`docs/PROJECT_REVIEW.md`, `docs/AUTONOMOUS_RESEARCH_ROADMAP.md`, and the current gap analysis in
+`docs/FINAL_GOAL_GAP_ANALYSIS_2026_08_12.md`.

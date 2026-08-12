@@ -1,7 +1,7 @@
-"""Multi-turn scoping conversation.
+"""Provider-neutral multi-turn scoping conversation.
 
-A ``ConversationSession`` keeps a long-lived ``ClaudeSDKClient`` alive across many
-user turns so Aletheia and the user can jointly clarify the research goal. The
+A ``ConversationSession`` keeps provider-specific state across many user turns so
+Aletheia and the user can jointly clarify the research goal. The
 agent asks focused questions, proposes directions, and when the user confirms it
 calls ``finalize_goal`` to record a structured experiment plan (the Phase-1
 hand-off). Tools are gated to {memory_log, finalize_goal} during this phase.
@@ -29,6 +29,7 @@ from aletheia.orchestrator.tools import (
     build_memory_tool,
     build_recall_tool,
     build_request_data_tool,
+    to_claude_tool,
 )
 
 SCOPING_PROMPT = (
@@ -77,7 +78,7 @@ class ConversationSession:
         self.dry_run = dry_run
         self._queue: asyncio.Queue[str] = asyncio.Queue()
         self._task: asyncio.Task | None = None
-        self._client: Any = None  # ClaudeSDKClient (real mode)
+        self._client: Any = None  # interruptible Claude client; OpenAI turns are cancellable tasks
         self._turn = 0
         self._first_message: str | None = None
 
@@ -126,21 +127,30 @@ class ConversationSession:
 
     # --- real loop ---
     async def _run_real_loop(self) -> None:
+        settings = get_settings()
+        if settings.orchestrator_provider == "openai":
+            await self._run_openai_loop(settings)
+        else:
+            await self._run_claude_loop(settings)
+
+    def _tools(self):
+        return [
+            build_memory_tool(self.run_id),
+            build_recall_tool(self.run_id),
+            build_finalize_goal_tool(self.run_id),
+            build_request_data_tool(self.run_id),
+            build_inspect_dataset_tool(self.run_id),
+        ]
+
+    async def _run_claude_loop(self, settings) -> None:
         from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, create_sdk_mcp_server
 
-        settings = get_settings()
         configure_auth(settings)
 
         server = create_sdk_mcp_server(
             name="aletheia",
             version="0.0.1",
-            tools=[
-                build_memory_tool(self.run_id),
-                build_recall_tool(self.run_id),
-                build_finalize_goal_tool(self.run_id),
-                build_request_data_tool(self.run_id),
-                build_inspect_dataset_tool(self.run_id),
-            ],
+            tools=[to_claude_tool(spec) for spec in self._tools()],
         )
         options = ClaudeAgentOptions(
             model=settings.claude_model,
@@ -178,6 +188,39 @@ class ConversationSession:
             raise
         except Exception as exc:  # noqa: BLE001
             await self._emit(make_event("error", run_id=self.run_id, payload={"error": str(exc)}))
+
+    async def _run_openai_loop(self, settings) -> None:
+        if settings.openai_auth_mode == "subscription":
+            from aletheia.orchestrator.codex_runtime import run_codex_turn as run_openai_turn
+        else:
+            from aletheia.orchestrator.openai_runtime import run_responses_turn as run_openai_turn
+
+        history: list[dict[str, Any]] = []
+        await self._status("awaiting_user", "ready")
+        while True:
+            text = await self._queue.get()
+            await self._status("thinking")
+            try:
+                turn = await run_openai_turn(
+                    self.run_id,
+                    "orchestrator",
+                    text,
+                    system=SCOPING_PROMPT,
+                    settings=settings,
+                    tools=self._tools(),
+                    allowed_tools=list(ALLOWLIST),
+                    can_use_tool=build_tool_gate(ALLOWLIST, self.run_id),
+                    max_turns=8,
+                    history=history,
+                )
+                history = turn.history
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # keep the session alive across turn errors
+                await self._emit(
+                    make_event("error", run_id=self.run_id, payload={"error": str(exc)})
+                )
+            await self._status("awaiting_user")
 
     # --- dry-run loop (scripted) ---
     async def _run_dryrun_loop(self) -> None:

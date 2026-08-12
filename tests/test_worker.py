@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 from aletheia.events.bus import get_bus
 from aletheia.orchestrator.reasoner import reason_stage
+from aletheia.orchestrator.tools import ToolSpec
 from aletheia.orchestrator.worker import (
     _NO_TOOLS,
     _looks_like_api_error,
@@ -116,6 +117,12 @@ def _install_fake_sdk(monkeypatch):
     fake_mod = types.ModuleType("claude_agent_sdk")
     fake_mod.ClaudeAgentOptions = FakeOptions
     fake_mod.ClaudeSDKClient = FakeClient
+    fake_mod.tool = lambda name, description, schema: (
+        lambda handler: SimpleNamespace(
+            name=name, description=description, input_schema=schema, handler=handler,
+        )
+    )
+    fake_mod.create_sdk_mcp_server = lambda **kwargs: kwargs
     monkeypatch.setitem(sys.modules, "claude_agent_sdk", fake_mod)
 
     import aletheia.orchestrator.worker as w
@@ -165,6 +172,23 @@ def test_mcp_worker_with_gate_is_default_permission(monkeypatch):
     # a tool gate is supplied -> the SDK asks the gate per call instead of bypassing.
     assert captured["permission_mode"] == "default"
     assert captured["can_use_tool"] is gate
+
+
+def test_provider_neutral_tool_is_adapted_for_claude(monkeypatch):
+    captured = _install_fake_sdk(monkeypatch)
+
+    async def lookup(args):
+        return {"content": [{"type": "text", "text": args["query"]}]}
+
+    spec = ToolSpec("lookup", "Look up a value.", {"query": str}, lookup)
+    out = asyncio.run(run_worker(
+        "run-opts4", "retriever", "search",
+        tools=[spec], tool_namespace="research", dry_run=False,
+    ))
+    assert out == "inline answer"
+    assert captured["allowed_tools"] == ["mcp__research__lookup"]
+    server = captured["mcp_servers"]["research"]
+    assert server["tools"][0].name == "lookup"
 
 
 def test_analysis_excludes_degraded_subchecks(monkeypatch):
