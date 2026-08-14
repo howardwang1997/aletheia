@@ -17,11 +17,35 @@ from typing import Any
 from aletheia.db import session_scope
 from aletheia.memory.ledger import DataAsset
 
+DATA_ROLES = ("primary", "external_validation")
+
+
+def content_sha256(path: str) -> str:
+    """Hash a file or a directory tree deterministically for immutable data provenance."""
+    import hashlib
+    from pathlib import Path
+
+    root = Path(path)
+    if not root.exists():
+        raise FileNotFoundError(path)
+    digest = hashlib.sha256()
+    files = [root] if root.is_file() else sorted(p for p in root.rglob("*") if p.is_file())
+    for item in files:
+        relative = item.name if root.is_file() else item.relative_to(root).as_posix()
+        encoded = relative.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "little"))
+        digest.update(encoded)
+        with item.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                digest.update(chunk)
+    return digest.hexdigest()
+
 
 def _to_dict(a: DataAsset) -> dict[str, Any]:
     return {
         "id": a.id,
         "run_id": a.run_id,
+        "role": a.role or "primary",
         "source": a.source,
         "ref": a.ref,
         "target_column": a.target_column,
@@ -30,6 +54,7 @@ def _to_dict(a: DataAsset) -> dict[str, Any]:
         "description": a.description,
         "status": a.status,
         "uri": a.uri,
+        "content_sha256": a.content_sha256,
         "profile": a.profile_json,
         "requested_by": a.requested_by,
         "created_at": a.created_at.isoformat() if a.created_at else None,
@@ -40,6 +65,7 @@ def register_dataset(
     run_id: str,
     source: str,
     *,
+    role: str = "primary",
     ref: str | None = None,
     target_column: str | None = None,
     composition_column: str | None = None,
@@ -49,11 +75,15 @@ def register_dataset(
     status: str = "needed",
     requested_by: str = "human",
     profile_json: dict[str, Any] | None = None,
+    content_sha256: str | None = None,
 ) -> str:
     """Create a DataAsset row. Returns its id."""
+    if role not in DATA_ROLES:
+        raise ValueError(f"role must be one of {DATA_ROLES}, got {role!r}")
     with session_scope() as s:
         a = DataAsset(
             run_id=run_id,
+            role=role,
             source=source,
             ref=ref,
             target_column=target_column,
@@ -64,6 +94,7 @@ def register_dataset(
             status=status,
             requested_by=requested_by,
             profile_json=profile_json,
+            content_sha256=content_sha256,
         )
         s.add(a)
         s.flush()
@@ -129,6 +160,7 @@ def attach_local(
     path: str,
     *,
     asset_id: str | None = None,
+    role: str = "primary",
     target_column: str | None = None,
     composition_column: str | None = None,
     feature_kind: str | None = "composition",
@@ -142,9 +174,13 @@ def attach_local(
     """
     import os
 
+    if role not in DATA_ROLES:
+        raise ValueError(f"role must be one of {DATA_ROLES}, got {role!r}")
+
     from aletheia.data.profiler import profile_path
 
     profile = profile_path(path, target_hint=target_column)
+    content_hash = content_sha256(path)
     source = "directory" if os.path.isdir(path) else "upload"
     if asset_id:
         return update_dataset(
@@ -158,10 +194,13 @@ def attach_local(
             composition_column=composition_column,
             feature_kind=feature_kind,
             description=description,
+            role=role,
+            content_sha256=content_hash,
         )
     new_id = register_dataset(
         run_id,
         source=source,
+        role=role,
         ref=path,
         uri=path,
         target_column=target_column,
@@ -171,6 +210,7 @@ def attach_local(
         status="ready",
         requested_by="human",
         profile_json=profile,
+        content_sha256=content_hash,
     )
     return get_dataset(new_id)
 
@@ -180,6 +220,7 @@ def attach_url(
     url: str,
     *,
     asset_id: str | None = None,
+    role: str = "primary",
     target_column: str | None = None,
     composition_column: str | None = None,
     feature_kind: str | None = "composition",
@@ -193,6 +234,7 @@ def attach_url(
 
     local = download(url, run_data_dir(run_id))
     profile = profile_path(str(local), target_hint=target_column)
+    content_hash = content_sha256(str(local))
     if asset_id:
         return update_dataset(
             asset_id,
@@ -205,10 +247,13 @@ def attach_url(
             composition_column=composition_column,
             feature_kind=feature_kind,
             description=description,
+            role=role,
+            content_sha256=content_hash,
         )
     new_id = register_dataset(
         run_id,
         source="url",
+        role=role,
         ref=url,
         uri=str(local),
         target_column=target_column,
@@ -218,6 +263,7 @@ def attach_url(
         status="ready",
         requested_by="human",
         profile_json=profile,
+        content_sha256=content_hash,
     )
     return get_dataset(new_id)
 
@@ -227,6 +273,7 @@ def attach_upload(
     path: str,
     *,
     asset_id: str | None = None,
+    role: str = "primary",
     target_column: str | None = None,
     composition_column: str | None = None,
     feature_kind: str | None = "composition",
@@ -237,6 +284,7 @@ def attach_upload(
         run_id,
         path,
         asset_id=asset_id,
+        role=role,
         target_column=target_column,
         composition_column=composition_column,
         feature_kind=feature_kind,

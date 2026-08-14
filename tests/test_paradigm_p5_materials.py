@@ -96,10 +96,10 @@ def test_materials_ai_demo_refuted_when_effect_is_an_artifact_on_control(materia
     assert d["holds"] is False and d["control_silent"] is False
 
 
-def test_materials_ai_demo_refuted_on_degenerate_control_probe(materials_plugin, tmp_path):
-    # a sham control (n_control below the floor) cannot ground the claim
+def test_materials_ai_demo_not_evaluated_on_degenerate_control_probe(materials_plugin, tmp_path):
+    # A sham control cannot ground a claim, but is not scientific counter-evidence.
     d = materials_plugin.run_demonstration(_spec(_DEGENERATE), _DATA_SPEC, str(tmp_path / "degen"))
-    assert d["holds"] is False and any("control" in f for f in d["probes"]["flags"])
+    assert d["holds"] is None and any("control" in f for f in d["probes"]["flags"])
 
 
 def test_materials_ai_demo_not_evaluated_without_preregistration(materials_plugin, tmp_path):

@@ -128,6 +128,38 @@ def test_cap_honored_on_persistent_disagreement(monkeypatch):
     assert panel.gate_passed is False  # unrefuted blocker survives to the final round
 
 
+def test_locked_artifact_cannot_pass_on_an_unimplemented_rebuttal(monkeypatch):
+    """A locked/observed artifact gets one review of its actual bytes.  Even a stub
+    reviewer that would accept after seeing a rebuttal never gets that second turn."""
+    create_all()
+    calls = {"rebuttal": 0}
+
+    async def counting_rebuttal(*a, **k):
+        calls["rebuttal"] += 1
+        return "I promise to fix it later"
+
+    monkeypatch.setattr(gw_mod, "run_worker", counting_rebuttal)
+
+    def adversary(content):
+        return (
+            _resp("approve")
+            if "AUTHOR REBUTTAL" in content
+            else _resp("reject", blocker=True)
+        )
+
+    gw = _gw(
+        [_Stub("adv", adversary), _Stub("sup", lambda c: _resp("approve"))],
+        max_rounds=5,
+    )
+    panel = asyncio.run(gw.review(
+        "design", {"artifact_locked": True, "design": {"x": 1}},
+        "exp-locked-no-launder", dry_run=False,
+    ))
+    assert _rounds_run("exp-locked-no-launder") == 1
+    assert calls["rebuttal"] == 0
+    assert panel.gate_passed is False
+
+
 # --- vendor-failure visibility (a dropped auditor must be diagnosable, not silent) ---
 def test_failing_vendor_is_dropped_and_evented():
     # a vendor that errors (e.g. unreachable on a direct link) is dropped from the panel — not fatal —

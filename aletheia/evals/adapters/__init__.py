@@ -1,0 +1,63 @@
+"""Public benchmark adapters executed behind the independent evaluator boundary."""
+
+from aletheia.evals.adapters.corebench import (
+    CoreBenchAdapter,
+    CoreBenchAssetReceipt,
+    CoreBenchHarnessManifest,
+    CoreBenchHarnessResult,
+    CoreBenchInstance,
+    CoreBenchScorer,
+    CoreBenchSourceManifest,
+    DockerCoreBenchHarness,
+)
+from aletheia.evals.adapters.scienceagentbench import (
+    DockerScienceAgentBenchHarness,
+    ScienceAgentBenchAdapter,
+    ScienceAgentBenchAssetReceipt,
+    ScienceAgentBenchHarnessManifest,
+    ScienceAgentBenchHarnessResult,
+    ScienceAgentBenchInstance,
+    ScienceAgentBenchScorer,
+    ScienceAgentBenchSourceManifest,
+)
+from aletheia.evals.adapters.discoveryworld import (
+    DiscoveryWorldAdapter,
+    DiscoveryWorldAssetReceipt,
+    DiscoveryWorldEpisodeReceipt,
+    DiscoveryWorldHarnessManifest,
+    DiscoveryWorldHarnessResult,
+    DiscoveryWorldInstanceSpec,
+    DiscoveryWorldScorer,
+    DiscoveryWorldSourceManifest,
+    DiscoveryWorldSubsetManifest,
+    DockerDiscoveryWorldHarness,
+)
+
+__all__ = [
+    "CoreBenchAdapter",
+    "CoreBenchAssetReceipt",
+    "CoreBenchHarnessManifest",
+    "CoreBenchHarnessResult",
+    "CoreBenchInstance",
+    "CoreBenchScorer",
+    "CoreBenchSourceManifest",
+    "DockerCoreBenchHarness",
+    "DockerDiscoveryWorldHarness",
+    "DockerScienceAgentBenchHarness",
+    "ScienceAgentBenchAdapter",
+    "ScienceAgentBenchAssetReceipt",
+    "ScienceAgentBenchHarnessManifest",
+    "ScienceAgentBenchHarnessResult",
+    "ScienceAgentBenchInstance",
+    "ScienceAgentBenchScorer",
+    "ScienceAgentBenchSourceManifest",
+    "DiscoveryWorldAdapter",
+    "DiscoveryWorldAssetReceipt",
+    "DiscoveryWorldEpisodeReceipt",
+    "DiscoveryWorldHarnessManifest",
+    "DiscoveryWorldHarnessResult",
+    "DiscoveryWorldInstanceSpec",
+    "DiscoveryWorldScorer",
+    "DiscoveryWorldSourceManifest",
+    "DiscoveryWorldSubsetManifest",
+]

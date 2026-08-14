@@ -5,20 +5,23 @@ the **host** (trusted, has network + matminer) loads + featurizes the data and
 stages ``X/y/groups``; a **light, no-network container** runs only
 ``train_evaluate`` on the staged arrays — that is where the AI-authored
 ``build_pipeline`` executes, behind real isolation (no network, read-only root,
-dropped capabilities, non-root, memory/PID/CPU caps). The aletheia source is
-mounted read-only at ``/repo``; the agent runtime never enters the sandbox.
+dropped capabilities, non-root, memory/PID/CPU caps). The small trusted evaluation
+harness is baked into the immutable image; neither the repository nor host secrets
+are mounted into the container.
 """
 
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 from pathlib import Path
 
-import aletheia
+from aletheia.coder.executor import (
+    hardened_docker_command,
+    resolve_docker_image,
+    run_hardened_container,
+)
 from aletheia.compute.base import ComputeBackend, JobSpec, JobStatus
-from aletheia.compute.local import DRY_RUN_INFO, DRY_RUN_METRICS
+from aletheia.compute.local import _dry_result
 from aletheia.config import get_settings
 from aletheia.domains.registry import get_domain_plugin
 from aletheia.memory.service import (
@@ -29,8 +32,6 @@ from aletheia.memory.service import (
 )
 from aletheia.paths import run_workspace
 
-_REPO_ROOT = Path(aletheia.__file__).resolve().parents[1]
-
 # Runs INSIDE the container: load staged arrays + design, run the fixed eval
 # harness (which executes the coder's build_pipeline), write metrics.json.
 _SANDBOX_SCRIPT = '''\
@@ -38,7 +39,7 @@ import json, sys
 from pathlib import Path
 import numpy as np
 
-sys.path.insert(0, "/repo")
+sys.path.insert(0, "/opt/aletheia")
 here = Path("/work")
 payload = json.loads((here / "payload.json").read_text())
 data = np.load(here / "staged.npz", allow_pickle=True)
@@ -63,28 +64,22 @@ class DockerBackend(ComputeBackend):
         self._terminal: dict[str, JobStatus] = {}
 
     # --- the hardened `docker run` command ---
-    def docker_command(self, workdir: Path) -> list[str]:
-        s = get_settings()
-        cmd = [
-            "docker", "run", "--rm",
-            "--memory", f"{s.sandbox_max_memory_mb}m",
-            "--cpus", str(s.sandbox_docker_cpus),
-            "--pids-limit", str(s.sandbox_docker_pids),
-            "--read-only", "--tmpfs", "/tmp:rw,size=512m",
-            "--cap-drop", "ALL",
-            "--security-opt", "no-new-privileges",
-            "--user", f"{os.getuid()}:{os.getgid()}",
-            "-v", f"{workdir}:/work",
-            "-v", f"{_REPO_ROOT}:/repo:ro",
-            "-w", "/work",
-            "-e", "PYTHONPATH=/repo",
-            "-e", "MPLBACKEND=Agg",
-            "-e", "MPLCONFIGDIR=/tmp",  # writable on the read-only root (tmpfs)
-        ]
-        if not s.sandbox_allow_network:
-            cmd += ["--network", "none"]
-        cmd += [s.sandbox_docker_image, "python", "/work/train_sandbox.py"]
-        return cmd
+    def docker_command(
+        self,
+        workdir: Path,
+        *,
+        image_id: str | None = None,
+        container_name: str = "aletheia-compute-preview",
+    ) -> list[str]:
+        immutable = image_id or resolve_docker_image()
+        return hardened_docker_command(
+            workdir,
+            image_id=immutable,
+            container_name=container_name,
+            container_dir="/work",
+            writable=True,
+            command=["python", "/work/train_sandbox.py"],
+        )
 
     # --- submit (blocking: host stages, container trains, then finalize) ---
     def submit(self, spec: JobSpec) -> str:
@@ -97,8 +92,9 @@ class DockerBackend(ComputeBackend):
         workdir.mkdir(parents=True, exist_ok=True)
 
         if spec.dry_run:
+            metrics, info = _dry_result(spec.domain)
             (workdir / "metrics.json").write_text(
-                json.dumps({"metrics": dict(DRY_RUN_METRICS), "artifacts": [], "info": dict(DRY_RUN_INFO)})
+                json.dumps({"metrics": metrics, "artifacts": [], "info": info})
             )
             return self._finalize(job_id, workdir, spec.experiment_id, rc=0)
 
@@ -118,37 +114,71 @@ class DockerBackend(ComputeBackend):
             y=np.asarray(y, dtype=float),
             groups=np.asarray(groups, dtype=object),
         )
-        (workdir / "payload.json").write_text(
-            json.dumps({"domain": spec.domain, "design": design, "data_spec": spec.data_spec})
-        )
+        # The raw-data location is deliberately omitted: the container receives only staged arrays.
+        (workdir / "payload.json").write_text(json.dumps({"domain": spec.domain, "design": design}))
         (workdir / "train_sandbox.py").write_text(_SANDBOX_SCRIPT)
 
         set_compute_job_status(job_id, "running")
-        log = (workdir / "job.log").open("wb")
         try:
-            proc = subprocess.run(
-                self.docker_command(workdir),
-                stdout=log, stderr=subprocess.STDOUT,
-                timeout=get_settings().sandbox_timeout_s, check=False,
+            image_id = resolve_docker_image()
+            container_name = f"aletheia-job-{job_id[:20]}"
+            execution = run_hardened_container(
+                self.docker_command(
+                    workdir, image_id=image_id, container_name=container_name
+                ),
+                container_name=container_name,
+                timeout_s=get_settings().sandbox_timeout_s,
+                image_id=image_id,
             )
-            rc = proc.returncode
-        except subprocess.TimeoutExpired:
+            (workdir / "job.log").write_text(execution.output)
+            rc = execution.returncode if execution.ok else -1
+            failure = execution.error
+            if execution.timed_out and not failure:
+                failure = f"hard sandbox timed out after {get_settings().sandbox_timeout_s:g}s"
+            if failure:
+                (workdir / "job.log").write_text(
+                    execution.output + f"\nSANDBOX_ERROR {failure}\n"
+                )
+        except Exception as exc:
             rc = -1
-        finally:
-            log.close()
-        return self._finalize(job_id, workdir, spec.experiment_id, rc=rc)
+            image_id = None
+            failure = f"hard sandbox launch failed: {exc}"
+            (workdir / "job.log").write_text(f"SANDBOX_ERROR {exc}\n")
+        return self._finalize(
+            job_id, workdir, spec.experiment_id, rc=rc, image_id=image_id,
+            failure=failure,
+        )
 
-    def _finalize(self, job_id: str, workdir: Path, experiment_id: str | None, rc: int) -> str:
+    def _finalize(
+        self,
+        job_id: str,
+        workdir: Path,
+        experiment_id: str | None,
+        rc: int,
+        image_id: str | None = None,
+        failure: str | None = None,
+    ) -> str:
         metrics_path = workdir / "metrics.json"
         if not metrics_path.exists() or rc not in (0, None):
             set_compute_job_status(job_id, "failed")
             self._terminal[job_id] = JobStatus(
                 job_id=job_id, status="failed",
-                error=f"container rc={rc}; metrics.json present={metrics_path.exists()}",
+                error=(
+                    f"{failure}; container rc={rc}; metrics.json present={metrics_path.exists()}"
+                    if failure else
+                    f"container rc={rc}; metrics.json present={metrics_path.exists()}"
+                ),
             )
             return job_id
         data = json.loads(metrics_path.read_text())
         metrics, artifacts, info = data.get("metrics", {}), data.get("artifacts", []), data.get("info", {})
+        # Container paths are provenance, but host consumers need the actual staged artifact URI.
+        for artifact in artifacts:
+            uri = str(artifact.get("uri") or "")
+            if uri.startswith("/work/"):
+                artifact["uri"] = str(workdir / uri.removeprefix("/work/"))
+        if image_id:
+            info["sandbox_image_id"] = image_id
         if experiment_id:
             record_metrics(experiment_id, metrics, split="test")
             if artifacts:

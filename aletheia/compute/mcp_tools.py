@@ -10,31 +10,45 @@ import json
 from typing import Any
 
 from aletheia.compute.base import JobSpec
-from aletheia.compute.local import get_local_backend
+from aletheia.compute.factory import get_compute_backend
 from aletheia.data.registry import list_datasets
 from aletheia.events.bus import get_bus, make_event
 
 
+def _asset_spec(d: dict[str, Any]) -> dict[str, Any]:
+    spec = {
+        "asset_id": d["id"],
+        "role": d.get("role") or "primary",
+        "source": d["source"],
+        "ref": d["ref"],
+        "uri": d["uri"],
+        "target_column": d["target_column"],
+        "feature_kind": d["feature_kind"],
+        "content_sha256": d.get("content_sha256"),
+        "profile": d.get("profile"),
+    }
+    if d.get("composition_column"):
+        spec["composition_column"] = d["composition_column"]
+    return spec
+
+
 def resolve_data_spec(run_id: str) -> dict[str, Any]:
-    """Build a data spec from the first ready DataAsset of the run (falls back to
-    the canonical benchmark)."""
+    """Build a data spec from the first ready *primary* DataAsset."""
     for d in list_datasets(run_id):
-        if d["status"] == "ready":
-            spec = {
-                "source": d["source"],
-                "ref": d["ref"],
-                "uri": d["uri"],
-                "target_column": d["target_column"],
-                "feature_kind": d["feature_kind"],
-            }
-            # explicit composition/feature column (e.g. UCI superconductivity 'material') so the
-            # domain featurizer resolves it deterministically instead of guessing the first
-            # non-numeric column — and so it is visible in the JSON-dumped data_spec the design /
-            # demonstration authoring prompts see.
-            if d.get("composition_column"):
-                spec["composition_column"] = d["composition_column"]
-            return spec
+        if d["status"] == "ready" and (d.get("role") or "primary") == "primary":
+            return _asset_spec(d)
     return {"source": "benchmark", "ref": "matbench_expt_gap"}
+
+
+def resolve_external_data_spec(run_id: str) -> dict[str, Any] | None:
+    """Resolve exactly one ready external-validation asset, without exposing it as training data."""
+    ready = [
+        d for d in list_datasets(run_id)
+        if d["status"] == "ready" and d.get("role") == "external_validation"
+    ]
+    if len(ready) > 1:
+        raise RuntimeError("a campaign may seal exactly one external-validation dataset")
+    return _asset_spec(ready[0]) if ready else None
 
 
 def build_compute_tools(
@@ -62,7 +76,7 @@ def build_compute_tools(
             experiment_id=experiment_id,
             dry_run=dry_run,
         )
-        job_id = await asyncio.to_thread(get_local_backend().submit, spec)
+        job_id = await asyncio.to_thread(get_compute_backend().submit, spec)
         await get_bus().publish(
             make_event(
                 "compute_submitted", run_id=run_id, payload={"job_id": job_id, "design": design}
@@ -77,7 +91,7 @@ def build_compute_tools(
     )
     async def compute_status(args: dict[str, Any]) -> dict[str, Any]:
         job_id = str(args.get("job_id", "")).strip()
-        st = await asyncio.to_thread(get_local_backend().status, job_id)
+        st = await asyncio.to_thread(get_compute_backend().status, job_id)
         await get_bus().publish(
             make_event(
                 "compute_status",

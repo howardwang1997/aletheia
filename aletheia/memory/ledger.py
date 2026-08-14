@@ -18,6 +18,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -128,6 +129,22 @@ class Run(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     experiments: Mapped[list["Experiment"]] = relationship(back_populates="run")
+
+
+class RunManifestRecord(Base):
+    """Immutable, content-addressed identity frozen before a formal run does science."""
+
+    __tablename__ = "run_manifests"
+    __table_args__ = (UniqueConstraint("run_id", name="uq_run_manifest_run"),)
+
+    manifest_sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    schema_version: Mapped[int] = mapped_column(Integer)
+    parent_manifest_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
+    uri: Mapped[str] = mapped_column(Text)
+    payload_json: Mapped[dict] = mapped_column(JSONB)
+    state: Mapped[str] = mapped_column(String(16), default="frozen")
+    frozen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Experiment(Base):
@@ -379,6 +396,10 @@ class DataAsset(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    # ``primary`` is the only role visible to adaptive design/training.  A ready
+    # ``external_validation`` asset is sealed up front but opened only after the
+    # campaign and its one-time internal final holdout have finished.
+    role: Mapped[str] = mapped_column(String(32), default="primary")
     source: Mapped[str] = mapped_column(String(16))  # benchmark | upload | api
     ref: Mapped[str | None] = mapped_column(Text)  # benchmark name | file path | api dataset id
     target_column: Mapped[str | None] = mapped_column(String(128))
@@ -390,8 +411,71 @@ class DataAsset(Base):
     description: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default="needed")  # needed | ready | error
     uri: Mapped[str | None] = mapped_column(Text)  # stored path for uploads
+    content_sha256: Mapped[str | None] = mapped_column(String(64))
     profile_json: Mapped[dict | None] = mapped_column(JSONB)  # columns/dtypes/n_rows/stats
     requested_by: Mapped[str] = mapped_column(String(16), default="human")  # agent | human
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CampaignSplitLedger(Base):
+    """Immutable campaign-wide row-role allocation for Epistemic Seal v2."""
+
+    __tablename__ = "campaign_split_ledgers"
+    __table_args__ = (UniqueConstraint("run_id", name="uq_campaign_split_run"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    dataset_fingerprint: Mapped[str] = mapped_column(String(64))
+    row_identity_hash: Mapped[str] = mapped_column(String(64))
+    split_algo_version: Mapped[int] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(String(24), default="sealed")
+    plan_json: Mapped[dict] = mapped_column(JSONB)
+    final_result_json: Mapped[dict | None] = mapped_column(JSONB)
+    final_opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ExternalValidationLedger(Base):
+    """One-time, locked-code evaluation on a separately sourced dataset."""
+
+    __tablename__ = "external_validation_ledgers"
+    __table_args__ = (UniqueConstraint("run_id", name="uq_external_validation_run"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    data_asset_id: Mapped[str] = mapped_column(ForeignKey("data_assets.id"), index=True)
+    dataset_fingerprint: Mapped[str] = mapped_column(String(64))
+    row_identity_hash: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(24), default="sealed")
+    provenance_json: Mapped[dict] = mapped_column(JSONB)
+    result_json: Mapped[dict | None] = mapped_column(JSONB)
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class HypothesisAttempt(Base):
+    """Family-level disclosure of every hypothesis assigned a confirm/final test."""
+
+    __tablename__ = "hypothesis_attempts"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id", "experiment_id", "phase", name="uq_hypothesis_attempt_run_exp_phase"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    experiment_id: Mapped[str | None] = mapped_column(ForeignKey("experiments.id"), index=True)
+    family_key: Mapped[str] = mapped_column(String(64), index=True)
+    hypothesis_key: Mapped[str] = mapped_column(String(64))
+    hypothesis_text: Mapped[str] = mapped_column(Text)
+    round_index: Mapped[int] = mapped_column(Integer)
+    phase: Mapped[str] = mapped_column(String(24))  # confirmation | final_holdout | external_replication
+    confirmation_batch: Mapped[int | None] = mapped_column(Integer)
+    split_hash: Mapped[str] = mapped_column(String(64))
+    alpha_allocated: Mapped[float] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String(24), default="registered")
+    outcome_json: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

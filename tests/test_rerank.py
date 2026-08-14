@@ -3,7 +3,10 @@ fail-soft to the input order when the model can't load. Offline (CrossEncoder st
 
 from __future__ import annotations
 
+import concurrent.futures
 import sys
+import threading
+import time
 import types
 
 import aletheia.research.rerank as rr
@@ -59,3 +62,34 @@ def test_rerank_keeps_top_when_threshold_drops_all(monkeypatch):
     _stub_crossencoder(monkeypatch, lambda pairs: [-8.0 for _ in pairs])  # all below cutoff
     out = rr.rerank_papers("x", _papers(), top_k=2, min_relevance=0.5)
     assert len(out) == 2  # never starves the survey: keeps the top reordered
+
+
+def test_parallel_reranks_construct_once_and_serialize_inference(monkeypatch):
+    state = {"constructed": 0, "active": 0, "max_active": 0}
+    state_lock = threading.Lock()
+
+    class _CE:
+        def __init__(self, name):
+            with state_lock:
+                state["constructed"] += 1
+
+        def predict(self, pairs):
+            with state_lock:
+                state["active"] += 1
+                state["max_active"] = max(state["max_active"], state["active"])
+            time.sleep(0.01)
+            with state_lock:
+                state["active"] -= 1
+            return [1.0] * len(pairs)
+
+    fake = types.ModuleType("sentence_transformers")
+    fake.CrossEncoder = _CE
+    monkeypatch.setitem(sys.modules, "sentence_transformers", fake)
+    monkeypatch.setattr(rr, "_cached_model", None)
+    monkeypatch.setattr(rr, "_cached_name", None)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda i: rr.rerank_papers(f"q{i}", _papers()), range(8)))
+
+    assert all(len(result) == 3 for result in results)
+    assert state == {"constructed": 1, "active": 0, "max_active": 1}

@@ -127,7 +127,9 @@ def resource_limits():
     return _apply
 
 
-def smoke_test_solution(source: str, timeout_s: float = 30.0) -> tuple[bool, str]:
+def smoke_test_solution(
+    source: str, timeout_s: float = 30.0, *, backend: str | None = None
+) -> tuple[bool, str]:
     """Beyond the static AST gate: actually IMPORT the solution + build the pipeline in
     an isolated subprocess. Catches a runtime import error (e.g. a real symbol imported
     from the WRONG module — ``VarianceThreshold`` from ``sklearn.preprocessing``) or a
@@ -136,39 +138,29 @@ def smoke_test_solution(source: str, timeout_s: float = 30.0) -> tuple[bool, str
 
     Safe enough: ``source`` already passed ``check_code`` (allowlisted imports, no
     os/subprocess/open/exec), and ``build_pipeline`` only CONSTRUCTS estimators here."""
-    import subprocess
-    import sys
-    import tempfile
-    from pathlib import Path
+    from aletheia.coder.executor import execute_python_files
 
-    with tempfile.TemporaryDirectory() as td:
-        sol = Path(td) / "solution.py"
-        sol.write_text(source)
-        probe = (
-            "import importlib.util as u;"
-            f"s=u.spec_from_file_location('sol', r'{sol}');"
-            "m=u.module_from_spec(s);s.loader.exec_module(m);"
-            "p=m.build_pipeline();"
-            "assert hasattr(p,'fit') and hasattr(p,'predict'),'build_pipeline must return an estimator'"
-        )
-        try:
-            # the smoke test EXECUTES AI-authored code, so apply the same CPU/memory
-            # rlimits as the training subprocess (no-network is not enforced here — that
-            # is the Docker backend's job; this caps runaway import/build code).
-            proc = subprocess.run(
-                [sys.executable, "-c", probe],
-                capture_output=True, text=True, timeout=timeout_s,
-                stdin=subprocess.DEVNULL, preexec_fn=resource_limits(),
-            )
-        except Exception as exc:  # noqa: BLE001 - smoke test is best-effort
-            return False, f"smoke-test could not run: {exc}"
-        if proc.returncode != 0:
-            err = (proc.stderr or proc.stdout or "non-zero exit").strip()
-            return False, err.splitlines()[-1][:200] if err else "non-zero exit"
-        return True, ""
+    probe = (
+        "import importlib.util as u\n"
+        "s=u.spec_from_file_location('sol','solution.py')\n"
+        "m=u.module_from_spec(s);s.loader.exec_module(m)\n"
+        "p=m.build_pipeline()\n"
+        "assert hasattr(p,'fit') and hasattr(p,'predict'),"
+        "'build_pipeline must return an estimator'\n"
+        "print('ALETHEIA_SMOKE_OK')\n"
+    )
+    result = execute_python_files(
+        {"solution.py": source, "runner.py": probe}, timeout_s=timeout_s, backend=backend
+    )
+    if not result.ok or "ALETHEIA_SMOKE_OK" not in result.output:
+        err = (result.error or result.output or "non-zero exit").strip()
+        return False, err.splitlines()[-1][:200] if err else "non-zero exit"
+    return True, ""
 
 
-def smoke_test_demonstration(source: str, timeout_s: float = 30.0, sample=None) -> tuple[bool, str]:
+def smoke_test_demonstration(
+    source: str, timeout_s: float = 30.0, sample=None, *, backend: str | None = None
+) -> tuple[bool, str]:
     """Beyond the static gate: IMPORT the AI-authored demonstration and CALL
     ``compute_demonstration`` on a small data frame in an isolated subprocess, asserting it
     returns a dict with FINITE ``test_statistic``/``control_statistic`` AND a NON-DEGENERATE
@@ -193,55 +185,56 @@ def smoke_test_demonstration(source: str, timeout_s: float = 30.0, sample=None) 
 
     Safe: ``source`` already passed ``check_code`` (allowlisted imports, no os/open/exec); here
     it only runs on a small matrix in a subprocess. Same CPU/memory rlimits as training."""
-    import subprocess
-    import sys
-    import tempfile
-    from pathlib import Path
+    import io
 
-    with tempfile.TemporaryDirectory() as td:
-        sol = Path(td) / "demo.py"
-        sol.write_text(source)
-        if sample is not None:
-            import numpy as _np
-            Xs, ys, gs = sample
-            npz = Path(td) / "probe.npz"
-            _np.savez(npz, X=_np.asarray(Xs, dtype=float), y=_np.asarray(ys, dtype=float),
-                      g=_np.asarray(gs, dtype=str))
-            data_setup = (f"d=np.load(r'{npz}', allow_pickle=True);"
-                          "X=d['X'];y=d['y'];g=d['g'];N=len(y);")
-        else:
-            data_setup = ("rng=np.random.default_rng(0);N=200;"
-                          "X=rng.random((N,8));y=rng.random(N);"
-                          "g=np.array([i%10 for i in range(N)],dtype=object);")
-        probe = (
-            "import importlib.util as u, numpy as np, math;"
-            f"s=u.spec_from_file_location('demo', r'{sol}');"
-            "m=u.module_from_spec(s);s.loader.exec_module(m);"
-            + data_setup +
-            "r=m.compute_demonstration(X,y,g,{'random_state':0,'preregistration':{}});"
-            "assert isinstance(r,dict),'compute_demonstration must return a dict';"
-            "ts=float(r['test_statistic']);cs=float(r['control_statistic']);"
-            "assert math.isfinite(ts) and math.isfinite(cs),'statistics must be finite';"
-            # NON-DEGENERACY shape check: catch a 0-sample / broken / impossible-count selection
-            # at pre-flight (it is a DESIGN bug, not a null result) so the bounded retry can fix it.
-            "nt=r.get('n_test');nc=r.get('n_control');"
-            "assert nt is not None and nc is not None,'must return n_test and n_control sample sizes';"
-            "nt=float(nt);nc=float(nc);"
-            "assert nt.is_integer() and nc.is_integer(),'n_test/n_control must be whole sample counts';"
-            "assert nt>0 and nc>0,('degenerate sample (n_test=%d, n_control=%d): a 0-sample test or "
-            "control means the selection is broken -- ensure BOTH conditions retain samples'%(nt,nc));"
-            "assert nt<=N and nc<=N,('n_test=%d/n_control=%d exceed the %d available rows -- the "
-            "selection double-counts or leaks samples'%(nt,nc,N))"
+    import numpy as _np
+
+    from aletheia.coder.executor import execute_python_files
+
+    payload: dict[str, str | bytes] = {"demo.py": source}
+    if sample is not None:
+        Xs, ys, gs = sample
+        buf = io.BytesIO()
+        _np.savez(
+            buf,
+            X=_np.asarray(Xs, dtype=float),
+            y=_np.asarray(ys, dtype=float),
+            g=_np.asarray(gs, dtype=str),
         )
-        try:
-            proc = subprocess.run(
-                [sys.executable, "-c", probe],
-                capture_output=True, text=True, timeout=timeout_s,
-                stdin=subprocess.DEVNULL, preexec_fn=resource_limits(),
-            )
-        except Exception as exc:  # noqa: BLE001 - smoke test is best-effort
-            return False, f"smoke-test could not run: {exc}"
-        if proc.returncode != 0:
-            err = (proc.stderr or proc.stdout or "non-zero exit").strip()
-            return False, err.splitlines()[-1][:200] if err else "non-zero exit"
-        return True, ""
+        payload["probe.npz"] = buf.getvalue()
+        data_setup = (
+            "d=np.load('probe.npz',allow_pickle=True)\n"
+            "X=d['X'];y=d['y'];g=d['g'];N=len(y)\n"
+        )
+    else:
+        data_setup = (
+            "rng=np.random.default_rng(0);N=200\n"
+            "X=rng.random((N,8));y=rng.random(N)\n"
+            "g=np.array([i%10 for i in range(N)],dtype=object)\n"
+        )
+    probe = (
+        "import importlib.util as u, numpy as np, math\n"
+        "s=u.spec_from_file_location('demo','demo.py')\n"
+        "m=u.module_from_spec(s);s.loader.exec_module(m)\n"
+        + data_setup
+        + "r=m.compute_demonstration(X,y,g,{'random_state':0,'preregistration':{},"
+          "'family_alpha':0.05})\n"
+        "assert isinstance(r,dict),'compute_demonstration must return a dict'\n"
+        "ts=float(r['test_statistic']);cs=float(r['control_statistic'])\n"
+        "assert math.isfinite(ts) and math.isfinite(cs),'statistics must be finite'\n"
+        "nt=r.get('n_test');nc=r.get('n_control')\n"
+        "assert nt is not None and nc is not None,'must return n_test and n_control sample sizes'\n"
+        "nt=float(nt);nc=float(nc)\n"
+        "assert nt.is_integer() and nc.is_integer(),'n_test/n_control must be whole sample counts'\n"
+        "assert nt>0 and nc>0,('degenerate sample (n_test=%d, n_control=%d): a 0-sample test or "
+        "control means the selection is broken -- ensure BOTH conditions retain samples'%(nt,nc))\n"
+        "assert nt<=N and nc<=N,('n_test=%d/n_control=%d exceed the %d available rows -- the "
+        "selection double-counts or leaks samples'%(nt,nc,N))\n"
+        "print('ALETHEIA_SMOKE_OK')\n"
+    )
+    payload["runner.py"] = probe
+    result = execute_python_files(payload, timeout_s=timeout_s, backend=backend)
+    if not result.ok or "ALETHEIA_SMOKE_OK" not in result.output:
+        err = (result.error or result.output or "non-zero exit").strip()
+        return False, err.splitlines()[-1][:200] if err else "non-zero exit"
+    return True, ""

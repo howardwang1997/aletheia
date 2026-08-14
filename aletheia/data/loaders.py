@@ -145,11 +145,16 @@ def download(url: str, dest_dir: Path | str, timeout: float = 300.0) -> Path:
     dest_dir.mkdir(parents=True, exist_ok=True)
     name = os.path.basename(urlparse(url).path) or "download.bin"
     target = dest_dir / name
-    with httpx.stream("GET", url, follow_redirects=True, timeout=timeout) as r:
-        r.raise_for_status()
-        with open(target, "wb") as fh:
-            for chunk in r.iter_bytes():
-                fh.write(chunk)
+    host = (urlparse(url).hostname or "").lower()
+    # Corporate/system proxies commonly intercept even loopback traffic when NO_PROXY is absent.
+    # A local test/data service must be reached directly; public URLs retain normal proxy settings.
+    trust_env = host not in {"localhost", "127.0.0.1", "::1"}
+    with httpx.Client(follow_redirects=True, timeout=timeout, trust_env=trust_env) as client:
+        with client.stream("GET", url) as r:
+            r.raise_for_status()
+            with open(target, "wb") as fh:
+                for chunk in r.iter_bytes():
+                    fh.write(chunk)
     if _is_archive(name):
         extract_dir = dest_dir / f"{name}.extracted"
         extract_dir.mkdir(parents=True, exist_ok=True)

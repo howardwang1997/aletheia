@@ -1,5 +1,8 @@
-"""Compute-backend selection. ``local`` = restricted host subprocess (default);
-``docker`` = hard sandbox (host featurizes, a no-network container trains)."""
+"""Compute-backend selection.
+
+``docker`` is the hard-sandbox default: the host featurizes and a no-network
+container trains. ``local`` is an explicit development-only host subprocess.
+"""
 
 from __future__ import annotations
 

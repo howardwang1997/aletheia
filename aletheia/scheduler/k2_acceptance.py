@@ -80,7 +80,13 @@ def _final_confirm_verdicts(events: list[dict]) -> list[dict]:
     ]
 
 
-def score_k2(events: list[dict], credences: list[dict]) -> K2Result:
+def score_k2(
+    events: list[dict],
+    credences: list[dict],
+    *,
+    require_seal_v2: bool = False,
+    require_external: bool = False,
+) -> K2Result:
     """Score the K2 acceptance criteria from a run's ``events`` (each ``{"type","payload",...}``,
     in chronological order) and its ``credences`` (``list_credences(run_id)``)."""
     priors = _payloads(events, "belief_prior")
@@ -176,6 +182,112 @@ def score_k2(events: list[dict], credences: list[dict]) -> K2Result:
         f"{spine_ok if confirm_verdicts else 'n/a (no verdict this run)'}",
     ))
 
+    strict_ok = True
+    if require_seal_v2:
+        # Older resume paths re-emitted the same immutable seal with reused=True.
+        # Such references are not new sealing acts and must not move the epistemic timestamp.
+        seals_with_positions = [
+            (i, e.get("payload") or {})
+            for i, e in enumerate(events)
+            if e.get("type") == "campaign_split_sealed"
+            and not (e.get("payload") or {}).get("reused")
+        ]
+        seal_positions = [i for i, _ in seals_with_positions]
+        seals = [p for _, p in seals_with_positions]
+        adaptive_positions = [
+            i for i, e in enumerate(events)
+            if e.get("type") in ("hypothesis_attempt", "belief_prediction")
+        ]
+        sealed_before_adaptation = (
+            len(seals) == 1
+            and int(seals[0].get("split_algo_version") or 0) >= 2
+            and bool(seal_positions)
+            and (not adaptive_positions or seal_positions[0] < min(adaptive_positions))
+        )
+        checks.append(Check(
+            "Epistemic Seal v2 fixed every row role before adaptation",
+            sealed_before_adaptation,
+            f"seal_events={len(seals)}, algorithm={seals[0].get('split_algo_version') if seals else None}, "
+            f"sealed_before_adaptation={sealed_before_adaptation}",
+        ))
+
+        attempts = _payloads(events, "hypothesis_attempt")
+        registrations = {
+            a.get("attempt_id"): a for a in attempts
+            if a.get("phase") == "confirmation" and a.get("status") == "registered"
+        }
+        evaluated_ids = {
+            a.get("attempt_id") for a in attempts
+            if a.get("phase") == "confirmation" and a.get("status") == "evaluated"
+        }
+        evaluated = [registrations[i] for i in evaluated_ids if i in registrations]
+        split_hashes = [str(a.get("split_hash") or "") for a in evaluated]
+        fresh_batches = (
+            bool(evaluated)
+            and len(evaluated) == len(evaluated_ids)
+            and all(split_hashes)
+            and len(split_hashes) == len(set(split_hashes))
+            and all(float(a.get("alpha") or 0.0) > 0.0 for a in evaluated)
+        )
+        checks.append(Check(
+            "every evaluated adaptive hypothesis used a fresh disclosed confirmation batch",
+            fresh_batches,
+            f"evaluated_attempts={len(evaluated_ids)}, disclosed={len(evaluated)}, "
+            f"unique_split_hashes={len(set(split_hashes))}",
+        ))
+
+        finals = _payloads(events, "final_holdout")
+        final_positions = [i for i, e in enumerate(events) if e.get("type") == "final_holdout"]
+        final_ok = (
+            len(finals) == 1
+            and finals[0].get("evaluated") is True
+            and isinstance(finals[0].get("holds"), bool)
+            and bool(final_positions)
+        )
+        checks.append(Check(
+            "one-time final holdout produced a harness verdict",
+            final_ok,
+            f"final_events={len(finals)}, evaluated={finals[-1].get('evaluated') if finals else None}, "
+            f"holds={finals[-1].get('holds') if finals else None}",
+        ))
+        strict_ok = sealed_before_adaptation and fresh_batches and final_ok
+
+    if require_external:
+        external_seals_with_positions = [
+            (i, e.get("payload") or {})
+            for i, e in enumerate(events)
+            if e.get("type") == "external_validation_sealed"
+            and not (e.get("payload") or {}).get("reused")
+        ]
+        external_seals = [p for _, p in external_seals_with_positions]
+        external = _payloads(events, "external_replication")
+        final_positions = [i for i, e in enumerate(events) if e.get("type") == "final_holdout"]
+        external_positions = [i for i, e in enumerate(events) if e.get("type") == "external_replication"]
+        adaptive_positions = [
+            i for i, e in enumerate(events)
+            if e.get("type") in ("hypothesis_attempt", "belief_prediction")
+        ]
+        external_seal_positions = [i for i, _ in external_seals_with_positions]
+        external_ok = (
+            len(external_seals) == 1
+            and bool(external_seal_positions)
+            and (not adaptive_positions or external_seal_positions[0] < min(adaptive_positions))
+            and len(external) == 1
+            and external[0].get("evaluated") is True
+            and isinstance(external[0].get("holds"), bool)
+            and bool(external_positions)
+            and bool(final_positions)
+            and external_positions[0] > final_positions[0]
+        )
+        checks.append(Check(
+            "pre-sealed external dataset was opened once after the final holdout",
+            external_ok,
+            f"external_seals={len(external_seals)}, external_events={len(external)}, "
+            f"evaluated={external[-1].get('evaluated') if external else None}, "
+            f"holds={external[-1].get('holds') if external else None}",
+        ))
+        strict_ok = strict_ok and external_ok
+
     # --- verdict --------------------------------------------------------------------------------
     core = [checks[i].ok for i in (0, 1, 2, 3, 5)]  # reasoned traj, weak prior, prereg, spine-moves, persist
     core_ok = all(bool(c) for c in core)
@@ -186,7 +298,7 @@ def score_k2(events: list[dict], credences: list[dict]) -> K2Result:
     positive_evidence = (
         len(updates) >= 1 and len(confirm_verdicts) >= 1 and calibration is not None
     )
-    full = core_ok and spine_intact and bool(checks[6].ok) and positive_evidence
+    full = core_ok and spine_intact and bool(checks[6].ok) and positive_evidence and strict_ok
 
     if full:
         verdict = "full"

@@ -328,3 +328,34 @@ def test_run_eval_attaches_demonstration_for_paradigm(monkeypatch):
     monkeypatch.setattr(d, "_compute_demonstration", fake_compute)
     result = asyncio.run(d._run_eval({}, {}, "molecules", None))
     assert result["info"]["demonstration"]["holds"] is True
+
+
+def test_diagnostic_run_eval_skips_generic_benchmark_and_records_primary_statistic(monkeypatch):
+    d = ExperimentDriver("rid-diagnostic-primary", dry_run=False)
+    d.hypothesis = {
+        "contribution_type": "diagnostic",
+        "demonstration": {"form": "discriminating_instance", "claim": "matched MAE gap"},
+    }
+
+    async def must_not_dispatch(*args, **kwargs):
+        raise AssertionError("diagnostic primary path must not run the generic benchmark")
+
+    async def fake_compute(*args, **kwargs):
+        return {
+            "form": "discriminating_instance",
+            "holds": True,
+            "statistic": 2.5,
+            "test_statistic": 2.5,
+            "control_statistic": 0.02,
+            "detail": "sealed diagnostic",
+        }
+
+    monkeypatch.setattr(d, "_dispatch_eval", must_not_dispatch)
+    monkeypatch.setattr(d, "_compute_demonstration", fake_compute)
+    result = asyncio.run(d._run_eval({"model": "rf"}, {}, "materials", None))
+    assert result["info"]["performance_eval_skipped"] is True
+    assert result["metrics"] == {
+        "diagnostic_test_statistic": 2.5,
+        "diagnostic_control_statistic": 0.02,
+    }
+    assert result["info"]["demonstration"]["holds"] is True

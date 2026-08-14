@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 from aletheia.db import session_scope
@@ -14,14 +15,18 @@ from aletheia.memory.ledger import (
     BudgetEvent,
     Claim,
     ClaimEvidence,
+    CampaignSplitLedger,
     ComputeJob,
     CritiquePanel,
     Decision,
     Experiment,
+    ExternalValidationLedger,
     HypothesisScorecard,
+    HypothesisAttempt,
     LiteratureFinding,
     Metric,
     Run,
+    RunManifestRecord,
     SOTAResult,
     WorkerCache,
 )
@@ -79,6 +84,59 @@ def get_run(run_id: str) -> dict[str, Any] | None:
             "created_at": r.created_at.isoformat() if r.created_at else None,
             "plan": plan.design_json if plan else None,
             "plan_experiment_id": plan.id if plan else None,
+        }
+
+
+def record_run_manifest(
+    run_id: str,
+    *,
+    manifest_sha256: str,
+    schema_version: int,
+    uri: str,
+    payload: dict[str, Any],
+    parent_manifest_sha256: str | None = None,
+) -> None:
+    """Persist the one frozen manifest for a run; retries must be byte-identical."""
+    with session_scope() as s:
+        existing = (
+            s.query(RunManifestRecord).filter(RunManifestRecord.run_id == run_id).one_or_none()
+        )
+        if existing is not None:
+            if existing.manifest_sha256 != manifest_sha256 or existing.payload_json != payload:
+                raise ValueError(
+                    f"run {run_id} already has a different frozen manifest "
+                    f"({existing.manifest_sha256})"
+                )
+            return
+        s.add(
+            RunManifestRecord(
+                manifest_sha256=manifest_sha256,
+                run_id=run_id,
+                schema_version=schema_version,
+                parent_manifest_sha256=parent_manifest_sha256,
+                uri=uri,
+                payload_json=payload,
+                state="frozen",
+            )
+        )
+
+
+def get_run_manifest_record(run_id: str) -> dict[str, Any] | None:
+    with session_scope() as s:
+        row = (
+            s.query(RunManifestRecord).filter(RunManifestRecord.run_id == run_id).one_or_none()
+        )
+        if row is None:
+            return None
+        return {
+            "manifest_sha256": row.manifest_sha256,
+            "run_id": row.run_id,
+            "schema_version": row.schema_version,
+            "parent_manifest_sha256": row.parent_manifest_sha256,
+            "uri": row.uri,
+            "payload": row.payload_json,
+            "state": row.state,
+            "frozen_at": row.frozen_at.isoformat() if row.frozen_at else None,
         }
 
 
@@ -174,6 +232,293 @@ def set_run_status(run_id: str, status: str) -> None:
         run = s.get(Run, run_id)
         if run is not None:
             run.status = status
+
+
+# --- Epistemic Seal v2: campaign splits + family-wise attempt disclosure -----------------------
+
+
+def seal_campaign_splits(
+    run_id: str,
+    *,
+    dataset_fingerprint: str,
+    row_identity_hash: str,
+    plan: dict[str, Any],
+) -> dict[str, Any]:
+    """Create the immutable split ledger, or verify/reuse it on resume."""
+    with session_scope() as s:
+        existing = (
+            s.query(CampaignSplitLedger).filter(CampaignSplitLedger.run_id == run_id).first()
+        )
+        if existing is not None:
+            if existing.dataset_fingerprint != dataset_fingerprint:
+                raise RuntimeError("staged dataset changed after campaign split sealing")
+            if existing.row_identity_hash != row_identity_hash:
+                raise RuntimeError("stable row identity changed after campaign split sealing")
+            if (existing.plan_json or {}).get("membership_hash") != plan.get("membership_hash"):
+                raise RuntimeError("campaign split allocation changed on resume")
+            return {
+                "id": existing.id,
+                "plan": existing.plan_json,
+                "state": existing.state,
+                "final_result": existing.final_result_json,
+                "reused": True,
+            }
+        row = CampaignSplitLedger(
+            run_id=run_id,
+            dataset_fingerprint=dataset_fingerprint,
+            row_identity_hash=row_identity_hash,
+            split_algo_version=int(plan.get("split_algo_version", 0)),
+            state="sealed",
+            plan_json=plan,
+        )
+        s.add(row)
+        s.flush()
+        return {
+            "id": row.id,
+            "plan": row.plan_json,
+            "state": row.state,
+            "final_result": None,
+            "reused": False,
+        }
+
+
+def get_campaign_split_ledger(run_id: str) -> dict[str, Any] | None:
+    with session_scope() as s:
+        row = s.query(CampaignSplitLedger).filter(CampaignSplitLedger.run_id == run_id).first()
+        if row is None:
+            return None
+        return {
+            "id": row.id,
+            "dataset_fingerprint": row.dataset_fingerprint,
+            "row_identity_hash": row.row_identity_hash,
+            "state": row.state,
+            "plan": row.plan_json,
+            "final_result": row.final_result_json,
+            "final_opened_at": row.final_opened_at.isoformat() if row.final_opened_at else None,
+        }
+
+
+def claim_final_holdout(run_id: str) -> dict[str, Any]:
+    """Atomically consume the one-time final holdout before its outcome is computed."""
+    with session_scope() as s:
+        row = (
+            s.query(CampaignSplitLedger)
+            .filter(CampaignSplitLedger.run_id == run_id)
+            .with_for_update()
+            .first()
+        )
+        if row is None:
+            raise RuntimeError("campaign split ledger is missing")
+        if row.state != "sealed":
+            return {
+                "claimed": False,
+                "state": row.state,
+                "result": row.final_result_json,
+            }
+        row.state = "final_opened"
+        row.final_opened_at = datetime.now(timezone.utc)
+        return {"claimed": True, "state": row.state, "result": None}
+
+
+def record_final_holdout_result(run_id: str, result: dict[str, Any]) -> None:
+    with session_scope() as s:
+        row = (
+            s.query(CampaignSplitLedger)
+            .filter(CampaignSplitLedger.run_id == run_id)
+            .with_for_update()
+            .first()
+        )
+        if row is None or row.state not in ("final_opened", "final_completed"):
+            raise RuntimeError("final holdout was not atomically opened")
+        if row.final_result_json is not None and row.final_result_json != result:
+            raise RuntimeError("final holdout result is immutable")
+        row.final_result_json = result
+        row.state = "final_completed"
+
+
+def seal_external_validation(
+    run_id: str,
+    *,
+    data_asset_id: str,
+    dataset_fingerprint: str,
+    row_identity_hash: str,
+    provenance: dict[str, Any],
+) -> dict[str, Any]:
+    """Seal the external bytes/rows before any adaptive campaign outcome exists."""
+    with session_scope() as s:
+        existing = (
+            s.query(ExternalValidationLedger)
+            .filter(ExternalValidationLedger.run_id == run_id)
+            .first()
+        )
+        if existing is not None:
+            immutable = (
+                existing.data_asset_id == data_asset_id
+                and existing.dataset_fingerprint == dataset_fingerprint
+                and existing.row_identity_hash == row_identity_hash
+                and (existing.provenance_json or {}) == provenance
+            )
+            if not immutable:
+                raise RuntimeError("external-validation dataset changed after sealing")
+            return {
+                "id": existing.id,
+                "state": existing.state,
+                "result": existing.result_json,
+                "reused": True,
+            }
+        row = ExternalValidationLedger(
+            run_id=run_id,
+            data_asset_id=data_asset_id,
+            dataset_fingerprint=dataset_fingerprint,
+            row_identity_hash=row_identity_hash,
+            state="sealed",
+            provenance_json=provenance,
+        )
+        s.add(row)
+        s.flush()
+        return {"id": row.id, "state": row.state, "result": None, "reused": False}
+
+
+def get_external_validation_ledger(run_id: str) -> dict[str, Any] | None:
+    with session_scope() as s:
+        row = (
+            s.query(ExternalValidationLedger)
+            .filter(ExternalValidationLedger.run_id == run_id)
+            .first()
+        )
+        if row is None:
+            return None
+        return {
+            "id": row.id,
+            "data_asset_id": row.data_asset_id,
+            "dataset_fingerprint": row.dataset_fingerprint,
+            "row_identity_hash": row.row_identity_hash,
+            "state": row.state,
+            "provenance": row.provenance_json,
+            "result": row.result_json,
+            "opened_at": row.opened_at.isoformat() if row.opened_at else None,
+        }
+
+
+def claim_external_validation(run_id: str) -> dict[str, Any]:
+    """Atomically open the sealed external set exactly once."""
+    with session_scope() as s:
+        row = (
+            s.query(ExternalValidationLedger)
+            .filter(ExternalValidationLedger.run_id == run_id)
+            .with_for_update()
+            .first()
+        )
+        if row is None:
+            raise RuntimeError("external-validation ledger is missing")
+        if row.state != "sealed":
+            return {"claimed": False, "state": row.state, "result": row.result_json}
+        row.state = "opened"
+        row.opened_at = datetime.now(timezone.utc)
+        return {"claimed": True, "state": row.state, "result": None}
+
+
+def record_external_validation_result(run_id: str, result: dict[str, Any]) -> None:
+    with session_scope() as s:
+        row = (
+            s.query(ExternalValidationLedger)
+            .filter(ExternalValidationLedger.run_id == run_id)
+            .with_for_update()
+            .first()
+        )
+        if row is None or row.state not in ("opened", "completed"):
+            raise RuntimeError("external-validation dataset was not atomically opened")
+        if row.result_json is not None and row.result_json != result:
+            raise RuntimeError("external-validation result is immutable")
+        row.result_json = result
+        row.state = "completed"
+
+
+def register_hypothesis_attempt(
+    run_id: str,
+    *,
+    experiment_id: str | None,
+    family_key: str,
+    hypothesis_text: str,
+    round_index: int,
+    phase: str,
+    split_hash: str,
+    alpha_allocated: float,
+    confirmation_batch: int | None = None,
+) -> int:
+    hypothesis_key = _dedup_hash(family_key, hypothesis_text)
+    with session_scope() as s:
+        existing = (
+            s.query(HypothesisAttempt)
+            .filter(
+                HypothesisAttempt.run_id == run_id,
+                HypothesisAttempt.experiment_id == experiment_id,
+                HypothesisAttempt.phase == phase,
+            )
+            .first()
+        )
+        if existing is not None:
+            if (
+                existing.split_hash != split_hash
+                or existing.hypothesis_key != hypothesis_key
+                or abs(float(existing.alpha_allocated) - float(alpha_allocated)) > 1e-12
+            ):
+                raise RuntimeError("hypothesis attempt changed after registration")
+            return int(existing.id)
+        row = HypothesisAttempt(
+            run_id=run_id,
+            experiment_id=experiment_id,
+            family_key=family_key,
+            hypothesis_key=hypothesis_key,
+            hypothesis_text=hypothesis_text,
+            round_index=int(round_index),
+            phase=phase,
+            confirmation_batch=confirmation_batch,
+            split_hash=split_hash,
+            alpha_allocated=float(alpha_allocated),
+            status="registered",
+        )
+        s.add(row)
+        s.flush()
+        return int(row.id)
+
+
+def finish_hypothesis_attempt(attempt_id: int, *, status: str, outcome: dict[str, Any]) -> None:
+    with session_scope() as s:
+        row = s.get(HypothesisAttempt, attempt_id)
+        if row is None:
+            raise RuntimeError("hypothesis attempt is missing")
+        if row.outcome_json is not None and row.outcome_json != outcome:
+            raise RuntimeError("hypothesis attempt outcome is immutable")
+        row.status = status
+        row.outcome_json = outcome
+
+
+def list_hypothesis_attempts(run_id: str) -> list[dict[str, Any]]:
+    with session_scope() as s:
+        rows = (
+            s.query(HypothesisAttempt)
+            .filter(HypothesisAttempt.run_id == run_id)
+            .order_by(HypothesisAttempt.id)
+            .all()
+        )
+        return [
+            {
+                "id": row.id,
+                "experiment_id": row.experiment_id,
+                "family_key": row.family_key,
+                "hypothesis_key": row.hypothesis_key,
+                "hypothesis_text": row.hypothesis_text,
+                "round": row.round_index,
+                "phase": row.phase,
+                "confirmation_batch": row.confirmation_batch,
+                "split_hash": row.split_hash,
+                "alpha_allocated": row.alpha_allocated,
+                "status": row.status,
+                "outcome": row.outcome_json,
+            }
+            for row in rows
+        ]
 
 
 def list_runs() -> list[dict[str, Any]]:

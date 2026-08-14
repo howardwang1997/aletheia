@@ -34,9 +34,11 @@ reliable autonomous frontier scientist.
 3. **Exploratory -> confirmatory demonstrations — built.** The AI calibrates on an exploration
    partition, commits a pre-registered threshold, and is judged only on a disjoint confirmation
    partition. Discovery now screens only the exploration side of the same immutable split.
-4. **Campaign learning loop — built offline, live validation owed.** Harness verdicts update a
-   belief ledger and feed typed failure reasons into the next EIG-ranked experiment. A substantive
-   multi-round live campaign is still needed to validate the complete behavior.
+4. **Campaign learning loop — built and live-validated once.** Harness verdicts update a belief
+   ledger and feed typed failure reasons into the next EIG-ranked experiment. Real Campaign Gate v1
+   completed a two-round campaign with fresh confirmation batches, one-time final holdout, and a
+   pre-sealed SuperCon2 external evaluation; the protocol passed even though the external scientific
+   result was negative.
 5. **Strong novelty/SOTA grounding — partial.** Literature retrieval, structured findings, and SOTA
    rows exist, but novelty and SOTA claims still need stronger health checks and prior-work mapping
    before the system can reliably tell new science from a rephrased known idea.
@@ -45,7 +47,23 @@ reliable autonomous frontier scientist.
    reproduction, limitations, paper, and reproducibility package/PR.
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
-of causal/mechanistic experiments, independent external replication, and a complete evidence bundle.
+of causal/mechanistic experiments, repeated lower-overlap or laboratory replication, and a complete
+evidence bundle.
+
+The executable plan for the next frontier program is
+[`docs/FRONTIER_SCIENTIST_F7_F12_DETAILED_PLAN_2026_08_13.md`](docs/FRONTIER_SCIENTIST_F7_F12_DETAILED_PLAN_2026_08_13.md):
+F7 independent discovery evaluation, F8 knowledge-boundary grounding, F9/K3 competing causal
+hypotheses, F10 an open experiment engine and deep materials domain, F11 durable long-horizon
+research portfolios, and F12 reality-linked independent replication.
+
+F7's independent evaluation plane now includes all three engineering-complete public adapters:
+ScienceAgentBench scientific coding, an Asta CORE-Bench-Hard reproduction mini-suite, and a
+DiscoveryWorld hidden-rule/action-trace suite. DiscoveryWorld runs the candidate and official world
+in different offline containers and scores controlled trials, belief revision, explicit governing
+rule, terminal task success, and exact repeated trajectories; see
+[`docs/benchmarks/DISCOVERYWORLD_ADAPTER.md`](docs/benchmarks/DISCOVERYWORLD_ADAPTER.md). Its final
+four-rule suite and the complete 29-test Docker matrix are frozen and passing. F7 still needs the
+predeclared baseline matrix, private-suite custody, and frozen acceptance report.
 
 ## Invariants (the safety/quality spine — never traded for a feature)
 
@@ -53,8 +71,10 @@ of causal/mechanistic experiments, independent external replication, and a compl
 2. **Honest evaluation** — a fixed, leakage-aware harness computes metrics; the agent never grades its own homework (independent re-compute when it authors training code).
 3. **Adversarial cross-model peer review** — ≥1 distinct-vendor red-team reviewer per gate; novelty/SOTA claims must cite literature.
 4. **Full provenance** — every transition/decision/metric/critique/artifact is in the ledger; every claim traces to code (a PR).
-5. **Budget guardrails + sandboxed code** — per-run caps and a Docker hard-sandbox path exist. Host
-   subprocess execution remains a known P0 gap and must not be treated as hard isolation.
+5. **Budget guardrails + sandboxed code** — per-run caps; every AI-authored smoke, exploration,
+   demonstration, training, and reproduction path defaults to one immutable no-network Docker
+   boundary. Host subprocess execution is an explicit development-only override and unattended
+   real runs fail closed if the hard sandbox is unavailable.
 6. **Evaluated frontier models.** Defaults may track current frontier models; benchmark and
    reproduction runs pin an explicit model identifier and record it in provenance.
 7. **Human role** — set the domain/direction + connect data/keys; the AI does the science lights-out within the guardrails (irreversible/outward actions stay gated).
@@ -130,6 +150,23 @@ locally and persist canonical events to Aletheia's ledger. See OpenAI's official
 conda run -n aletheia python -m pytest        # Phase 0 skeleton tests (needs Postgres up)
 ```
 
+### Real Campaign Gate v1 evidence
+
+Run `4443d7d226b64ffeb16cce722498063a` completed the strict K2 acceptance path: two adaptive rounds
+on distinct confirmation batches, Epistemic Seal v2, one final-holdout opening, then one external
+SuperCon2 opening with the same locked code and preregistration. The internal final holdout supported
+the diagnostic, while the external evaluation did not; the run is therefore honestly archived as
+`results_rejected` even though all anti-fakeability acceptance checks passed.
+
+- [Campaign summary](workspaces/4443d7d226b64ffeb16cce722498063a/artifacts/campaign.md)
+- [Final holdout record](workspaces/4443d7d226b64ffeb16cce722498063a/artifacts/final_holdout.json)
+- [External replication record](workspaces/4443d7d226b64ffeb16cce722498063a/artifacts/external_replication.json)
+- [Machine-readable run summary](artifacts/demo_e2e_materials_4443d7d226b64ffeb16cce722498063a_20260813T051822.json)
+- [Lossless event transcript](artifacts/transcript_materials_4443d7d226b64ffeb16cce722498063a_20260813T051822.jsonl)
+
+The external asset is an independently pinned literature extraction, not an independent laboratory
+campaign. Its provenance discloses formula overlap with the primary UCI/SuperCon-derived dataset.
+
 ## Token / cost usage
 
 Every provider call persists token `usage` in the event ledger. Claude SDK calls also persist the
@@ -168,7 +205,9 @@ hypothesis scorecards, a reproduction pass, an EIG-ranked experiment planner, an
 AI-application domain (RAG: lexical & dense retrieval, host-side LLM generation,
 cross-vendor faithfulness) alongside the materials and molecules regression domains.
 
-**Honest caveat:** this is breadth of *machinery*, not yet depth of *result*. A substantive,
-externally replicated live campaign is the next milestone — not more workflow breadth. See
-`docs/PROJECT_REVIEW.md`, `docs/AUTONOMOUS_RESEARCH_ROADMAP.md`, and the current gap analysis in
+**Honest caveat:** this is still stronger evidence for the *machinery* than for a scientific result.
+The first strict live campaign completed, but its external evaluation was negative and the external
+literature extraction has disclosed formula overlap with the primary dataset. Repeated campaigns,
+stronger novelty grounding, and lower-overlap or laboratory replication are the next milestones.
+See `docs/PROJECT_REVIEW.md`, `docs/AUTONOMOUS_RESEARCH_ROADMAP.md`, and the current gap analysis in
 `docs/FINAL_GOAL_GAP_ANALYSIS_2026_08_12.md`.

@@ -415,10 +415,11 @@ class DomainPlugin(ABC):
         statistic. The driver injects ``demonstration_code`` (sandboxed) + ``preregistration``
         (read back from the ledger, immutable) onto the spec.
 
-        ``holds = test_triggers AND control_silent AND probes_clean`` — all harness-applied.
-        Never reads an AI-provided 'holds'. FAIL CLOSED everywhere: missing code/rule -> None
-        (not_evaluated); gate reject / control fires / probe trips -> holds False (refuted);
-        sandbox failure -> holds None (not_evaluated). Never raises."""
+        ``holds = test_triggers AND control_silent`` only after every harness validity probe
+        passes. Never reads an AI-provided ``holds``. Invalid code, a starved sample, a
+        non-finite statistic, an alpha mismatch, or a sandbox failure is ``None``
+        (not_evaluated), never scientific counter-evidence. A valid test miss or firing
+        negative control is ``False`` (refuted). Never raises."""
         from aletheia.coder.demonstration_runner import run_authored_demonstration
         from aletheia.coder.sandbox import DEMO_REQUIRED_FUNCTION, check_code
 
@@ -430,7 +431,7 @@ class DomainPlugin(ABC):
 
         ok, reasons = check_code(code, required_function=DEMO_REQUIRED_FUNCTION)
         if not ok:
-            return {"form": form, "holds": False, "statistic": None,
+            return {"form": form, "holds": None, "statistic": None,
                     "detail": f"AI-authored demonstration rejected by code gate: {reasons[:3]}",
                     "preregistration": prereg}
 
@@ -473,21 +474,59 @@ class DomainPlugin(ABC):
             groups = np.asarray(groups, dtype=object)[idx] if groups is not None else None
             exploration_applied = True
 
-        meta = {"random_state": rs, "preregistration": prereg}
-        res = run_authored_demonstration(code, X, y, groups, meta)
+        familywise = prereg.get("familywise_error") if isinstance(prereg, dict) else {}
+        meta = {
+            "random_state": rs,
+            "preregistration": prereg,
+            "family_alpha": demonstration.get("family_alpha")
+            or (familywise or {}).get("alpha"),
+            "split_role": (split_meta or {}).get("role", "confirmation")
+            if isinstance(split_meta, dict)
+            else "confirmation",
+        }
+        res = run_authored_demonstration(
+            code,
+            X,
+            y,
+            groups,
+            meta,
+            timeout_s=demonstration.get("execution_timeout_s"),
+        )
         if res is None:
             return {"form": form, "holds": None, "statistic": None,
                     "detail": "AI-authored demonstration did not run (sandbox timeout/error)",
                     "preregistration": prereg}
 
         probes = self._demonstration_probes(res)
+        expected_alpha = meta.get("family_alpha")
+        if expected_alpha is not None:
+            used_alpha = (res.get("components") or {}).get("family_alpha_used")
+            try:
+                alpha_matches = abs(float(used_alpha) - float(expected_alpha)) <= 1e-12
+            except (TypeError, ValueError):
+                alpha_matches = False
+            if not alpha_matches:
+                probes["clean"] = False
+                probes.setdefault("flags", []).append(
+                    "authored statistic did not prove use of the harness-allocated family_alpha"
+                )
+                probes["note"] = (
+                    " [probe flags: authored statistic did not prove use of the "
+                    "harness-allocated family_alpha]"
+                )
         test_triggers = self._apply_rule(res["test_statistic"], prereg["supported_if"])
         control_silent = self._apply_rule(res["control_statistic"], prereg["control_silent_if"])
-        holds = bool(test_triggers and control_silent and probes["clean"])  # harness, not the AI
-        verdict = ("holds" if holds else
-                   "control fired" if not control_silent else
-                   "test did not trigger" if not test_triggers else
-                   "probe flagged")
+        holds = (
+            bool(test_triggers and control_silent)
+            if probes["clean"]
+            else None
+        )  # harness, not the AI
+        verdict = (
+            "not evaluated (validity probe flagged)" if holds is None else
+            "holds" if holds else
+            "control fired" if not control_silent else
+            "test did not trigger"
+        )
         return {
             "form": form,
             "holds": holds,
@@ -505,6 +544,7 @@ class DomainPlugin(ABC):
             "preregistration": prereg,
             "probes": probes,
             "components": res.get("components", {}),
+            "sandbox_image_id": res.get("sandbox_image_id"),
             # K1 seal record: did the demonstration run on the held-out CONFIRM partition, and on
             # which split? ``exploration_applied=False`` means the seal was NOT applied (blind
             # fallback) — the formulation claim is then capped below `strong` in _claim_strength.

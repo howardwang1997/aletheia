@@ -17,6 +17,7 @@ substituting random vectors. Fail-closed beats reporting a meaningless number.
 from __future__ import annotations
 
 import hashlib
+import threading
 from typing import Protocol
 
 import numpy as np
@@ -71,23 +72,30 @@ class SentenceTransformerEmbedder:
         self.model_name = model_name
         self.dim = dim
         self._model = None
+        self._lock = threading.RLock()
 
     def _load(self):
-        if self._model is None:
-            from sentence_transformers import SentenceTransformer
+        with self._lock:
+            if self._model is None:
+                from sentence_transformers import SentenceTransformer
 
-            self._model = SentenceTransformer(self.model_name)
-        return self._model
+                self._model = SentenceTransformer(self.model_name)
+            return self._model
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        model = self._load()
-        mat = np.asarray(model.encode(texts, normalize_embeddings=True), dtype=float)
+        # Keep model inference single-threaded at the Python-call boundary. Survey
+        # librarians index concurrently, while the underlying torch model is not a
+        # reliable re-entrant object on every CPU runtime.
+        with self._lock:
+            model = self._load()
+            mat = np.asarray(model.encode(texts, normalize_embeddings=True), dtype=float)
         return mat.tolist()
 
 
 _cached: Embedder | None = None
+_cache_lock = threading.RLock()
 
 
 def get_embedder(*, dry_run: bool = False, require_real: bool = False) -> Embedder:
@@ -112,17 +120,18 @@ def get_embedder(*, dry_run: bool = False, require_real: bool = False) -> Embedd
         return HashEmbedder(s.embedding_dim)
     # reuse a cached REAL backend; never let a cached hash-fallback satisfy a
     # require_real caller (deps may have since been installed) — retry the load.
-    if _cached is not None and not isinstance(_cached, HashEmbedder):
-        return _cached
-    try:
-        emb: Embedder = SentenceTransformerEmbedder(s.embedding_model, s.embedding_dim)
-        emb.embed(["warmup"])  # force the model load now so failures surface here
-    except Exception as exc:
-        if require_real:
-            raise EmbedderUnavailableError(
-                f"the real embedding backend {s.embedding_model!r} could not be loaded "
-                f"({type(exc).__name__}: {exc}); refusing to fall back to the random hash stub"
-            ) from exc
-        emb = HashEmbedder(s.embedding_dim)
-    _cached = emb
-    return emb
+    with _cache_lock:
+        if _cached is not None and not isinstance(_cached, HashEmbedder):
+            return _cached
+        try:
+            emb: Embedder = SentenceTransformerEmbedder(s.embedding_model, s.embedding_dim)
+            emb.embed(["warmup"])  # force the model load now so failures surface here
+        except Exception as exc:
+            if require_real:
+                raise EmbedderUnavailableError(
+                    f"the real embedding backend {s.embedding_model!r} could not be loaded "
+                    f"({type(exc).__name__}: {exc}); refusing to fall back to the random hash stub"
+                ) from exc
+            emb = HashEmbedder(s.embedding_dim)
+        _cached = emb
+        return emb

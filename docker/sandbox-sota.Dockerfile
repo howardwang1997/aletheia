@@ -5,17 +5,22 @@
 #   ALETHEIA_SANDBOX_DOCKER_IMAGE=aletheia-sandbox-sota:latest
 #
 # Build (large; CPU-only torch):
-#   docker build -t aletheia-sandbox-sota:latest -f docker/sandbox-sota.Dockerfile docker/
-FROM python:3.11-slim
+#   docker build -t aletheia-sandbox-sota:latest -f docker/sandbox-sota.Dockerfile .
+FROM python:3.11-slim@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff
 
 # CPU-only torch wheels (no CUDA) to keep the image as small as deep learning allows.
 RUN pip install --no-cache-dir \
-    "numpy" "pandas" "scikit-learn" "scipy" "joblib" "matplotlib" \
-    "xgboost" "lightgbm" "skorch" \
-    --extra-index-url https://download.pytorch.org/whl/cpu "torch"
+    "numpy==2.4.6" "pandas==2.3.3" "scikit-learn==1.8.0" \
+    "scipy==1.17.1" "joblib==1.5.3" "matplotlib==3.10.9" \
+    "xgboost==3.2.0" "lightgbm==4.6.0" "cloudpickle==3.1.2" \
+    "pydantic==2.13.4" "pydantic-settings==2.14.1" "PyYAML==6.0.3" \
+    "skorch==1.2.0" --extra-index-url https://download.pytorch.org/whl/cpu "torch==2.12.0"
+
+COPY aletheia /opt/aletheia/aletheia
 
 ENV MPLBACKEND=Agg \
     MPLCONFIGDIR=/tmp \
+    PYTHONPATH=/opt/aletheia \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 

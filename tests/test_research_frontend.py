@@ -8,6 +8,7 @@ import asyncio
 
 import pytest
 
+from aletheia.config import get_settings
 from aletheia.data.registry import register_dataset
 from aletheia.db import create_all, session_scope
 from aletheia.memory.ledger import CritiquePanel, Decision, Experiment, MemoryChunk, Run
@@ -142,6 +143,14 @@ async def test_real_run_blocks_when_survey_has_no_citable_grounding(monkeypatch)
         return "", []
 
     monkeypatch.setattr(ExperimentDriver, "_survey", empty_survey)
+    # This test targets the literature gate, so satisfy the earlier production-sandbox precondition.
+    monkeypatch.setattr(get_settings(), "authored_code_backend", "docker")
+    monkeypatch.setattr(get_settings(), "compute_backend", "docker")
+    monkeypatch.setattr(get_settings(), "campaign_seal_v2_enabled", False)
+    monkeypatch.setattr(
+        "aletheia.scheduler.driver.hard_sandbox_preflight",
+        lambda: {"ok": True, "image_id": "sha256:" + "a" * 64, "error": None},
+    )
 
     await ExperimentDriver(run_id, dry_run=False).run()
 
