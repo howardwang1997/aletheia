@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import re
 from typing import Any
@@ -163,7 +164,12 @@ def detect_method_drift(hypothesis_text: str, requested: str, executed_impl: str
 
 
 class ExperimentDriver:
-    def __init__(self, run_id: str, dry_run: bool = False) -> None:
+    def __init__(
+        self,
+        run_id: str,
+        dry_run: bool = False,
+        auditable_sota_campaign_fn=None,
+    ) -> None:
         self.run_id = run_id
         self.dry_run = dry_run
         self.gateway = CriticGateway()
@@ -180,6 +186,10 @@ class ExperimentDriver:
         self.survey_papers: list[literature.Paper] = []  # citable refs for WRITE_UP
         self.survey_findings: list[dict[str, Any]] = []  # structured LiteratureFinding rows
         self.survey_sota: list[dict[str, Any]] = []  # structured SOTAResult rows (curated + extracted)
+        # Optional F8-S6 evaluator boundary. It receives only current-result identities and must
+        # return ``(SOTAEvaluationCampaign, receipt_verification_key)``. When present, WRITE_UP
+        # bypasses the legacy caller-score shortcut and fails closed on every binding error.
+        self.auditable_sota_campaign_fn = auditable_sota_campaign_fn
         self.survey_weak: bool = False  # retrieval health: too few citable papers to ground novelty
         self.hypothesis: dict[str, Any] = {}  # the hypothesis chosen by IDEATE
         self._discovered_demo: dict[str, Any] | None = None  # {code, prereg} from the discovery stage
@@ -1301,6 +1311,88 @@ class ExperimentDriver:
             stmt = str(self.hypothesis.get("statement", "")).strip()
             if stmt and exp_id:
                 await asyncio.to_thread(set_experiment_hypothesis, exp_id, stmt)
+
+    async def _resolve_auditable_sota_claim(
+        self,
+        *,
+        headline_metric: str,
+        headline_score: float | None,
+        candidate_protocol_sha256: str,
+        experiment_id: str | None,
+    ) -> dict[str, Any]:
+        """Turn an evaluator-owned F8-S6 campaign into exact claim-ledger fields."""
+        from aletheia.research.sota_claims import (
+            blocked_sota_writeup_decision,
+            screen_auditable_sota_campaign,
+        )
+
+        request = {
+            "run_id": self.run_id,
+            "experiment_id": experiment_id,
+            "headline_metric": headline_metric,
+            "headline_score": headline_score,
+            "candidate_protocol_sha256": candidate_protocol_sha256,
+            "contribution_type": self._contribution_type(),
+        }
+        try:
+            provided = self.auditable_sota_campaign_fn(request)
+            if inspect.isawaitable(provided):
+                provided = await provided
+            if not isinstance(provided, tuple) or len(provided) != 2:
+                raise TypeError("campaign provider must return (campaign, receipt_key)")
+            campaign, receipt_key = provided
+            if not isinstance(receipt_key, bytes):
+                raise TypeError("campaign receipt verification key must be bytes")
+            decision = screen_auditable_sota_campaign(
+                campaign=campaign,
+                receipt_key=receipt_key,
+                expected_candidate_protocol_sha256=candidate_protocol_sha256,
+                headline_metric=headline_metric,
+                headline_score=headline_score,
+                contribution_type=self._contribution_type(),
+            )
+        except Exception as exc:  # noqa: BLE001 - manuscript SOTA claims fail closed
+            decision = blocked_sota_writeup_decision(
+                headline_metric=headline_metric,
+                headline_score=headline_score,
+                reason_code=f"auditable_sota_provider_error:{type(exc).__name__}",
+            )
+
+        evidence: list[dict[str, str]] = []
+        if decision.campaign_sha256:
+            evidence.append({
+                "evidence_kind": "artifact",
+                "evidence_ref": decision.campaign_sha256,
+                "note": f"F8-S6 campaign; verdict={decision.campaign_verdict.value}",
+            })
+        if decision.candidate_result_receipt_sha256:
+            evidence.append({
+                "evidence_kind": "metric",
+                "evidence_ref": decision.candidate_result_receipt_sha256,
+                "note": "signed candidate benchmark result receipt",
+            })
+        evidence.extend(
+            {
+                "evidence_kind": "artifact",
+                "evidence_ref": row_sha256,
+                "note": "derived protocol/statistical SOTA comparison row",
+            }
+            for row_sha256 in decision.comparison_row_sha256s
+        )
+        if not evidence:
+            evidence.append({
+                "evidence_kind": "metric",
+                "evidence_ref": headline_metric,
+                "note": ",".join(decision.reason_codes),
+            })
+        return {
+            "claim_text": decision.claim_text,
+            "strength": decision.claim_strength,
+            "status": decision.claim_status,
+            "evidence": evidence,
+            "decision_sha256": decision.decision_sha256,
+            "headline_authorized": decision.headline_authorized,
+        }
 
     @staticmethod
     def _writeup_claim_policy(claims: list[dict[str, Any]]) -> dict[str, str]:
@@ -5266,43 +5358,63 @@ class ExperimentDriver:
         )
         # evidence-ledger: finalize this experiment's claims before the writer sees them.
         protocol_status = info.get("protocol_status")
-        # SOTA claim now stands on STRUCTURED rows (Phase H): find the best comparable
-        # published number on the headline metric family and compute a real win/loss.
-        best_sota, comparable, beat = self._compare_to_sota(hk, hv)
-        if not comparable or best_sota is None:
-            # best_sota is None with comparable rows when there is NO headline value to
-            # compare (the performance eval produced no metrics) — no comparison happened.
-            sota_text = (
-                f"No structured SOTA row comparable on {hk}; known reference: {sota}."
-                if not comparable
-                else f"No headline {hk} was measured (performance eval produced no metrics); "
-                f"{len(comparable)} comparable SOTA row(s) exist but no comparison is possible."
+        # An injected F8-S6 evaluator campaign replaces the legacy caller-score shortcut. The
+        # current result must expose its exact candidate ProtocolSignature identity; absence or
+        # mismatch becomes an unverified weak claim, never a fallback to the legacy comparison.
+        if self.auditable_sota_campaign_fn is not None:
+            audited_sota = await self._resolve_auditable_sota_claim(
+                headline_metric=hk,
+                headline_score=hv,
+                candidate_protocol_sha256=str(
+                    info.get("candidate_protocol_sha256") or ""
+                ),
+                experiment_id=exp_id,
             )
-            sota_strength = "weak"
+            sota_text = audited_sota["claim_text"]
+            sota_strength = audited_sota["strength"]
+            sota_status = audited_sota["status"]
+            sota_evidence = audited_sota["evidence"]
         else:
-            rel = "beats" if beat else "does not beat"
-            sota_text = (
-                f"The headline {hk} ({hv}{usfx}) {rel} the best comparable published result "
-                f"({best_sota.get('method')} {best_sota.get('score')} on {best_sota.get('dataset')})."
-            )
-            # only a grouped + gate-passed WIN earns 'strong'; otherwise comparable -> moderate.
-            # single-vendor (degraded) review caps it at weak (see _claim_strength rationale).
-            _xv = len({c.critic_id for c in (rpanel.critiques or [])}) >= int(get_settings().min_review_vendors)
-            sota_strength = (
-                "strong" if (beat and protocol_status == "grouped" and rpanel.gate_passed) else "moderate"
-            )
-            if not _xv and sota_strength in ("moderate", "strong"):
+            # Backward-compatible Phase-H path for deployments that have not yet materialized an
+            # evaluator-owned F8-S6 campaign.
+            best_sota, comparable, beat = self._compare_to_sota(hk, hv)
+            if not comparable or best_sota is None:
+                # best_sota is None with comparable rows when there is NO headline value to
+                # compare (the performance eval produced no metrics) — no comparison happened.
+                sota_text = (
+                    f"No structured SOTA row comparable on {hk}; known reference: {sota}."
+                    if not comparable
+                    else f"No headline {hk} was measured (performance eval produced no metrics); "
+                    f"{len(comparable)} comparable SOTA row(s) exist but no comparison is possible."
+                )
                 sota_strength = "weak"
-        sota_evidence = [
-            {"evidence_kind": "paper",
-             "evidence_ref": f"{r.get('method')} ({r.get('source')})",
-             "note": f"{r.get('metric')}={r.get('score')} on {r.get('dataset')} [{r.get('split_policy')}]"}
-            for r in comparable[:4]
-        ] or [{"evidence_kind": "metric", "evidence_ref": hk, "note": f"curated SOTA string: {sota}"}]
+            else:
+                rel = "beats" if beat else "does not beat"
+                sota_text = (
+                    f"The headline {hk} ({hv}{usfx}) {rel} the best comparable published result "
+                    f"({best_sota.get('method')} {best_sota.get('score')} on {best_sota.get('dataset')})."
+                )
+                # only a grouped + gate-passed WIN earns 'strong'; otherwise comparable -> moderate.
+                # single-vendor (degraded) review caps it at weak (see _claim_strength rationale).
+                _xv = len({c.critic_id for c in (rpanel.critiques or [])}) >= int(get_settings().min_review_vendors)
+                sota_strength = (
+                    "strong" if (beat and protocol_status == "grouped" and rpanel.gate_passed) else "moderate"
+                )
+                if not _xv and sota_strength in ("moderate", "strong"):
+                    sota_strength = "weak"
+            sota_status = (
+                "supported" if (comparable and best_sota is not None) else "unverified"
+            )
+            sota_evidence = [
+                {"evidence_kind": "paper",
+                 "evidence_ref": f"{r.get('method')} ({r.get('source')})",
+                 "note": f"{r.get('metric')}={r.get('score')} on {r.get('dataset')} [{r.get('split_policy')}]"}
+                for r in comparable[:4]
+            ] or [{"evidence_kind": "metric", "evidence_ref": hk, "note": f"curated SOTA string: {sota}"}]
         await asyncio.to_thread(
             create_claim, self.run_id,
             claim_text=sota_text, claim_type="sota", strength=sota_strength,
-            status=("supported" if (comparable and best_sota is not None) else "unverified"),
+            status=sota_status,
             experiment_id=exp_id, created_by="write_up", stage="write_up",
             evidence=sota_evidence,
         )

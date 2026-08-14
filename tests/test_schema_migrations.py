@@ -16,7 +16,7 @@ from aletheia.db import (
 
 
 def test_repository_has_one_expected_alembic_head():
-    assert expected_schema_revision() == "20260813_0002"
+    assert expected_schema_revision() == "20260815_0004"
 
 
 def test_current_schema_is_accepted(monkeypatch):
@@ -30,7 +30,7 @@ def test_current_schema_is_accepted(monkeypatch):
     [
         (SchemaStatus(None, "r2", False), "empty database"),
         (SchemaStatus(None, "r2", True), "pre-Alembic schema"),
-        (SchemaStatus("20260813_0001", "20260813_0002", True), "alembic upgrade head"),
+        (SchemaStatus("20260814_0003", "20260815_0004", True), "alembic upgrade head"),
         (SchemaStatus("future", "r2", True), "newer or unknown"),
     ],
 )
@@ -52,9 +52,7 @@ def test_legacy_create_all_name_delegates_to_alembic(monkeypatch):
     import aletheia.db as module
 
     calls = []
-    monkeypatch.setattr(
-        module, "schema_status", lambda: SchemaStatus(None, "20260813_0002", False)
-    )
+    monkeypatch.setattr(module, "schema_status", lambda: SchemaStatus(None, "20260815_0004", False))
     monkeypatch.setattr(module, "alembic_config", lambda: "config")
     monkeypatch.setattr(module, "require_schema_current", lambda: calls.append("checked"))
     monkeypatch.setattr("alembic.command.upgrade", lambda cfg, rev: calls.append((cfg, rev)))
@@ -66,14 +64,15 @@ def test_legacy_adoption_rejects_empty_database(monkeypatch):
     from aletheia.schema_migrations import adopt_existing_baseline
 
     connection = MagicMock()
+
     @contextmanager
     def connected():
         yield connection
 
+    monkeypatch.setattr("aletheia.schema_migrations.engine", lambda: MagicMock(connect=connected))
     monkeypatch.setattr(
-        "aletheia.schema_migrations.engine", lambda: MagicMock(connect=connected)
+        "aletheia.schema_migrations.inspect", lambda _conn: MagicMock(get_table_names=lambda: [])
     )
-    monkeypatch.setattr("aletheia.schema_migrations.inspect", lambda _conn: MagicMock(get_table_names=lambda: []))
     with pytest.raises(SchemaCompatibilityError, match="database is empty"):
         adopt_existing_baseline()
 
@@ -82,13 +81,12 @@ def test_legacy_adoption_rejects_schema_drift(monkeypatch):
     from aletheia.schema_migrations import adopt_existing_baseline
 
     connection = MagicMock()
+
     @contextmanager
     def connected():
         yield connection
 
-    monkeypatch.setattr(
-        "aletheia.schema_migrations.engine", lambda: MagicMock(connect=connected)
-    )
+    monkeypatch.setattr("aletheia.schema_migrations.engine", lambda: MagicMock(connect=connected))
     monkeypatch.setattr(
         "aletheia.schema_migrations.inspect",
         lambda _conn: MagicMock(get_table_names=lambda: ["runs"]),

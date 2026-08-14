@@ -39,9 +39,23 @@ reliable autonomous frontier scientist.
    completed a two-round campaign with fresh confirmation batches, one-time final holdout, and a
    pre-sealed SuperCon2 external evaluation; the protocol passed even though the external scientific
    result was negative.
-5. **Strong novelty/SOTA grounding — partial.** Literature retrieval, structured findings, and SOTA
-   rows exist, but novelty and SOTA claims still need stronger health checks and prior-work mapping
-   before the system can reliably tell new science from a rephrased known idea.
+5. **Strong novelty/SOTA grounding — F8 engineering built; real scientific validation pending.**
+   The isolated F8 contract versions corpus/time, exact source spans, replayable searches, hard
+   coverage, atomic claims, ranked prior art, bounded novelty, and protocol-safe SOTA comparison.
+   F8-S1 persists license-explicit corpus/provider evidence as immutable ordered rows; F8-S2 adds
+   deterministic metadata search/replay and mechanical citation traversal; F8-S3 adds
+   authorization-aware exact-span claim extraction, independent low-confidence review, and
+   contradiction-preserving graph closure; F8-S4 adds four-channel complete-union recall,
+   no-delete reranking, strict six-way prior-art relations/component differences, and independent
+   blocking/low-confidence review. F8-S5 adds evaluator-owned validation/later temporal splits,
+   signed complete trial ledgers, one-sided confidence-bound gates, artifact-derived live coverage,
+   author-excluded domain/librarian review, claim ceilings, and an optional exact-claim discovery
+   gate. F8-S6 adds independently pre-sealed reference registries, exact protocol matrices, signed
+   paired result receipts, exact sign tests with Holm correction and practical margins, immutable
+   SOTA verdicts, and an optional no-fallback write-up gate. The included calibration and SOTA
+   campaign are synthetic: live adapters, real expert-labelled calibration, private holdout custody,
+   prospective false-novelty results, and reproduction of a real complete reference matrix are still
+   required before the system can reliably recognize or claim frontier science.
 6. **Reproducible research bundle — partial.** The final output should be a stable bundle containing
    the question, literature, data card, split metadata, code, artifacts, metrics, claims, audits,
    reproduction, limitations, paper, and reproducibility package/PR.
@@ -62,8 +76,129 @@ DiscoveryWorld hidden-rule/action-trace suite. DiscoveryWorld runs the candidate
 in different offline containers and scores controlled trials, belief revision, explicit governing
 rule, terminal task success, and exact repeated trajectories; see
 [`docs/benchmarks/DISCOVERYWORLD_ADAPTER.md`](docs/benchmarks/DISCOVERYWORLD_ADAPTER.md). Its final
-four-rule suite and the complete 29-test Docker matrix are frozen and passing. F7 still needs the
-predeclared baseline matrix, private-suite custody, and frozen acceptance report.
+four-rule suite and the complete 29-test Docker matrix are frozen and passing. F7 now also has a
+pre-registered four-arm evaluation path for direct model, generic agent, Aletheia without K2, and
+full K2. It enforces paired seeds, same-model identity, disclosed resource/tool mismatches,
+all-attempt ledger reconciliation, signed-score verification, no-best-of-N accounting, paired
+confidence intervals, Holm correction, and cost/failure decomposition; see
+[`docs/benchmarks/BASELINE_MATRIX.md`](docs/benchmarks/BASELINE_MATRIX.md). Private prospective
+suites now have role-separated encrypted envelopes, bounded two-person authorization, a
+concurrency-safe one-time unlock, exact runner guards, contamination-triggered retirement, verified
+plaintext cleanup, and an operator CLI; see
+[`docs/benchmarks/PRIVATE_SUITE_CUSTODY.md`](docs/benchmarks/PRIVATE_SUITE_CUSTODY.md). These are
+now joined by a validation-calibrated Frontier Gate contract: independently reviewed reference
+evidence and raw validation receipts derive immutable thresholds; the final reporter re-verifies
+all test ledgers and signed scorer receipts, distinguishes measured `FAIL` from missing-evidence
+`BLOCKED`, audits private cleanup/retirement, and emits content-addressed JSON, Markdown, and SVG.
+See [`docs/benchmarks/FRONTIER_GATE_REPORT.md`](docs/benchmarks/FRONTIER_GATE_REPORT.md). This
+completes F7's planned evaluation/report engineering slice, but not its scientific exit. The
+repository still lacks operator-frozen production configurations, commissioned private tasks,
+authenticated approvals, and real four-track runs; therefore it contains no legitimate Frontier
+Gate pass. Development proceeds through the isolated F8 knowledge-boundary slices while real F7
+execution remains a release gate.
+
+F8 issue 12 now freezes the knowledge-boundary interface before retrieval integration. A synthetic
+temporal-holdout fixture and 13 adversarial tests reject future-paper leakage, invented full text,
+literature prompt-authority fields, missing source-span evidence, outage-as-novelty, self-review,
+evidence-package tampering, and SOTA claims across different split bytes. The schema package is
+deliberately disconnected from the research driver and database, so this is an engineering
+contract—not evidence that Aletheia can yet determine novelty. See
+[`docs/benchmarks/KNOWLEDGE_BOUNDARY_SCHEMA.md`](docs/benchmarks/KNOWLEDGE_BOUNDARY_SCHEMA.md) and
+[`docs/adr/0009-f8-knowledge-boundary-schema-spike.md`](docs/adr/0009-f8-knowledge-boundary-schema-spike.md).
+
+F8-S1 adds the first durable implementation under that interface. Article-level grants separate
+metadata/abstract/full-text capability from automation, model-input, retention, and redistribution
+rights; normalized source, paper, span, update, grant, receipt, corpus, and ordered membership rows
+are content-addressed, reject SQL mutation, and re-hash on every read. The offline CLI validates,
+persists, or audits typed JSON without network retrieval or raw paper text. This store remains
+disconnected from SURVEY and cannot confer novelty. See
+[`docs/knowledge/CORPUS_PERSISTENCE.md`](docs/knowledge/CORPUS_PERSISTENCE.md).
+
+F8-S2 freezes deterministic multi-source query axes and adapter/parser identities, archives only
+policy-checked structured metadata responses, records every page/failure, replays exact parsers,
+expands all new forward/backward citations mechanically, and derives four fail-closed coverage
+signals. The fixtures are synthetic and no live provider is configured. See
+[`docs/knowledge/SEARCH_REPLAY_AND_CITATION.md`](docs/knowledge/SEARCH_REPLAY_AND_CITATION.md).
+
+F8-S3 now validates exact licensed document/span identities ephemerally, separates
+`span_extraction` from model `model_input` rights, accepts only strict atomic scientific fields,
+routes OCR/low-confidence candidates to independent accept/revise/reject review, preserves
+supporting/refuting/qualifying edges, and commits the execution, resolution, and exact graph view to
+write-once ledgers. Source bytes are not persisted. This is still a synthetic engineering harness,
+not measured real-literature accuracy or a novelty capability. See
+[`docs/knowledge/CLAIM_EXTRACTION_AND_REVIEW.md`](docs/knowledge/CLAIM_EXTRACTION_AND_REVIEW.md).
+
+F8-S4 now runs separately frozen lexical, embedding, citation, and structured-entity recall,
+rederives and retains their complete candidate union, requires a reranker to score every item while
+the harness owns ordering/selection, and emits strict equivalent/subsumes/special-case/extension/
+combination/contradiction relations with exact component differences and source-span identities.
+Blocking or weak matches require independent accept/revise/reject review, and execution/resolution
+remain write-once. This is synthetic-tested matching machinery, not calibrated novelty evidence.
+See
+[`docs/knowledge/PRIOR_ART_MATCHING_AND_REVIEW.md`](docs/knowledge/PRIOR_ART_MATCHING_AND_REVIEW.md).
+
+F8-S5 now freezes evaluator-owned known-answer and strictly later temporal splits, signs one result
+for every base/perturbed trial, and applies one-sided confidence bounds to recall, ranking,
+classification, false/missed strong novelty, and stability. Live coverage is derived from the exact
+F8-S1–S4/correction artifacts rather than caller-supplied numbers. Candidate authors are excluded
+from role-distinct domain-expert/research-librarian review; classification, claim ceiling, and the
+research-direction authorization bit are mechanical. Discovery can consume an exact gate through
+an optional candidate-claim-bound callback. The 80-case fixture is synthetic and no production
+calibration pass is claimed. See
+[`docs/knowledge/CALIBRATED_NOVELTY_ACCEPTANCE.md`](docs/knowledge/CALIBRATED_NOVELTY_ACCEPTANCE.md).
+
+F8-S6 now seals an author-excluded reference registry before candidate evaluation, requires signed
+scores on identical paired partitions, compares exact dataset/split/metric/statistics/resource
+protocols, and permits a SOTA headline only when every required reference passes both a
+Holm-corrected paired sign test and a preregistered practical-improvement margin. Campaign verdicts
+and manuscript claim status are mechanically re-derived; the optional scheduler consumer exact-binds
+protocol, metric, and score and never falls back after an audited-path error. The fixture is
+synthetic and establishes no real SOTA. See
+[`docs/knowledge/PROTOCOL_SAFE_SOTA_EVALUATION.md`](docs/knowledge/PROTOCOL_SAFE_SOTA_EVALUATION.md).
+
+F9-S1 now adds an append-only competitive-world-model substrate alongside K2. Stable question,
+hypothesis, assumption, prediction, and belief lineages are separated from immutable content-hash
+versions. A complete snapshot requires H0, one primary mechanism, at least one alternative,
+assumptions and discriminating predictions for every hypothesis, and one normalized belief vector
+over the exact versions. PostgreSQL rejects mutation, while a labelled read-only compatibility view
+keeps the existing K2 Beta service usable without fabricating F9 alternatives. This remains schema
+and persistence engineering—not evidence of causal discovery or calibrated multi-model beliefs.
+See [`docs/epistemics/WORLD_MODEL_VERSIONING.md`](docs/epistemics/WORLD_MODEL_VERSIONING.md).
+
+F9-S2 now admits competing hypotheses only from an exact experiment-authorized F8 direction. An
+unprivileged generator retains every valid raw draft; a separately manifested reviewer must judge
+the complete candidate-pair ledger. The harness blocks uncertain, cross-role, non-transitive, or
+exact-normalizer-inconsistent duplicate decisions, requires alternatives to cite accepted linked
+prior art, and proves that every kept pair disagrees bidirectionally in one shared observable/
+protocol/outcome space. Only then does it derive a uniform-prior F9-S1 snapshot; failures retain
+hashes rather than untrusted text, campaigns are content-addressed, and only ready campaigns can be
+persisted. The current adapters and scientific content are synthetic, so this is not evidence of
+real hypothesis quality, causal identification, or calibrated belief. See
+[`docs/epistemics/F8_GROUNDED_HYPOTHESIS_GENERATION.md`](docs/epistemics/F8_GROUNDED_HYPOTHESIS_GENERATION.md).
+
+F9-S3 now turns a ready hypothesis campaign into an explicit causal artifact: a shared typed variable
+registry, one exact graph per hypothesis, latent common causes, measurement and selection processes,
+one estimand/adjustment set, and scoped identification assumptions. The harness detects cycles,
+undefined references, invalid descendants/bad controls, H0/mechanism path contradictions, and
+endpoint/protocol rebinding; its tested mathematical surface is deliberately limited to the
+back-door criterion and retains open-path witnesses. A distinct reviewer must cover every frozen
+assumption, while unresolved judgments or selection-recovery gaps cap future claims at association
+and rejected assumptions block prediction planning. `ready_identified` still means only graphically
+identified under reviewed assumptions—not observed or causally confirmed. All fixtures remain
+synthetic. See
+[`docs/epistemics/CAUSAL_CONTRACT_AND_IDENTIFICATION_AUDIT.md`](docs/epistemics/CAUSAL_CONTRACT_AND_IDENTIFICATION_AUDIT.md).
+
+F9-S4 now freezes the experiment namespace, causal/measurement boundary, outcome bins, analysis/
+exclusion/stopping/parser identities, and one prediction for every active hypothesis before target
+observation. Probability mode requires independently evaluated historical calibration, a likelihood
+derived from the calibrated frozen family, complete normalized mass, pairwise separation, entropy,
+and measurement-error sensitivity; ordinal mode remains available but cannot claim probability or
+EIG eligibility. The private staging store reloads an immutable ready receipt before writing raw
+bytes, requires observation time after commitment, and seals the experiment namespace on first
+observation. Exact retries are allowed; a scientifically changed commitment is rejected before raw
+write and persisted as a security/scientific-integrity violation. Fixtures remain synthetic, so
+`ready` is not evidence that an experiment, prediction, or causal claim is correct. See
+[`docs/epistemics/PREOBSERVATION_PREDICTION_COMMITMENT.md`](docs/epistemics/PREOBSERVATION_PREDICTION_COMMITMENT.md).
 
 ## Invariants (the safety/quality spine — never traded for a feature)
 
@@ -204,6 +339,24 @@ fail-closed guardrails, an evidence/claims ledger, structured literature + SOTA 
 hypothesis scorecards, a reproduction pass, an EIG-ranked experiment planner, and the first
 AI-application domain (RAG: lexical & dense retrieval, host-side LLM generation,
 cross-vendor faithfulness) alongside the materials and molecules regression domains.
+
+The isolated F8 knowledge boundary now has immutable corpus/access persistence, deterministic
+metadata search/replay and citation traversal, plus licensed exact-span atomic-claim extraction with
+independent low-confidence review and contradiction-preserving graph closure, plus auditable
+four-channel prior-art matching, complete-union reranking, component differences, and independent
+relation review. It now also has synthetic-tested calibrated novelty acceptance, artifact-derived
+coverage, role-distinct review, claim ceilings, and an optional exact-claim discovery callback.
+WRITE_UP can explicitly consume an exact F8-S6 campaign with no fallback, but the default scheduler
+and scorecard still do not automatically materialize or consume the full F8 artifact chain.
+Live-provider/extractor/matcher calibration plus a real prospective suite and reference matrix
+remain release gates. See `docs/F8_S5_CALIBRATED_NOVELTY_IMPLEMENTATION_REPORT_2026_08_15.md` and
+`docs/F8_S6_PROTOCOL_SAFE_SOTA_IMPLEMENTATION_REPORT_2026_08_15.md`.
+
+The isolated F9 chain now reaches pre-observation prediction commitment: competing hypotheses,
+explicit causal graphs/assumptions, calibrated-or-ordinal likelihood semantics, immutable receipts,
+and a sealed raw-observation entry boundary are synthetic-tested end to end. It still lacks an
+observation-blind constrained experiment selector, validated-observation-to-posterior update path,
+negative-result revision policy, K3 acceptance scorer, and real-domain calibration/replication.
 
 **Honest caveat:** this is still stronger evidence for the *machinery* than for a scientific result.
 The first strict live campaign completed, but its external evaluation was negative and the external

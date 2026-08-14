@@ -530,6 +530,14 @@ inbox 并写 score，研究进程不能查询 hidden task 和 score internals。
 
 报告本身是评估产物的视图，不能编辑分数。
 
+实现进度（2026-08-14）：F7-S6 / issue 11 已工程完成。`SuiteCalibrationPlan` 在 validation
+执行前冻结参考基线、统计规则和 validation/test 身份；`SuiteAcceptanceConfig` 只从完整
+validation ledger 与签名回执推导阈值；program config 在 held-out test 前冻结四轨声明。最终
+report 不接受手工 aggregate，而是重跑 raw result/ledger/HMAC 对账，输出 JSON、Markdown、SVG
+及逐 attempt receipt index。缺轨为 `BLOCKED`，完整实测未达标为 `FAIL`，仅全部公有轨与私有
+custody 闭环通过才允许 `PASS`。这是工程完成状态；当前仓库没有真实四轨运行，因此没有科学
+Frontier Gate pass。
+
 ## F7.8 测试计划
 
 建议新增：
@@ -757,6 +765,15 @@ evaluation date
 - 搜索错误进入 health report；
 - 缓存外部 API 响应，支持完整 replay。
 
+**工程状态（2026-08-14）：隔离 harness 已完成。** 已实现 deterministic core term contract、
+frozen adapter/parser manifest、metadata-only content-addressed response/ledger archive、逐页成功/
+失败记录、同 parser replay、全新命中机械派生的 forward/backward citation rounds、whole-round
+预算与 saturation/source-exhaustion stopping，以及四项不可由调用方伪造的 fail-closed search
+coverage signals。36 个 F8-S2 新测试通过，完整 knowledge suite 为 66 passed。仍无 live provider、
+真实 known-answer/temporal calibration 或 driver/novelty wiring；这些非能力不能由“工程完成”推断。
+最终全项目非 Docker 验收为 733 passed、1 skipped、29 deselected（290.81 s），真实 Docker 隔离组
+为 29 passed、734 deselected（26.62 s）。
+
 ### F8-S3：Atomic claim extraction
 
 - schema-first extraction；
@@ -765,12 +782,36 @@ evaluation date
 - 低 OCR/抽取置信度进入人工或第二模型复核队列；
 - contradictory edges 不被摘要阶段抹平。
 
+**工程状态（2026-08-15）：隔离 harness 已完成。** 已实现 frozen extractor/output-schema
+manifest、逐 span 的显式 `span_extraction`/`model_input` 授权与过期检查、临时非持久化原文、
+document/exact-span/normalized/locator 四重 identity 校验、严格数值/单位/population/条件/不确定性
+结构化输出、完整 attempt/failure ledger、OCR/六类低置信原因机械派生的 review queue、独立人类/
+second-model accept/revise/reject、supports/refutes/qualifies/mentions 保留、每个 prior-art claim 到
+exact span 的 graph closure，以及 execution/resolution/graph 三层 write-once ledger 与不重采样模型的
+derivation replay。37 个 F8-S3 新测试使用 synthetic licensed fixtures；仍无 production content
+resolver/model extractor、真实 extraction calibration、driver/novelty wiring 或科学结论。下一工程切片
+为 F8-S4 nearest-prior-art matcher。权威回归结果为完整 knowledge 103 passed；全项目非 Docker
+770 passed、1 skipped、29 deselected（296.81 s）；真实 Docker 隔离组 29 passed、771 deselected
+（37.82 s）。
+
 ### F8-S4：Nearest-prior-art matcher
 
 - lexical、embedding、citation 和结构化实体多路召回；
 - cross-encoder/模型 rerank 只改变候选顺序，不删除审计轨迹；
-- 输出 equivalent/subsumption/special-case/extension 关系；
+- 输出 equivalent/subsumes/special-case/extension/combination/contradiction 关系；
 - 对候选 claim 做 component-wise difference。
+
+**工程状态（2026-08-15）：隔离 harness 已完成。** 已实现 exact reviewed graph/pool 绑定、四路
+frozen recall/index/scorer manifest 与零工具权限、每 candidate/channel 完整 attempt/failure ledger、
+single-channel hit 保留但不得形成正式 relation、从 result receipts 机械重算完整 union、reranker 对
+union 每项同序打分且不得删除/换对、harness 控制最终排序和 relation budget、六类严格 relation 与十类
+component difference/source-span closure、blocking/低 channel/低 relation/低 difference confidence
+机械 review queue、独立 human/second-model accept/revise/reject、拒绝后连续重排且保留 original
+candidate identity，以及 execution/resolution write-once ledger。52 个 F8-S4 synthetic tests 与完整
+knowledge 155 passed；仍无 production indexes/adapters/matcher、真实 known-answer recall/关系精度/
+置信标定、temporal false-novelty 或 driver wiring。下一工程切片为 F8-S5 calibrated coverage and
+novelty acceptance；最终非 Docker 为 822 passed、1 skipped、29 deselected（296.75 s），真实 Docker
+隔离组为 29 passed、823 deselected（26.57 s）。
 
 ### F8-S5：Coverage 与 novelty acceptance
 
@@ -780,12 +821,55 @@ evaluation date
 - wiring 到 direction gate、scorecard、claim strength 和 write-up；
 - coverage unknown 时 novelty claim 最高为 speculative/unverified。
 
+**工程状态（2026-08-15）：校准、coverage、review/claim ceiling 与显式 direction callback 已完成；
+scientific exit 未完成。** `NoveltyCalibrationSuite` 冻结 40+40 validation/严格更晚 temporal
+holdout、每 split 至少 30 个 known non-strong + 10 个 strong label、每 case 至少三种语义保持 variant、
+evaluator-only label commitment、candidate-author exclusion 与 exact system/evaluator/classifier identity。
+每 case/variant 必须有不可复用的 HMAC receipt；错误只保留 class/message hash 且任一 trial error fail
+closed。两个 split 分别机械计算 known-answer/seed recall、classification、false/missed strong novelty、
+perturbation stability、MRR，并以 one-sided 95% Wilson lower/upper bound 而非点估计过门。
+
+live `CalibratedNoveltyCoverageAssessment` 无 caller observation 参数：六项外部 signal 分别从 temporal
+calibration lower bound、replayed seed hits、licensed full-text grants、immutable source spans、bound
+correction report 推导；F8-S2 继续推导另外四项。global calibration fail、任何 hard signal 或任一
+candidate 少于三条 resolved prior relation 均阻断。authorship manifest 与 exact evidence package 之后，
+至少 domain expert + research librarian 的 author-excluded confirm 才能授权方向；known work 被拒绝，
+incremental/contradictory 只可 weak bounded advance，满足全部条件的 strong class 最高也仅 moderate，
+coverage insufficient 固定 indeterminate/speculative。`discover()` 已支持 exact candidate-claim-bound
+F8-S5 callback，旧 count+critic 路径仅为兼容路径；default scheduler、scorecard/write-up 尚未自动生产/
+消费整套 artifact。59 个 F8-S5 synthetic tests 与完整 knowledge 214 passed。80-case/240-trial fixture
+不是 real expert corpus、真实 temporal false-novelty 结果或 scientific exit；production adapters、private
+custody、真实领域标定和 prospective run 仍是发布门。下一工程切片为 F8-S6 protocol-safe SOTA
+comparator integration。
+
 ### F8-S6：SOTA comparator
 
 - 对 DatasetVersion、MetricDefinition、ProtocolSignature 做 canonicalization；
 - curated fixtures 覆盖“数字相同但协议不同”；
 - 自动生成 comparability matrix；
 - 只有 comparable row 能进入 headline delta。
+
+**工程状态（2026-08-15）：已完成；scientific exit 未完成。** 在原有逐维
+`ProtocolSignature` 比较之上，现已加入与 F8-S5 authorized direction、coverage、reference search 和
+corpus 精确绑定的 pre-sealed reference registry；candidate author 不得选择或 review reference，至少三条
+required reference 必须在 candidate protocol/result 前冻结。无工具 evaluator 对 candidate 与每个
+reference 的同一组 paired replicate/partition 签发 HMAC receipt，error 保留 class/message hash 而不造
+分数；execution/prediction artifact 不得复用。完整 matrix 对每个 comparable row 机械计算
+direction-normalized delta、exact one-sided paired sign test、Holm correction 与预注册 practical margin，
+只有每条 reference 同时统计且实际优于才生成 `sota_confirmed`，任一 unbeaten row 为
+`sota_not_demonstrated`，任一 error/non-comparable 为 `sota_blocked_evidence`。
+
+campaign commit/load 重验 canonical JSON、全部 derivation 和签名。WRITE_UP 另有显式 injected
+consumer，必须精确匹配当前 candidate protocol hash、metric identity 与 signed aggregate；provider
+错误或 identity mismatch 固定为 weak/unverified 且不会 fallback 到旧 scalar shortcut。36 个 F8-S6
+focused tests 和 262 个 write-up/evidence/knowledge integration tests 已通过；最终完整回归数字见
+`F8_S6_PROTOCOL_SAFE_SOTA_IMPLEMENTATION_REPORT_2026_08_15.md`：917 个非 Docker 测试通过、1 skip、
+29 deselected（532.77 s），29 个真实 Docker 测试通过、918 deselected（45.30 s）。fixture 的
+3 references/10 repeats
+完全 synthetic，不是 published-method reproduction 或真实 SOTA。F8-S1–S6 工程合同至此完成；真实
+expert novelty calibration、private temporal custody、production reference completeness、真实 reference
+reproduction/prospective run 与 F7 Frontier Gate 仍是 scientific release gates。仓库能力下一切片为
+F9-S1 competing causal-hypothesis graph contract。
 
 ## F8.9 建议代码边界
 
@@ -1011,6 +1095,22 @@ subject to:
 - version mutation 测试；
 - K2 BeliefState 保留，提供迁移/兼容 view，不重写历史 K2 事件。
 
+**工程状态（2026-08-15）：已完成；scientific exit 未完成。** 新增 frozen
+`ResearchQuestion`、`HypothesisVersion`、`Assumption`、`Prediction` 和 multi-hypothesis
+`BeliefState` 合同。稳定 lineage ID 与 canonical content SHA-256 分离；任何 revision 必须精确引用同
+lineage 的直接 parent，旧版本不覆盖。完整 `WorldModelSnapshot` 至少包含 H0、一个主解释和一个可信
+替代解释，每个 hypothesis 都有 exact-bound assumption 与 discriminating prediction，belief vector 必须
+覆盖相同版本并归一化。Alembic `20260815_0004` 加入 7 张 append-only 表、外键/唯一约束和拒绝
+update/delete 的 trigger；commit/load 重验 normalized members 与 payload hash。
+
+既有 K2 `belief_states`、service 和 event 不迁移、不改写；只增加带
+`legacy_k2_beta_bernoulli` 标签的 read-only compatibility view，并显式禁止把其单命题 Beta mean 当成
+F9 posterior。31 个 schema/persistence/migration/history/compatibility tests 与 136 个 K2/F9 integration
+tests 已通过；最终全库非 Docker 938 passed、1 skipped、29 deselected（314.65 s），真实 Docker
+29 passed、939 deselected（38.37 s）。该 fixture 完全 synthetic，尚未证明 alternatives 的可信度、
+因果 identification、prediction precommitment、likelihood、EIG 或 posterior update。下一切片为 F9-S2
+competing-hypothesis generator。
+
 ### F9-S2：Competing-hypothesis generator
 
 - 每个 mechanism 题至少生成 H0、主解释和可信替代解释；
@@ -1018,6 +1118,25 @@ subject to:
 - 去除语义重复假设；
 - 要求每个假设给出不同的可观测预测；
 - 若无法形成有区分度的 alternatives，mechanism 研究阻塞或降为 descriptive。
+
+**工程状态（2026-08-15）：已完成；scientific exit 未完成。** `HypothesisGenerationRequest`
+精确绑定 experiment-authorized F8 gate、candidate、corpus、claim graph、prior-art resolution、完整
+claim/relation 集和 frozen manifests/policy；任一 rebinding 都在 generator 调用前失败。generator 与
+semantic de-duplicator 使用独立 principal/manifest，均无 tool authority 或 observation access。所有
+valid raw drafts 保留；独立 reviewer 必须完成 `n(n-1)/2` 个 exact-draft pair judgments，harness 阻塞
+uncertain/low-confidence、cross-role、non-transitive 和 deterministic-normalizer 冲突，并输出显式
+duplicate→canonical provenance。
+
+H0/primary 必须绑定 candidate claim，每个 alternative 必须绑定 accepted F8 relation 连接的 prior
+claim；每个 kept pair 必须在同一 observable、measurement protocol 和 finite outcome space 上有双向、
+不同 expected outcome 的 prediction witness。只有全通过才机械生成 uniform-prior F9-S1 snapshot；
+failure 只保留 hash，campaign 可 content-addressed archive，且仅 ready campaign 可持久化。Focused
+F9-S2 26 tests、F8 direction + F9 integration 61 tests 已通过。fixture、机制、semantic labels 和
+protocol 均为 synthetic；尚未证明真实 hypothesis quality、feasibility、causal identification 或 belief
+calibration。最终全库非 Docker 964 passed、1 skipped、29 deselected（321.28 s），真实 Docker
+29 passed、965 deselected（38.08 s）。Docker 首轮唯一失败为 evaluator-owned ScienceAgentBench
+candidate container 45 秒冷启动超时；精确用例随后 1.27 秒通过，完整 29 项复跑通过，未放宽任何
+timeout/sandbox/scorer policy。下一工程切片为 F9-S3 causal contract 与 identification audit。
 
 ### F9-S3：Causal contract 与 identification audit
 
@@ -1027,6 +1146,26 @@ subject to:
 - assumption unresolved 时限制 claim strength；
 - 将 causal graph 作为 evidence artifact，而不是 prompt 内 prose。
 
+**工程状态（2026-08-15）：已完成；scientific exit 未完成。** 新增 shared typed variable registry、
+exact-bound per-hypothesis graph、directed edge、latent confounder、measurement/selection process、
+single total-effect estimand/adjustment set 和 scoped identification assumptions。request 精确绑定 ready
+F9-S2 campaign、F8 gate/claims/relations 与 F9-S1 snapshot/question/hypothesis versions，且 author/
+reviewer 均无 tool 或 observation access。harness 机械检测 undefined reference、duplicate relation、DAG
+cycle、invalid/descendant adjustment、H0 偷渡 effect path、mechanism 缺 path、endpoint/protocol rebinding、
+assumption/evidence closure 和 capacity。
+
+当前数学边界只实现并明确命名 Pearl back-door criterion：删除 exposure outgoing arrows 后构造
+ancestral moral graph，记录 causal/open path witness；observed/latent fork 和 conditioned-collider gold
+cases 已通过。back-door failure 不冒充 general non-identifiability；front-door、IV、general ID 和
+selection recoverability 显式 unsupported/bounded。独立 reviewer 必须完整裁定每条 frozen assumption；
+reject 阻塞，unresolved/low-confidence 或 open path 将 future claim ceiling 限为 association。
+即使 `ready_identified` 也只表示在 reviewed assumptions 下通过该图准则，proposed evidence kind 继续
+将 descriptive/observational/simulation/controlled 的未来主张分级，绝不表示已观察到 causal effect。
+Focused 38 tests、截至 F9-S3 的 `tests/epistemics` 85 tests 已通过；fixtures 全为 synthetic。其后
+F9-S4 已实现 pre-observation prediction commitment 与 likelihood contract。F9-S3 当时的 F8 direction
++ F9 integration 为 99 passed；当时全库非 Docker 1002 passed、1 skipped、29 deselected
+（328.30 s），真实 Docker 29 passed、1003 deselected（26.27 s）。
+
 ### F9-S4：Prediction commitment 与 likelihood
 
 - 实现 immutable prediction receipt；
@@ -1034,6 +1173,32 @@ subject to:
 - continuous outcome 的预注册 binning/likelihood；
 - probability calibration 与 degeneracy probe；
 - post-observation mutation 必须被拒绝并记录 security/science violation。
+
+**工程状态（2026-08-15）：已完成；scientific exit 未完成。** `PredictionCommitmentRequest` 精确绑定
+authorized F9-S3/F9-S2/F9-S1 chain、causal contract、完整 experiment protocol、outcome schema、author/
+independent calibration evaluator manifests、policy 与 issue time，且 author 明确无 observation/tool
+access。protocol 冻结 intervention/population、measurement/error model、analysis、exclusion、stopping、
+parser，并机械派生 experiment namespace；categorical 或 continuous-binned outcome 必须覆盖每个 F9-S2
+prediction 的同一 outcome space，continuous bins 要求 units、连续边界、两端开放且每个边界唯一归属。
+
+probabilistic mode 每个 active hypothesis 提交完整归一化 mass、唯一且与 F9-S2 一致的 modal outcome、
+由 calibrated frozen likelihood family + hypothesis version + protocol/schema 机械派生的 likelihood hash，
+以及 measurement-error sensitivity scenarios。independent historical report 的每条 prediction 必须先于
+其 observation、不得早于 predictor freeze、validation namespace 不得等于 target；harness 重算
+multiclass Brier、log loss、top-label ECE 与 zero-probability observations。entropy、probability extremes、
+pairwise total variation、sensitivity coverage/stability 再决定 `ready`、`blocked_calibration` 或
+`blocked_degeneracy`。ordinal mode 只提交完整排序，可 ready 但永远 `eig_eligible=false`。
+
+campaign canonical archive 读时重算全部 derivation；substantive `commitment_sha256` 排除 operational
+retry labels/time。`ObservationStagingStore` 必须先从 archive 读取 ready receipt 并证明
+`observed_at > committed_at`，再 atomic seal experiment namespace 与写入 content-addressed raw bytes。
+exact retry 可复用；同 namespace 的 changed commitment 在 raw write 前被拒绝，并持久化
+`security_and_scientific_integrity` violation。Focused 30 tests、当前完整 `tests/epistemics` 115 tests
+通过；最终全库非 Docker 1032 passed、1 skipped、29 deselected（316.57 s），真实 Docker 29
+passed、1033 deselected（37.58 s）。fixtures/calibration/observations 全为 synthetic。完整验收见
+`F9_S4_PREOBSERVATION_PREDICTION_COMMITMENT_IMPLEMENTATION_REPORT_2026_08_15.md`。下一工程切片为
+F9-S5 observation-blind constrained experiment selector；真实 likelihood calibration、experiment
+execution/validation、posterior update 与 replication 仍是发布门。
 
 ### F9-S5：Experiment selector
 
@@ -1087,6 +1252,7 @@ driver.py 目前职责过多。F9 不应继续把全部逻辑塞进 Driver；先
 
 ~~~text
 tests/epistemics/test_hypothesis_versions.py
+tests/epistemics/test_hypothesis_generation.py
 tests/epistemics/test_causal_contract.py
 tests/epistemics/test_prediction_commitment.py
 tests/epistemics/test_likelihoods.py
@@ -2145,7 +2311,116 @@ DiscoveryWorld adapter 已冻结官方源码/许可证，使用候选与隐藏�
 并以真实系统化实验策略通过显式规律、终态、信息增益、信念修正和双次 exact trace 验收；
 最终四规则 suite 已内容寻址冻结，全项目 622 个非 Docker 测试（另 1 skip）与 29 个 Docker
 测试通过。
-下一项为 issue 9（direct model、generic agent、no-K2、full K2 的预注册 baseline matrix）。
+issue 9 也已工程完成：direct model、generic agent、no-K2、full K2 四臂现在强制相同基础模型、
+相同 task/repeat/seed 配对、预注册统计与差异披露；执行保留全部 infra retry，聚合会对账完整
+hash-chain ledger、验签 scorer receipts、拒绝遗漏 attempt，并自动生成 pass@1、科学有效率、
+paired hierarchical bootstrap、Holm 校正、成本和 failure decomposition。全项目现为 635 个
+非 Docker 测试（另 1 skip）及 29 个 Docker 测试通过。此为工程能力，不代表已运行真实模型或
+获得 K2 科学增益。issue 10 也已工程完成：private prospective suite 现在强制 10–20 题、至少
+两个领域和六类科学情形，使用角色分离的加密 envelopes、冻结且限时的双人授权、并发安全的一次性
+解锁、runner 前后双重 access guard、污染即退役，以及带 hash-chain 回执的验证后明文清理；完整
+operator 流程由 `scripts/manage_private_suite.py` 执行。这里的 19 个测试使用 synthetic custody
+fixtures；issue 10 验收时全项目为 654 个非 Docker 测试通过（另 1 skip）及 29 个 Docker 测试
+通过，但这不代表真实私有题已经委托或系统通过 Frontier Gate。
+
+issue 11 也已工程完成：validation/reference evidence 现在确定性推导 immutable suite threshold，
+独立双人证据冻结 program claim；formal config 强制 ScienceAgentBench、COREBench、DiscoveryWorld、
+private prospective 四轨及四项核心科学 objective。report 会重新聚合所有 raw attempt、hash-chain
+ledger 与 signed scorer receipts，分别判定 success、validity、invalid/retry、paired superiority /
+noninferiority、Holm、cost、intervention、contamination 和 private cleanup/retirement，并生成不可
+覆盖的 JSON/Markdown/SVG。13 个新增对抗测试覆盖 pass、measured fail、missing blocked、漏 attempt、
+伪造签名、配置漂移、self approval、private custody 和 CLI。最终全项目为 667 个非 Docker 测试
+通过（另 1 skip）及 29 个真实 Docker 测试通过。F7 的计划内评价/报告工程切片至此完成；真实科学
+退出仍需外部 operator 冻结配置、委托私有题并花费预算运行四轨。仓库开发下一项为 issue 12（F8
+knowledge schema ADR/fixture spike），同时真实 F7 继续作为发布门。
+
+issue 12 已按限定范围工程完成：新增隔离、immutable、content-addressed 的 F8 knowledge schema，
+冻结 source/corpus/paper/span 的版本与时间边界、可 replay search、十项 hard coverage、atomic claim /
+evidence graph、component-wise prior art、author-excluded novelty evidence package、correction /
+contradiction report，以及按 dataset bytes、split、leakage、metric formula、statistics、budget 和
+external resources 逐维比较的 ProtocolSignature。synthetic temporal-holdout fixture 明确包含一篇
+cutoff 后 exact-match paper 和一段 instruction-like 文献文本；13 个 adversarial tests 证明二者分别
+不能泄漏进历史 snapshot 或提升工具权限，并覆盖 outage→coverage insufficient→novelty
+indeterminate、equivalent blocker、self review、hash tampering 与 non-comparable SOTA 无 headline
+delta。此 spike 没有接入 driver、DB、API、provider 或 migration，也不代表真实 novelty/SOTA
+能力。验收后全项目为 680 个非 Docker 测试通过（另 1 skip）及 29 个真实 Docker 测试通过；
+下一工程切片为 F8-S1 immutable corpus/source-span persistence，同时 F7 真实运行仍是发布门。
+
+F8-S1 storage foundation 也已工程完成：`CorpusIngestionBundle` 现在把 corpus 与逐 paper 的
+access grant/provider receipt 一起冻结，明确区分 metadata/abstract/full text、open/institutional/
+user-provided、automated retrieval、model input、retention 和 redistribution，unknown license
+不能授权文本处理。Alembic `20260814_0003` 新增 16 个 normalized tables 和显式 ordered
+membership edges；canonical paper/version/text scope 不能绑定新 bytes，所有表由 PostgreSQL
+trigger 拒绝 UPDATE/DELETE，四个 concurrent identical writers 收敛为一个 bundle，读回时逐对象
+重验 schema、foreign-key closure、ordinal 与 content hash。operator CLI 只接受非 symlink typed
+JSON，执行 validate/persist/inspect，不联网且 DB 中不保存文献原文。聚焦 schema/access/
+persistence/migration 验收为 40 passed；此能力仍未接入当前 SURVEY/driver，也没有 live provider、
+PDF/HTML/OCR extractor、response archive、coverage/novelty calibration 或真实科学结论。最终全项目
+为 697 个非 Docker 测试通过（另 1 skip）及 29 个真实 Docker 测试通过；首次 Docker run 的一个
+client-exit transient 已由 exact 单测与完整 29 项复跑通过确认并如实记录。下一切片为 F8-S2
+deterministic query planning、multi-source response caching 与 citation traversal。
+
+F8-S2 isolated evidence harness 也已工程完成：`QueryTermSet` 强制九类 deterministic core axes，
+model 只能追加 synonym/adjacent-field；`ProviderAdapterManifest` 冻结 adapter/parser/schema、字段、
+pagination、pacing 与预算。structured metadata response 经过 abstract/body/full-text 字段检查后以
+exclusive create、content hash、read-only mode 和 readback rehash 保存；每页成功、429、circuit-open、
+transport、parse、重复页和未终止 cursor 都有 immutable receipt/failure ledger，且同 manifest/parser
+完整 replay。citation campaign 把上一轮所有新 paper hash 机械派生为下一轮双向、全 capable-source
+查询，在整轮开始前检查预算，每轮提交 ledger/replay audit，只允许 saturation 或 source exhaustion
+进入 coverage。query-family、source diversity、citation saturation、uncovered-source 四项由 harness
+推导且固定 hard thresholds，调用方不能提交或放宽；其余六项仍需 F8-S5 的真实测量。新增 36 tests，
+完整 `tests/knowledge` 为 66 passed。该路径未接入当前 SURVEY/driver，无 live provider 或真实文献
+结果，也不产生 novelty/SOTA claim。下一工程切片为 F8-S3 exact-source-span atomic claim extraction；
+F7 真实 Frontier Gate 与 F8-S5 科学校准仍是发布门。权威回归结果为 733 个非 Docker 测试通过
+（另 1 skip、29 deselected）及 29 个真实 Docker 测试通过（734 deselected）。
+
+F8-S3 isolated atomic-claim extraction harness 也已工程完成：frozen manifest 将 deterministic/
+model extractor、parser、exact output schema、instruction/model identity、零工具权限与 byte/claim
+预算固定；每个 target span 在读取前重验 grant/paper/content hash，并将 `span_extraction` 与
+`model_input` 分权。原文只存在于 `repr=False` runtime envelope，ledger 仅保存 content receipt hash
+与严格 AtomicClaim 字段；全文复制、prompt-like tool 指令、extra authority、错误 request/span、重复
+claim 均 fail closed。OCR/低 source/claim/evidence/numeric confidence 自动进入独立人类或 second-model
+review queue，accept/revise/reject 全部内容寻址，refutes/qualifies 不被支持性摘要覆盖；最终 graph bundle
+精确绑定 resolution 且每个 prior-art claim 闭合到 source span。新增 37 tests；真实回归数字见
+`F8_S3_CLAIM_EXTRACTION_IMPLEMENTATION_REPORT_2026_08_15.md`：完整 knowledge 103 passed，全项目
+非 Docker 770 passed、1 skipped、29 deselected，真实 Docker 29 passed、771 deselected。该路径仍
+只使用 synthetic licensed fixtures，无 production resolver/extractor、真实精度/召回标定或 novelty
+wiring；下一切片为 F8-S4 multi-channel nearest-prior-art matcher，F8-S5 科学校准仍是发布门。
+
+F8-S4 isolated nearest-prior-art matching harness 也已工程完成：lexical/embedding/citation/entity
+四路 recall 分别冻结 code/scorer/index/model identity 并记录完整 attempts；union 保留所有 unique hit，
+单路命中仅供审计，至少双路支持才可形成正式 relation。reranker 必须对完整 union 同序逐项打分，
+harness 机械排序、分配 budget 且保留下限外候选。strict judgment 精确覆盖 selected pairs、prior claim
+全部 source spans、六类 relation 与十类 component difference；blocking/低支持/低置信结果进入独立
+review，accept/revise/reject 后 accepted ranks 连续且原始 candidate hash 不丢失。执行模型会离线重算
+union、rerank order、judgment derivation、review reasons/package，抵抗 ledger 伪造。新增 52 tests，完整
+knowledge 155 passed；全项目非 Docker 822 passed、1 skipped、29 deselected，真实 Docker 29 passed、
+823 deselected。完整证据见 `F8_S4_PRIOR_ART_MATCHING_IMPLEMENTATION_REPORT_2026_08_15.md`。
+该路径仍仅有 synthetic adapters/matcher，无真实 recall/关系精度/temporal false-novelty 标定或 novelty
+wiring；下一切片为 F8-S5，F7 真实 Frontier Gate 与 F8-S5 scientific exit 仍是发布门。
+
+F8-S5 calibrated novelty acceptance engineering 也已完成：evaluator-owned validation/strictly-later
+temporal split、sealed label commitment、complete signed variant receipts 与 one-sided Wilson bounds
+共同控制 recall、false/missed strong novelty、stability 和 ranking；live coverage 的六项原 external
+signals 现在从 calibration/search/grant/span/correction artifacts 推导，调用方不能填数。global
+calibration fail、hard coverage failure 与每 candidate 少于三条 prior 均 fail closed。candidate authors
+被排除在 domain-expert/research-librarian review 外，classification、exact differences、claim ceiling 与
+direction disposition 全部机械重算；discovery optional callback 还要求 gate 与 atomic candidate claim
+SHA-256 精确一致。新增 59 tests，完整 knowledge 214 passed。该验收仍只使用 80-case/240-trial
+synthetic suite，没有 production expert labels/private custody/live false-novelty 结果；default scheduler、
+scorecard/write-up 的整链自动 materialization 也仍待后续 integration。完整证据见
+`F8_S5_CALIBRATED_NOVELTY_IMPLEMENTATION_REPORT_2026_08_15.md`。
+
+F8-S6 protocol-safe SOTA engineering 也已完成：author-excluded selectors 在 candidate protocol/result
+之前封存至少三条 required reference，并把 registry 精确绑定到 F8-S5 direction/coverage/search/corpus。
+unprivileged evaluator 为 candidate 与所有 reference 的同序 paired replicate 签发不可复用 HMAC
+receipts；reference paper/span 必须闭合进 exact F8-S1 corpus，error 显式保留，protocol comparator 对 dataset bytes、split、metric、statistics、budget 等
+逐维 fail closed。compatible rows 采用 exact one-sided paired sign test、跨 references 的 Holm correction
+和 frozen practical margin；全局 headline 要求每条 sealed reference 都被击败。campaign 与 WRITE_UP
+claim 都机械重算并 exact-bind protocol/metric/score，audited provider 错误不 fallback。新增 36 focused
+tests，最终全库非 Docker 917 passed、1 skipped、29 deselected，真实 Docker 29 passed、918
+deselected；完整证据见 `F8_S6_PROTOCOL_SAFE_SOTA_IMPLEMENTATION_REPORT_2026_08_15.md`。该验收仅为
+synthetic engineering fixture，未证明真实 reference completeness、published reproduction 或 SOTA。
 
 ---
 

@@ -194,5 +194,8 @@ The four-instance frozen bundle SHA-256 is
 
 The upstream source publishes the seed-to-rule implementation, and public models may have seen it.
 Static contamination checks and an empty candidate image prevent direct runtime access but cannot
-prove absence from model weights. Report this suite as public validation only. F7 still needs the
-private prospective suite, predeclared baseline matrix, and frozen acceptance report.
+prove absence from model weights. Report this suite as public validation only. The predeclared
+four-arm matrix machinery is now implemented, but real model configurations/runs are not yet
+claimed. The private prospective custody mechanism is also implemented in
+[`PRIVATE_SUITE_CUSTODY.md`](PRIVATE_SUITE_CUSTODY.md), but real private tasks/runs and the frozen
+acceptance configuration/report remain outstanding.

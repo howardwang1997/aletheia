@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import ValidationError
 
@@ -43,6 +43,7 @@ from aletheia.evals.schemas import (
     InvalidReason,
     ScorerReceipt,
     SignedScorerReceipt,
+    content_sha256,
 )
 
 
@@ -72,6 +73,36 @@ class EvaluationScorer(Protocol):
 
 class EvaluationScorerInfrastructureError(RuntimeError):
     """Only this explicit trusted failure class authorizes a scorer-side retry."""
+
+
+class EvaluationAccessRevokedError(EvaluationRunnerError):
+    """A one-time private task was retired or contaminated before hidden scoring."""
+
+
+class EvaluationCustodyInfrastructureError(RuntimeError):
+    """The evaluator could not durably consult or update private-suite custody state."""
+
+
+class EvaluationCustodyGuard(Protocol):
+    def assert_access(
+        self,
+        *,
+        suite: EvaluationSuite,
+        plan: EvaluationRunPlan,
+        task: EvaluationTask,
+    ) -> None: ...
+
+    def record_contamination(
+        self,
+        *,
+        suite: EvaluationSuite,
+        plan: EvaluationRunPlan,
+        task: EvaluationTask,
+        attempt_id: str,
+        source: Literal["submission", "scorer"],
+        evidence_sha256: str,
+        detail_sha256: str,
+    ) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -129,6 +160,7 @@ class IndependentEvaluationRunner:
         receipt_key_id: str,
         receipt_signing_key: bytes,
         formal: bool = True,
+        custody_guard: EvaluationCustodyGuard | None = None,
     ) -> None:
         self.root = Path(root).expanduser().resolve(strict=False)
         self.ledger = ledger
@@ -138,6 +170,7 @@ class IndependentEvaluationRunner:
         self.receipt_key_id = receipt_key_id
         self.receipt_signing_key = receipt_signing_key
         self.formal = formal
+        self.custody_guard = custody_guard
         if len(receipt_signing_key) < 32:
             raise ValueError("evaluator receipt signing keys must contain at least 32 bytes")
         if self.ledger.path == self.root or not _is_within(self.ledger.path, self.root):
@@ -169,7 +202,9 @@ class IndependentEvaluationRunner:
             )
 
     @staticmethod
-    def _slot(plan: EvaluationRunPlan, task: EvaluationTask, repeat_index: int) -> EvaluationAttemptSlot:
+    def _slot(
+        plan: EvaluationRunPlan, task: EvaluationTask, repeat_index: int
+    ) -> EvaluationAttemptSlot:
         matches = [
             slot
             for slot in plan.slots
@@ -195,9 +230,7 @@ class IndependentEvaluationRunner:
             raise EvaluationRunnerError("run plan is not bound to this evaluator manifest")
         if task.manifest_sha256 not in suite.task_manifest_sha256s:
             raise EvaluationRunnerError("task is not a member of the frozen suite")
-        if any(
-            slot.task_manifest_sha256 not in suite.task_manifest_sha256s for slot in plan.slots
-        ):
+        if any(slot.task_manifest_sha256 not in suite.task_manifest_sha256s for slot in plan.slots):
             raise EvaluationRunnerError("run plan contains a task outside the frozen suite")
         plan_accesses: dict[str, int] = {}
         for slot in plan.slots:
@@ -233,9 +266,7 @@ class IndependentEvaluationRunner:
             retry_reason="infra_failure" if retry_of else None,
         )
 
-    def _attempt_paths(
-        self, attempt_id: str
-    ) -> tuple[Path, Path, Path, Path, EvaluationBoundary]:
+    def _attempt_paths(self, attempt_id: str) -> tuple[Path, Path, Path, Path, EvaluationBoundary]:
         research, inbox = stage_attempt_directories(self.root, attempt_id)
         evaluator_workspace = self.root / "evaluator_attempts" / attempt_id
         public_inputs = self.root / "public_inputs" / attempt_id
@@ -281,8 +312,10 @@ class IndependentEvaluationRunner:
                 if "\\" in member.name:
                     raise EvaluationRunnerError("public task archive uses a non-portable path")
                 relative = PurePosixPath(member.name)
-                if relative.is_absolute() or not relative.parts or any(
-                    part in {"", ".", ".."} for part in relative.parts
+                if (
+                    relative.is_absolute()
+                    or not relative.parts
+                    or any(part in {"", ".", ".."} for part in relative.parts)
                 ):
                     raise EvaluationRunnerError("public task archive contains an unsafe path")
                 if relative in seen:
@@ -341,9 +374,13 @@ class IndependentEvaluationRunner:
                 boundary.public_assets_root.joinpath(*relative.parts)
             )
             try:
-                data = self._read_regular_file(path, root=boundary.public_assets_root, max_bytes=asset.bytes)
+                data = self._read_regular_file(
+                    path, root=boundary.public_assets_root, max_bytes=asset.bytes
+                )
             except (FileNotFoundError, EvaluationProtocolError, EvaluationBoundaryError) as exc:
-                raise EvaluationRunnerError(f"public evaluator asset is unavailable: {exc}") from exc
+                raise EvaluationRunnerError(
+                    f"public evaluator asset is unavailable: {exc}"
+                ) from exc
             if len(data) != asset.bytes or hashlib.sha256(data).hexdigest() != asset.sha256:
                 raise EvaluationRunnerError("public evaluator asset differs from the frozen task")
             destination = boundary.assert_research_write(
@@ -453,10 +490,14 @@ class IndependentEvaluationRunner:
     def _artifact_relative_uri(uri: str) -> PurePosixPath:
         prefix = "inbox://"
         if not uri.startswith(prefix):
-            raise EvaluationProtocolError("artifact uri must use inbox://", InvalidReason.PROTOCOL_BREACH)
+            raise EvaluationProtocolError(
+                "artifact uri must use inbox://", InvalidReason.PROTOCOL_BREACH
+            )
         relative = PurePosixPath(uri[len(prefix) :])
-        if relative.is_absolute() or not relative.parts or any(
-            part in {"", ".", ".."} for part in relative.parts
+        if (
+            relative.is_absolute()
+            or not relative.parts
+            or any(part in {"", ".", ".."} for part in relative.parts)
         ):
             raise EvaluationProtocolError("artifact uri escaped submission inbox")
         return relative
@@ -474,7 +515,9 @@ class IndependentEvaluationRunner:
             raise EvaluationProtocolError("artifact path escaped submission inbox")
         stat = resolved.stat()
         if stat.st_size > max_bytes:
-            raise EvaluationProtocolError("artifact exceeds declared byte limit", InvalidReason.RESOURCE_LIMIT)
+            raise EvaluationProtocolError(
+                "artifact exceeds declared byte limit", InvalidReason.RESOURCE_LIMIT
+            )
         data = resolved.read_bytes()
         if len(data) != stat.st_size:
             raise EvaluationProtocolError("artifact changed while being validated")
@@ -509,11 +552,13 @@ class IndependentEvaluationRunner:
         requirements = {item.kind: item for item in task.expected_artifacts}
         submitted = {item.kind: item for item in submission.artifacts}
         unknown = set(submitted) - set(requirements)
-        missing = {kind for kind, requirement in requirements.items() if requirement.required} - set(
-            submitted
-        )
+        missing = {
+            kind for kind, requirement in requirements.items() if requirement.required
+        } - set(submitted)
         if unknown:
-            raise EvaluationProtocolError(f"submission contains undeclared artifact kinds: {sorted(unknown)}")
+            raise EvaluationProtocolError(
+                f"submission contains undeclared artifact kinds: {sorted(unknown)}"
+            )
         if missing:
             raise EvaluationProtocolError(
                 f"submission is missing required artifact kinds: {sorted(missing)}",
@@ -552,13 +597,17 @@ class IndependentEvaluationRunner:
         if not task.hidden_asset_ref.startswith(prefix):
             raise EvaluationRunnerError("hidden asset ref must use evaluator://hidden/")
         relative = PurePosixPath(task.hidden_asset_ref[len(prefix) :])
-        if relative.is_absolute() or not relative.parts or any(
-            part in {"", ".", ".."} for part in relative.parts
+        if (
+            relative.is_absolute()
+            or not relative.parts
+            or any(part in {"", ".", ".."} for part in relative.parts)
         ):
             raise EvaluationRunnerError("hidden asset ref escaped evaluator storage")
         path = boundary.hidden_assets_root.joinpath(*relative.parts)
         try:
-            data = self._read_regular_file(path, root=boundary.hidden_assets_root, max_bytes=1 << 30)
+            data = self._read_regular_file(
+                path, root=boundary.hidden_assets_root, max_bytes=1 << 30
+            )
         except (FileNotFoundError, EvaluationProtocolError) as exc:
             raise EvaluationRunnerError(f"hidden evaluator asset is unavailable: {exc}") from exc
         if hashlib.sha256(data).hexdigest() != task.hidden_asset_sha256:
@@ -578,6 +627,12 @@ class IndependentEvaluationRunner:
         self._validate_identities(suite=suite, plan=plan, task=task)
         self._assert_contract(task)
         slot = self._slot(plan, task, repeat_index)
+        if task.contamination_policy.retire_after_access and self.custody_guard is None:
+            raise EvaluationRunnerError(
+                "one-time private tasks require an evaluator-owned custody guard"
+            )
+        if self.custody_guard is not None:
+            self.custody_guard.assert_access(suite=suite, plan=plan, task=task)
         self.ledger.register_plan(plan)
         attempt = self._new_attempt(
             plan=plan,
@@ -713,9 +768,7 @@ class IndependentEvaluationRunner:
             )
         if execution.ended_at < execution.started_at:
             raise EvaluationRunnerError("executor returned an invalid timestamp interval")
-        measured_wall_time = max(
-            0.0, (execution.ended_at - execution.started_at).total_seconds()
-        )
+        measured_wall_time = max(0.0, (execution.ended_at - execution.started_at).total_seconds())
         wall_slack = max(0.25, task.resource_budget.wall_time_s * 0.05)
         if execution.wall_time_s + wall_slack < measured_wall_time:
             raise EvaluationRunnerError("executor wall-time receipt understates its timestamps")
@@ -740,9 +793,7 @@ class IndependentEvaluationRunner:
                 infrastructure_detail="executor exceeded the frozen wall-time budget",
                 container_name=execution.container_name,
             )
-        receipt = self._execution_receipt(
-            attempt=attempt, manifest=manifest, execution=execution
-        )
+        receipt = self._execution_receipt(attempt=attempt, manifest=manifest, execution=execution)
         seal_research_workspace(research)
         seal_research_workspace(inbox)
         _atomic_json(evaluator_workspace / "execution_receipt.v1.json", receipt)
@@ -840,23 +891,64 @@ class IndependentEvaluationRunner:
             and receipt.cost_usd > task.resource_budget.usd_cap
         ):
             budget_invalid = True
-        if budget_invalid:
-            # A trusted usage overage is already terminal.  Do not consume hidden-test access or
-            # execute an expensive scorer after the attempt has exceeded its frozen budget.
-            score = EvaluationScore(invalid_reasons=(InvalidReason.RESOURCE_LIMIT,))
-        else:
-            score = None
+        score: EvaluationScore | None = None
+        contamination_recorded = False
         try:
+            invalid_reasons: list[InvalidReason] = []
+            if submission.declared_contamination:
+                invalid_reasons.append(InvalidReason.CONTAMINATION)
+                if self.custody_guard is not None:
+                    declaration_sha256 = content_sha256(
+                        {"declared_contamination": sorted(submission.declared_contamination)}
+                    )
+                    self.custody_guard.record_contamination(
+                        suite=suite,
+                        plan=plan,
+                        task=task,
+                        attempt_id=attempt.attempt_id,
+                        source="submission",
+                        evidence_sha256=submission.submission_sha256,
+                        detail_sha256=declaration_sha256,
+                    )
+                    contamination_recorded = True
+            if budget_invalid:
+                invalid_reasons.append(InvalidReason.RESOURCE_LIMIT)
+            if invalid_reasons:
+                # Declared overlap and trusted usage overage are terminal before hidden scoring.
+                score = EvaluationScore(invalid_reasons=tuple(invalid_reasons))
             if score is None:
-                hidden = self._hidden_asset(task, boundary)
-                score = self.scorer.score(
+                if self.custody_guard is not None:
+                    try:
+                        self.custody_guard.assert_access(suite=suite, plan=plan, task=task)
+                    except EvaluationAccessRevokedError:
+                        score = EvaluationScore(invalid_reasons=(InvalidReason.CONTAMINATION,))
+                        # A concurrent custody event already recorded and retired this access.
+                        contamination_recorded = True
+                if score is None:
+                    hidden = self._hidden_asset(task, boundary)
+                    score = self.scorer.score(
+                        task=task,
+                        hidden_asset=hidden,
+                        submission=submission,
+                        artifacts=artifact_payloads,
+                    )
+                    score = EvaluationScore.model_validate(score)
+            if (
+                self.custody_guard is not None
+                and InvalidReason.CONTAMINATION in score.invalid_reasons
+                and not contamination_recorded
+            ):
+                score_sha256 = content_sha256(score)
+                self.custody_guard.record_contamination(
+                    suite=suite,
+                    plan=plan,
                     task=task,
-                    hidden_asset=hidden,
-                    submission=submission,
-                    artifacts=artifact_payloads,
+                    attempt_id=attempt.attempt_id,
+                    source="scorer",
+                    evidence_sha256=score_sha256,
+                    detail_sha256=score_sha256,
                 )
-                score = EvaluationScore.model_validate(score)
-        except EvaluationScorerInfrastructureError as exc:
+        except (EvaluationScorerInfrastructureError, EvaluationCustodyInfrastructureError) as exc:
             attempt = self._transition(
                 attempt,
                 AttemptStatus.INFRA_FAILURE,
