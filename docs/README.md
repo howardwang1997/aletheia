@@ -194,5 +194,12 @@ Recommended reading order:
     readiness CLI, real-protocol workflow, and current release work.
 88. `adr/0031-f10-fail-closed-mechanistic-campaign-composition.md` — registry trust, separate
     execution/release gates, no-joint-posterior, fresh confirmation, and claim-ceiling decisions.
-89. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
-90. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.
+89. `F10_S7_CAPABILITY_AUTHORING_AND_PROMOTION_IMPLEMENTATION_REPORT_2026_08_16.md` — hard-sandbox
+    authoring evidence, separate generated tests/validation, Ed25519 role policy, independent audit,
+    signed append-only update, malicious-capability coverage, and honest production blockers.
+90. `capabilities/CAPABILITY_AUTHORING_AND_PROMOTION.md` — trust objects, signature/permission
+    rules, owner-only key handling, audit/promote/verify CLI, failure semantics, and commissioning.
+91. `adr/0032-f10-signed-role-separated-capability-promotion.md` — SLSA/in-toto/TUF-inspired
+    attestation, role-threshold, no-self-validation, rollback, and non-claim decisions.
+92. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
+93. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.

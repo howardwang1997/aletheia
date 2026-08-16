@@ -1953,6 +1953,50 @@ capability authoring/promotion boundary；F10 scientific exit 仍需真实 prosp
 - manifest registry 签名/权限；
 - 恶意 capability tests。
 
+**工程状态（2026-08-16）：signed authoring/promotion core 已完成；production registry 仍保持
+零 registered。** 新增 `CapabilityPromotionPolicy`，用 raw Ed25519 public key 的 SHA-256 作为 key ID，
+分别委派 sandbox attestation、test-suite attestation、independent validation、domain review、promotion
+audit 与 registry promotion 六类权限。每类支持 distinct-principal threshold；key 同时受 exact domain、
+capability prefix、validity、expiry 和 revocation 约束，跨权限 principal overlap 在 policy freeze 时直接
+拒绝。canonical signature message 还绑定 protocol context、artifact kind/hash、policy hash、registry ID、
+capability/domain 与 issuance time，避免跨类型/跨域 replay。private keys 从不进入任何 schema；CLI 只从
+owner-only、非 symlink regular file 读取 raw/hex key，并 create-only/0600 写出 audit/update。
+
+`SandboxAuthoringReceipt` 只接受 immutable image 下成功、非截断、含 exact sentinel 的 hard-sandbox
+execution，并绑定 source-file index、source review 与全部 executable AI-authored role implementation hashes；
+local-dev/mutable image 不能产生 promotable receipt。generated suite 在 validation 前冻结 reference、
+adversarial、positive 和 negative fixtures。independent validator 必须 non-agent-authored、在执行前冻结、
+与 executor adapter/所有 source roles/test generator/domain reviewer 分离，并机械绑定同一 suite、counts、
+controls、reexecution 与 reproduction evidence。domain review 限定 claim/evidence ceiling；request 关闭全部
+hash lineage 和时间顺序。
+
+promotion auditor 对 exact current registry/latest provisional、四阶段 signatures、sandbox images、roles、
+controls 与 reproduction gates 给出 signed approved/rejected receipt。只有 approved audit 才可交给另一
+registry-promoter role；promotion receipt 同时绑定 request、audit、policy、source/target registry、source/
+registered manifest 和 promoter principals。verifier 从 source 重建唯一 compatible successor 和 append-only
+target；post-sign edit、rollback、stale-source/concurrent second promotion 均 fail closed。
+
+20 个 focused tests 使用真实 immutable range-compression v1→v2.0→v2.1 lineage 构造明确 synthetic 的
+v2.1 provisional→v2.2 registered 全升级，并覆盖 test-generator/validator 合并、agent self-validator、
+control rebinding、pre-artifact attestation、signature forgery/wrong permission/out-of-scope、cross-role key
+reuse、revocation、non-Docker authoring、registry tamper/rollback、stale-source race、删减 audit checks 和
+group-readable/symlink key 与 frozen-output overwrite。该案例只满足 engineering conformance，不代表真实
+独立 reviewer 或 scientific result。
+
+最终 capabilities + materials 交叉回归为 97 passed；权威全库 non-Docker 回归为 1234 passed、1 skipped、
+29 deselected、2611 个既有 spglib deprecation warnings（794.56 s）。新增代码没有改动 F9/F10 frozen
+executor/planner/validator/source hashes。
+
+真实 materials registry v4 没有改写。冻结 readiness audit object hash
+`b1017ae5e7cbb8ffb7628ec9b0ce12a11bd060d272518e69b6d3a3a6f0dad9c0`，返回
+`production_promotion_ready=false`、`registered_capability_count=0`。range-compression v2.1.0 与 ASE/EMT
+v1.0.0 都仍有 agent-authored validator，并缺 production trust policy、independent validation/domain review、
+signed audit 与 authorized update。完整报告见
+`F10_S7_CAPABILITY_AUTHORING_AND_PROMOTION_IMPLEMENTATION_REPORT_2026_08_16.md`，runbook 见
+`capabilities/CAPABILITY_AUTHORING_AND_PROMOTION.md`，架构决策见 ADR 0032。下一步是 commissioning 一个
+真实 bounded capability 的独立 validator/reviewer/key custody/promotion；在此之前不得把 synthetic upgrade
+或 registry schema validity 称为 registered scientific capability。
+
 ## F10.8 建议代码边界
 
 ~~~text

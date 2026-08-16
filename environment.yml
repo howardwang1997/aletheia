@@ -13,6 +13,7 @@ dependencies:
   - scikit-learn
   - matplotlib              # parity plots / artifacts
   - cloudpickle             # robust model persistence: pickles coder-authored custom estimator classes BY VALUE (joblib pickles by reference, which fails for classes defined in the dynamically-loaded solution module)
+  - cryptography            # Ed25519 capability-promotion attestations and registry authorization
   - pymatgen                # Composition parsing
   - matminer                # Magpie composition featurizer + expt_gap dataset loader
   - ase                     # atomistic simulation interface + deterministic EMT reference calculator

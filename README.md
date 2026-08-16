@@ -322,6 +322,20 @@ mechanism capabilities, independently reviewed family qualifications, fresh rese
 independent confirmation exists. See
 [`docs/capabilities/MECHANISTIC_CAMPAIGN_TEMPLATE.md`](docs/capabilities/MECHANISTIC_CAMPAIGN_TEMPLATE.md).
 
+F10-S7 now makes capability registration a signed, role-separated supply-chain transition instead
+of a lifecycle-field edit. A provisional manifest must bind a hard-sandbox authoring receipt,
+separately frozen generated tests, exact reference/adversarial/positive/negative cases, a
+non-agent-authored independent validator, domain/safety/claim-scope review, and a complete promotion
+audit. Ed25519 policies delegate six distinct permissions with public-key-derived IDs, thresholds,
+domain/capability scopes, validity, and revocation; a separate registry promoter can append only the
+exact reconstructed successor to the exact source snapshot. Forgery, wrong permission, role reuse,
+fixture rebinding, stale-source races, rollback, post-signature mutation, and unsafe private-key
+files fail closed. The synthetic full upgrade proves the engineering contract only: the unchanged
+materials registry v4 still has zero registered capabilities and both latest candidates remain
+blocked on real independent validators/reviewers, production trust policy, signed audit, and
+authorized update. See
+[`docs/capabilities/CAPABILITY_AUTHORING_AND_PROMOTION.md`](docs/capabilities/CAPABILITY_AUTHORING_AND_PROMOTION.md).
+
 ## Invariants (the safety/quality spine — never traded for a feature)
 
 1. **Deterministic FSM + hard gates** — capability is added as gated stages, not free-roaming autonomy.
