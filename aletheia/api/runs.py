@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from aletheia.data.registry import all_ready, pending_datasets
 from aletheia.events.store import list_events
@@ -18,9 +19,10 @@ from aletheia.memory.service import (
     list_scorecards,
     list_sota_results,
 )
+from aletheia.jobs import IdempotencyConflict
 from aletheia.orchestrator.client import run_task
 from aletheia.orchestrator.session import auto_dry_run
-from aletheia.scheduler.driver import launch_driver
+from aletheia.scheduler.durable import enqueue_driver_task
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
@@ -43,9 +45,7 @@ class StartRunResponse(BaseModel):
 @router.post("", response_model=StartRunResponse)
 async def start_run(req: StartRunRequest) -> StartRunResponse:
     run_id = await asyncio.to_thread(create_run, req.goal, req.domain)
-    prompt = req.prompt or (
-        f"Begin work on this goal and log a brief plan: {req.goal}"
-    )
+    prompt = req.prompt or (f"Begin work on this goal and log a brief plan: {req.goal}")
     task = asyncio.create_task(run_task(run_id, prompt, dry_run=req.dry_run))
     _TASKS.add(task)
     task.add_done_callback(_TASKS.discard)
@@ -90,10 +90,12 @@ async def get_run_scorecards(run_id: str, experiment_id: str | None = None) -> l
 
 class LaunchRequest(BaseModel):
     dry_run: bool | None = None  # None -> auto (dry-run if selected provider lacks credentials)
+    operation_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class LaunchResponse(BaseModel):
     run_id: str
+    task_id: str
     status: str
     mode: str
 
@@ -118,8 +120,21 @@ async def launch(run_id: str, req: LaunchRequest) -> LaunchResponse:
             },
         )
     dry_run = req.dry_run if req.dry_run is not None else auto_dry_run()
-    launch_driver(run_id, dry_run=dry_run)
-    return LaunchResponse(run_id=run_id, status="launched", mode="dry_run" if dry_run else "real")
+    try:
+        receipt = await asyncio.to_thread(
+            enqueue_driver_task,
+            run_id,
+            dry_run=dry_run,
+            operation_id=req.operation_id or uuid.uuid4().hex,
+        )
+    except IdempotencyConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return LaunchResponse(
+        run_id=run_id,
+        task_id=receipt.task.task_id,
+        status=receipt.task.status.value,
+        mode="dry_run" if dry_run else "real",
+    )
 
 
 @router.post("/{run_id}/resume", response_model=LaunchResponse)
@@ -129,5 +144,18 @@ async def resume(run_id: str, req: LaunchRequest) -> LaunchResponse:
     if run is None:
         raise HTTPException(404, "run not found")
     dry_run = req.dry_run if req.dry_run is not None else auto_dry_run()
-    launch_driver(run_id, dry_run=dry_run)
-    return LaunchResponse(run_id=run_id, status="resumed", mode="dry_run" if dry_run else "real")
+    try:
+        receipt = await asyncio.to_thread(
+            enqueue_driver_task,
+            run_id,
+            dry_run=dry_run,
+            operation_id=req.operation_id or uuid.uuid4().hex,
+        )
+    except IdempotencyConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return LaunchResponse(
+        run_id=run_id,
+        task_id=receipt.task.task_id,
+        status=receipt.task.status.value,
+        mode="dry_run" if dry_run else "real",
+    )

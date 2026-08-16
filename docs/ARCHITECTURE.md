@@ -53,13 +53,15 @@ campaigns, and multi-domain generalization follow).
 ## Components
 
 ```
-Next.js dashboard  ⇄  FastAPI (session auth + RBAC)  ⇄  event bus → SSE
-                                  │
-   ┌──────────────┬──────────────┼───────────────┬──────────────┐
+Next.js dashboard  ⇄  FastAPI control plane  ⇄  Postgres task + event ledger  → cursor SSE
+                                                    │
+                                           independent durable workers
+                                                    │
+   ┌──────────────┬──────────────┬──────────────────┼──────────────┐
    orchestrator    critic gateway   memory/ledger    scheduler/FSM   compute + IAM
-   (Claude or GPT, (cross-vendor    (Postgres +      (driver:        (local subprocess
-    isolated per    peer review)     pgvector recall)  stages+gates)   / Docker sandbox;
-    stage)                                                            GitHub App repos)
+   (Claude or GPT, (cross-vendor    (Postgres +      (durable task   (local subprocess
+    isolated per    peer review)     pgvector recall)  + driver)       / Docker sandbox;
+    stage)                                                               GitHub App repos)
 ```
 
 - **orchestrator** (`aletheia/orchestrator/`): isolated `run_worker` per stage, selected globally via
@@ -72,7 +74,9 @@ Next.js dashboard  ⇄  FastAPI (session auth + RBAC)  ⇄  event bus → SSE
   consensus.
 - **memory** (`aletheia/memory/`): the ledger is the source of truth; pgvector `recall` surfaces relevant
   prior work (own runs and — from the SURVEY iteration — external literature) before designing.
-- **scheduler** (`aletheia/scheduler/`): the deterministic driver walks the FSM and enforces budget.
+- **scheduler/jobs** (`aletheia/scheduler/`, `aletheia/jobs/`): launch/resume enters the Postgres
+  durable queue; a separate worker leases and heartbeats the deterministic FSM driver. Queue state
+  coordinates delivery but never replaces typed scientific ledgers.
 - **compute** (`aletheia/compute/`): `local` restricted subprocess (default) or `docker` hard sandbox.
 - **coder** (`aletheia/coder/`): authors model code behind the AST gate; runs only in the sandbox.
 - **iam** (`aletheia/iam/`, `aletheia/auth/`): GitHub App for repo/branch/PR-per-experiment; session login

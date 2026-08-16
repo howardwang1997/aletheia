@@ -13,6 +13,7 @@ from sqlalchemy.engine import Connection
 import aletheia.memory.ledger  # noqa: F401  (register every ORM table)
 import aletheia.knowledge.persistence  # noqa: F401  (register F8 immutable tables)
 import aletheia.epistemics.persistence  # noqa: F401  (register F9 world-model tables)
+import aletheia.jobs.persistence  # noqa: F401  (register F11 durable queue tables)
 from aletheia.db import Base, SchemaCompatibilityError, alembic_config, engine
 
 LEGACY_BASELINE_REVISION = "20260813_0001"
@@ -43,6 +44,22 @@ POST_BASELINE_TABLES = frozenset(
         "epistemic_belief_state_members",
         "epistemic_world_model_snapshots",
         "epistemic_world_model_transitions",
+        "durable_tasks",
+        "durable_task_dependencies",
+        "durable_task_attempts",
+        "durable_queue_audits",
+    }
+)
+POST_BASELINE_COLUMNS = frozenset(
+    {
+        ("events", "event_key"),
+        ("events", "event_sha256"),
+    }
+)
+POST_BASELINE_CONSTRAINTS = frozenset(
+    {
+        "ck_events_key_has_sha256",
+        "uq_events_event_key",
     }
 )
 
@@ -55,19 +72,33 @@ class BaselineAdoptionReceipt:
 
 
 def schema_diffs(
-    connection: Connection, *, exclude_tables: frozenset[str] = frozenset()
+    connection: Connection,
+    *,
+    exclude_tables: frozenset[str] = frozenset(),
+    exclude_columns: frozenset[tuple[str, str]] = frozenset(),
+    exclude_constraints: frozenset[str] = frozenset(),
 ) -> list[object]:
     """Return Alembic's structural diff between the connected schema and ORM metadata."""
+
+    def include_object(
+        object_, name: str | None, type_: str, _reflected: bool, _compare_to
+    ) -> bool:
+        if type_ == "table" and name in exclude_tables:
+            return False
+        if type_ == "column":
+            table_name = getattr(getattr(object_, "table", None), "name", None)
+            if (table_name, name) in exclude_columns:
+                return False
+        if type_ in {"unique_constraint", "check_constraint"} and name in exclude_constraints:
+            return False
+        return True
+
     context = MigrationContext.configure(
         connection,
         opts={
             "compare_type": True,
             "compare_server_default": False,
-            "include_object": (
-                lambda _object, name, type_, _reflected, _compare_to: (
-                    not (type_ == "table" and name in exclude_tables)
-                )
-            ),
+            "include_object": include_object,
         },
     )
     return list(compare_metadata(context, Base.metadata))
@@ -88,7 +119,12 @@ def adopt_existing_baseline() -> BaselineAdoptionReceipt:
             raise SchemaCompatibilityError(
                 "database is empty; use `conda run -n aletheia alembic upgrade head`"
             )
-        diffs = schema_diffs(connection, exclude_tables=POST_BASELINE_TABLES)
+        diffs = schema_diffs(
+            connection,
+            exclude_tables=POST_BASELINE_TABLES,
+            exclude_columns=POST_BASELINE_COLUMNS,
+            exclude_constraints=POST_BASELINE_CONSTRAINTS,
+        )
         if diffs:
             preview = "; ".join(repr(diff) for diff in diffs[:5])
             raise SchemaCompatibilityError(

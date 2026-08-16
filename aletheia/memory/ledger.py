@@ -14,6 +14,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -555,8 +556,17 @@ class Event(Base):
     """Canonical event-bus sink: every SDK message + service event."""
 
     __tablename__ = "events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_key IS NULL OR event_sha256 IS NOT NULL",
+            name="ck_events_key_has_sha256",
+        ),
+        UniqueConstraint("event_key", name="uq_events_event_key"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    event_key: Mapped[str | None] = mapped_column(String(128))
+    event_sha256: Mapped[str | None] = mapped_column(String(64))
     run_id: Mapped[str | None] = mapped_column(String(32), index=True)
     agent: Mapped[str | None] = mapped_column(String(64))
     parent_tool_use_id: Mapped[str | None] = mapped_column(String(128))

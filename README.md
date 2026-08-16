@@ -56,13 +56,17 @@ reliable autonomous frontier scientist.
    campaign are synthetic: live adapters, real expert-labelled calibration, private holdout custody,
    prospective false-novelty results, and reproduction of a real complete reference matrix are still
    required before the system can reliably recognize or claim frontier science.
-6. **Reproducible research bundle — partial.** The final output should be a stable bundle containing
-   the question, literature, data card, split metadata, code, artifacts, metrics, claims, audits,
-   reproduction, limitations, paper, and reproducibility package/PR.
+6. **Durable execution and reproducible research bundle — partial.** F11-S1 now provides a
+   Postgres-backed task/attempt/dependency ledger, leases, heartbeats, finite retry, process-kill
+   recovery, content-bound idempotency, independent workers, and resumable database-cursor SSE.
+   The final output still needs a stable bundle containing the question, literature, data card,
+   split metadata, code, artifacts, metrics, claims, audits, reproduction, limitations, paper, and
+   reproducibility package/PR; F11-S2–S7 and F12 remain.
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
-of causal/mechanistic experiments, repeated lower-overlap or laboratory replication, and a complete
-evidence bundle.
+of causal/mechanistic experiments, transactional one-time scientific/outward actions, a durable
+quest/program portfolio and endurance gate, repeated lower-overlap or laboratory replication, and
+a complete evidence bundle.
 
 The executable plan for the next frontier program is
 [`docs/FRONTIER_SCIENTIST_F7_F12_DETAILED_PLAN_2026_08_13.md`](docs/FRONTIER_SCIENTIST_F7_F12_DETAILED_PLAN_2026_08_13.md):
@@ -336,6 +340,19 @@ blocked on real independent validators/reviewers, production trust policy, signe
 authorized update. See
 [`docs/capabilities/CAPABILITY_AUTHORING_AND_PROMOTION.md`](docs/capabilities/CAPABILITY_AUTHORING_AND_PROMOTION.md).
 
+F11-S1 now moves long-running execution out of the API process. Postgres owns immutable task
+request identities, dependency edges, attempt history, current leases, heartbeat/retry state, and
+recovery audits; `FOR UPDATE SKIP LOCKED` gives concurrent workers one active owner per attempt,
+while exact stale callbacks cannot change a replacement attempt. Launch/resume returns a durable
+task ID, and a separately deployed worker runs the existing experiment driver. Each task transition
+and its content-bound event commit in one transaction. SSE tails the database by event ID and
+supports `Last-Event-ID`, so API restarts or multiple API processes no longer define event truth.
+An actual killed child process, replacement recovery, concurrency, duplicate delivery, dependency,
+and event-rollback cases are tested. This completes only the F11-S1 engineering boundary:
+transactional scientific outbox/external-action receipts, quest/program graphs, memory compaction,
+portfolio planning, broad fault injection, and the 72-hour gate remain. See
+[`docs/jobs/DURABLE_TASK_ORCHESTRATION.md`](docs/jobs/DURABLE_TASK_ORCHESTRATION.md).
+
 ## Invariants (the safety/quality spine — never traded for a feature)
 
 1. **Deterministic FSM + hard gates** — capability is added as gated stages, not free-roaming autonomy.
@@ -352,8 +369,9 @@ authorized update. See
 
 ## Architecture (one-liner)
 
-`Next.js dashboard ⇄ FastAPI ⇄ {orchestrator (Claude or GPT), critic gateway, memory/ledger,
-scheduler, compute, IAM}`, with every message flowing through an **event bus → SSE**.
+`Next.js dashboard ⇄ FastAPI control plane ⇄ Postgres task/event ledger ⇄ independent workers ⇄
+{orchestrator (Claude or GPT), critic gateway, scheduler, compute, IAM}`, with SSE replaying the
+durable event cursor.
 
 ## Quickstart (Phase 0 — walking skeleton)
 
@@ -370,10 +388,17 @@ docker compose up -d            # needs a running docker daemon (e.g. `colima st
 # 3. Config
 cp .env.example .env            # dry-run works with no secrets
 
-# 4. Backend
+# 4. Backend control plane
 conda run -n aletheia uvicorn aletheia.api.main:app --reload --port 8000
 
-# 5. Dashboard (separate shell)
+# 5. Durable research worker (separate shell; replace the example with the retained
+#    deployment worker-manifest SHA-256)
+conda run -n aletheia python scripts/durable_worker.py \
+  --worker-id research-worker-01 \
+  --worker-manifest-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  --handler research.experiment_driver.v1=aletheia.scheduler.durable:run_driver_task
+
+# 6. Dashboard (separate shell)
 cd frontend && npm install && npm run dev    # http://localhost:3000
 ```
 

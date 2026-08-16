@@ -201,5 +201,12 @@ Recommended reading order:
     rules, owner-only key handling, audit/promote/verify CLI, failure semantics, and commissioning.
 91. `adr/0032-f10-signed-role-separated-capability-promotion.md` — SLSA/in-toto/TUF-inspired
     attestation, role-threshold, no-self-validation, rollback, and non-claim decisions.
-92. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
-93. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.
+92. `F11_S1_DURABLE_TASK_ORCHESTRATION_IMPLEMENTATION_REPORT_2026_08_16.md` — Postgres queue,
+    content-bound delivery, lease/heartbeat/retry, process-kill recovery, task/event atomicity,
+    independent worker integration, and honest F11-S2 boundary.
+93. `jobs/DURABLE_TASK_ORCHESTRATION.md` — deployment, task states, API/CLI/worker operation,
+    event-cursor resume, failure interpretation, recovery, and debugging.
+94. `adr/0033-f11-postgres-durable-queue-and-event-cursor.md` — at-least-once delivery,
+    `SKIP LOCKED`, hashed leases, durable SSE cursor, and rejected exactly-once/broker claims.
+95. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
+96. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.

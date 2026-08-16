@@ -2225,6 +2225,15 @@ anti-loop fingerprint 应综合：
 - multi-process SSE 使用 durable event source；
 - kill/restart 测试。
 
+**实现状态（2026-08-16）：工程完成。** Alembic `20260816_0006`–`0009` 新增 durable task、
+dependency、attempt 和 recovery-audit 表；Postgres `FOR UPDATE SKIP LOCKED` claim、哈希 lease
+token、heartbeat、有限重试、内容绑定 idempotency、依赖释放/失败传播和过期恢复均已接通。
+launch/resume 只入队，内建 experiment-driver handler 由独立 worker 执行；任务 state/event
+同事务提交，SSE 以数据库 event ID 和 `Last-Event-ID` 跨进程回放。验收包含真实子进程
+`os._exit`、重启重领、并发抢占、stale callback、duplicate、rollback 和 partial-not-evidence。
+这不提前完成 F11-S2：旧 scientific transition、outward action 和一次性 holdout 的统一
+transactional outbox/receipt 仍是下一项。
+
 ### F11-S2：Transactional scientific transitions
 
 - prediction commit、observation validation、belief update 分事务边界；

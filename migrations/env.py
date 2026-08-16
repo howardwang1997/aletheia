@@ -10,6 +10,7 @@ from sqlalchemy import engine_from_config, pool
 import aletheia.memory.ledger  # noqa: F401  (register every ORM table)
 import aletheia.knowledge.persistence  # noqa: F401  (register F8 immutable tables)
 import aletheia.epistemics.persistence  # noqa: F401  (register F9 world-model tables)
+import aletheia.jobs.persistence  # noqa: F401  (register F11 durable queue tables)
 from aletheia.config import get_settings
 from aletheia.db import Base
 

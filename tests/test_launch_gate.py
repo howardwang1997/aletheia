@@ -40,9 +40,31 @@ def test_launch_blocked_until_data_ready():
         # satisfy it -> launch is allowed
         ok = client.post(f"/runs/{run_id}/datasets/{asset_id}/ready")
         assert ok.status_code == 200
-        r2 = client.post(f"/runs/{run_id}/launch", json={"dry_run": True})
+        operation_id = f"launch-gate-{run_id}"
+        r2 = client.post(
+            f"/runs/{run_id}/launch",
+            json={"dry_run": True, "operation_id": operation_id},
+        )
         assert r2.status_code == 200
-        assert r2.json()["status"] == "launched"
+        assert r2.json()["status"] == "queued"
+        assert r2.json()["task_id"].startswith(f"driver-{run_id}-")
+        replay = client.post(
+            f"/runs/{run_id}/launch",
+            json={"dry_run": True, "operation_id": operation_id},
+        )
+        assert replay.status_code == 200
+        assert replay.json()["task_id"] == r2.json()["task_id"]
+        duplicate_click = client.post(
+            f"/runs/{run_id}/launch",
+            json={"dry_run": True, "operation_id": f"another-{operation_id}"},
+        )
+        assert duplicate_click.status_code == 200
+        assert duplicate_click.json()["task_id"] == r2.json()["task_id"]
+        conflicting_mode = client.post(
+            f"/runs/{run_id}/launch",
+            json={"dry_run": False, "operation_id": f"real-{operation_id}"},
+        )
+        assert conflicting_mode.status_code == 409
 
 
 def test_launch_unknown_run_404():
