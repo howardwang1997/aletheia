@@ -63,9 +63,13 @@ reliable autonomous frontier scientist.
    and keyed event commit together, while prediction, observation validation, and belief update stay
    separate. Final holdout/external actions now have one raw authorization token, stable provider
    key, immutable receipt, and fail-closed reconciliation after an unknown outcome.
+   F11-S3 adds a reconstructible Quest/Program/Campaign graph with cross-Campaign family identity
+   and frozen allocations. F11-S4 adds immutable task-bound memory facts, receipt-backed
+   non-destructive compaction, exact preservation of negative/contradictory state, deterministic
+   recovery, and provider-neutral task context delivery.
    The final output still needs a stable bundle containing the question, literature, data card,
    split metadata, code, artifacts, metrics, claims, audits, reproduction, limitations, paper, and
-   reproducibility package/PR; F11-S3–S7 and F12 remain.
+   reproducibility package/PR; F11-S5–S7 and F12 remain.
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning, a
@@ -362,9 +366,20 @@ redelivery returns the first receipt without applying another update. One-time f
 external-validation claims expose a raw token only once, persist only its SHA-256, pass a stable
 provider idempotency key, and atomically bind the result to an immutable external-action receipt.
 An expired claim becomes `reconciliation_required` and is never automatically reissued. This is an
-at-most-one Aletheia authorization guarantee, not cross-system exactly-once execution. Quest/program
-graphs, memory compaction, portfolio planning, broad fault injection, and the 72-hour gate remain.
+at-most-one Aletheia authorization guarantee, not cross-system exactly-once execution. Portfolio
+planning, broad fault injection, and the 72-hour gate remain.
 See [`docs/jobs/TRANSACTIONAL_SCIENTIFIC_TRANSITIONS.md`](docs/jobs/TRANSACTIONAL_SCIENTIFIC_TRANSITIONS.md).
+
+F11-S3 gives each long-horizon effort a reconstructible Quest → Program → Campaign spine, durable
+scientific-family identity, dependency DAG, and frozen data/budget allocations. F11-S4 builds a
+separate authoritative memory ledger on that ancestry: typed facts and task bindings are immutable;
+compaction artifacts retain complete per-fact coverage receipts; unfavorable evidence and required
+state remain exact; and a worker reloads a provider-neutral context receipt before delivery. New
+facts make an old projection stale, while missing/corrupt artifacts, context overflow, or a
+provider/model mismatch fail closed. This proves recovery custody, not the semantic truth of a
+model-written summary or autonomous research value. See
+[`docs/programs/RESEARCH_PROGRAM_GRAPH.md`](docs/programs/RESEARCH_PROGRAM_GRAPH.md) and
+[`docs/programs/RECEIPT_BACKED_SCIENTIFIC_MEMORY.md`](docs/programs/RECEIPT_BACKED_SCIENTIFIC_MEMORY.md).
 
 ## Invariants (the safety/quality spine — never traded for a feature)
 

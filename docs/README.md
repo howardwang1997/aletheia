@@ -224,5 +224,13 @@ Recommended reading order:
 100. `adr/0035-f11-reconstructible-scientific-program-graph.md` — hierarchy/task separation,
     append-only lifecycle, concurrent cycle prevention, portfolio command scope, and rejected reset
     paths.
-101. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
-102. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.
+101. `F11_S4_RECEIPT_BACKED_SCIENTIFIC_MEMORY_IMPLEMENTATION_REPORT_2026_08_17.md` — immutable
+    task-bound facts, exact negative-state retention, complete compaction receipts, deterministic
+    recovery, provider-neutral context delivery, and honest scientific boundary.
+102. `programs/RECEIPT_BACKED_SCIENTIFIC_MEMORY.md` — deployment, fact/compaction/context workflow,
+    API/CLI/worker integration, incident handling, and failure semantics.
+103. `adr/0036-f11-receipt-backed-task-scoped-scientific-memory.md` — authoritative ledger,
+    task-minimal ancestry, non-destructive compaction, exact protected facts, and provider-switch
+    decisions.
+104. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
+105. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.

@@ -44,7 +44,8 @@ async def _collect(run_id, n, coro):
 def test_worker_dry_run_returns_value_and_tags_label():
     async def go():
         return await _collect(
-            "run-w1", 1,
+            "run-w1",
+            1,
             run_worker("run-w1", "analyst", "do x", dry_run=True, dry_value="ok-analyst"),
         )
 
@@ -58,7 +59,10 @@ def test_parallel_workers_isolated():
     async def go():
         labels = ["leakage", "overfit", "baseline", "stats"]
         results = await asyncio.gather(
-            *[run_worker("run-w2", lb, "check", dry_run=True, dry_value=f"{lb}-done") for lb in labels]
+            *[
+                run_worker("run-w2", lb, "check", dry_run=True, dry_value=f"{lb}-done")
+                for lb in labels
+            ]
         )
         return results
 
@@ -108,6 +112,7 @@ def _install_fake_sdk(monkeypatch):
             return False
 
         async def query(self, prompt):
+            captured["query_prompt"] = prompt
             return None
 
         async def receive_response(self):
@@ -119,13 +124,17 @@ def _install_fake_sdk(monkeypatch):
     fake_mod.ClaudeSDKClient = FakeClient
     fake_mod.tool = lambda name, description, schema: (
         lambda handler: SimpleNamespace(
-            name=name, description=description, input_schema=schema, handler=handler,
+            name=name,
+            description=description,
+            input_schema=schema,
+            handler=handler,
         )
     )
     fake_mod.create_sdk_mcp_server = lambda **kwargs: kwargs
     monkeypatch.setitem(sys.modules, "claude_agent_sdk", fake_mod)
 
     import aletheia.orchestrator.worker as w
+
     monkeypatch.setattr(w, "has_credentials", lambda *a, **k: True)
     monkeypatch.setattr(w, "configure_auth", lambda *a, **k: None)
     return captured
@@ -146,10 +155,16 @@ def test_text_only_worker_disables_all_tools(monkeypatch):
 
 def test_mcp_worker_passes_allowed_tools_and_no_disallow_list(monkeypatch):
     captured = _install_fake_sdk(monkeypatch)
-    out = asyncio.run(run_worker(
-        "run-opts2", "retriever", "search",
-        mcp_servers={"lit": object()}, allowed_tools=["mcp__lit__search"], dry_run=False,
-    ))
+    out = asyncio.run(
+        run_worker(
+            "run-opts2",
+            "retriever",
+            "search",
+            mcp_servers={"lit": object()},
+            allowed_tools=["mcp__lit__search"],
+            dry_run=False,
+        )
+    )
     assert out == "inline answer"
     # mcp/tool worker: allowed_tools pass through and the text-only disallow list is NOT applied.
     assert captured["allowed_tools"] == ["mcp__lit__search"]
@@ -163,11 +178,17 @@ def test_mcp_worker_with_gate_is_default_permission(monkeypatch):
     async def gate(*a, **k):
         return True
 
-    out = asyncio.run(run_worker(
-        "run-opts3", "retriever", "search",
-        mcp_servers={"lit": object()}, allowed_tools=["mcp__lit__search"],
-        can_use_tool=gate, dry_run=False,
-    ))
+    out = asyncio.run(
+        run_worker(
+            "run-opts3",
+            "retriever",
+            "search",
+            mcp_servers={"lit": object()},
+            allowed_tools=["mcp__lit__search"],
+            can_use_tool=gate,
+            dry_run=False,
+        )
+    )
     assert out == "inline answer"
     # a tool gate is supplied -> the SDK asks the gate per call instead of bypassing.
     assert captured["permission_mode"] == "default"
@@ -181,14 +202,59 @@ def test_provider_neutral_tool_is_adapted_for_claude(monkeypatch):
         return {"content": [{"type": "text", "text": args["query"]}]}
 
     spec = ToolSpec("lookup", "Look up a value.", {"query": str}, lookup)
-    out = asyncio.run(run_worker(
-        "run-opts4", "retriever", "search",
-        tools=[spec], tool_namespace="research", dry_run=False,
-    ))
+    out = asyncio.run(
+        run_worker(
+            "run-opts4",
+            "retriever",
+            "search",
+            tools=[spec],
+            tool_namespace="research",
+            dry_run=False,
+        )
+    )
     assert out == "inline answer"
     assert captured["allowed_tools"] == ["mcp__research__lookup"]
     server = captured["mcp_servers"]["research"]
     assert server["tools"][0].name == "lookup"
+
+
+def test_worker_loads_only_receipted_research_context(monkeypatch):
+    captured = _install_fake_sdk(monkeypatch)
+    from aletheia.config import get_settings
+    import aletheia.programs.memory as memory_module
+
+    context = SimpleNamespace(
+        prompt_text="VERIFIED TASK MEMORY\n- contradiction: mechanism failed",
+        context_sha256="a" * 64,
+        scope_node_id="cmp_" + ("b" * 32),
+        task_key="current-task",
+        source_fact_ids=("mem_" + ("c" * 32),),
+    )
+    receipt = SimpleNamespace(
+        consumer_provider="anthropic",
+        consumer_model=get_settings().orchestrator_model,
+        context=context,
+    )
+
+    class StubMemoryStore:
+        def load_task_context(self, receipt_id):
+            assert receipt_id == "mctx_" + ("d" * 32)
+            return receipt
+
+    monkeypatch.setattr(memory_module, "ResearchMemoryStore", StubMemoryStore)
+    out = asyncio.run(
+        run_worker(
+            "run-context",
+            "analyst",
+            "analyze the current experiment",
+            dry_run=False,
+            memory_context_receipt_id="mctx_" + ("d" * 32),
+        )
+    )
+    assert out == "inline answer"
+    assert captured["query_prompt"].startswith("VERIFIED TASK MEMORY")
+    assert "mechanism failed" in captured["query_prompt"]
+    assert captured["query_prompt"].endswith("analyze the current experiment")
 
 
 def test_analysis_excludes_degraded_subchecks(monkeypatch):

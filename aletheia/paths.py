@@ -21,6 +21,13 @@ def artifacts_dir() -> Path:
     return ARTIFACTS_ROOT
 
 
+def research_memory_archive_dir() -> Path:
+    """Write-once, content-addressed scientific-memory artifacts."""
+    path = artifacts_dir() / "research_memory"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def run_workspace(run_id: str) -> Path:
     """Per-run scratch directory (created on demand)."""
     p = WORKSPACES_ROOT / run_id

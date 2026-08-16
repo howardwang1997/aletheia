@@ -62,6 +62,11 @@ POST_BASELINE_TABLES = frozenset(
         "research_campaign_experiments",
         "research_data_role_allocations",
         "research_budget_allocations",
+        "research_memory_facts",
+        "research_memory_task_bindings",
+        "research_memory_compactions",
+        "research_memory_compaction_members",
+        "research_memory_context_receipts",
     }
 )
 POST_BASELINE_COLUMNS = frozenset(

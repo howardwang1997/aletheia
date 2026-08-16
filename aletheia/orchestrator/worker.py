@@ -53,6 +53,7 @@ def _get_worker_sem(limit: int | None) -> asyncio.Semaphore | None:
         _worker_sem_limit = limit
     return _worker_sem
 
+
 # Built-in tools a text-only worker must NOT have. Without this, a worker running under
 # ``bypassPermissions`` keeps the full default Claude Code toolset, so the model may "help"
 # by WRITING its answer to a file (e.g. the coder doing ``Write('/tmp/demo.py', ...)``) and
@@ -66,12 +67,38 @@ def _get_worker_sem(limit: int | None) -> asyncio.Semaphore | None:
 # gate degraded across all retries; AskUserQuestion stalls waiting for a human. Forcing them off makes
 # the worker reply INLINE. The system prompts already say not to — this enforces it at the gate.
 _NO_TOOLS: list[str] = [
-    "Write", "Edit", "MultiEdit", "NotebookEdit", "Read", "Bash", "BashOutput",
-    "Glob", "Grep", "WebFetch", "WebSearch", "Task", "TodoWrite", "KillBash",
-    "AskUserQuestion", "ScheduleWakeup", "Monitor", "PushNotification", "RemoteTrigger",
-    "CronCreate", "CronDelete", "CronList",
-    "EnterPlanMode", "ExitPlanMode", "EnterWorktree", "ExitWorktree",
-    "TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "TaskUpdate",
+    "Write",
+    "Edit",
+    "MultiEdit",
+    "NotebookEdit",
+    "Read",
+    "Bash",
+    "BashOutput",
+    "Glob",
+    "Grep",
+    "WebFetch",
+    "WebSearch",
+    "Task",
+    "TodoWrite",
+    "KillBash",
+    "AskUserQuestion",
+    "ScheduleWakeup",
+    "Monitor",
+    "PushNotification",
+    "RemoteTrigger",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "EnterPlanMode",
+    "ExitPlanMode",
+    "EnterWorktree",
+    "ExitWorktree",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskOutput",
+    "TaskStop",
+    "TaskUpdate",
 ]
 
 
@@ -126,10 +153,44 @@ async def run_worker(
     max_attempts: int | None = None,
     dry_run: bool,
     dry_value: str | None = None,
+    memory_context_receipt_id: str | None = None,
 ) -> str:
     """Run one isolated worker task and return its text. Streams events tagged with
     ``label`` (the dashboard lane / ledger ``agent``)."""
     settings = get_settings()
+    provider = settings.orchestrator_provider
+    model_resolved = model or settings.orchestrator_model
+    if memory_context_receipt_id is not None:
+        from aletheia.programs.memory import ResearchMemoryStore
+
+        memory_receipt = await asyncio.to_thread(
+            ResearchMemoryStore().load_task_context,
+            memory_context_receipt_id,
+        )
+        accepted_provider_names = {"claude", "anthropic"} if provider == "claude" else {"openai"}
+        if memory_receipt.consumer_provider not in accepted_provider_names:
+            raise ValueError("research memory context receipt targets another provider")
+        if memory_receipt.consumer_model != model_resolved:
+            raise ValueError("research memory context receipt targets another model")
+        prompt = (
+            memory_receipt.context.prompt_text
+            + "\n\nCURRENT TASK (use only the verified memory above):\n"
+            + prompt
+        )
+        await get_bus().publish(
+            make_event(
+                "research_memory_context_loaded",
+                run_id=run_id,
+                agent=label,
+                payload={
+                    "context_receipt_id": memory_context_receipt_id,
+                    "context_sha256": memory_receipt.context.context_sha256,
+                    "scope_node_id": memory_receipt.context.scope_node_id,
+                    "task_key": memory_receipt.context.task_key,
+                    "source_fact_count": len(memory_receipt.context.source_fact_ids),
+                },
+            )
+        )
     if dry_run or not has_credentials(settings):
         text = dry_value or f"[dry-run] {label} complete."
         await get_bus().publish(
@@ -140,21 +201,29 @@ async def run_worker(
     # Resume cache: a stable fingerprint of this exact call. On a RESUMED run (read mode) a prior
     # successful result short-circuits the provider call entirely (0 tokens). A fresh run never reads
     # (no within-run collisions) but still WRITES, so a later resume can fast-forward.
-    provider = settings.orchestrator_provider
-    model_resolved = model or settings.orchestrator_model
     cache_key = hashlib.sha256(
-        "\0".join([
-            provider, settings.orchestrator_transport, label, system, model_resolved, prompt,
-            ",".join(sorted(allowed_tools or [])),
-        ])
-        .encode("utf-8")
+        "\0".join(
+            [
+                provider,
+                settings.orchestrator_transport,
+                label,
+                system,
+                model_resolved,
+                prompt,
+                ",".join(sorted(allowed_tools or [])),
+            ]
+        ).encode("utf-8")
     ).hexdigest()
     if settings.resume_cache_enabled and settings.resume_cache_read:
         cached = await _cache_get(run_id, cache_key)
         if cached is not None:
             await get_bus().publish(
-                make_event("worker_cache_hit", run_id=run_id, agent=label,
-                           payload={"label": label, "chars": len(cached)})
+                make_event(
+                    "worker_cache_hit",
+                    run_id=run_id,
+                    agent=label,
+                    payload={"label": label, "chars": len(cached)},
+                )
             )
             return cached
 
@@ -168,7 +237,8 @@ async def run_worker(
             from claude_agent_sdk import create_sdk_mcp_server
 
             server = create_sdk_mcp_server(
-                name=tool_namespace, version="0.0.1",
+                name=tool_namespace,
+                version="0.0.1",
                 tools=[to_claude_tool(spec) for spec in tools],
             )
             mcp_servers = {tool_namespace: server}
@@ -203,7 +273,9 @@ async def run_worker(
     # per-call override: the discriminating-demonstration authoring is the longest, most critical
     # stream — give just THAT call more patient attempts to land one clean stream, without inflating
     # retries (and token burn) on every other call. None => the global weak-network default.
-    max_attempts = max(1, int(max_attempts if max_attempts is not None else settings.worker_max_attempts))
+    max_attempts = max(
+        1, int(max_attempts if max_attempts is not None else settings.worker_max_attempts)
+    )
     backoff = float(settings.worker_backoff_s)
 
     last = ""
@@ -219,17 +291,31 @@ async def run_worker(
                     from aletheia.orchestrator.codex_runtime import run_codex_turn
 
                     result = await run_codex_turn(
-                        run_id, label, prompt, system=system, settings=settings,
-                        model=model, tools=tools, allowed_tools=allowed_tools,
-                        can_use_tool=can_use_tool, max_turns=max_turns,
+                        run_id,
+                        label,
+                        prompt,
+                        system=system,
+                        settings=settings,
+                        model=model,
+                        tools=tools,
+                        allowed_tools=allowed_tools,
+                        can_use_tool=can_use_tool,
+                        max_turns=max_turns,
                     )
                 else:
                     from aletheia.orchestrator.openai_runtime import run_responses_turn
 
                     result = await run_responses_turn(
-                        run_id, label, prompt, system=system, settings=settings,
-                        model=model, tools=tools, allowed_tools=allowed_tools,
-                        can_use_tool=can_use_tool, max_turns=max_turns,
+                        run_id,
+                        label,
+                        prompt,
+                        system=system,
+                        settings=settings,
+                        model=model,
+                        tools=tools,
+                        allowed_tools=allowed_tools,
+                        can_use_tool=can_use_tool,
+                        max_turns=max_turns,
                     )
                 last = result.text
             else:
@@ -248,20 +334,34 @@ async def run_worker(
             if sem is not None:
                 sem.release()
         if not _looks_like_api_error(last):
-            if settings.resume_cache_enabled:  # cache only SUCCESSES — a failed call re-runs on resume
+            if (
+                settings.resume_cache_enabled
+            ):  # cache only SUCCESSES — a failed call re-runs on resume
                 await _cache_put(run_id, cache_key, label, last)
             return last
         if attempt < max_attempts:
             await get_bus().publish(
-                make_event("worker_retry", run_id=run_id, agent=label,
-                           payload={"label": label, "attempt": attempt, "of": max_attempts,
-                                    "reason": last[:160]})
+                make_event(
+                    "worker_retry",
+                    run_id=run_id,
+                    agent=label,
+                    payload={
+                        "label": label,
+                        "attempt": attempt,
+                        "of": max_attempts,
+                        "reason": last[:160],
+                    },
+                )
             )
             await asyncio.sleep(backoff * attempt)
     # transient failure survived the SDK's retries + our outer attempts: degrade
     # cleanly so downstream ignores it instead of ingesting an error string.
     await get_bus().publish(
-        make_event("worker_degraded", run_id=run_id, agent=label,
-                   payload={"label": label, "reason": last[:200], "attempts": max_attempts})
+        make_event(
+            "worker_degraded",
+            run_id=run_id,
+            agent=label,
+            payload={"label": label, "reason": last[:200], "attempts": max_attempts},
+        )
     )
     return degraded_marker(label)

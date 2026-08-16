@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -48,9 +49,7 @@ class ResearchGraphNodeRecord(Base):
     )
 
     node_id: Mapped[str] = mapped_column(String(96), primary_key=True)
-    quest_id: Mapped[str] = mapped_column(
-        ForeignKey("research_graph_nodes.node_id"), index=True
-    )
+    quest_id: Mapped[str] = mapped_column(ForeignKey("research_graph_nodes.node_id"), index=True)
     parent_node_id: Mapped[str | None] = mapped_column(
         ForeignKey("research_graph_nodes.node_id"), index=True
     )
@@ -82,9 +81,7 @@ class ResearchGraphTransitionRecord(Base):
         UniqueConstraint(
             "node_id", "to_version", name="uq_research_graph_transitions_node_version"
         ),
-        UniqueConstraint(
-            "command_id", name="uq_research_graph_transitions_command"
-        ),
+        UniqueConstraint("command_id", name="uq_research_graph_transitions_command"),
     )
 
     transition_id: Mapped[str] = mapped_column(String(96), primary_key=True)
@@ -111,9 +108,7 @@ class ResearchScientificFamilyRecord(Base):
             "family_key",
             name="uq_research_scientific_families_program_key",
         ),
-        UniqueConstraint(
-            "command_id", name="uq_research_scientific_families_command"
-        ),
+        UniqueConstraint("command_id", name="uq_research_scientific_families_command"),
     )
 
     family_id: Mapped[str] = mapped_column(String(96), primary_key=True)
@@ -136,9 +131,7 @@ class ResearchScientificFamilyRecord(Base):
 
 class ResearchCampaignFamilyRecord(Base):
     __tablename__ = "research_campaign_families"
-    __table_args__ = (
-        UniqueConstraint("command_id", name="uq_research_campaign_families_command"),
-    )
+    __table_args__ = (UniqueConstraint("command_id", name="uq_research_campaign_families_command"),)
 
     campaign_node_id: Mapped[str] = mapped_column(
         ForeignKey("research_graph_nodes.node_id"), primary_key=True
@@ -303,9 +296,7 @@ class ResearchBudgetAllocationRecord(Base):
             "'experiment_count')",
             name="ck_research_budget_allocations_kind",
         ),
-        UniqueConstraint(
-            "scope_node_id", "kind", name="uq_research_budget_allocations_scope_kind"
-        ),
+        UniqueConstraint("scope_node_id", "kind", name="uq_research_budget_allocations_scope_kind"),
         UniqueConstraint("command_id", name="uq_research_budget_allocations_command"),
     )
 
@@ -329,6 +320,187 @@ class ResearchBudgetAllocationRecord(Base):
     )
 
 
+class ResearchMemoryFactRecord(Base):
+    """One immutable scientific fact; summaries are derived from these rows."""
+
+    __tablename__ = "research_memory_facts"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('goal','hypothesis','assumption','prediction','observation','evidence',"
+            "'decision','method','result','negative_result','contradiction','limitation',"
+            "'failed_hypothesis','open_question','safety_boundary')",
+            name="ck_research_memory_facts_kind",
+        ),
+        UniqueConstraint("command_id", name="uq_research_memory_facts_command"),
+        Index("ix_research_memory_facts_scope_kind", "scope_node_id", "kind"),
+    )
+
+    fact_id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    quest_id: Mapped[str] = mapped_column(ForeignKey("research_graph_nodes.node_id"), index=True)
+    scope_node_id: Mapped[str] = mapped_column(
+        ForeignKey("research_graph_nodes.node_id"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(32), index=True)
+    statement: Mapped[str] = mapped_column(Text)
+    detail_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    source_refs_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
+    fact_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    command_id: Mapped[str] = mapped_column(
+        ForeignKey("scientific_commands.command_id"), index=True
+    )
+    created_by: Mapped[str] = mapped_column(String(128), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+class ResearchMemoryTaskBindingRecord(Base):
+    """Explicit task relevance; no semantic search is allowed to expand prompt authority."""
+
+    __tablename__ = "research_memory_task_bindings"
+    __table_args__ = (
+        CheckConstraint(
+            "context_role IN ('required','supporting')",
+            name="ck_research_memory_task_bindings_role",
+        ),
+    )
+
+    fact_id: Mapped[str] = mapped_column(
+        ForeignKey("research_memory_facts.fact_id"), primary_key=True
+    )
+    task_key: Mapped[str] = mapped_column(String(128), primary_key=True, index=True)
+    context_role: Mapped[str] = mapped_column(String(24), index=True)
+    command_id: Mapped[str] = mapped_column(
+        ForeignKey("scientific_commands.command_id"), index=True
+    )
+
+
+class ResearchMemoryCompactionRecord(Base):
+    """Immutable receipt for one complete task/scope memory projection."""
+
+    __tablename__ = "research_memory_compactions"
+    __table_args__ = (
+        CheckConstraint("source_count > 0", name="ck_research_memory_compactions_source_count"),
+        CheckConstraint(
+            "exact_count >= 0 AND exact_count <= source_count",
+            name="ck_research_memory_compactions_exact_count",
+        ),
+        UniqueConstraint("command_id", name="uq_research_memory_compactions_command"),
+        Index(
+            "ix_research_memory_compactions_scope_task",
+            "scope_node_id",
+            "task_key",
+            "created_at",
+        ),
+        Index(
+            "uq_research_memory_compactions_root",
+            "scope_node_id",
+            "task_key",
+            unique=True,
+            postgresql_where=text("parent_compaction_id IS NULL"),
+        ),
+        Index(
+            "uq_research_memory_compactions_parent",
+            "parent_compaction_id",
+            unique=True,
+            postgresql_where=text("parent_compaction_id IS NOT NULL"),
+        ),
+    )
+
+    compaction_id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    quest_id: Mapped[str] = mapped_column(ForeignKey("research_graph_nodes.node_id"), index=True)
+    scope_node_id: Mapped[str] = mapped_column(
+        ForeignKey("research_graph_nodes.node_id"), index=True
+    )
+    task_key: Mapped[str] = mapped_column(String(128), index=True)
+    parent_compaction_id: Mapped[str | None] = mapped_column(
+        ForeignKey("research_memory_compactions.compaction_id"), index=True
+    )
+    source_manifest_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    source_count: Mapped[int] = mapped_column(Integer)
+    exact_count: Mapped[int] = mapped_column(Integer)
+    summary_text: Mapped[str] = mapped_column(Text)
+    summary_sha256: Mapped[str] = mapped_column(String(64))
+    producer_provider: Mapped[str] = mapped_column(String(64))
+    producer_model: Mapped[str] = mapped_column(String(256))
+    producer_prompt_sha256: Mapped[str] = mapped_column(String(64))
+    producer_draft_sha256: Mapped[str] = mapped_column(String(64))
+    artifact_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    artifact_bytes: Mapped[int] = mapped_column(BigInteger)
+    artifact_relative_path: Mapped[str] = mapped_column(Text)
+    artifact_object_sha256: Mapped[str] = mapped_column(String(64))
+    artifact_receipt_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    command_id: Mapped[str] = mapped_column(
+        ForeignKey("scientific_commands.command_id"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+class ResearchMemoryCompactionMemberRecord(Base):
+    __tablename__ = "research_memory_compaction_members"
+    __table_args__ = (
+        CheckConstraint(
+            "disposition IN ('summary','exact_required','exact_non_droppable')",
+            name="ck_research_memory_compaction_members_disposition",
+        ),
+    )
+
+    compaction_id: Mapped[str] = mapped_column(
+        ForeignKey("research_memory_compactions.compaction_id"), primary_key=True
+    )
+    fact_id: Mapped[str] = mapped_column(
+        ForeignKey("research_memory_facts.fact_id"), primary_key=True, index=True
+    )
+    fact_sha256: Mapped[str] = mapped_column(String(64))
+    fact_kind: Mapped[str] = mapped_column(String(32))
+    disposition: Mapped[str] = mapped_column(String(32), index=True)
+
+
+class ResearchMemoryContextReceiptRecord(Base):
+    """Append-only proof of the provider-neutral context delivered to one consumer."""
+
+    __tablename__ = "research_memory_context_receipts"
+    __table_args__ = (
+        CheckConstraint("max_chars >= 512", name="ck_research_memory_context_max_chars"),
+        CheckConstraint(
+            "prompt_chars > 0 AND prompt_chars <= max_chars",
+            name="ck_research_memory_context_prompt_chars",
+        ),
+        UniqueConstraint("command_id", name="uq_research_memory_context_command"),
+        Index(
+            "ix_research_memory_context_scope_task",
+            "scope_node_id",
+            "task_key",
+            "created_at",
+        ),
+    )
+
+    context_receipt_id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    compaction_id: Mapped[str] = mapped_column(
+        ForeignKey("research_memory_compactions.compaction_id"), index=True
+    )
+    quest_id: Mapped[str] = mapped_column(ForeignKey("research_graph_nodes.node_id"), index=True)
+    scope_node_id: Mapped[str] = mapped_column(
+        ForeignKey("research_graph_nodes.node_id"), index=True
+    )
+    task_key: Mapped[str] = mapped_column(String(128), index=True)
+    consumer_provider: Mapped[str] = mapped_column(String(64))
+    consumer_model: Mapped[str] = mapped_column(String(256))
+    max_chars: Mapped[int] = mapped_column(Integer)
+    prompt_chars: Mapped[int] = mapped_column(Integer)
+    selected_manifest_sha256: Mapped[str] = mapped_column(String(64))
+    context_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    command_id: Mapped[str] = mapped_column(
+        ForeignKey("scientific_commands.command_id"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
 __all__ = [
     "ResearchBudgetAllocationRecord",
     "ResearchCampaignExperimentRecord",
@@ -338,6 +510,11 @@ __all__ = [
     "ResearchGraphDependencyRecord",
     "ResearchGraphNodeRecord",
     "ResearchGraphTransitionRecord",
+    "ResearchMemoryCompactionMemberRecord",
+    "ResearchMemoryCompactionRecord",
+    "ResearchMemoryContextReceiptRecord",
+    "ResearchMemoryFactRecord",
+    "ResearchMemoryTaskBindingRecord",
     "ResearchProgramQuestionRecord",
     "ResearchScientificFamilyRecord",
 ]

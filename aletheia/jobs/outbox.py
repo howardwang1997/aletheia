@@ -54,6 +54,8 @@ class ScientificCommandType(str, Enum):
     STAGE_TRANSITION = "stage.transition"
     WORLD_MODEL_TRANSITION = "world_model.transition"
     RESEARCH_GRAPH_MUTATION = "research_graph.mutation"
+    RESEARCH_MEMORY_MUTATION = "research_memory.mutation"
+    RESEARCH_MEMORY_CONTEXT = "research_memory.context"
     GENERIC = "scientific.generic"
 
 

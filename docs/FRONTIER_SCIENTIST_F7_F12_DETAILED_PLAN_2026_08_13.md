@@ -2293,6 +2293,29 @@ build、Ruff、Alembic head/current 与 ORM schema diff 均通过。
 - provider/model 切换后恢复；
 - prompt context 只拉取当前任务必要状态。
 
+**实现状态（2026-08-17）：工程完成。** 新增与 best-effort `MemoryChunk` 分离的 append-only
+scientific-memory ledger：immutable fact、显式 task binding、compaction、逐 fact coverage member 与
+delivery receipt。每个 fact 绑定 Quest/Program/Campaign scope、稳定来源 hash 与一个或多个 task key；
+Campaign 只继承自身 Program/Quest ancestry，不能读取 sibling Campaign。`negative_result`、
+`contradiction`、`limitation`、`failed_hypothesis`、`safety_boundary` 和 REQUIRED binding 会被机械地
+逐字写入 artifact/context，summary producer 无权删除或降级。
+
+Compaction 只产生 content-addressed derived artifact，不删除 source fact；covered ID 必须与当前 eligible
+set 完全相等。PostgreSQL command/outbox transaction、append-only/deferred completeness trigger、单 root/
+单 successor partial unique index 与 Quest lock 共同保证 crash replay、并发 fact/compaction 和并发
+compaction fail closed。新 fact 会使旧 compaction stale；随机行顺序仍重建同一 snapshot hash，缺失/
+损坏 artifact、超出 exact-context 字符预算、provider/model receipt 不匹配都会阻止 delivery。
+
+FastAPI 提供 authenticated fact/compaction/rebuild/context receipt controller；CLI 可重哈希 ledger 与
+artifact；worker 只接受重新加载并验证过的 receipt，并把 provider-neutral context 放在用户 prompt 前。
+provider/model 切换会创建新的 delivery receipt，不依赖旧 provider session。Alembic
+`20260817_0016`–`0018` 和聚焦 graph/memory/API/worker/migration 回归 52 passed。该切片证明
+custody、coverage、deterministic recovery 与 task-minimal delivery，不证明 summary 语义忠实、来源真值、
+科学有效性或 portfolio 价值；scheduler/domain stages 仍需显式登记 typed fact 并传入 fresh receipt。
+最终全库非 Docker 回归为 1280 passed、1 skipped、29 deselected（744.69 s），Ruff、Alembic
+head/current、ORM schema diff、CLI smoke 与 `git diff --check` 均通过。下一项为 F11-S5 portfolio
+planner。
+
 ### F11-S5：Portfolio planner
 
 - deterministic hard filters；
