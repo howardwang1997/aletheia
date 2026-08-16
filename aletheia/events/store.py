@@ -32,6 +32,7 @@ def persist_event(
     *,
     event_key: str | None = None,
     session: Session | None = None,
+    flush_pending: bool = True,
 ) -> int:
     """Persist one event, optionally inside the caller's transaction.
 
@@ -42,7 +43,12 @@ def persist_event(
 
     if session is None:
         with session_scope() as owned_session:
-            return persist_event(evt, event_key=event_key, session=owned_session)
+            return persist_event(
+                evt,
+                event_key=event_key,
+                session=owned_session,
+                flush_pending=flush_pending,
+            )
 
     projection = _event_projection(evt)
     key = event_key if event_key is not None else evt.get("event_key")
@@ -70,7 +76,8 @@ def persist_event(
         .on_conflict_do_nothing(constraint="uq_events_event_key")
         .returning(Event.id)
     )
-    session.flush()
+    if flush_pending:
+        session.flush()
     if inserted_id is not None:
         return inserted_id
 

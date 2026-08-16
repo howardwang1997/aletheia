@@ -48,18 +48,33 @@ POST_BASELINE_TABLES = frozenset(
         "durable_task_dependencies",
         "durable_task_attempts",
         "durable_queue_audits",
+        "scientific_commands",
+        "one_time_external_actions",
+        "external_action_receipts",
     }
 )
 POST_BASELINE_COLUMNS = frozenset(
     {
         ("events", "event_key"),
         ("events", "event_sha256"),
+        ("artifacts", "scientific_command_id"),
+        ("artifacts", "commit_ordinal"),
+        ("decisions", "scientific_command_id"),
+        ("campaign_split_ledgers", "final_action_id"),
+        ("campaign_split_ledgers", "final_action_receipt_sha256"),
+        ("external_validation_ledgers", "action_id"),
+        ("external_validation_ledgers", "action_receipt_sha256"),
     }
 )
 POST_BASELINE_CONSTRAINTS = frozenset(
     {
         "ck_events_key_has_sha256",
         "uq_events_event_key",
+        "ck_artifacts_scientific_commit_pair",
+        "uq_artifacts_scientific_commit_ordinal",
+        "uq_decisions_scientific_command_id",
+        "uq_campaign_split_ledgers_final_action_id",
+        "uq_external_validation_ledgers_action_id",
     }
 )
 

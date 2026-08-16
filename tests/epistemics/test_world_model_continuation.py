@@ -173,10 +173,10 @@ def test_event_write_failure_rolls_back_transition_and_all_child_snapshots(
     transition = continuation_fixture["transition"]
     _ensure_run(transition)
 
-    def fail_event_write(**_values):
+    def fail_event_write(*_args, **_values):
         raise RuntimeError("injected typed-event failure")
 
-    monkeypatch.setattr(continuation_service, "Event", fail_event_write)
+    monkeypatch.setattr(continuation_service, "persist_event", fail_event_write)
     with pytest.raises(RuntimeError, match="typed-event failure"):
         e.persist_world_model_transition(transition)
 
@@ -213,6 +213,8 @@ def test_atomic_transition_round_trip_is_exact_and_idempotent(
     with session_scope() as session:
         event = session.get(Event, first.event_id)
         assert event is not None
+        assert event.event_key == f"f9-world-model-transition:{transition.transition_sha256}"
+        assert event.event_sha256 is not None
         projection = e.WorldModelTransitionEventProjection.model_validate(event.payload)
         assert projection.transition_sha256 == transition.transition_sha256
         assert projection.event_type == "f9_world_model_transition_committed"

@@ -273,6 +273,12 @@ from aletheia.epistemics.continuation import (
     load_authorized_next_round_source,
     persist_world_model_transition,
 )
+from aletheia.epistemics.transactional import (
+    TransactionalScientificCommit,
+    commit_observation_validation_transactionally,
+    commit_prediction_transactionally,
+    commit_world_belief_update_transactionally,
+)
 
 __all__ = [
     "Assumption",
@@ -526,8 +532,12 @@ __all__ = [
     "WorldModelTransitionDisposition",
     "WorldModelTransitionEventProjection",
     "WorldModelTransitionStoreReceipt",
+    "TransactionalScientificCommit",
     "build_world_model_transition",
     "get_world_model_transition",
     "load_authorized_next_round_source",
     "persist_world_model_transition",
+    "commit_observation_validation_transactionally",
+    "commit_prediction_transactionally",
+    "commit_world_belief_update_transactionally",
 ]

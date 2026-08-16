@@ -3001,13 +3001,20 @@ class ExperimentDriver:
             split_hash=str(final.get("index_hash") or ""),
             alpha_allocated=float(final.get("alpha") or 0.0),
         )
-        claim = await asyncio.to_thread(claim_final_holdout, self.run_id)
+        claim = await asyncio.to_thread(
+            claim_final_holdout,
+            self.run_id,
+            claim_owner=f"experiment-driver:{self.run_id}",
+        )
         if not claim.get("claimed"):
             if claim.get("result") is not None:
                 return dict(claim["result"])
             raise RuntimeError(
-                "final holdout was already opened without a completed result; refusing a second look"
+                "final holdout was already claimed without a completed receipt; "
+                "reconciliation is required and a second look is forbidden"
             )
+        action_id = str(claim["action_id"])
+        execution_token = str(claim["execution_token"])
 
         split_meta = {
             "split_algo_version": self._campaign_split_plan.get("split_algo_version"),
@@ -3026,7 +3033,13 @@ class ExperimentDriver:
             "confirm_index": list(final.get("indices") or []),
             "split_meta": split_meta,
             "family_alpha": float(final.get("alpha") or 0.0),
+            "external_action": {
+                "action_id": action_id,
+                "provider_idempotency_key": claim["provider_idempotency_key"],
+                "delivery": "at_most_once_reconcile_on_unknown",
+            },
         }
+        execution_status = "returned"
         try:
             demo = await asyncio.to_thread(
                 plugin.run_demonstration,
@@ -3051,6 +3064,7 @@ class ExperimentDriver:
                 "locked_preregistration_sha256": prereg_sha256,
             }
         except Exception as exc:
+            execution_status = "raised"
             result = {
                 "evaluated": False,
                 "selected_round": selected.get("round"),
@@ -3064,7 +3078,19 @@ class ExperimentDriver:
                 "locked_code_sha256": code_sha256,
                 "locked_preregistration_sha256": prereg_sha256,
             }
-        await asyncio.to_thread(record_final_holdout_result, self.run_id, result)
+        await asyncio.to_thread(
+            record_final_holdout_result,
+            self.run_id,
+            result,
+            action_id=action_id,
+            execution_token=execution_token,
+            provider_receipt={
+                "executor": "plugin.run_demonstration",
+                "execution_status": execution_status,
+                "sandbox_image_id": result.get("sandbox_image_id"),
+            },
+            completed_by=f"experiment-driver:{self.run_id}",
+        )
         await asyncio.to_thread(
             finish_hypothesis_attempt,
             attempt_id,
@@ -3121,14 +3147,24 @@ class ExperimentDriver:
             split_hash=str(identity["row_identity_hash"]),
             alpha_allocated=alpha,
         )
-        claim = await asyncio.to_thread(claim_external_validation, self.run_id)
+        claim = await asyncio.to_thread(
+            claim_external_validation,
+            self.run_id,
+            claim_owner=f"experiment-driver:{self.run_id}",
+            claim_ttl_seconds=max(
+                60,
+                int(get_settings().campaign_external_timeout_s) + 300,
+            ),
+        )
         if not claim.get("claimed"):
             if claim.get("result") is not None:
                 return dict(claim["result"])
             raise RuntimeError(
-                "external-validation dataset was already opened without a completed result; "
-                "refusing a second look"
+                "external-validation action was already claimed without a completed receipt; "
+                "reconciliation is required and a second look is forbidden"
             )
+        action_id = str(claim["action_id"])
+        execution_token = str(claim["execution_token"])
 
         split_meta = {
             "role": "external_replication",
@@ -3148,7 +3184,13 @@ class ExperimentDriver:
             "split_meta": split_meta,
             "family_alpha": alpha,
             "execution_timeout_s": float(get_settings().campaign_external_timeout_s),
+            "external_action": {
+                "action_id": action_id,
+                "provider_idempotency_key": claim["provider_idempotency_key"],
+                "delivery": "at_most_once_reconcile_on_unknown",
+            },
         }
+        execution_status = "returned"
         try:
             demo = await asyncio.to_thread(
                 plugin.run_demonstration,
@@ -3181,6 +3223,7 @@ class ExperimentDriver:
                 "locked_preregistration_sha256": prereg_sha256,
             }
         except Exception as exc:
+            execution_status = "raised"
             result = {
                 "evaluated": False,
                 "selected_round": selected.get("round"),
@@ -3197,7 +3240,19 @@ class ExperimentDriver:
                 "locked_code_sha256": code_sha256,
                 "locked_preregistration_sha256": prereg_sha256,
             }
-        await asyncio.to_thread(record_external_validation_result, self.run_id, result)
+        await asyncio.to_thread(
+            record_external_validation_result,
+            self.run_id,
+            result,
+            action_id=action_id,
+            execution_token=execution_token,
+            provider_receipt={
+                "executor": "plugin.run_demonstration",
+                "execution_status": execution_status,
+                "sandbox_image_id": result.get("sandbox_image_id"),
+            },
+            completed_by=f"experiment-driver:{self.run_id}",
+        )
         await asyncio.to_thread(
             finish_hypothesis_attempt,
             attempt_id,

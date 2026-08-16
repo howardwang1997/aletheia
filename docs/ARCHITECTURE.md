@@ -53,7 +53,7 @@ campaigns, and multi-domain generalization follow).
 ## Components
 
 ```
-Next.js dashboard  ⇄  FastAPI control plane  ⇄  Postgres task + event ledger  → cursor SSE
+Next.js dashboard  ⇄  FastAPI control plane  ⇄  Postgres task + command/event ledger  → cursor SSE
                                                     │
                                            independent durable workers
                                                     │
@@ -76,7 +76,10 @@ Next.js dashboard  ⇄  FastAPI control plane  ⇄  Postgres task + event ledger
   prior work (own runs and — from the SURVEY iteration — external literature) before designing.
 - **scheduler/jobs** (`aletheia/scheduler/`, `aletheia/jobs/`): launch/resume enters the Postgres
   durable queue; a separate worker leases and heartbeats the deterministic FSM driver. Queue state
-  coordinates delivery but never replaces typed scientific ledgers.
+  coordinates delivery but never replaces typed scientific ledgers. Transactional scientific
+  commands atomically bind migrated domain writes to result receipts and keyed events. One-time
+  outward actions expose one raw authorization token, retain a stable provider idempotency key, and
+  require reconciliation instead of automatic replay when the remote outcome is unknown.
 - **compute** (`aletheia/compute/`): `local` restricted subprocess (default) or `docker` hard sandbox.
 - **coder** (`aletheia/coder/`): authors model code behind the AST gate; runs only in the sandbox.
 - **iam** (`aletheia/iam/`, `aletheia/auth/`): GitHub App for repo/branch/PR-per-experiment; session login

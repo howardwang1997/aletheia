@@ -59,14 +59,18 @@ reliable autonomous frontier scientist.
 6. **Durable execution and reproducible research bundle — partial.** F11-S1 now provides a
    Postgres-backed task/attempt/dependency ledger, leases, heartbeats, finite retry, process-kill
    recovery, content-bound idempotency, independent workers, and resumable database-cursor SSE.
+   F11-S2 adds transactionally exact scientific commands: domain state, immutable result receipt,
+   and keyed event commit together, while prediction, observation validation, and belief update stay
+   separate. Final holdout/external actions now have one raw authorization token, stable provider
+   key, immutable receipt, and fail-closed reconciliation after an unknown outcome.
    The final output still needs a stable bundle containing the question, literature, data card,
    split metadata, code, artifacts, metrics, claims, audits, reproduction, limitations, paper, and
-   reproducibility package/PR; F11-S2–S7 and F12 remain.
+   reproducibility package/PR; F11-S3–S7 and F12 remain.
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
-of causal/mechanistic experiments, transactional one-time scientific/outward actions, a durable
-quest/program portfolio and endurance gate, repeated lower-overlap or laboratory replication, and
-a complete evidence bundle.
+of causal/mechanistic experiments, production provider receipt/reconciliation commissioning, a
+durable quest/program portfolio and endurance gate, repeated lower-overlap or laboratory
+replication, and a complete evidence bundle.
 
 The executable plan for the next frontier program is
 [`docs/FRONTIER_SCIENTIST_F7_F12_DETAILED_PLAN_2026_08_13.md`](docs/FRONTIER_SCIENTIST_F7_F12_DETAILED_PLAN_2026_08_13.md):
@@ -340,7 +344,7 @@ blocked on real independent validators/reviewers, production trust policy, signe
 authorized update. See
 [`docs/capabilities/CAPABILITY_AUTHORING_AND_PROMOTION.md`](docs/capabilities/CAPABILITY_AUTHORING_AND_PROMOTION.md).
 
-F11-S1 now moves long-running execution out of the API process. Postgres owns immutable task
+F11-S1 moves long-running execution out of the API process. Postgres owns immutable task
 request identities, dependency edges, attempt history, current leases, heartbeat/retry state, and
 recovery audits; `FOR UPDATE SKIP LOCKED` gives concurrent workers one active owner per attempt,
 while exact stale callbacks cannot change a replacement attempt. Launch/resume returns a durable
@@ -348,10 +352,19 @@ task ID, and a separately deployed worker runs the existing experiment driver. E
 and its content-bound event commit in one transaction. SSE tails the database by event ID and
 supports `Last-Event-ID`, so API restarts or multiple API processes no longer define event truth.
 An actual killed child process, replacement recovery, concurrency, duplicate delivery, dependency,
-and event-rollback cases are tested. This completes only the F11-S1 engineering boundary:
-transactional scientific outbox/external-action receipts, quest/program graphs, memory compaction,
-portfolio planning, broad fault injection, and the 72-hour gate remain. See
+and event-rollback cases are tested. See
 [`docs/jobs/DURABLE_TASK_ORCHESTRATION.md`](docs/jobs/DURABLE_TASK_ORCHESTRATION.md).
+
+F11-S2 now places prediction, observation validation, belief update, stage decision, artifact batch,
+and accepted world-model transitions behind content-bound PostgreSQL command receipts. The domain
+rows, command result, and keyed durable event either all commit or all roll back; exact worker
+redelivery returns the first receipt without applying another update. One-time final-holdout and
+external-validation claims expose a raw token only once, persist only its SHA-256, pass a stable
+provider idempotency key, and atomically bind the result to an immutable external-action receipt.
+An expired claim becomes `reconciliation_required` and is never automatically reissued. This is an
+at-most-one Aletheia authorization guarantee, not cross-system exactly-once execution. Quest/program
+graphs, memory compaction, portfolio planning, broad fault injection, and the 72-hour gate remain.
+See [`docs/jobs/TRANSACTIONAL_SCIENTIFIC_TRANSITIONS.md`](docs/jobs/TRANSACTIONAL_SCIENTIFIC_TRANSITIONS.md).
 
 ## Invariants (the safety/quality spine — never traded for a feature)
 

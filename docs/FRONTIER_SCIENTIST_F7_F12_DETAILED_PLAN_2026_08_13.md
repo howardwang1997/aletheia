@@ -2242,6 +2242,24 @@ transactional outbox/receipt 仍是下一项。
 - one-time holdout/external action 在 worker 重试中仍保持一次；
 - 外部 action receipt。
 
+**实现状态（2026-08-17）：工程完成。** `scientific_commands` 将 canonical request、source
+event、aggregate、result 和 keyed event receipt 绑定为一个不可变命令；domain callback、命令
+结果与 `events` outbox 在同一 PostgreSQL 事务提交，exact replay 不再执行 callback，改变内容的
+idempotency/source-event 重放 fail closed。prediction、observation validation、belief update 已拆成
+三个显式 wrapper，validation 本身不会推进 posterior；stage decision、artifact batch 与 F9
+world-model continuation 也接入同事务 event 边界。
+
+`one_time_external_actions` 在揭示 holdout/调用 provider 前先原子 claim，只向首个 claimant
+返回 raw token（数据库仅存 SHA-256），并派生稳定 provider idempotency key。domain result、
+provider receipt、不可变 `external_action_receipts` 与 completion event 同事务提交。claim 超时只会
+进入 `reconciliation_required`，不会自动发新 token；原 token 的迟到可验证 receipt 仍可完成。
+数据库 trigger 同时禁止删除/改绑 action intent、token hash 或 request，并强制 state/event version
+单向推进；复合外键保证 holdout/external ledger 不能引用另一个 action 的 receipt。
+并发、duplicate、两处 scientific crash point、claim/completion crash、伪造 token、receipt
+rebinding、DB trigger immutability、一次性 holdout/external retry 与三段 epistemic replay 均有
+验收覆盖。这里保证的是数据库内 exact commit 与 Aletheia 侧 at-most-one authorization，不声称
+任意远端系统的全局 exactly-once。下一项为 F11-S3 Quest/program graph。
+
 ### F11-S3：Quest/program graph
 
 - 建立层级与 dependency graph；

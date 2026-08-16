@@ -18,6 +18,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -190,13 +191,36 @@ class Artifact(Base):
     uri: Mapped[str] = mapped_column(Text)
     sha256: Mapped[str | None] = mapped_column(String(64))
     bytes: Mapped[int | None] = mapped_column(BigInteger)
+    scientific_command_id: Mapped[str | None] = mapped_column(
+        ForeignKey("scientific_commands.command_id"), index=True
+    )
+    commit_ordinal: Mapped[int | None] = mapped_column(Integer)
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "(scientific_command_id IS NULL AND commit_ordinal IS NULL) OR "
+            "(scientific_command_id IS NOT NULL AND commit_ordinal IS NOT NULL)",
+            name="ck_artifacts_scientific_commit_pair",
+        ),
+        UniqueConstraint(
+            "scientific_command_id",
+            "commit_ordinal",
+            name="uq_artifacts_scientific_commit_ordinal",
+        ),
+    )
 
 
 class Decision(Base):
     """Why the system transitioned between stages — the auditable reasoning chain."""
 
     __tablename__ = "decisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "scientific_command_id",
+            name="uq_decisions_scientific_command_id",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
@@ -206,6 +230,9 @@ class Decision(Base):
     rationale: Mapped[str | None] = mapped_column(Text)
     actor: Mapped[str | None] = mapped_column(String(64))  # orchestrator | human | <subagent>
     critique_panel_id: Mapped[str | None] = mapped_column(ForeignKey("critique_panels.id"))
+    scientific_command_id: Mapped[str | None] = mapped_column(
+        ForeignKey("scientific_commands.command_id"), index=True
+    )
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -213,7 +240,9 @@ class CritiquePanel(Base):
     __tablename__ = "critique_panels"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    target: Mapped[str] = mapped_column(String(32))  # design | direction | results | demonstration_audit
+    target: Mapped[str] = mapped_column(
+        String(32)
+    )  # design | direction | results | demonstration_audit
     target_ref: Mapped[str | None] = mapped_column(String(32))  # ledger id
     consensus_verdict: Mapped[str | None] = mapped_column(String(32))
     gate_passed: Mapped[bool | None] = mapped_column()
@@ -276,7 +305,9 @@ class BeliefState(Base):
     question_key: Mapped[str] = mapped_column(String(96), index=True)
     alpha: Mapped[float] = mapped_column(Float)
     beta: Mapped[float] = mapped_column(Float)
-    n_updates: Mapped[int] = mapped_column(default=0)  # harness-verified confirm-split updates folded in
+    n_updates: Mapped[int] = mapped_column(
+        default=0
+    )  # harness-verified confirm-split updates folded in
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -294,7 +325,9 @@ class HypothesisScorecard(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
     experiment_id: Mapped[str | None] = mapped_column(ForeignKey("experiments.id"), index=True)
-    scores: Mapped[dict | None] = mapped_column(JSONB)  # {novelty, feasibility, expected_information_gain, …}
+    scores: Mapped[dict | None] = mapped_column(
+        JSONB
+    )  # {novelty, feasibility, expected_information_gain, …}
     decision: Mapped[str | None] = mapped_column(String(16))  # proceed | block
     rationale: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -422,7 +455,21 @@ class CampaignSplitLedger(Base):
     """Immutable campaign-wide row-role allocation for Epistemic Seal v2."""
 
     __tablename__ = "campaign_split_ledgers"
-    __table_args__ = (UniqueConstraint("run_id", name="uq_campaign_split_run"),)
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_campaign_split_run"),
+        UniqueConstraint(
+            "final_action_id",
+            name="uq_campaign_split_ledgers_final_action_id",
+        ),
+        ForeignKeyConstraint(
+            ["final_action_id", "final_action_receipt_sha256"],
+            [
+                "external_action_receipts.action_id",
+                "external_action_receipts.receipt_sha256",
+            ],
+            name="fk_campaign_split_ledgers_final_action_receipt",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
@@ -432,6 +479,10 @@ class CampaignSplitLedger(Base):
     state: Mapped[str] = mapped_column(String(24), default="sealed")
     plan_json: Mapped[dict] = mapped_column(JSONB)
     final_result_json: Mapped[dict | None] = mapped_column(JSONB)
+    final_action_id: Mapped[str | None] = mapped_column(
+        ForeignKey("one_time_external_actions.action_id"), index=True
+    )
+    final_action_receipt_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
     final_opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -440,7 +491,21 @@ class ExternalValidationLedger(Base):
     """One-time, locked-code evaluation on a separately sourced dataset."""
 
     __tablename__ = "external_validation_ledgers"
-    __table_args__ = (UniqueConstraint("run_id", name="uq_external_validation_run"),)
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_external_validation_run"),
+        UniqueConstraint(
+            "action_id",
+            name="uq_external_validation_ledgers_action_id",
+        ),
+        ForeignKeyConstraint(
+            ["action_id", "action_receipt_sha256"],
+            [
+                "external_action_receipts.action_id",
+                "external_action_receipts.receipt_sha256",
+            ],
+            name="fk_external_validation_ledgers_action_receipt",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
@@ -450,6 +515,10 @@ class ExternalValidationLedger(Base):
     state: Mapped[str] = mapped_column(String(24), default="sealed")
     provenance_json: Mapped[dict] = mapped_column(JSONB)
     result_json: Mapped[dict | None] = mapped_column(JSONB)
+    action_id: Mapped[str | None] = mapped_column(
+        ForeignKey("one_time_external_actions.action_id"), index=True
+    )
+    action_receipt_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
     opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -471,7 +540,9 @@ class HypothesisAttempt(Base):
     hypothesis_key: Mapped[str] = mapped_column(String(64))
     hypothesis_text: Mapped[str] = mapped_column(Text)
     round_index: Mapped[int] = mapped_column(Integer)
-    phase: Mapped[str] = mapped_column(String(24))  # confirmation | final_holdout | external_replication
+    phase: Mapped[str] = mapped_column(
+        String(24)
+    )  # confirmation | final_holdout | external_replication
     confirmation_batch: Mapped[int | None] = mapped_column(Integer)
     split_hash: Mapped[str] = mapped_column(String(64))
     alpha_allocated: Mapped[float] = mapped_column(Float)

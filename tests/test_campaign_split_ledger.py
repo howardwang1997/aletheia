@@ -121,14 +121,22 @@ def test_persisted_split_is_immutable_and_final_holdout_is_one_time():
             row_identity_hash=identity["row_identity_hash"],
             plan=plan,
         )
-    assert claim_final_holdout(run_id)["claimed"] is True
-    assert claim_final_holdout(run_id) == {
-        "claimed": False,
-        "state": "final_opened",
-        "result": None,
-    }
+    first_claim = claim_final_holdout(run_id)
+    assert first_claim["claimed"] is True
+    replayed_claim = claim_final_holdout(run_id)
+    assert replayed_claim["claimed"] is False
+    assert replayed_claim["state"] == "final_opened"
+    assert replayed_claim["result"] is None
+    assert replayed_claim["execution_token"] is None
+    assert replayed_claim["action_id"] == first_claim["action_id"]
     result = {"evaluated": True, "holds": True, "split_hash": plan["final_holdout"]["index_hash"]}
-    record_final_holdout_result(run_id, result)
+    record_final_holdout_result(
+        run_id,
+        result,
+        action_id=first_claim["action_id"],
+        execution_token=first_claim["execution_token"],
+        provider_receipt={"executor": "pytest"},
+    )
     claimed = claim_final_holdout(run_id)
     assert claimed["claimed"] is False and claimed["result"] == result
     assert get_campaign_split_ledger(run_id)["state"] == "final_completed"
@@ -263,14 +271,22 @@ def test_external_validation_is_immutable_and_one_time():
     assert seal_external_validation(run_id, **args)["reused"] is True
     with pytest.raises(RuntimeError, match="changed after sealing"):
         seal_external_validation(run_id, **{**args, "dataset_fingerprint": "x" * 64})
-    assert claim_external_validation(run_id)["claimed"] is True
-    assert claim_external_validation(run_id) == {
-        "claimed": False,
-        "state": "opened",
-        "result": None,
-    }
+    first_claim = claim_external_validation(run_id)
+    assert first_claim["claimed"] is True
+    replayed_claim = claim_external_validation(run_id)
+    assert replayed_claim["claimed"] is False
+    assert replayed_claim["state"] == "opened"
+    assert replayed_claim["result"] is None
+    assert replayed_claim["execution_token"] is None
+    assert replayed_claim["action_id"] == first_claim["action_id"]
     result = {"evaluated": True, "holds": False, "detail": "negative replication preserved"}
-    record_external_validation_result(run_id, result)
+    record_external_validation_result(
+        run_id,
+        result,
+        action_id=first_claim["action_id"],
+        execution_token=first_claim["execution_token"],
+        provider_receipt={"executor": "pytest"},
+    )
     assert claim_external_validation(run_id)["result"] == result
     assert get_external_validation_ledger(run_id)["state"] == "completed"
 

@@ -208,5 +208,13 @@ Recommended reading order:
     event-cursor resume, failure interpretation, recovery, and debugging.
 94. `adr/0033-f11-postgres-durable-queue-and-event-cursor.md` — at-least-once delivery,
     `SKIP LOCKED`, hashed leases, durable SSE cursor, and rejected exactly-once/broker claims.
-95. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
-96. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.
+95. `F11_S2_TRANSACTIONAL_SCIENTIFIC_TRANSITIONS_IMPLEMENTATION_REPORT_2026_08_17.md` — exact
+    scientific commands, phase-separated epistemic commits, one-time outward authorization,
+    immutable receipts, reconciliation, and honest cross-system boundary.
+96. `jobs/TRANSACTIONAL_SCIENTIFIC_TRANSITIONS.md` — command/action contracts, deployment,
+    inspection, recovery, failure interpretation, and focused acceptance suite.
+97. `adr/0034-f11-transactional-scientific-commands-and-external-action-receipts.md` — database
+    outbox atomicity, content-bound replay, stable provider keys, and rejected global exactly-once
+    claim.
+98. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
+99. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.

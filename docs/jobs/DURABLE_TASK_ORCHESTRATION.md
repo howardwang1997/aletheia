@@ -1,8 +1,9 @@
 # Durable task orchestration
 
 F11-S1 moves long-running work out of the API process and onto a Postgres-backed at-least-once task
-queue. It provides restart recovery and a durable event cursor. It does not make queue completion
-scientific evidence, and it does not yet complete the F11-S2 scientific outbox boundary.
+queue. It provides restart recovery and a durable event cursor. Queue completion is still not
+scientific evidence. F11-S2 now supplies the separate exact scientific-command and one-time-action
+boundary described in `TRANSACTIONAL_SCIENTIFIC_TRANSITIONS.md`.
 
 ## State model
 
@@ -181,7 +182,9 @@ SSE replay, dependencies, finite retry, and automatic worker handling.
 
 ## Honest boundary
 
-F11-S1 prevents process-local orchestration from being the only execution truth. It does not yet
-guarantee exactly-once outward effects, atomically couple every legacy scientific transition to its
-event, reconstruct a Quest/Program/Campaign graph, compact long-term memory, choose portfolios, or
-pass the 72-hour endurance gate. Those remain F11-S2 through F11-S7.
+F11-S1 prevents process-local orchestration from being the only execution truth. F11-S2 now couples
+the migrated scientific transitions to exact command/event receipts and gives one-time outward
+actions an at-most-one authorization plus reconciliation protocol. Neither slice claims globally
+atomic effects across an arbitrary provider. The Quest/Program/Campaign graph, long-term memory
+compaction, portfolio selection, broad fault injection, and the 72-hour endurance gate remain
+F11-S3 through F11-S7.

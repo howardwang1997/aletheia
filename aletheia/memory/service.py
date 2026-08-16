@@ -5,10 +5,24 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from aletheia.db import session_scope
+from aletheia.jobs.actions import (
+    ExternalActionReceipt,
+    ExternalActionStatus,
+    ExternalActionType,
+    OneTimeExternalActionSpec,
+    OneTimeExternalActionStore,
+)
+from aletheia.jobs.outbox import (
+    ScientificCommandReceipt,
+    ScientificCommandSpec,
+    ScientificCommandType,
+    ScientificMutation,
+    ScientificTransitionStore,
+)
 from aletheia.memory.ledger import (
     Artifact,
     BeliefState,
@@ -30,6 +44,7 @@ from aletheia.memory.ledger import (
     SOTAResult,
     WorkerCache,
 )
+from aletheia.reproducibility.manifest import content_sha256
 
 
 def _dedup_hash(*parts: Any) -> str:
@@ -123,9 +138,7 @@ def record_run_manifest(
 
 def get_run_manifest_record(run_id: str) -> dict[str, Any] | None:
     with session_scope() as s:
-        row = (
-            s.query(RunManifestRecord).filter(RunManifestRecord.run_id == run_id).one_or_none()
-        )
+        row = s.query(RunManifestRecord).filter(RunManifestRecord.run_id == run_id).one_or_none()
         if row is None:
             return None
         return {
@@ -182,8 +195,9 @@ def create_experiment(
     Idempotent: keyed on a content fingerprint of (run_id, parent, plan, stage), so a
     RESUMED run that replays this round REUSES the existing experiment instead of
     inserting a duplicate."""
-    key = _dedup_hash(run_id, parent_experiment_id, stage,
-                      json.dumps(plan, sort_keys=True, default=str))
+    key = _dedup_hash(
+        run_id, parent_experiment_id, stage, json.dumps(plan, sort_keys=True, default=str)
+    )
     with session_scope() as s:
         existing = (
             s.query(Experiment)
@@ -246,9 +260,7 @@ def seal_campaign_splits(
 ) -> dict[str, Any]:
     """Create the immutable split ledger, or verify/reuse it on resume."""
     with session_scope() as s:
-        existing = (
-            s.query(CampaignSplitLedger).filter(CampaignSplitLedger.run_id == run_id).first()
-        )
+        existing = s.query(CampaignSplitLedger).filter(CampaignSplitLedger.run_id == run_id).first()
         if existing is not None:
             if existing.dataset_fingerprint != dataset_fingerprint:
                 raise RuntimeError("staged dataset changed after campaign split sealing")
@@ -294,46 +306,138 @@ def get_campaign_split_ledger(run_id: str) -> dict[str, Any] | None:
             "state": row.state,
             "plan": row.plan_json,
             "final_result": row.final_result_json,
+            "final_action_id": row.final_action_id,
+            "final_action_receipt_sha256": row.final_action_receipt_sha256,
             "final_opened_at": row.final_opened_at.isoformat() if row.final_opened_at else None,
         }
 
 
-def claim_final_holdout(run_id: str) -> dict[str, Any]:
-    """Atomically consume the one-time final holdout before its outcome is computed."""
+def claim_final_holdout(
+    run_id: str,
+    *,
+    claim_owner: str = "experiment-driver",
+    claim_ttl_seconds: int = 86_400,
+) -> dict[str, Any]:
+    """Claim one final-holdout opening and return its non-persisted execution token once."""
+
     with session_scope() as s:
+        row = s.query(CampaignSplitLedger).filter(CampaignSplitLedger.run_id == run_id).first()
+        if row is None:
+            raise RuntimeError("campaign split ledger is missing")
+        if row.state != "sealed" and row.final_action_id is None:
+            # Legacy pre-F11-S2 rows remain fail-closed: opening is already consumed and no token
+            # can be reconstructed or safely reissued.
+            return {
+                "claimed": False,
+                "state": row.state,
+                "result": row.final_result_json,
+                "reconciliation_required": row.final_result_json is None,
+            }
+        final = dict((row.plan_json or {}).get("final_holdout") or {})
+        action_request = {
+            "ledger_id": row.id,
+            "dataset_fingerprint": row.dataset_fingerprint,
+            "row_identity_hash": row.row_identity_hash,
+            "split_algo_version": row.split_algo_version,
+            "final_holdout": {
+                "index_hash": final.get("index_hash"),
+                "n": final.get("n"),
+                "alpha": final.get("alpha"),
+            },
+        }
+
+    spec = OneTimeExternalActionSpec(
+        run_id=run_id,
+        action_type=ExternalActionType.FINAL_HOLDOUT_OPEN.value,
+        scope_key=f"final-holdout:{run_id}",
+        request=action_request,
+        principal="epistemic-seal",
+        claim_ttl_seconds=claim_ttl_seconds,
+    )
+
+    def open_ledger(session, action_id: str, claimed_at: datetime) -> None:
         row = (
-            s.query(CampaignSplitLedger)
+            session.query(CampaignSplitLedger)
             .filter(CampaignSplitLedger.run_id == run_id)
             .with_for_update()
             .first()
         )
         if row is None:
             raise RuntimeError("campaign split ledger is missing")
-        if row.state != "sealed":
-            return {
-                "claimed": False,
-                "state": row.state,
-                "result": row.final_result_json,
-            }
+        if row.state != "sealed" or row.final_action_id is not None:
+            raise RuntimeError("final holdout was already opened")
         row.state = "final_opened"
-        row.final_opened_at = datetime.now(timezone.utc)
-        return {"claimed": True, "state": row.state, "result": None}
+        row.final_action_id = action_id
+        row.final_opened_at = claimed_at
 
-
-def record_final_holdout_result(run_id: str, result: dict[str, Any]) -> None:
+    claimed = OneTimeExternalActionStore().claim(
+        spec,
+        claim_owner=claim_owner,
+        on_claim=open_ledger,
+    )
+    action = claimed.action
     with session_scope() as s:
+        persisted = (
+            s.query(CampaignSplitLedger).filter(CampaignSplitLedger.run_id == run_id).first()
+        )
+        result = None if persisted is None else persisted.final_result_json
+    return {
+        "claimed": claimed.created,
+        "state": "final_completed"
+        if action.status is ExternalActionStatus.COMPLETED
+        else "final_opened",
+        "result": result,
+        "action_id": action.action_id,
+        "execution_token": claimed.execution_token,
+        "provider_idempotency_key": action.provider_idempotency_key,
+        "action_status": action.status.value,
+        "reconcile_after": action.reconcile_after.isoformat(),
+        "reconciliation_required": (action.status is ExternalActionStatus.RECONCILIATION_REQUIRED),
+    }
+
+
+def record_final_holdout_result(
+    run_id: str,
+    result: dict[str, Any],
+    *,
+    action_id: str,
+    execution_token: str,
+    provider_receipt: dict[str, Any] | None = None,
+    completed_by: str = "experiment-driver",
+) -> dict[str, Any]:
+    def complete_ledger(session, receipt: ExternalActionReceipt) -> None:
         row = (
-            s.query(CampaignSplitLedger)
+            session.query(CampaignSplitLedger)
             .filter(CampaignSplitLedger.run_id == run_id)
             .with_for_update()
             .first()
         )
-        if row is None or row.state not in ("final_opened", "final_completed"):
-            raise RuntimeError("final holdout was not atomically opened")
+        if (
+            row is None
+            or row.state not in ("final_opened", "final_completed")
+            or row.final_action_id != action_id
+        ):
+            raise RuntimeError("final holdout was not atomically opened by this action")
         if row.final_result_json is not None and row.final_result_json != result:
             raise RuntimeError("final holdout result is immutable")
         row.final_result_json = result
+        row.final_action_receipt_sha256 = receipt.receipt_sha256
         row.state = "final_completed"
+
+    completion = OneTimeExternalActionStore().complete(
+        action_id=action_id,
+        execution_token=execution_token,
+        outcome=result,
+        provider_receipt=provider_receipt or {},
+        completed_by=completed_by,
+        event_projection={"ledger": "final_holdout", "result": result},
+        on_complete=complete_ledger,
+    )
+    return {
+        **completion.receipt.model_dump(mode="json"),
+        "receipt_sha256": completion.receipt.receipt_sha256,
+        "replayed": completion.replayed,
+    }
 
 
 def seal_external_validation(
@@ -396,42 +500,133 @@ def get_external_validation_ledger(run_id: str) -> dict[str, Any] | None:
             "state": row.state,
             "provenance": row.provenance_json,
             "result": row.result_json,
+            "action_id": row.action_id,
+            "action_receipt_sha256": row.action_receipt_sha256,
             "opened_at": row.opened_at.isoformat() if row.opened_at else None,
         }
 
 
-def claim_external_validation(run_id: str) -> dict[str, Any]:
-    """Atomically open the sealed external set exactly once."""
+def claim_external_validation(
+    run_id: str,
+    *,
+    claim_owner: str = "experiment-driver",
+    claim_ttl_seconds: int = 86_400,
+) -> dict[str, Any]:
+    """Claim one external-validation opening and return its execution token once."""
+
     with session_scope() as s:
         row = (
             s.query(ExternalValidationLedger)
+            .filter(ExternalValidationLedger.run_id == run_id)
+            .first()
+        )
+        if row is None:
+            raise RuntimeError("external-validation ledger is missing")
+        if row.state != "sealed" and row.action_id is None:
+            return {
+                "claimed": False,
+                "state": row.state,
+                "result": row.result_json,
+                "reconciliation_required": row.result_json is None,
+            }
+        action_request = {
+            "ledger_id": row.id,
+            "data_asset_id": row.data_asset_id,
+            "dataset_fingerprint": row.dataset_fingerprint,
+            "row_identity_hash": row.row_identity_hash,
+            "provenance_sha256": content_sha256(row.provenance_json or {}),
+        }
+
+    spec = OneTimeExternalActionSpec(
+        run_id=run_id,
+        action_type=ExternalActionType.EXTERNAL_VALIDATION_OPEN.value,
+        scope_key=f"external-validation:{run_id}",
+        request=action_request,
+        principal="external-validation-ledger",
+        claim_ttl_seconds=claim_ttl_seconds,
+    )
+
+    def open_ledger(session, action_id: str, claimed_at: datetime) -> None:
+        row = (
+            session.query(ExternalValidationLedger)
             .filter(ExternalValidationLedger.run_id == run_id)
             .with_for_update()
             .first()
         )
         if row is None:
             raise RuntimeError("external-validation ledger is missing")
-        if row.state != "sealed":
-            return {"claimed": False, "state": row.state, "result": row.result_json}
+        if row.state != "sealed" or row.action_id is not None:
+            raise RuntimeError("external-validation dataset was already opened")
         row.state = "opened"
-        row.opened_at = datetime.now(timezone.utc)
-        return {"claimed": True, "state": row.state, "result": None}
+        row.action_id = action_id
+        row.opened_at = claimed_at
 
-
-def record_external_validation_result(run_id: str, result: dict[str, Any]) -> None:
+    claimed = OneTimeExternalActionStore().claim(
+        spec,
+        claim_owner=claim_owner,
+        on_claim=open_ledger,
+    )
+    action = claimed.action
     with session_scope() as s:
-        row = (
+        persisted = (
             s.query(ExternalValidationLedger)
+            .filter(ExternalValidationLedger.run_id == run_id)
+            .first()
+        )
+        result = None if persisted is None else persisted.result_json
+    return {
+        "claimed": claimed.created,
+        "state": "completed" if action.status is ExternalActionStatus.COMPLETED else "opened",
+        "result": result,
+        "action_id": action.action_id,
+        "execution_token": claimed.execution_token,
+        "provider_idempotency_key": action.provider_idempotency_key,
+        "action_status": action.status.value,
+        "reconcile_after": action.reconcile_after.isoformat(),
+        "reconciliation_required": (action.status is ExternalActionStatus.RECONCILIATION_REQUIRED),
+    }
+
+
+def record_external_validation_result(
+    run_id: str,
+    result: dict[str, Any],
+    *,
+    action_id: str,
+    execution_token: str,
+    provider_receipt: dict[str, Any] | None = None,
+    completed_by: str = "experiment-driver",
+) -> dict[str, Any]:
+    def complete_ledger(session, receipt: ExternalActionReceipt) -> None:
+        row = (
+            session.query(ExternalValidationLedger)
             .filter(ExternalValidationLedger.run_id == run_id)
             .with_for_update()
             .first()
         )
-        if row is None or row.state not in ("opened", "completed"):
-            raise RuntimeError("external-validation dataset was not atomically opened")
+        if row is None or row.state not in ("opened", "completed") or row.action_id != action_id:
+            raise RuntimeError(
+                "external-validation dataset was not atomically opened by this action"
+            )
         if row.result_json is not None and row.result_json != result:
             raise RuntimeError("external-validation result is immutable")
         row.result_json = result
+        row.action_receipt_sha256 = receipt.receipt_sha256
         row.state = "completed"
+
+    completion = OneTimeExternalActionStore().complete(
+        action_id=action_id,
+        execution_token=execution_token,
+        outcome=result,
+        provider_receipt=provider_receipt or {},
+        completed_by=completed_by,
+        event_projection={"ledger": "external_validation", "result": result},
+        on_complete=complete_ledger,
+    )
+    return {
+        **completion.receipt.model_dump(mode="json"),
+        "receipt_sha256": completion.receipt.receipt_sha256,
+        "replayed": completion.replayed,
+    }
 
 
 def register_hypothesis_attempt(
@@ -605,7 +800,10 @@ def get_compute_job(job_id: str) -> dict[str, Any] | None:
 
 
 def record_metrics(
-    experiment_id: str, metrics: dict[str, float], split: str | None = "test", step: int | None = None
+    experiment_id: str,
+    metrics: dict[str, float],
+    split: str | None = "test",
+    step: int | None = None,
 ) -> None:
     """Idempotent on the natural key (experiment_id, name, split, step): a resumed run that
     recomputes the same metrics UPDATES the value in place rather than inserting duplicates."""
@@ -625,31 +823,97 @@ def record_metrics(
                 existing.value = float(value)
             else:
                 s.add(
-                    Metric(experiment_id=experiment_id, name=name, value=float(value),
-                           split=split, step=step)
+                    Metric(
+                        experiment_id=experiment_id,
+                        name=name,
+                        value=float(value),
+                        split=split,
+                        step=step,
+                    )
                 )
 
 
-def record_artifacts(experiment_id: str, artifacts: list[dict[str, Any]]) -> None:
+def record_artifacts(
+    experiment_id: str,
+    artifacts: list[dict[str, Any]],
+    *,
+    idempotency_key: str | None = None,
+    principal: str = "artifact-committer",
+) -> ScientificCommandReceipt:
+    """Commit one artifact batch and its keyed event once under worker redelivery.
+
+    Files are expected to have been durably written before this call.  A failed database
+    transaction may therefore leave an unreferenced content-addressed file, but it cannot leave an
+    artifact ledger row without the matching command receipt and event.
+    """
+
     with session_scope() as s:
-        for a in artifacts:
-            s.add(
-                Artifact(
-                    experiment_id=experiment_id,
-                    kind=a.get("kind", "model"),
-                    uri=a.get("uri", ""),
-                    sha256=a.get("sha256"),
-                    bytes=a.get("bytes"),
-                )
+        experiment = s.get(Experiment, experiment_id)
+        if experiment is None:
+            raise RuntimeError("artifact experiment is missing")
+        run_id = experiment.run_id
+
+    normalized = [
+        {
+            "kind": str(artifact.get("kind", "model")),
+            "uri": str(artifact.get("uri", "")),
+            "sha256": artifact.get("sha256"),
+            "bytes": artifact.get("bytes"),
+        }
+        for artifact in artifacts
+    ]
+    batch_sha256 = content_sha256({"experiment_id": experiment_id, "artifacts": normalized})
+    spec = ScientificCommandSpec(
+        run_id=run_id,
+        command_type=ScientificCommandType.ARTIFACT_COMMIT.value,
+        aggregate_type="experiment_artifacts",
+        aggregate_id=experiment_id,
+        idempotency_key=(idempotency_key or f"artifact:{experiment_id}:{batch_sha256}"),
+        input={"experiment_id": experiment_id, "artifacts": normalized},
+        principal=principal,
+        event_type="artifacts_committed",
+    )
+
+    def apply(session):
+        if session.get(Experiment, experiment_id) is None:
+            raise RuntimeError("artifact experiment disappeared")
+        rows: list[Artifact] = []
+        for ordinal, artifact in enumerate(spec.input["artifacts"]):
+            row = Artifact(
+                experiment_id=experiment_id,
+                kind=artifact["kind"],
+                uri=artifact["uri"],
+                sha256=artifact.get("sha256"),
+                bytes=artifact.get("bytes"),
+                scientific_command_id=spec.command_id,
+                commit_ordinal=ordinal,
             )
+            session.add(row)
+            rows.append(row)
+        session.flush()
+        artifact_ids = [int(row.id) for row in rows]
+        return ScientificMutation(
+            result={
+                "experiment_id": experiment_id,
+                "artifact_ids": artifact_ids,
+                "artifact_count": len(rows),
+                "batch_sha256": batch_sha256,
+            },
+            event_projection={
+                "experiment_id": experiment_id,
+                "artifact_ids": artifact_ids,
+                "artifacts": spec.input["artifacts"],
+                "batch_sha256": batch_sha256,
+            },
+        )
+
+    return ScientificTransitionStore().execute(spec, apply)
 
 
 def list_metrics(experiment_id: str) -> list[dict[str, Any]]:
     with session_scope() as s:
         rows = s.query(Metric).filter(Metric.experiment_id == experiment_id).all()
-        return [
-            {"name": m.name, "value": m.value, "split": m.split, "step": m.step} for m in rows
-        ]
+        return [{"name": m.name, "value": m.value, "split": m.split, "step": m.step} for m in rows]
 
 
 def list_artifacts(experiment_id: str) -> list[dict[str, Any]]:
@@ -671,7 +935,7 @@ def record_budget_event(run_id: str, kind: str, amount: float) -> float:
             .order_by(BudgetEvent.id.desc())
             .first()
         )
-        prev = (last.cumulative if last and last.cumulative is not None else 0.0)
+        prev = last.cumulative if last and last.cumulative is not None else 0.0
         cumulative = prev + float(amount)
         s.add(BudgetEvent(run_id=run_id, kind=kind, amount=float(amount), cumulative=cumulative))
         return cumulative
@@ -763,11 +1027,7 @@ def create_claim(
     stable across attempts, so the driver's later ``update_claim`` lands on the same row."""
     key = _dedup_hash(run_id, experiment_id, claim_type, claim_text)
     with session_scope() as s:
-        existing = (
-            s.query(Claim)
-            .filter(Claim.run_id == run_id, Claim.dedup_key == key)
-            .first()
-        )
+        existing = s.query(Claim).filter(Claim.run_id == run_id, Claim.dedup_key == key).first()
         if existing is not None:
             existing.strength = strength
             existing.status = status
@@ -835,6 +1095,7 @@ def attach_claim_evidence(
 
 # --- K2 belief state: durable mirror of the campaign's calibrated credences ----------------
 
+
 def upsert_credence(
     run_id: str, question_key: str, alpha: float, beta: float, n_updates: int = 0
 ) -> None:
@@ -848,10 +1109,15 @@ def upsert_credence(
             .one_or_none()
         )
         if row is None:
-            s.add(BeliefState(
-                run_id=run_id, question_key=question_key,
-                alpha=float(alpha), beta=float(beta), n_updates=int(n_updates),
-            ))
+            s.add(
+                BeliefState(
+                    run_id=run_id,
+                    question_key=question_key,
+                    alpha=float(alpha),
+                    beta=float(beta),
+                    n_updates=int(n_updates),
+                )
+            )
         else:
             row.alpha = float(alpha)
             row.beta = float(beta)
@@ -867,8 +1133,12 @@ def get_credence(run_id: str, question_key: str) -> dict[str, Any] | None:
         )
         if row is None:
             return None
-        return {"question_key": row.question_key, "alpha": row.alpha, "beta": row.beta,
-                "n_updates": row.n_updates}
+        return {
+            "question_key": row.question_key,
+            "alpha": row.alpha,
+            "beta": row.beta,
+            "n_updates": row.n_updates,
+        }
 
 
 def list_credences(run_id: str) -> list[dict[str, Any]]:
@@ -880,7 +1150,12 @@ def list_credences(run_id: str) -> list[dict[str, Any]]:
             .all()
         )
         return [
-            {"question_key": r.question_key, "alpha": r.alpha, "beta": r.beta, "n_updates": r.n_updates}
+            {
+                "question_key": r.question_key,
+                "alpha": r.alpha,
+                "beta": r.beta,
+                "n_updates": r.n_updates,
+            }
             for r in rows
         ]
 
@@ -905,7 +1180,11 @@ def list_claims(run_id: str, experiment_id: str | None = None) -> list[dict[str,
                     "stage": c.stage,
                     "experiment_id": c.experiment_id,
                     "evidence": [
-                        {"evidence_kind": e.evidence_kind, "evidence_ref": e.evidence_ref, "note": e.note}
+                        {
+                            "evidence_kind": e.evidence_kind,
+                            "evidence_ref": e.evidence_ref,
+                            "note": e.note,
+                        }
                         for e in ev
                     ],
                 }
@@ -915,7 +1194,18 @@ def list_claims(run_id: str, experiment_id: str | None = None) -> list[dict[str,
 
 # --- structured literature + SOTA (Phase H) -------------------------------
 
-_LIT_FIELDS = ("paper_id", "query", "method", "dataset", "metric", "result", "limitation", "gap", "relevance", "source")
+_LIT_FIELDS = (
+    "paper_id",
+    "query",
+    "method",
+    "dataset",
+    "metric",
+    "result",
+    "limitation",
+    "gap",
+    "relevance",
+    "source",
+)
 _SOTA_FIELDS = ("task", "dataset", "metric", "score", "method", "source", "split_policy", "notes")
 
 
@@ -935,9 +1225,7 @@ def list_literature_findings(run_id: str) -> list[dict[str, Any]]:
             .order_by(LiteratureFinding.id)
             .all()
         )
-        return [
-            {"id": r.id, **{k: getattr(r, k) for k in _LIT_FIELDS}} for r in rows
-        ]
+        return [{"id": r.id, **{k: getattr(r, k) for k in _LIT_FIELDS}} for r in rows]
 
 
 def record_scorecard(
@@ -950,8 +1238,11 @@ def record_scorecard(
 ) -> str:
     with session_scope() as s:
         row = HypothesisScorecard(
-            run_id=run_id, experiment_id=experiment_id,
-            scores=scores, decision=decision, rationale=rationale,
+            run_id=run_id,
+            experiment_id=experiment_id,
+            scores=scores,
+            decision=decision,
+            rationale=rationale,
         )
         s.add(row)
         s.flush()
@@ -966,8 +1257,11 @@ def list_scorecards(run_id: str, experiment_id: str | None = None) -> list[dict[
         rows = q.order_by(HypothesisScorecard.created_at).all()
         return [
             {
-                "id": r.id, "experiment_id": r.experiment_id, "scores": r.scores,
-                "decision": r.decision, "rationale": r.rationale,
+                "id": r.id,
+                "experiment_id": r.experiment_id,
+                "scores": r.scores,
+                "decision": r.decision,
+                "rationale": r.rationale,
             }
             for r in rows
         ]
@@ -977,7 +1271,8 @@ def record_sota_result(run_id: str, domain: str | None, **fields: Any) -> int:
     with session_scope() as s:
         score = fields.get("score")
         row = SOTAResult(
-            run_id=run_id, domain=domain,
+            run_id=run_id,
+            domain=domain,
             score=(float(score) if score is not None else None),
             **{k: fields.get(k) for k in _SOTA_FIELDS if k != "score"},
         )
@@ -993,5 +1288,6 @@ def list_sota_results(run_id: str, domain: str | None = None) -> list[dict[str, 
             q = q.filter(SOTAResult.domain == domain)
         rows = q.order_by(SOTAResult.id).all()
         return [
-            {"id": r.id, "domain": r.domain, **{k: getattr(r, k) for k in _SOTA_FIELDS}} for r in rows
+            {"id": r.id, "domain": r.domain, **{k: getattr(r, k) for k in _SOTA_FIELDS}}
+            for r in rows
         ]

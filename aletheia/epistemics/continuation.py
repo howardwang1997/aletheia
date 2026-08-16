@@ -62,6 +62,8 @@ from aletheia.epistemics.schemas import (
     Prediction,
     WorldModelSnapshot,
 )
+from aletheia.events.bus import make_event
+from aletheia.events.store import persist_event
 from aletheia.memory.ledger import Event
 from aletheia.knowledge.response_archive import ContentAddressedResponseArchive
 from aletheia.reproducibility.manifest import content_sha256
@@ -386,9 +388,7 @@ def _matching_transition_events(session, transition: WorldModelTransition) -> li
     projection = _event_projection(transition).model_dump(mode="json")
     rows = session.scalars(
         select(Event).where(
-            Event.run_id == transition.source_world_model_snapshot.question.run_id,
-            Event.type == _TRANSITION_EVENT_TYPE,
-            Event.payload["transition_sha256"].astext == transition.transition_sha256,
+            Event.event_key == f"f9-world-model-transition:{transition.transition_sha256}",
         )
     ).all()
     return [row for row in rows if row.payload == projection]
@@ -460,23 +460,16 @@ def persist_world_model_transition(
             raise ImmutableEpistemicConflict("persisted world-model transition content conflicts")
 
         created = inserted is not None
-        if created:
-            event = Event(
+        event_id = persist_event(
+            make_event(
+                _TRANSITION_EVENT_TYPE,
                 run_id=source.question.run_id,
                 agent=_TRANSITION_EVENT_AGENT,
-                type=_TRANSITION_EVENT_TYPE,
                 payload=projection.model_dump(mode="json"),
-            )
-            session.add(event)
-            session.flush()
-            event_id = event.id
-        else:
-            events = _matching_transition_events(session, transition)
-            if len(events) != 1:
-                raise EpistemicPersistenceError(
-                    "persisted world-model transition lacks one exact event projection"
-                )
-            event_id = events[0].id
+            ),
+            event_key=f"f9-world-model-transition:{transition.transition_sha256}",
+            session=session,
+        )
     return WorldModelTransitionStoreReceipt(
         transition_sha256=transition.transition_sha256,
         event_id=event_id,
