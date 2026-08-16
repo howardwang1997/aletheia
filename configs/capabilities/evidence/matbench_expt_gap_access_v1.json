@@ -1,0 +1,15 @@
+{
+  "schema_name": "aletheia.dataset_access_evidence",
+  "schema_version": 1,
+  "dataset_ref": "matbench_expt_gap",
+  "distribution": "Bundled by matminer and published as a Matbench v0.1 benchmark for model training, benchmarking, and evaluation.",
+  "official_sources": [
+    "https://docs.materialsproject.org/collaborations/matbench",
+    "https://github.com/materialsproject/matbench",
+    "https://hackingmaterials.lbl.gov/matminer/dataset_summary.html"
+  ],
+  "repository_license": "The official materialsproject/matbench code repository declares MIT; this record does not infer that every upstream experimental datum has identical relicensing terms.",
+  "permitted_scope": "Local read-only benchmark computation with no network egress and no redistribution by this capability.",
+  "limitation": "Source-specific experimental-data licensing has not received independent legal review, so the capability remains provisional and raw data is not added to source control.",
+  "review_status": "operator_documented_not_independent_legal_review"
+}

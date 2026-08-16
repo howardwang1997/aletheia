@@ -1,0 +1,354 @@
+schema_name: aletheia.experiment_capability_manifest
+schema_version: 1
+capability_id: materials.simulation.ase_emt_eos_reference
+version: 1.0.0
+domain: materials
+lifecycle: provisional
+scientific_question_ids:
+- materials.simulation.classical_reference_calibration
+claim_types_supported:
+- descriptive
+maximum_evidence_level: exploratory
+
+input_schema:
+  schema_id: materials.simulation.ase_emt_eos_reference.job
+  version: 1.0.0
+  media_type: application/schema+json
+  json_schema:
+    $schema: https://json-schema.org/draft/2020-12/schema
+    type: object
+    properties:
+      schema_name:
+        const: aletheia.ase_emt_eos_job
+      schema_version:
+        const: 1
+      job_id:
+        type: string
+        pattern: ^[a-zA-Z0-9][a-zA-Z0-9_.-]{1,127}$
+      calculator:
+        type: object
+        properties:
+          name:
+            const: ase.emt
+          asap_cutoff:
+            const: false
+        required:
+        - name
+        - asap_cutoff
+        additionalProperties: false
+      structure:
+        type: object
+        properties:
+          symbols:
+            type: array
+            minItems: 1
+            maxItems: 256
+            items:
+              type: string
+          positions_angstrom:
+            type: array
+            minItems: 1
+            maxItems: 256
+            items:
+              type: array
+              minItems: 3
+              maxItems: 3
+              items:
+                type: number
+          cell_angstrom:
+            type: array
+            minItems: 3
+            maxItems: 3
+            items:
+              type: array
+              minItems: 3
+              maxItems: 3
+              items:
+                type: number
+          pbc:
+            type: array
+            minItems: 3
+            maxItems: 3
+            items:
+              const: true
+        required:
+        - symbols
+        - positions_angstrom
+        - cell_angstrom
+        - pbc
+        additionalProperties: false
+      scan:
+        type: object
+        properties:
+          eos_model:
+            const: sj
+          points:
+            type: integer
+            minimum: 5
+            maximum: 31
+          volume_strain_fraction:
+            type: number
+            minimum: 0.005
+            maximum: 0.20
+        required:
+        - eos_model
+        - points
+        - volume_strain_fraction
+        additionalProperties: false
+    required:
+    - schema_name
+    - schema_version
+    - job_id
+    - calculator
+    - structure
+    - scan
+    additionalProperties: false
+  json_schema_sha256: a7e311c592cecc39ec03c04f0232c6a2f5c56325e9dcc885874513cf0e70bb4a
+
+output_schema:
+  schema_id: materials.simulation.ase_emt_eos_reference.bundle
+  version: 1.0.0
+  media_type: application/schema+json
+  json_schema:
+    $schema: https://json-schema.org/draft/2020-12/schema
+    type: object
+    properties:
+      schema_name:
+        const: aletheia.ase_emt_simulation_bundle
+      schema_version:
+        const: 1
+      protocol:
+        type: object
+      job:
+        type: object
+      raw_run:
+        type: object
+      parse_result:
+        type: object
+      validation:
+        type: object
+    required:
+    - schema_name
+    - schema_version
+    - protocol
+    - job
+    - raw_run
+    - parse_result
+    - validation
+    additionalProperties: false
+  json_schema_sha256: bf292c2c6241b3aee3aa245d715bcb6ecf288e2ef9a8b1cb991b26148b4164cc
+
+accepted_data_modalities:
+- periodic_atomic_structure
+required_metadata:
+- calculator
+- cell_angstrom
+- pbc
+- positions_angstrom
+- symbols
+units_and_ontologies:
+- ASE.EMT
+- angstrom
+- eV
+- eV/angstrom
+- eV/angstrom^3
+action_type: simulation
+
+roles:
+- role: planner
+  adapter_ref: aletheia.capabilities.planner:plan_capability
+  implementation_sha256: fdafe6aba6f07290367acb5b1245b1f2f04421a6ed852252847d8ebaab059183
+  principal_sha256: 15d423d883a1b94b1a3f4b36daabde3a0771e7a13b7f95656becc7b82e0cc9ba
+  runtime: deterministic
+  boundary: no_execution
+  allowed_tools: []
+  agent_authored: true
+  frozen_at: '2026-08-15T09:30:00Z'
+- role: executor
+  adapter_ref: scripts.ase_emt_simulation_e2e:_execute
+  implementation_sha256: 9f21dcf30151208d1feb11147adb253ef6914feb4f9bfba923a346e0467cc463
+  principal_sha256: 2ff6081626f0d9594861460ed1143a9772f2008856c4530aa7681603d6894555
+  runtime: container
+  boundary: digest_pinned_container
+  allowed_tools:
+  - cpu
+  - docker
+  agent_authored: true
+  frozen_at: '2026-08-15T09:30:00Z'
+- role: observation_parser
+  adapter_ref: aletheia.domains.materials.simulation:parse_ase_emt_simulation
+  implementation_sha256: 3f77e6ec7edbffb5778fd6d56fb8ebd4c5af477eb7674254373a18bbbed3c1f2
+  principal_sha256: f935cb33da64477752bcbd29945df2b155bec88c59d71d09b6c32d7bbefeceec
+  runtime: deterministic
+  boundary: hard_sandbox
+  allowed_tools: []
+  agent_authored: true
+  frozen_at: '2026-08-15T09:30:00Z'
+- role: validator
+  adapter_ref: aletheia.domains.materials.simulation:validate_ase_emt_simulation
+  implementation_sha256: 3f77e6ec7edbffb5778fd6d56fb8ebd4c5af477eb7674254373a18bbbed3c1f2
+  principal_sha256: 20dd383d9335abd7f8e4ede5a284c8b8fab079bdca3c6f9716b050a251b6ea8c
+  runtime: deterministic
+  boundary: hard_sandbox
+  allowed_tools: []
+  agent_authored: true
+  frozen_at: '2026-08-15T09:30:00Z'
+
+preregistration_schema:
+  schema_id: materials.simulation.ase_emt_eos_reference.protocol
+  version: 1.0.0
+  media_type: application/schema+json
+  json_schema:
+    $schema: https://json-schema.org/draft/2020-12/schema
+    type: object
+    properties:
+      schema_name:
+        const: aletheia.ase_emt_simulation_protocol
+      schema_version:
+        const: 1
+      protocol_id:
+        type: string
+      container:
+        type: object
+      calculator:
+        type: object
+      scan:
+        type: object
+      runtime_versions:
+        type: object
+      host_executor_implementation_sha256:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      parser_implementation_sha256:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      validator_implementation_sha256:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      quality:
+        type: object
+      gold_reference:
+        type: object
+      evidence_scope:
+        const: classical_potential_reference_calibration
+      dft_claim_forbidden:
+        const: true
+      experimental_claim_forbidden:
+        const: true
+      mechanism_claim_forbidden:
+        const: true
+      frozen_at:
+        type: string
+        format: date-time
+      state:
+        const: frozen
+    required:
+    - schema_name
+    - schema_version
+    - protocol_id
+    - container
+    - calculator
+    - scan
+    - runtime_versions
+    - host_executor_implementation_sha256
+    - parser_implementation_sha256
+    - validator_implementation_sha256
+    - quality
+    - gold_reference
+    - evidence_scope
+    - dft_claim_forbidden
+    - experimental_claim_forbidden
+    - mechanism_claim_forbidden
+    - frozen_at
+    - state
+    additionalProperties: true
+  json_schema_sha256: 5d967de3774605e2b9f56d0d38482ab630b8f7d34b0d96d5043077c68fa75ded
+
+controls_required:
+- control_id: control.negative.unsupported_element_failure
+  kind: negative_control
+  description: An element outside ASE EMT support must remain an execution failure, never a finite physical result.
+  required: true
+- control_id: control.positive.ase_official_cu_fcc_eos
+  kind: positive_control
+  description: Frozen Cu fcc input must reproduce the ASE documentation lattice constant and exact image-local result payload.
+  required: true
+
+assumptions:
+- assumption_id: assumption.classical_scope
+  statement: ASE EMT is an empirical classical potential and is not a first-principles electronic-structure method.
+  violation_consequence: The evidence would be mislabeled as DFT, experimental, transferable, or mechanistic.
+  test_or_monitor: Freeze the classical-only claim ceiling in protocol, validation, manifest, and reports.
+- assumption_id: assumption.exact_runtime
+  statement: Numerical calibration applies only to the exact image, worker, runtime versions, job, and scan.
+  violation_consequence: Exact payload comparison and the documented tolerance may no longer be valid.
+  test_or_monitor: Reject any image, source, version, job, or protocol digest drift before parsing.
+- assumption_id: assumption.reference_equivalence
+  statement: Primitive one-atom fcc Cu volume maps to conventional lattice constant by a=(4V)^(1/3).
+  violation_consequence: The gold comparison would test the wrong physical quantity.
+  test_or_monitor: Derive the relation mechanically and compare with the frozen ASE reference value.
+
+known_failure_modes:
+- failure_id: failure.container_infrastructure
+  description: Image, platform, bind mount, daemon, or container lifecycle is unavailable or inconsistent.
+  detection: Retain infrastructure status, exit code, stderr, and cleanup receipt; reject execution.
+  disposition: blocked
+- failure_id: failure.eos_quality
+  description: The fitted minimum is unbracketed, residuals exceed policy, or bulk modulus is outside the calibration range.
+  detection: Independently derive all frozen numerical quality and gold checks from retained points.
+  disposition: invalid
+- failure_id: failure.output_quota
+  description: The worker emits too many files, unknown file types, a symlink, or too many bytes.
+  detection: Read the bounded output directory through the host quota and regular-file gate.
+  disposition: blocked
+- failure_id: failure.timeout
+  description: The container does not exit within the frozen wall-clock budget.
+  detection: Kill and remove the exact named container, retain partial output, and mark timed_out.
+  disposition: blocked
+- failure_id: failure.unsupported_element
+  description: ASE EMT has no potential parameters for one or more requested elements.
+  detection: Worker returns a typed failure artifact and no result; parser preserves execution failure.
+  disposition: invalid
+
+minimum_sample_rule:
+  sampling_unit: reference_system
+  minimum_count: 1
+  power_or_precision_rule: One frozen reference system calibrates only this adapter; it supports no population inference or transfer claim.
+  rule_sha256: 4dd86c102ed0d907369ddf70f062a2c420f071d30dc5aa85625fbf17a58f2a76
+
+resources:
+  estimated_cost_usd: 0.0
+  estimated_wall_time_seconds: 10
+  cpu_seconds: 10
+  memory_mb: 256
+  gpu_seconds: 0
+  external_resource_units: {}
+
+nondeterminism_policy:
+  mode: deterministic
+  frozen_seeds: []
+  maximum_attempts_per_slot: 1
+  best_of_n_forbidden: true
+  aggregation_rule: Retain one result or one typed failure per frozen run; never select among attempts.
+  stopping_rule: Execute one bounded attempt per run slot and retain timeout, quota, infrastructure, and worker failures.
+
+reproduction_policy:
+  minimum_exact_reexecutions: 2
+  independent_validator_recomputation: true
+  independent_implementation_required: false
+  independent_dataset_required: false
+  metric_tolerance: 0.0
+  failure_retention: true
+
+safety_class: low_risk_compute
+approval_class: operator
+license_egress_policy:
+  allowed_data_classes:
+  - operator_supplied_structure
+  - public_reference_calibration
+  network_egress: none
+  raw_data_retention: required
+  license_evidence_sha256: 6e5ec847cd687a9471933d1e4edf59028cc37a3cab6e05bd7ac2c71b6b19ed26
+
+frozen_at: '2026-08-15T09:30:00Z'
+state: frozen

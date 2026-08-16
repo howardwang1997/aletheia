@@ -28,9 +28,11 @@ from aletheia.evals.adapters.discoveryworld import (
     DiscoveryWorldHarnessResult,
     DiscoveryWorldInstanceSpec,
     DiscoveryWorldScorer,
+    DiscoveryWorldScientificExitMetrics,
     DiscoveryWorldSourceManifest,
     DiscoveryWorldSubsetManifest,
     DockerDiscoveryWorldHarness,
+    derive_discoveryworld_scientific_exit_metrics,
 )
 
 __all__ = [
@@ -58,6 +60,8 @@ __all__ = [
     "DiscoveryWorldHarnessResult",
     "DiscoveryWorldInstanceSpec",
     "DiscoveryWorldScorer",
+    "DiscoveryWorldScientificExitMetrics",
     "DiscoveryWorldSourceManifest",
     "DiscoveryWorldSubsetManifest",
+    "derive_discoveryworld_scientific_exit_metrics",
 ]

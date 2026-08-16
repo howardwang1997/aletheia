@@ -43,6 +43,7 @@ def test_f9s1_migration_matches_orm_and_exposes_compatibility_view() -> None:
         "epistemic_belief_states",
         "epistemic_belief_state_members",
         "epistemic_world_model_snapshots",
+        "epistemic_world_model_transitions",
     }
     with engine().connect() as connection:
         inspector = inspect(connection)
@@ -120,10 +121,7 @@ def test_database_triggers_reject_epistemic_update_and_delete() -> None:
     store_world_model_snapshot(snapshot)
     statements = (
         update(EpistemicResearchQuestionRecord)
-        .where(
-            EpistemicResearchQuestionRecord.question_sha256
-            == snapshot.question.question_sha256
-        )
+        .where(EpistemicResearchQuestionRecord.question_sha256 == snapshot.question.question_sha256)
         .values(kind="descriptive"),
         delete(EpistemicWorldModelSnapshotRecord).where(
             EpistemicWorldModelSnapshotRecord.snapshot_sha256 == snapshot.snapshot_sha256
@@ -155,11 +153,14 @@ def test_k2_compatibility_view_preserves_legacy_read_write_api_without_f9_backfi
     }
     assert list_credences(run_id) == [get_credence(run_id, question_key)]
     with session_scope() as session:
-        assert session.scalar(
-            select(EpistemicBeliefStateRecord).where(
-                EpistemicBeliefStateRecord.run_id == run_id
+        assert (
+            session.scalar(
+                select(EpistemicBeliefStateRecord).where(
+                    EpistemicBeliefStateRecord.run_id == run_id
+                )
             )
-        ) is None
+            is None
+        )
 
 
 def test_k2_compatibility_projection_rejects_writes_to_legacy_state() -> None:

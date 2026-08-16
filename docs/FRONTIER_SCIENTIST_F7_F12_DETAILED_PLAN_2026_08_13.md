@@ -1208,6 +1208,36 @@ execution/validation、posterior update 与 replication 仍是发布门。
 - selector 本身不能看隐藏 observation；
 - 对 proxy gaming 建立 fixture：高 EIG 但无测量效度的实验必须被拒绝。
 
+**工程状态（2026-08-15）：已完成；scientific exit 未完成。**
+`ExperimentSelectionRequest` 要求至少两个 canonical candidate，精确共享同一 F9-S2 hypothesis
+campaign、F9-S1 snapshot/belief/question，且每个 candidate 必须是不同 experiment namespace 与不同
+substantive F9-S4 commitment。selector 在任何评分前从 content-addressed archive 物理读取、rehash 并
+重验所有 prediction campaign；任一 missing/corrupt/rebound archive 使整次选择
+`blocked_execution`，不保留 partial ranking，只记录 failure class 与 detail hash。
+
+对 `ready + probabilistic + eig_eligible` candidate，harness 从 exact F9-S1 prior 和完整 F9-S4
+likelihood 机械计算每个 outcome marginal、每个 hypothetical posterior/entropy、expected posterior
+entropy、absolute/normalized EIG，以及所有 hypothesis pair 的 minimum/maximum total variation。
+ordinal 或 F9-S4 blocked campaign 仍保留，但不进入概率 EIG。cost/currency、duration、high/prohibited
+risk、measurement validity/confidence、任何 proxy risk、missing capability、fresh confirmation 缺失/
+过期/复用 calibration 或 target partition，以及 EIG/TV floors 都是 utility 前 hard blockers，高 EIG
+不能抵消无效 proxy。
+
+无 blockers 的 candidate 才使用 frozen sum-to-one weights，把 normalized EIG、minimum TV、fresh
+confirmation、replication-debt reduction 与 policy-fixed cost/time/risk penalties 合并；不使用
+candidate-relative scaling，避免 decoy 改变其他候选的分值。排序、tie-break、selected/
+feasible-not-selected/infeasible reasons 与 no-feasible disposition 全由 harness 重算；没有 feasible
+candidate 时明确不选，不 fallback。独立 assessor 与 request 均无 tool/observation access，并与此前
+hypothesis/causal/prediction/calibration roles 做 principal/model identity 隔离。campaign 可 canonical
+archive，commit wrapper 精确绑定提交时间/ledger 并提供 receipt，读取时重算 score/rank/decision。
+Focused 30 tests、截至 F9-S5 的 `tests/epistemics` 145 tests
+通过；最终全库非 Docker 1062 passed、1 skipped、29 deselected（380.76 s），真实 Docker 29
+passed、1063 deselected（31.31 s）。fixtures、assessment evidence、budget、risk、capability、
+partition 与 replication debt 全为 synthetic。完整验收见
+`F9_S5_CONSTRAINED_EXPERIMENT_SELECTION_IMPLEMENTATION_REPORT_2026_08_15.md`。下一工程切片为
+F9-S6 validated-observation posterior update、immutable revision 与 negative-result policy；真实
+measurement/surrogate validation、atomic reservation/debt/budget state 与 scheduler execution 仍是发布门。
+
 ### F9-S6：Update、revision 与 negative result policy
 
 - observation validator → update 的单向接口；
@@ -1215,6 +1245,49 @@ execution/validation、posterior update 与 replication 仍是发布门。
 - contradiction queue；
 - 若所有假设预测相同，强制寻找新测量或停止；
 - 若 posterior 对 likelihood 极敏感，状态标记 fragile。
+
+**工程状态（2026-08-15）：已完成；scientific exit 未完成。**
+F9-S6 把 observation validation 与 belief update 分成两个独立、可提交事务。validator policy、
+adapter/parser/schema、principal 与可选 model identity 必须在 F9-S5 selection 前冻结，无 ambient tools，
+且与 F9-S2 hypothesis、F9-S3 causal、F9-S4 prediction/calibration 和 F9-S5 assessment roles 做
+principal/model 隔离。validation 在调用 adapter 前物理读取并 rehash F9-S5 selection、selected F9-S4
+prediction 与 staged raw bytes；selection 必须先于 observation，outcome/experiment/protocol/parser/
+analysis/measurement/error-model、fresh confirmation batch/partition 与 custody receipt 全部 exact-bound。
+
+只有 confirmation role、verified experiment identity/custody、valid measurement、intact blinding、exact 或
+preregistered-tolerance protocol、resolved-accept audit，以及满足 sample floor 或 exact pre-frozen
+small-sample rule 的 observation 才得到 `validated_confirmation`。exploration/calibration、material/unknown
+deviation、invalid measurement、blinding/custody/identity failure、unresolved/reject audit、reservation 或
+schema rebinding 全部不触发 posterior；missing/corrupt/rebound archive/store、validator exception、malformed
+或 future-dated output 只留下 sanitized hash failure，不保留 raw payload 或 partial evidence。
+
+update request 只接受 committed `validated_confirmation`，API 明确
+`observation_access=validated_artifact_only`，没有 raw bytes/store handle；在计算前再次从 archive 物理验证
+validation campaign。harness 从 exact F9-S1 prior 与 selected F9-S4 likelihood 机械派生每个 hypothesis 的
+prior、realized likelihood、unnormalized mass、posterior 与 modal-match，以及 entropy change、prior
+predictive、surprisal、winner、primary-negative、all-model-miss 和 uninformative flags。所有 hypothesis
+必须提供同一组 policy-minimum likelihood sensitivity scenarios；每个 alternative posterior、TV 与 winner
+change 全保留，scenario matrix 不完整或 zero predictive mass 会 `blocked_likelihood`，超过 TV ceiling 或
+winner change 标记 `updated_fragile`。
+
+成功更新创建 exact-parent、`version + 1` 的 child `BeliefState` 与新 snapshot，question、hypothesis、
+assumption、prediction versions 不变，source 永不 mutation。modal match → retain；modal miss 且 nominal
+与全部 sensitivity posterior 均低于 retirement ceiling → retire；其余 miss → narrow。retire/narrow 仅发出
+append-only new-version directive。all-model low likelihood 强制 fork 新 hypothesis lineage；realized
+likelihood 相同强制 seek-new-measurement-or-stop；prediction miss、surprise、fragility、all-model miss 与
+uninformative outcome 均进入 immutable open contradiction queue。validation/update campaign 都可 canonical
+archive，model validation 重算 probe、posterior、sensitivity、revision、contradiction 与 disposition。
+
+Focused F9-S6 31 tests（76.56 s）、F9-S5/S6 combined 61 tests（111.74 s）与截至 F9-S6 的完整
+`tests/epistemics` 176 tests（149.44 s）已通过；最终全库非 Docker 1093 passed、1 skipped、29
+deselected（528.15 s），真实 Docker clean rerun 29 passed、1094 deselected（26.10 s）。首次 Docker
+matrix 的 image-environment probe 曾单次 timeout；该用例随即单独通过，完整 29-test matrix 再跑全绿，
+未为基础设施抖动修改 application code。fixtures、likelihood、observation、validator evidence 与 custody
+均为 synthetic。完整验收见
+`F9_S6_VALIDATED_OBSERVATION_BELIEF_UPDATE_IMPLEMENTATION_REPORT_2026_08_15.md`。下一工程切片为
+F9-S7 independent K3 acceptance scorer；真实 validator authentication、instrument/measurement audit、
+transactional snapshot/directive persistence、reservation consumption、scheduler execution、adaptive loop 与
+real-domain calibration/replication 仍是发布门。
 
 ### F9-S7：K3 acceptance scorer
 
@@ -1227,6 +1300,136 @@ execution/validation、posterior update 与 replication 仍是发布门。
 - mechanism claim 只在替代解释被证据排除后升级；
 - negative result 导致 belief/model 范围真实变化；
 - 所有版本、尝试和停止理由持久化。
+
+**工程状态（2026-08-15）：独立 artifact scorer 已完成；scientific exit 未完成。**
+`K3AcceptanceScorerManifest` 与 policy 在首次 F9-S5 selection 前冻结，deterministic、无 tools、仅访问
+committed artifacts；scorer principal 与 persistence/terminal 以及 F9-S2–S6 全部 scientific/harness roles
+隔离。`aletheia.scheduler.k3_acceptance.score_k3` 直接委托同一个
+`aletheia.epistemics.acceptance.run_k3_acceptance`，不存在 scheduler 自己的第二套 verdict 公式。
+
+每个 `K3RoundEvidence` 绑定一个 committed ready-selected F9-S5 campaign、恰好一个 committed F9-S6
+validation attempt 与零/一个 update attempt；另有 committed `K3EvidenceLedger` 精确记录 selection/
+validation/update receipts、source/child snapshots 与 beliefs、source/revised hypothesis 和 prediction
+versions、revision directives/materializations、contradictions、mechanism-claim attempts 与 terminal action/
+reasons。scorer 在评分前从四类 content-addressed archive 物理读取、rehash、nested revalidate 并要求
+embedded == loaded；任何 missing/corrupt/noncanonical/rebound object 都 `blocked_execution`，不保留 partial
+verification/checks。
+
+scorer 机械派生 11 个 canonical checks：nonduplicate null/primary/alternative active set；prediction/
+selection-before-observation chronology；validated observation ↔ update attempt 一一对应；selected
+likelihood 对 high-belief rivals 的 pairwise TV discrimination；exact child-belief/round lineage；mechanism
+claim causal ceiling + nominal/all-sensitivity alternative exclusion；primary-negative append-only revision；
+contradiction exact persistence；attempt/snapshot/belief/hypothesis/prediction/directive 完整持久化；terminal
+action 与 F9-S6 world directive 一致；以及至少一个 successful validated update。spine/integrity failure →
+`rejected_integrity`；archive failure → `blocked_execution`；spine 完整但零 successful update 或 high-belief
+discrimination 不足 → `partial_no_scientific_exit`；只有两项 exit gates 加完整 spine 才 `accepted`，因此
+`0 valid == 0 updates` 不会真空 full pass。
+
+issued descriptive/association claim 不得超过 F9-S3 ceiling；issued mechanism claim 还要求 robust update、
+stable world set、target 在 nominal 和全部 likelihood sensitivity posteriors 均高于 floor、所有 competing
+explanations 均低于 exclusion ceiling，且 target 被 retain。安全 withholding 可通过，越权 issuance 是
+integrity failure。每个 narrow/retire directive 必须 materialize exact-parent child hypothesis；narrow 还必须
+为 exact source prediction set 创建 `version + 1` prediction children 并改变 observable/outcome/direction/
+discrimination/measurement 中至少一个可检验字段，只有改写 statement/rationale 而 prediction 不变会被拒绝。
+terminal action/reasons 必须在最终证据后持久化并绑定 update/world-revision；scorer 只验证，不执行 outward
+action。
+
+Focused F9-S7 26 tests（149.25 s）与截至 F9-S7 的完整 `tests/epistemics` 202 tests（295.32 s）已通过。
+最终全库非 Docker 1119 passed、1 skipped、29 deselected（652.80 s），真实 Docker 29 passed、1120
+deselected（26.78 s），本轮 Docker 首次执行即全绿。
+完整报告见
+`F9_S7_INDEPENDENT_K3_ACCEPTANCE_IMPLEMENTATION_REPORT_2026_08_15.md`。所有 fixtures 与 accepted chain
+仍为 synthetic；S7 evidence ledger 本身是 isolated content-addressed persistence。其 PostgreSQL/next-round
+集成缺口已由 F9-S8 完成；F9-S9 随后完成 frozen K3-hidden-world vs K2/headline protocol 与
+posterior-calibration/false-mechanism gate，F9-S10 又完成真实 Matbench
+alternatives→experiment→validated update chain。hidden-world 仍无 live/private passing evidence，且 materials
+v2 未通过 robust contraction，因此 F9.11 scientific exit 明确未完成。
+
+### F9-S8：Transactional world-model continuation
+
+**目标：** 把 F9-S6 child posterior、F9-S7 revision materialization 与下一轮因果/预测链之间的状态交接
+变成原子、可重放、fail-closed 的正式协议，而不是由 scheduler 复制内存对象。
+
+**工程状态（2026-08-15）：已完成；scientific exit 未完成。** 新增 content-addressed
+`WorldModelTransition`：精确绑定一个 successful committed update 与 exact revision materialization set。
+`narrow` 会在 materialized hypothesis/prediction children 之外，为所有绑定 assumption 创建 exact-parent
+child，并创建 probability-preserving `hypothesis_revision` belief child，最终必须重新通过 closed
+`WorldModelSnapshot` 验证；`retire` 或 hypothesis-set fork 不会伪装成普通续轮，而是返回
+`hypothesis_set_fork_required` 且无 next snapshot。
+
+Alembic `20260815_0005` 新增 immutable `epistemic_world_model_transitions`。source、posterior、standalone
+revised versions、revision-closed next snapshot、transition row 与唯一
+`f9_world_model_transition_committed` typed event 在同一个 PostgreSQL transaction 中写入；event 注入失败
+测试证明全部 child objects 与 transition 一起 rollback，相同 retry 复用原 event。physical loader 重验
+payload/index columns、所有 snapshots/version rows 与 exact event projection。
+
+`load_authorized_next_round_source` 只有在 physical transition 与 committed independent F9-S7 verdict 的
+final round、update receipt、persistence principal/timestamp、mandatory checks 与 terminal action 全部一致时，
+才返回 exact `CausalWorldModelSource`。`continue_research`/`seek_new_measurement` 可继续，stop/fork 不可继续。
+F9-S3 request/campaign 现在提交该 source 的完整 snapshot/hash；F9-S4–S7 从 causal campaign 的 effective
+snapshot 取数。测试已真正运行第二个 F9-S3 causal audit，并验证其 hypothesis-version bindings 来自 child，
+不是原始 F9-S2 prior。
+
+Focused F9-S8 12 tests、完整 `tests/epistemics` 214 tests、全库非 Docker 1131 passed/1 skipped/29
+deselected 与最终真实 Docker 29 passed/1132 deselected 已通过；完整 timing 与一次已确认瞬态的 Docker
+timeout 见 `F9_S8_TRANSACTIONAL_WORLD_MODEL_CONTINUATION_IMPLEMENTATION_REPORT_2026_08_15.md`。仍缺
+automatic retirement→F9-S2 replenishment、contradiction resolution、frozen hidden-world K3-vs-K2、真实
+materials chain 与 F10 registered execution，因此下一工程切片是 F9 scientific-exit ablation harness。
+
+### F9-S9：Frozen K3 hidden-world scientific-exit harness
+
+**工程状态（2026-08-15）：协议、执行器、判分与 gate 已完成；live scientific exit 仍 blocked。**
+新增独立三臂语义 `headline_metric` / `k2_single_hypothesis` /
+`k3_competing_hypotheses`，没有复用或篡改 F7 `ALETHEIA_FULL_K2` 的历史含义。三臂必须共享 exact base
+model、public task prompt、tools、budget、wall time、sampling、task/repeat slots 与 paired seeds；validation
+至少 4 tasks × 3 repeats，test 至少 4 tasks × 5 repeats并绑定 validation parent。blocked arm order、所有
+preregistered cells、infra retry lineage 与 no-best-of-N 都由 evaluator ledger 重建。
+
+DiscoveryWorld trusted scorer 现在从 hidden rule + authoritative action trace 机械派生并签入
+`scientific_exit_metrics`：wrong-explanation elimination、genuine discriminating trials、terminal multiclass
+Brier、top-label confidence/correctness、mechanism claim/false mechanism 与 truth-preserving hypothesis
+contraction。aggregate 物理重验 signed receipt、trace reproduction、metrics evidence hash 与 objective copy；
+旧 scorer、缺失 trace、漏 attempt、伪签名或 ledger drift 都是 integrity error，不会伪装成科学负结果。
+
+两个 primary paired effects 使用 task/repeat hierarchical bootstrap、exact sign test 与 Holm correction：
+K3-vs-K2 wrong-explanation elimination，以及 K3-vs-headline discriminating-trial rate；另以
+K3-vs-K2 scientific success 作 non-inferiority guard。pre-validation threshold policy 把 F7
+`calibration_error` 映射到 fixed-bin top-label ECE，把 `false_discovery_rate` 映射到 false-mechanism rate，
+并同时冻结 Brier、claim coverage、contraction、validity、practical effect、CI、multiplicity、intervention
+和 contamination 门槛。validation 必须先通过，acceptance config 必须早于 test。
+
+`scripts/real_k3_hidden_world_e2e.py` 已支持 protocol inspection、materialize、run、aggregate、
+freeze-acceptance 与 decide；`configs/evals/k3_hidden_world_v1.yaml` 的 hash-checked protocol 已冻结。当前
+命令诚实返回 `scientific_exit_readiness: blocked`：公开 DiscoveryWorld scorer-bound validation suite 已重新
+冻结但只能做 diagnostic；正式 exit 仍需 provider snapshot receipt、三臂 runner、private prospective hidden
+suite、passing F7 custody 与 live receipts。完整报告见
+`F9_S9_K3_HIDDEN_WORLD_SCIENTIFIC_EXIT_HARNESS_IMPLEMENTATION_REPORT_2026_08_15.md`。
+
+### F9-S10：Authenticated real-materials evidence chain
+
+**工程状态（2026-08-15）：真实链已完成；robust contraction 未通过，scientific exit 仍 blocked。**
+新增独立 materials K3 protocol：在 `matbench_expt_gap` 上同时维护“无实质压缩”、“未见化学体系产生额外
+外推压缩”和“随机森林通用收缩”三种解释。两个 observation-blind 候选实验共享 prior；EIG 机械选择
+unseen-system vs represented-system control（0.380368 nats），而不是 random-holdout-only（0.003148
+nats）。模型、chemical-system hash split、cluster-bootstrap、outcome rule、nominal/conservative/skeptical
+likelihood 与所有阈值均在加载确认数据前冻结。
+
+measurement 与 validation 使用不同本地 HMAC key/principal；validator 重新加载 4604 条真实材料记录、重建
+Magpie features、重新分区/训练/预测/自助法，只有 exact result match 才签发 validation。belief updater 只接受
+该 signed validation，完整重算三组 posterior；mechanism claim 因为只是 model diagnostic 而强制 withheld。
+retirement 必须在所有 likelihood-sensitivity scenario 中低于 floor，nominal-only retirement 已被拒绝。
+
+v1/seed 20260816 得到 unseen-specific outcome，但 audit 发现旧 revision 指令只看 nominal posterior；证据和
+对应源码保留，terminal revision 明确 superseded。v2 使用新 implementation 与未打开的 seed 20260817，得到
+unseen/control compression 0.2409/0.1948，delta 0.0461，95% cluster-bootstrap CI
+[-0.0140, 0.1145]，按 frozen rule 为 `generic_model_shrinkage`。H2 在所有 sensitivity scenario 中获胜，
+但最弱 effective-hypothesis-count contraction 仅 0.0134，低于 0.10 gate；最终 disposition 是
+`valid_update_without_robust_contraction`，不得挑选较有利的 v1 伪造 exit。
+
+完整实现与运行报告见
+`F9_S10_REAL_MATERIALS_EVIDENCE_CHAIN_IMPLEMENTATION_REPORT_2026_08_15.md`，operator runbook 见
+`benchmarks/K3_REAL_MATERIALS_EVIDENCE_CHAIN.md`。后续 F10 矩阵已按要求预注册并完整运行；见 F10-S1
+状态。不得继续试 seed 直到显著。
 
 ## F9.9 建议代码边界
 
@@ -1242,6 +1445,7 @@ aletheia/epistemics/
   revision.py
   acceptance.py
 aletheia/scheduler/k3_acceptance.py
+aletheia/evals/k3_hidden_world.py
 scripts/real_k3_hidden_world_e2e.py
 ~~~
 
@@ -1288,6 +1492,8 @@ tests/test_k3_acceptance.py
 - mechanism claim gate 与 alternative exclusion 绑定；
 - K2 历史 run 可读且不被重解释；
 - K3 scorer 可从事件流独立重建 verdict。
+- K3-vs-K2/headline hidden-world matrix、truth-relative endpoints、paired statistics 与
+  validation-before-test scientific-exit gate 可从 signed raw receipts 独立重建。
 
 **Scientific exit：**
 
@@ -1305,6 +1511,10 @@ conda run -n aletheia python scripts/real_k3_hidden_world_e2e.py \
   --repeats 5 \
   --frozen
 ~~~
+
+该命令当前只验证冻结协议并列出 live blockers；只有提供独立 runner、provider receipt、private prospective
+suite/custody 与 raw signed executions 后，`decide` 才可能给出 formal PASS。公开 DiscoveryWorld 即使 measured
+criteria 全过也必须是 BLOCKED，不能冒充 contamination-resistant scientific exit。
 
 ---
 
@@ -1530,6 +1740,24 @@ sample 和 synthesis batch 层级。
 - capability 不存在时为 unsupported，不做 fuzzy fallback；
 - 注册变更进入 run manifest。
 
+**工程状态（2026-08-15）：核心 registry 与真实五分区矩阵完成；capability 仍为 provisional。**
+新增 immutable semantic-version registry、exact observation-blind planner、四角色绑定、evidence/claim
+ceiling、controls/assumptions/failure/resource/nondeterminism/reproduction/safety/license contract，以及
+create-only CLI。confirmatory query 对 provisional capability 同时返回 `capability_not_registered` 与
+`evidence_level_insufficient`，不做 fuzzy fallback。
+
+首次冻结的 v1 manifest 被发现 output schema 与真实 executor result 不一致；该对象没有改写。v2.0.0 以
+exact v1 hash supersede，schema 内容变化现在强制 major bump，registry v2 同时保留两版。真实 replication
+plan 在任何测量前冻结 20260818–20260822 五个 seed、每槽一次 measurement、两次 exact recomputation、
+全槽保留和 4/5 consensus；同一公开数据集的 partitions 禁止做 joint Bayesian pseudo-replication。
+
+五槽结果是 2 unseen-specific、2 generic-shrinkage、1 ambiguous；五个 delta 全正，但只有两个
+cluster-bootstrap interval 严格高于零，故 frozen aggregate 为 `partition_sensitive`。第三轮 audit 又物理
+重算全部五槽并验证 signatures/update/aggregation。它是 exploratory capability demonstration，不是
+registered capability、external replication 或 mechanism evidence。完整报告见
+`F10_S1_CAPABILITY_REGISTRY_AND_REPLICATION_IMPLEMENTATION_REPORT_2026_08_15.md`，runbook 见
+`benchmarks/F10_MATERIALS_CAPABILITY_REPLICATION.md`。下一工程切片是 F10-S2 typed observation pipeline。
+
 ### F10-S2：Typed observation pipeline
 
 - raw output → parser → candidate observation → validator → validated observation；
@@ -1538,6 +1766,25 @@ sample 和 synthesis batch 层级。
 - invalid 与 negative 分开；
 - validated observation 才能进入 F9 update。
 
+**工程状态（2026-08-15）：通用 typed pipeline 与真实 materials exact-reexecution 已完成。**
+raw executor status/bytes、parser candidate、domain validator report 与 harness-derived admission
+成为四个独立、content-addressed 层；raw archive 每次 parse/validate/load 都检查 regular file、byte count 和
+SHA-256。successful candidate 必须有 quantity kind、UCUM literal、显式 uncertainty、sample count、method、
+typed conditions 与 raw lineage。unit/uncertainty/condition/sample generic checks 不能由 parser 或 domain
+validator 自行宣告通过。
+
+终态区分 `validated_positive` / `validated_negative` / `validated_inconclusive`、
+`rejected_invalid`、`blocked_execution`、`blocked_parser` 与 `blocked_validator`。F9 exploratory admission
+只允许 validated 且 purpose=measurement；confirmatory 还要求 registered capability 与足够 evidence level；
+exact reexecution/fixture 永远不能作为新 evidence 重复计数。
+
+materials manifest v2.1.0 追加 typed parser 与独立 raw reparser validator。已预声明重算 frozen slot-03 来
+验证 negative-result preservation：真实 model result exact match，typed delta/CI/conditions、protocol、outcome
+与 minimum-system checks 全部通过，终态为 `validated_negative`；因为 purpose 是 exact reexecution，两个 F9
+admission flags 都是 false。随后 physical raw/ledger replay 与第二次 model recomputation 通过。完整报告见
+`F10_S2_TYPED_OBSERVATION_PIPELINE_IMPLEMENTATION_REPORT_2026_08_15.md`，开发/运行说明见
+`capabilities/TYPED_OBSERVATION_PIPELINE.md`。下一工程切片是 F10-S3 materials identity and measurement。
+
 ### F10-S3：Materials identity and measurement
 
 - 规范 formula、structure、sample、batch；
@@ -1545,6 +1792,35 @@ sample 和 synthesis batch 层级。
 - 重复/冲突/测量条件检查；
 - split ledger 支持多层 identity；
 - 建立小型 gold fixtures。
+
+**工程状态（2026-08-15）：核心实现、gold fixtures 与真实数据能力审计已完成。** formula 现在在精确
+pymatgen 版本策略下归约为元素整数比；structure 同时绑定 licensed CIF 原始字节与 conventional-standard
+cell 投影，保留解析/有序性/空间群/体积质量信号；synthesis batch 与 physical sample 使用显式 issuer ID
+和来源记录，sample 必须绑定 exact batch，缺失 structure/batch/sample 必须逐层声明，禁止以 formula
+伪造 sample identity。
+
+multi-level split policy 可独立要求 chemical-system/formula/structure/batch/sample/record 隔离，record
+永远必选；missing identity 或任一 required level 跨 split 都机械产生 witness 并 fail closed。measurement
+audit 冻结 property/unit conversion/method/condition/identity/conflict policy，区分 failed/invalid、exact
+duplicate、same-sample repeat、condition-incompatible strata 与 unresolved conflict；冲突值不进入 pooling，
+within-sample/between-batch/between-source variance 在样本不足时显式 `unavailable`，不制造 noise floor。
+
+CC0 gold fixtures 证明同为 NaCl 的 rock-salt 与 CsCl-type formula identity 相同而 structure identity
+不同，并覆盖 sample leakage、missing identity、bad unit/condition、failed execution、duplicate/conflict、
+不兼容条件隔离、同 provenance 异值拒绝、三层 variance 和 derived-result tampering。F10-S3 新测试
+15 passed；materials + capability focused suite 43 passed。
+
+最终权威宿主环境 non-Docker 回归为 1180 passed、1 skipped、29 deselected（719.90 s）；沙箱首轮因
+localhost PostgreSQL/网络被 policy 拒绝而产生环境失败，不计为代码验收结果。
+
+真实 `matbench_expt_gap` 审计重哈希官方 37,200-byte gzip 并重算 4,604 行：得到 4,601 个 normalized
+formula、3,705 个 chemical system 和三组/六行 unresolved same-composition collisions，最大 band-gap
+range 2.30 eV。因为原表缺 structure/sample/batch/uncertainty/method/conditions/row-source，unit 仅为
+dataset metadata，且 dataset-specific licence 未由 Matminer metadata 声明，终态诚实保持
+`composition_benchmark_only`；碰撞不能被武断判为 duplicate、polymorph、repeat 或 conflict。完整报告见
+`F10_S3_MATERIALS_IDENTITY_AND_MEASUREMENT_AUDIT_IMPLEMENTATION_REPORT_2026_08_15.md`，开发/审计说明见
+`capabilities/MATERIALS_IDENTITY_AND_MEASUREMENT_AUDIT.md`。下一工程切片是 F10-S4 structure-aware
+experiment。
 
 ### F10-S4：Structure-aware experiment
 
@@ -1555,6 +1831,30 @@ sample 和 synthesis batch 层级。
 - 锁定 internal/external evaluation；
 - 避免因模型容量/训练预算不同产生伪因果结论。
 
+**工程状态（2026-08-15）：结构质量 gate、匹配对照、真实同数据集锁定评估与物理重放完成。**
+新增 primitive-standard structure projection、ordered/site/volume/overlap/lattice/symmetry 全行 gate、
+species-blind 27 维 geometry receipt，以及 source/formula/chemical-system/structure/feature 的完整 hash
+lineage。实现 commitment 同时覆盖 experiment、structure、identity、Magpie 四个源码文件，并在 protocol
+冻结 Matminer/NumPy/pandas/pymatgen/scikit-learn/spglib 六个包版本。
+
+真实 `matbench_phonons` protocol 在任何 fit 前冻结 459,672-byte gzip、1,265 行、CC0 evidence、
+60/20/20 chemical-system-disjoint split、512-tree fixed RF、三臂、within-role permutation、5,000 次
+chemical-system cluster bootstrap 和 5% relative-MAE floor；plan 明确记录 fit count 0。三臂为
+composition-only 132 维、composition + aligned structure 159 维、composition + permuted structure
+control 159 维，后两者模型预算与 feature capacity 精确相同，无 tuning 或 best-of-N。
+
+759/253/253 行及 650/216/216 个 chemical systems 完全隔离。internal/locked 的 aligned MAE 分别为
+47.207/45.666 `cm-1`，matched control 为 98.750/87.530；relative improvement 为 52.20%/47.83%，
+cluster-bootstrap 95% CI 分别 `[33.393, 73.451]` 与 `[22.414, 68.321]`，机械终态
+`robust_aligned_structure_signal`。全数据/feature/split/model/bootstrap physical replay 精确复现 result hash
+`f1384600dfbc8289e6643aae13e6dbb16b0b429c89e7325bd83c88cd8522bb29`。
+
+结论只支持该 frozen retrospective DFPT task 上 aligned structure 的增量预测价值；locked role 仍来自同一
+公开数据集，不是 external replication、prospective blind result、intervention、causal 或 mechanism
+evidence。独立数据/实现 confirmation 保留为 F10-S6 release gate。完整报告见
+`F10_S4_STRUCTURE_AWARE_EXPERIMENT_IMPLEMENTATION_REPORT_2026_08_15.md`，运行说明见
+`capabilities/STRUCTURE_AWARE_MATERIALS_EXPERIMENT.md`。下一工程切片是 F10-S5 simulation capability。
+
 ### F10-S5：Simulation capability
 
 - 完成 ADR；
@@ -1563,6 +1863,37 @@ sample 和 synthesis batch 层级。
 - job receipt、checkpoint、timeout 和 quota；
 - parser/validator 独立于 agent；
 - 失败原因 taxonomy。
+
+**工程状态（2026-08-15）：digest-pinned 经典势模拟边界与 reference calibration 已完成；能力保持
+provisional。** ADR 选择 ASE workflow + pure-Python EMT 作为第一条便宜、确定性的工程校准路径，而不是把
+EMT 冒充 DFT。最终 `linux/arm64` image ID、base digest、ASE/NumPy/SciPy 版本、worker/host/parser/validator
+源码、exact Cu job、五点 ±4% EOS、quality/gold policy 与 claim ceiling 全部冻结；容器使用 no-network、
+read-only root、drop ALL capabilities、no-new-privileges、non-root、32 PIDs、256 MiB、1 CPU、10 s timeout，
+并限制 worker 输出为 allowlisted regular files、最多四个/8 MiB。
+
+worker 每次 energy evaluation 后 atomic checkpoint，终态保留 input/checkpoint/result 或 failure、stdout/
+stderr、Docker state 与 exact cleanup receipt。raw → parse → validate → bundle 分层重新打开
+content-addressed bytes；validator 机械重算 execution/parse、完整点数、单调 volume、bracketing、interior
+minimum、residual、bulk modulus、runtime、calculator/scan 与 exact gold 共 11 项。timeout、quota、
+infrastructure、unsupported element、parse corruption、bad fit 和 gold mismatch 都保持 invalid/blocked，
+不能伪装成 physical negative。
+
+首次 formal v1 因 macOS system temp 未共享进 Colima 而 exit 125；failure bundle 未被覆盖。v2 exact-hash
+supersede v1，只把 scratch 移到 workspace-backed archive parent。两次 distinct container attempts 均得到
+`validated_classical_reference`，Cu fcc conventional lattice 为 3.589824595554312 Å（frozen ASE reference
+3.589825 Å），result payload 精确相同；reproduction receipt 同时声明 same image/implementation repetition
+不是 independent replication。
+
+新 manifest `materials.simulation.ase_emt_eos_reference@1.0.0` 已进入 append-only registry v4，但所有角色
+仍标记 agent-authored，parser/validator 共用一个源码模块且没有 independent promotion review，因此默认
+discovery 拒绝、只有显式 allow-provisional 才可探索使用。它不是 registered capability、DFT、experimental、
+transferability、causal 或 mechanism evidence。simulation focused 12 tests、materials + capabilities 64 tests
+与最终全库 non-Docker `1201 passed, 1 skipped, 29 deselected`（731.80 s）通过；两个正式 v2 bundle 均从
+content-addressed raw archive exact replay。完整报告见
+`F10_S5_REPRODUCIBLE_SIMULATION_CAPABILITY_IMPLEMENTATION_REPORT_2026_08_15.md`，运行说明见
+`capabilities/ASE_EMT_REFERENCE_SIMULATION.md`。F10-S5 core engineering slice 完成；独立 validator/reviewer、
+OCI/SBOM/signature 与 DFT successor 保持 promotion gates，下一工程切片是 F10-S6 mechanistic campaign
+template。
 
 ### F10-S6：Mechanistic campaign template
 
@@ -1573,6 +1904,45 @@ sample 和 synthesis batch 层级。
 - fresh confirmation；
 - external dataset 或 independent implementation；
 - 输出完整 evidence bundle。
+
+**工程状态（2026-08-16）：template 已完成；真实 execution/scientific release 均 blocked。**
+新增 `MechanisticCampaignProtocol` 将 exact F8 direction、F9 competing-hypothesis/causal campaign、至少
+两个 unique probabilistic prediction campaigns、frozen capability registry snapshot、independently reviewed
+C1–C4 qualifications/slots、fresh reservation、independence kind、budget 与 robust decision policy 关闭为一个
+pre-observation lineage。每个
+prediction/experiment namespace 只能被一个 slot 使用；至少需要两个 distinct families 且包含 C3/C4；slot
+manifest 必须精确存在于 registry，implementation identity 必须等于 frozen executor。execution authorization
+与 mechanism release 分离，因此 provisional capability 可做 exploratory execution，但不能自行升级主张。
+generic action enum 不再自动获得 C1–C4 身份；`MechanisticCapabilityQualification` 必须 exact-bind manifest、
+family、compatible action、evidence hash、role-independent domain reviewer 与 pre-plan freeze time。
+
+每个结果必须通过 F10-S2 committed raw→parse→validate pipeline，run 在 protocol freeze 后开始且 exact-bind
+protocol/input/manifest。另一个 pre-frozen、role-independent mapper 只能映射到对应 F9 outcome schema 已承诺的
+bin。scorer 分别在 nominal 与全部 likelihood sensitivity scenarios 中要求同一个 unique winner 和最小概率
+margin；ties、low margin 或 winner sensitivity 是 valid-but-inconclusive，lineage/validation failure 才是
+invalid。跨 slot 只检查 robust winner concordance，`joint_posterior_computed=false`，不通过相乘 correlated
+likelihood 制造 pseudo-replication。最终 ceiling 同时受 F9 causal ceiling、registered capability claim types、
+confirmatory admission 与 fresh/independent release gates 约束；bundle validation 全量重算 assessments/decision。
+
+13 个 focused tests 构建了完整但明确 synthetic 的
+F8→F9→registered + family-qualified C2/C4→typed observations→fresh independent-implementation bundle，
+并覆盖 out-of-registry manifest、same-family、provisional promotion、
+low-margin、conflicting winner、preregistration/outcome-schema rebinding 与 decision tamper。该 fixture 的
+`mechanism_candidate_supported` 只证明工程合同，绝非材料科学结果。
+Materials + capabilities 交叉回归为 77 passed；最终全库 non-Docker 回归为 1214 passed、1 skipped、
+29 deselected、2611 个既有 spglib deprecation warnings（814.82 s）。本切片没有新增 container executor，
+因此没有把 F10-S5 的同实现 ASE/EMT runs 伪计为 fresh/independent S6 confirmation。
+
+当前 registry v4 的 machine-readable audit hash 为
+`d7fe32533ad2ea9853c35a56555d816f27b489e532a47cf6a29a10c7a89d003b`，明确返回
+`execution_ready=false`、`scientific_release_ready=false`：缺 production F8 direction、ready F9
+hypothesis/causal campaigns、任何 independently reviewed family qualification、两个 registered confirmatory
+families、registered C3/C4、mechanism-capable claim contract、fresh reservation 与 independent confirmation。
+完整报告见
+`F10_S6_MECHANISTIC_CAMPAIGN_TEMPLATE_IMPLEMENTATION_REPORT_2026_08_16.md`，操作说明见
+`capabilities/MECHANISTIC_CAMPAIGN_TEMPLATE.md`，架构决策见 ADR 0031。下一工程切片是 F10-S7 signed
+capability authoring/promotion boundary；F10 scientific exit 仍需真实 prospective quest、fresh/independent
+执行、hypothesis-set change、domain audit 与 private-baseline improvement。
 
 ### F10-S7：Capability authoring pipeline
 

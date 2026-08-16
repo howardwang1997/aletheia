@@ -1,0 +1,9 @@
+{
+  "schema_name": "aletheia.capability_minimum_sample_evidence",
+  "schema_version": 1,
+  "capability_id": "materials.band_gap.range_compression",
+  "sampling_unit": "chemical_system",
+  "minimum_count_per_comparison": 100,
+  "rationale": "A fixed engineering floor prevents tiny group counts from entering the registered replication matrix. It is not a formal prospective power calculation and therefore cannot promote the provisional capability.",
+  "status": "engineering_floor_not_power_calibration"
+}

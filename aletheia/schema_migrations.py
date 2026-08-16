@@ -42,6 +42,7 @@ POST_BASELINE_TABLES = frozenset(
         "epistemic_belief_states",
         "epistemic_belief_state_members",
         "epistemic_world_model_snapshots",
+        "epistemic_world_model_transitions",
     }
 )
 

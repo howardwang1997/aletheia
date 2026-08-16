@@ -21,7 +21,7 @@ from aletheia.epistemics.hypotheses import (
     HypothesisGenerationCampaign,
     HypothesisGenerationDisposition,
 )
-from aletheia.epistemics.schemas import EpistemicModel, HypothesisRole
+from aletheia.epistemics.schemas import EpistemicModel, HypothesisRole, WorldModelSnapshot
 from aletheia.knowledge.response_archive import (
     ArchivedKnowledgeLedger,
     ContentAddressedResponseArchive,
@@ -430,10 +430,14 @@ class CausalContractAuthorManifest(EpistemicModel):
             raise ValueError("causal author uses another output schema")
         if self.tool_names:
             raise ValueError("causal author cannot receive tool authority")
-        model_fields = self.instruction_sha256 is not None and self.model_identity_sha256 is not None
+        model_fields = (
+            self.instruction_sha256 is not None and self.model_identity_sha256 is not None
+        )
         if self.runtime is CausalAdapterRuntime.MODEL:
             if not model_fields or self.transport_policy != "model_transport_only":
-                raise ValueError("model causal author requires frozen instruction/model and transport")
+                raise ValueError(
+                    "model causal author requires frozen instruction/model and transport"
+                )
         elif (
             self.instruction_sha256 is not None
             or self.model_identity_sha256 is not None
@@ -492,9 +496,7 @@ class CausalAssumptionReviewBatch(EpistemicModel):
         return content_sha256(self)
 
 
-CAUSAL_REVIEW_OUTPUT_SCHEMA_SHA256 = content_sha256(
-    CausalAssumptionReviewBatch.model_json_schema()
-)
+CAUSAL_REVIEW_OUTPUT_SCHEMA_SHA256 = content_sha256(CausalAssumptionReviewBatch.model_json_schema())
 
 
 class CausalAssumptionReviewerManifest(EpistemicModel):
@@ -519,7 +521,9 @@ class CausalAssumptionReviewerManifest(EpistemicModel):
             raise ValueError("causal-assumption reviewer uses another output schema")
         if self.tool_names:
             raise ValueError("causal-assumption reviewer cannot receive tool authority")
-        model_fields = self.instruction_sha256 is not None and self.model_identity_sha256 is not None
+        model_fields = (
+            self.instruction_sha256 is not None and self.model_identity_sha256 is not None
+        )
         if self.runtime is CausalAdapterRuntime.MODEL:
             if not model_fields or self.transport_policy != "model_transport_only":
                 raise ValueError(
@@ -530,7 +534,9 @@ class CausalAssumptionReviewerManifest(EpistemicModel):
             or self.model_identity_sha256 is not None
             or self.transport_policy != "none"
         ):
-            raise ValueError("deterministic causal-assumption reviewer cannot declare model transport")
+            raise ValueError(
+                "deterministic causal-assumption reviewer cannot declare model transport"
+            )
         return self
 
     @property
@@ -564,10 +570,42 @@ class CausalHypothesisBinding(EpistemicModel):
     role: HypothesisRole
 
 
+class CausalWorldModelSource(EpistemicModel):
+    """Exact world-model snapshot authorized for this causal-planning round."""
+
+    schema_version: Literal[1] = 1
+    snapshot: WorldModelSnapshot
+    transition_sha256: str | None = Field(default=None, pattern=_SHA256_PATTERN)
+    acceptance_receipt_sha256: str | None = Field(default=None, pattern=_SHA256_PATTERN)
+    authorized_at: AwareDatetime | None = None
+
+    @model_validator(mode="after")
+    def _continuation_authority_is_all_or_nothing(self) -> "CausalWorldModelSource":
+        continuation = (
+            self.transition_sha256,
+            self.acceptance_receipt_sha256,
+            self.authorized_at,
+        )
+        if any(value is not None for value in continuation) and not all(
+            value is not None for value in continuation
+        ):
+            raise ValueError(
+                "continued world-model source requires transition, acceptance, and time"
+            )
+        if self.authorized_at is not None and self.authorized_at < self.snapshot.frozen_at:
+            raise ValueError("continued world-model authorization predates its snapshot")
+        return self
+
+    @property
+    def source_sha256(self) -> str:
+        return content_sha256(self)
+
+
 class CausalContractRequest(EpistemicModel):
     schema_version: Literal[1] = 1
     request_id: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{1,191}$")
     source_campaign_sha256: str = Field(pattern=_SHA256_PATTERN)
+    world_model_source_sha256: str = Field(pattern=_SHA256_PATTERN)
     direction_gate_sha256: str = Field(pattern=_SHA256_PATTERN)
     world_model_snapshot_sha256: str = Field(pattern=_SHA256_PATTERN)
     question_sha256: str = Field(pattern=_SHA256_PATTERN)
@@ -649,6 +687,7 @@ class CausalAuditCampaign(EpistemicModel):
     schema_version: Literal[1] = 1
     campaign_id: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{1,191}$")
     source_campaign: HypothesisGenerationCampaign
+    world_model_source: CausalWorldModelSource
     policy: CausalAuditPolicy
     author_manifest: CausalContractAuthorManifest
     reviewer_manifest: CausalAssumptionReviewerManifest
@@ -669,6 +708,7 @@ class CausalAuditCampaign(EpistemicModel):
     def _campaign_is_mechanically_derived(self) -> "CausalAuditCampaign":
         _validate_request_bindings(
             source_campaign=self.source_campaign,
+            world_model_source=self.world_model_source,
             policy=self.policy,
             author_manifest=self.author_manifest,
             reviewer_manifest=self.reviewer_manifest,
@@ -694,12 +734,15 @@ class CausalAuditCampaign(EpistemicModel):
                 )
                 expected_audits, structural_blockers = _derive_static_audits(
                     source_campaign=self.source_campaign,
+                    world_model_source=self.world_model_source,
                     request=self.request,
                     policy=self.policy,
                     contract=self.contract_batch.contract,
                 )
                 if structural_blockers:
-                    raise ValueError("reviewer failure cannot follow a structurally blocked contract")
+                    raise ValueError(
+                        "reviewer failure cannot follow a structurally blocked contract"
+                    )
                 if self.failure.occurred_at < self.contract_batch.completed_at:
                     raise ValueError("causal reviewer failure predates retained contract")
             expected_blockers = (f"execution_failure:{self.failure.kind.value}",)
@@ -728,6 +771,7 @@ class CausalAuditCampaign(EpistemicModel):
         )
         audits, structural_blockers = _derive_static_audits(
             source_campaign=self.source_campaign,
+            world_model_source=self.world_model_source,
             request=self.request,
             policy=self.policy,
             contract=self.contract_batch.contract,
@@ -742,7 +786,9 @@ class CausalAuditCampaign(EpistemicModel):
                 prediction_planning_authorized=False,
             )
             if self.review_batch is not None:
-                raise ValueError("structurally blocked causal contract cannot have assumption review")
+                raise ValueError(
+                    "structurally blocked causal contract cannot have assumption review"
+                )
         else:
             if self.review_batch is None:
                 raise ValueError("structurally valid causal contract requires complete review")
@@ -778,6 +824,10 @@ class CausalAuditCampaign(EpistemicModel):
         return self
 
     @property
+    def world_model_snapshot(self) -> WorldModelSnapshot:
+        return self.world_model_source.snapshot
+
+    @property
     def campaign_sha256(self) -> str:
         return content_sha256(self)
 
@@ -808,6 +858,7 @@ class CausalContractAuthorAdapter(Protocol):
         *,
         request: CausalContractRequest,
         source_campaign: HypothesisGenerationCampaign,
+        world_model_source: CausalWorldModelSource,
         claims: tuple[AtomicClaim, ...],
     ) -> object: ...
 
@@ -851,10 +902,9 @@ def _validate_independence(
 
 
 def _hypothesis_bindings(
-    source_campaign: HypothesisGenerationCampaign,
+    world_model_source: CausalWorldModelSource,
 ) -> tuple[CausalHypothesisBinding, ...]:
-    snapshot = source_campaign.world_model_snapshot
-    assert snapshot is not None
+    snapshot = world_model_source.snapshot
     return tuple(
         CausalHypothesisBinding(
             hypothesis_id=item.hypothesis_id,
@@ -868,6 +918,7 @@ def _hypothesis_bindings(
 def _validate_request_bindings(
     *,
     source_campaign: HypothesisGenerationCampaign,
+    world_model_source: CausalWorldModelSource,
     policy: CausalAuditPolicy,
     author_manifest: CausalContractAuthorManifest,
     reviewer_manifest: CausalAssumptionReviewerManifest,
@@ -889,22 +940,37 @@ def _validate_request_bindings(
         or policy.maximum_assumptions > author_manifest.maximum_assumptions
     ):
         raise ValueError("causal-audit policy exceeds frozen author capacity")
+    base_snapshot = source_campaign.world_model_snapshot
+    snapshot = world_model_source.snapshot
+    if world_model_source.transition_sha256 is None:
+        if snapshot != base_snapshot:
+            raise ValueError("initial causal round changed its F9-S2 world-model snapshot")
+    else:
+        if (
+            snapshot.question != base_snapshot.question
+            or snapshot.question.run_id != base_snapshot.question.run_id
+            or snapshot.belief_state.belief_lineage_id
+            != base_snapshot.belief_state.belief_lineage_id
+            or snapshot.belief_state.version <= base_snapshot.belief_state.version
+        ):
+            raise ValueError("continued causal round changed its world-model lineage")
     for frozen_at, label in (
         (policy.frozen_at, "causal policy"),
         (author_manifest.frozen_at, "causal author manifest"),
         (reviewer_manifest.frozen_at, "causal reviewer manifest"),
         (source_campaign.generated_at, "source hypothesis campaign"),
+        (snapshot.frozen_at, "world-model source"),
     ):
         if frozen_at > request.issued_at:
             raise ValueError(f"{label} must freeze before the causal request")
-    snapshot = source_campaign.world_model_snapshot
     gate = source_campaign.direction_gate
     expected = {
         "source_campaign_sha256": source_campaign.campaign_sha256,
+        "world_model_source_sha256": world_model_source.source_sha256,
         "direction_gate_sha256": gate.gate_sha256,
         "world_model_snapshot_sha256": snapshot.snapshot_sha256,
         "question_sha256": snapshot.question.question_sha256,
-        "hypothesis_bindings": _hypothesis_bindings(source_campaign),
+        "hypothesis_bindings": _hypothesis_bindings(world_model_source),
         "input_claim_sha256s": source_campaign.request.input_claim_sha256s,
         "accepted_prior_art_relation_sha256s": (
             source_campaign.request.accepted_prior_art_relation_sha256s
@@ -922,6 +988,7 @@ def build_causal_contract_request(
     *,
     request_id: str,
     source_campaign: HypothesisGenerationCampaign,
+    world_model_source: CausalWorldModelSource | None = None,
     proposed_evidence_kind: CausalEvidenceKind,
     policy: CausalAuditPolicy,
     author_manifest: CausalContractAuthorManifest,
@@ -933,13 +1000,19 @@ def build_causal_contract_request(
         or source_campaign.world_model_snapshot is None
     ):
         raise ValueError("causal contract requires a ready F9-S2 campaign")
+    assert source_campaign.world_model_snapshot is not None
+    world_model_source = world_model_source or CausalWorldModelSource(
+        snapshot=source_campaign.world_model_snapshot
+    )
+    snapshot = world_model_source.snapshot
     request = CausalContractRequest(
         request_id=request_id,
         source_campaign_sha256=source_campaign.campaign_sha256,
+        world_model_source_sha256=world_model_source.source_sha256,
         direction_gate_sha256=source_campaign.direction_gate.gate_sha256,
-        world_model_snapshot_sha256=source_campaign.world_model_snapshot.snapshot_sha256,
-        question_sha256=source_campaign.world_model_snapshot.question.question_sha256,
-        hypothesis_bindings=_hypothesis_bindings(source_campaign),
+        world_model_snapshot_sha256=snapshot.snapshot_sha256,
+        question_sha256=snapshot.question.question_sha256,
+        hypothesis_bindings=_hypothesis_bindings(world_model_source),
         input_claim_sha256s=source_campaign.request.input_claim_sha256s,
         accepted_prior_art_relation_sha256s=(
             source_campaign.request.accepted_prior_art_relation_sha256s
@@ -952,6 +1025,7 @@ def build_causal_contract_request(
     )
     _validate_request_bindings(
         source_campaign=source_campaign,
+        world_model_source=world_model_source,
         policy=policy,
         author_manifest=author_manifest,
         reviewer_manifest=reviewer_manifest,
@@ -980,9 +1054,7 @@ def _validate_contract_batch(
     contract = batch.contract
     if len(contract.variables) > min(policy.maximum_variables, manifest.maximum_variables):
         raise ValueError("causal contract exceeds variable capacity")
-    if len(contract.assumptions) > min(
-        policy.maximum_assumptions, manifest.maximum_assumptions
-    ):
+    if len(contract.assumptions) > min(policy.maximum_assumptions, manifest.maximum_assumptions):
         raise ValueError("causal contract exceeds assumption capacity")
     relation_limit = min(
         policy.maximum_edges_per_hypothesis,
@@ -1160,12 +1232,12 @@ def _assumption_applies(
 def _derive_static_audits(
     *,
     source_campaign: HypothesisGenerationCampaign,
+    world_model_source: CausalWorldModelSource,
     request: CausalContractRequest,
     policy: CausalAuditPolicy,
     contract: CausalContract,
 ) -> tuple[tuple[HypothesisGraphAudit, ...], tuple[str, ...]]:
-    snapshot = source_campaign.world_model_snapshot
-    assert snapshot is not None
+    snapshot = world_model_source.snapshot
     hypotheses = {item.hypothesis_id: item for item in snapshot.hypotheses}
     bindings = {item.hypothesis_id: item for item in request.hypothesis_bindings}
     variables = {item.variable_id: item for item in contract.variables}
@@ -1325,9 +1397,13 @@ def _derive_static_audits(
         directed_pairs: list[tuple[str, str]] = []
         for edge in graph.edges:
             if edge.source_variable_id not in variables or edge.target_variable_id not in variables:
-                graph_blockers.append(f"edge_undefined_variable:{graph.hypothesis_id}:{edge.edge_id}")
+                graph_blockers.append(
+                    f"edge_undefined_variable:{graph.hypothesis_id}:{edge.edge_id}"
+                )
             if set(edge.assumption_ids) - set(assumptions):
-                graph_blockers.append(f"edge_unknown_assumption:{graph.hypothesis_id}:{edge.edge_id}")
+                graph_blockers.append(
+                    f"edge_unknown_assumption:{graph.hypothesis_id}:{edge.edge_id}"
+                )
             elif any(
                 graph.hypothesis_id not in assumptions[item].applies_to_hypothesis_ids
                 for item in edge.assumption_ids
@@ -1336,7 +1412,9 @@ def _derive_static_audits(
                     f"edge_assumption_wrong_hypothesis:{graph.hypothesis_id}:{edge.edge_id}"
                 )
             if set(edge.grounding_claim_sha256s) - known_claim_ids:
-                graph_blockers.append(f"edge_unknown_grounding:{graph.hypothesis_id}:{edge.edge_id}")
+                graph_blockers.append(
+                    f"edge_unknown_grounding:{graph.hypothesis_id}:{edge.edge_id}"
+                )
             directed_pairs.append((edge.source_variable_id, edge.target_variable_id))
         for confounder in graph.latent_confounders:
             variable = variables.get(confounder.variable_id)
@@ -1378,11 +1456,16 @@ def _derive_static_audits(
                 if hypothesis.role is HypothesisRole.NULL and causal_path:
                     graph_blockers.append(f"null_contains_causal_effect_path:{graph.hypothesis_id}")
                 if hypothesis.role is not HypothesisRole.NULL and not causal_path:
-                    graph_blockers.append(f"mechanism_lacks_causal_effect_path:{graph.hypothesis_id}")
+                    graph_blockers.append(
+                        f"mechanism_lacks_causal_effect_path:{graph.hypothesis_id}"
+                    )
 
         backdoor_status = BackdoorAuditStatus.INVALID_GRAPH
         open_path: tuple[str, ...] = ()
-        if contract.estimand.identification_strategy is not IdentificationStrategy.BACKDOOR_ADJUSTMENT:
+        if (
+            contract.estimand.identification_strategy
+            is not IdentificationStrategy.BACKDOOR_ADJUSTMENT
+        ):
             backdoor_status = BackdoorAuditStatus.UNSUPPORTED_STRATEGY
         elif not graph_blockers and exposure is not None and outcome is not None:
             invalid_adjustment = False
@@ -1404,8 +1487,7 @@ def _derive_static_audits(
             if invalid_adjustment:
                 backdoor_status = BackdoorAuditStatus.INVALID_ADJUSTMENT
             elif any(
-                item.analysis_conditions_on_selection
-                for item in contract.selection_mechanisms
+                item.analysis_conditions_on_selection for item in contract.selection_mechanisms
             ):
                 # Selection recoverability needs a selection diagram/transport argument.  Treating
                 # selection as an ordinary adjustment variable would overclaim the back-door test.
@@ -1457,9 +1539,7 @@ def _validate_review_batch(
         raise ValueError("causal-assumption review predates its contract")
     if received_at is not None and batch.completed_at > received_at:
         raise ValueError("causal-assumption review claims a future completion time")
-    assumptions = {
-        item.assumption_id: item for item in contract_batch.contract.assumptions
-    }
+    assumptions = {item.assumption_id: item for item in contract_batch.contract.assumptions}
     actual = [item.assumption_id for item in batch.reviews]
     if actual != sorted(assumptions):
         raise ValueError("reviewer must adjudicate every identification assumption exactly once")
@@ -1594,6 +1674,7 @@ async def run_causal_identification_audit(
     *,
     campaign_id: str,
     source_campaign: HypothesisGenerationCampaign,
+    world_model_source: CausalWorldModelSource | None = None,
     policy: CausalAuditPolicy,
     request: CausalContractRequest,
     author: CausalContractAuthorAdapter,
@@ -1603,12 +1684,18 @@ async def run_causal_identification_audit(
     """Run proposal, structural audit, and complete independent assumption review."""
 
     clock = clock or (lambda: datetime.now(timezone.utc))
+    if source_campaign.world_model_snapshot is None:
+        raise ValueError("causal audit requires a ready F9-S2 world-model snapshot")
+    world_model_source = world_model_source or CausalWorldModelSource(
+        snapshot=source_campaign.world_model_snapshot
+    )
     if author.manifest.manifest_sha256 != request.author_manifest_sha256:
         raise ValueError("runtime causal author differs from the frozen request")
     if reviewer.manifest.manifest_sha256 != request.reviewer_manifest_sha256:
         raise ValueError("runtime causal reviewer differs from the frozen request")
     _validate_request_bindings(
         source_campaign=source_campaign,
+        world_model_source=world_model_source,
         policy=policy,
         author_manifest=author.manifest,
         reviewer_manifest=reviewer.manifest,
@@ -1619,6 +1706,7 @@ async def run_causal_identification_audit(
         raw_contract = await author.author(
             request=request,
             source_campaign=source_campaign,
+            world_model_source=world_model_source,
             claims=claims,
         )
     except Exception as exc:  # noqa: BLE001 - explicit sanitized failure artifact
@@ -1630,6 +1718,7 @@ async def run_causal_identification_audit(
         return CausalAuditCampaign(
             campaign_id=campaign_id,
             source_campaign=source_campaign,
+            world_model_source=world_model_source,
             policy=policy,
             author_manifest=author.manifest,
             reviewer_manifest=reviewer.manifest,
@@ -1667,6 +1756,7 @@ async def run_causal_identification_audit(
         return CausalAuditCampaign(
             campaign_id=campaign_id,
             source_campaign=source_campaign,
+            world_model_source=world_model_source,
             policy=policy,
             author_manifest=author.manifest,
             reviewer_manifest=reviewer.manifest,
@@ -1682,6 +1772,7 @@ async def run_causal_identification_audit(
         )
     graph_audits, structural_blockers = _derive_static_audits(
         source_campaign=source_campaign,
+        world_model_source=world_model_source,
         request=request,
         policy=policy,
         contract=contract_batch.contract,
@@ -1690,6 +1781,7 @@ async def run_causal_identification_audit(
         return CausalAuditCampaign(
             campaign_id=campaign_id,
             source_campaign=source_campaign,
+            world_model_source=world_model_source,
             policy=policy,
             author_manifest=author.manifest,
             reviewer_manifest=reviewer.manifest,
@@ -1717,6 +1809,7 @@ async def run_causal_identification_audit(
         return CausalAuditCampaign(
             campaign_id=campaign_id,
             source_campaign=source_campaign,
+            world_model_source=world_model_source,
             policy=policy,
             author_manifest=author.manifest,
             reviewer_manifest=reviewer.manifest,
@@ -1755,6 +1848,7 @@ async def run_causal_identification_audit(
         return CausalAuditCampaign(
             campaign_id=campaign_id,
             source_campaign=source_campaign,
+            world_model_source=world_model_source,
             policy=policy,
             author_manifest=author.manifest,
             reviewer_manifest=reviewer.manifest,
@@ -1779,6 +1873,7 @@ async def run_causal_identification_audit(
     return CausalAuditCampaign(
         campaign_id=campaign_id,
         source_campaign=source_campaign,
+        world_model_source=world_model_source,
         policy=policy,
         author_manifest=author.manifest,
         reviewer_manifest=reviewer.manifest,
@@ -1855,6 +1950,7 @@ __all__ = [
     "CausalValueKind",
     "CausalVariable",
     "CausalVariableRole",
+    "CausalWorldModelSource",
     "CommittedCausalAuditCampaign",
     "HypothesisCausalGraph",
     "HypothesisGraphAudit",

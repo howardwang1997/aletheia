@@ -73,9 +73,7 @@ def build_causal_manifests(
         adapter_code_sha256=digest("f9s3:reviewer-adapter-code"),
         parser_sha256=digest("f9s3:reviewer-parser"),
         output_schema_sha256=e.CAUSAL_REVIEW_OUTPUT_SCHEMA_SHA256,
-        reviewer_principal_sha256=(
-            reviewer_principal or digest("f9s3:reviewer-principal")
-        ),
+        reviewer_principal_sha256=(reviewer_principal or digest("f9s3:reviewer-principal")),
         transport_policy="none",
         frozen_at=frozen_at,
     )
@@ -130,16 +128,23 @@ def _edge(
 def build_causal_contract_batch(
     *,
     source_campaign: e.HypothesisGenerationCampaign,
+    world_model_source: e.CausalWorldModelSource | None = None,
     request: e.CausalContractRequest,
     author_manifest: e.CausalContractAuthorManifest,
     latent_confounding: bool = False,
     omit_batch_adjustment: bool = False,
     strategy: e.IdentificationStrategy = e.IdentificationStrategy.BACKDOOR_ADJUSTMENT,
 ) -> e.CausalContractBatch:
-    snapshot = source_campaign.world_model_snapshot
+    snapshot = (
+        world_model_source.snapshot
+        if world_model_source is not None
+        else source_campaign.world_model_snapshot
+    )
     assert snapshot is not None
     candidate = source_campaign.request.candidate_claim_sha256
-    accepted = source_campaign.direction_gate.novelty_decision.coverage.prior_art_resolution.accepted
+    accepted = (
+        source_campaign.direction_gate.novelty_decision.coverage.prior_art_resolution.accepted
+    )
     prior = next(
         item.relation.prior_claim_sha256
         for item in accepted
@@ -446,6 +451,7 @@ def build_causal_review_batch(
 def build_f9s3_fixture(
     source_campaign: e.HypothesisGenerationCampaign,
     *,
+    world_model_source: e.CausalWorldModelSource | None = None,
     latent_confounding: bool = False,
     omit_batch_adjustment: bool = False,
     strategy: e.IdentificationStrategy = e.IdentificationStrategy.BACKDOOR_ADJUSTMENT,
@@ -454,17 +460,28 @@ def build_f9s3_fixture(
     confidences: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     policy, author_manifest, reviewer_manifest = build_causal_manifests(source_campaign)
+    source_time = (
+        source_campaign.generated_at
+        if world_model_source is None
+        else max(
+            source_campaign.generated_at,
+            world_model_source.snapshot.frozen_at,
+            world_model_source.authorized_at or source_campaign.generated_at,
+        )
+    )
     request = e.build_causal_contract_request(
         request_id="f9s3-causal-contract-request-v1",
         source_campaign=source_campaign,
+        world_model_source=world_model_source,
         proposed_evidence_kind=evidence_kind,
         policy=policy,
         author_manifest=author_manifest,
         reviewer_manifest=reviewer_manifest,
-        issued_at=source_campaign.generated_at + timedelta(hours=1),
+        issued_at=source_time + timedelta(hours=1),
     )
     contract_batch = build_causal_contract_batch(
         source_campaign=source_campaign,
+        world_model_source=world_model_source,
         request=request,
         author_manifest=author_manifest,
         latent_confounding=latent_confounding,
@@ -479,6 +496,7 @@ def build_f9s3_fixture(
     )
     return {
         "source_campaign": source_campaign,
+        "world_model_source": world_model_source,
         "policy": policy,
         "author_manifest": author_manifest,
         "reviewer_manifest": reviewer_manifest,

@@ -1,0 +1,48 @@
+{
+  "schema_name": "aletheia.ase_emt_eos_job",
+  "schema_version": 1,
+  "job_id": "ase-emt-cu-fcc-eos-gold-v1",
+  "calculator": {
+    "name": "ase.emt",
+    "asap_cutoff": false
+  },
+  "structure": {
+    "symbols": [
+      "Cu"
+    ],
+    "positions_angstrom": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ]
+    ],
+    "cell_angstrom": [
+      [
+        0.0,
+        1.8,
+        1.8
+      ],
+      [
+        1.8,
+        0.0,
+        1.8
+      ],
+      [
+        1.8,
+        1.8,
+        0.0
+      ]
+    ],
+    "pbc": [
+      true,
+      true,
+      true
+    ]
+  },
+  "scan": {
+    "eos_model": "sj",
+    "points": 5,
+    "volume_strain_fraction": 0.04
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "schema_name": "aletheia.dataset_license_evidence",
+  "schema_version": 1,
+  "dataset_ref": "matbench_phonons",
+  "exact_distribution_sha256": "4db551f21ec5f577e6202725f10e34dfc509aa7df3a6bdaac497da7f6dbbb9b3",
+  "upstream_dataset": "Petretto et al. parsed phonon data",
+  "upstream_license_expression": "CC0-1.0",
+  "official_sources": [
+    "https://springernature.figshare.com/articles/dataset/Parsed_phonon_data/5649298",
+    "https://www.nature.com/articles/sdata201865",
+    "https://ml.materialsproject.org/projects/matbench_phonons.json.gz"
+  ],
+  "derivation_evidence": "Matminer metadata identifies matbench_phonons as a 1265-row Matbench v0.1 filtering of the Petretto phonon data and binds the exact distribution URL and SHA-256 recorded above.",
+  "permitted_scope": "Local read-only scientific benchmarking; raw dataset bytes remain outside source control.",
+  "limitation": "This is a machine-readable provenance record, not independent legal advice. It does not extend the article licence to unrelated content or claim that a software-repository licence governs upstream data.",
+  "review_status": "source_record_and_exact_distribution_hash_verified_2026-08-15"
+}

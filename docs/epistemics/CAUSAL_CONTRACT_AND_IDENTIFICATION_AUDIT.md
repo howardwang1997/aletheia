@@ -174,6 +174,11 @@ campaign = await run_causal_identification_audit(
 committed = commit_causal_audit_campaign(archive=archive, campaign=campaign)
 ```
 
+For a later adaptive round, F9-S8 returns a `CausalWorldModelSource` after physical transition and
+K3-verdict verification. Pass that exact object to both request construction and execution via
+`world_model_source=...`. The campaign commits its snapshot/hash, and downstream F9 stages use it
+instead of silently returning to the original F9-S2 prior.
+
 Reload with `load_causal_audit_campaign`. Archive reads rehash bytes, require canonical JSON, validate
 every nested contract, and recompute all graph audits, assumption resolutions, blockers,
 disposition, ceiling, and authorization.
@@ -195,6 +200,7 @@ provide:
 - posterior update, posterior sensitivity analysis, or mechanism-claim acceptance;
 - evidence that a real F8/F9 campaign has produced a correct causal model.
 
-F9-S4 now provides the next pre-observation prediction/likelihood and observation-staging gate; see
-[`PREOBSERVATION_PREDICTION_COMMITMENT.md`](PREOBSERVATION_PREDICTION_COMMITMENT.md). Observation
-validation, posterior update, and claim acceptance remain explicit later gates.
+F9-S4 through F9-S8 now provide prediction commitment, constrained selection, observation
+validation/update, independent acceptance, and transactional continuation. See
+[`PREOBSERVATION_PREDICTION_COMMITMENT.md`](PREOBSERVATION_PREDICTION_COMMITMENT.md) and
+[`TRANSACTIONAL_WORLD_MODEL_CONTINUATION.md`](TRANSACTIONAL_WORLD_MODEL_CONTINUATION.md).

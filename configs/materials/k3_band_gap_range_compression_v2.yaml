@@ -1,0 +1,205 @@
+schema_name: aletheia.materials_k3_protocol
+schema_version: 1
+protocol_id: materials-k3-band-gap-range-compression-v2
+state: protocol_frozen
+research_question: >-
+  Does a composition-only random-forest band-gap model compress the range of predictions more
+  strongly for entirely unseen chemical systems than for held-out rows from chemical systems that
+  remain represented in training?
+dataset_ref: matbench_expt_gap
+composition_column: composition
+target_column: gap expt
+
+hypotheses:
+  - hypothesis_id: h0_no_material_compression
+    version: 1
+    role: "null"
+    statement: >-
+      Neither unseen-system nor within-system predictions show material range compression under the
+      frozen split and model.
+    prior_probability: 0.30
+  - hypothesis_id: h1_unseen_system_extrapolation
+    version: 1
+    role: primary
+    statement: >-
+      Entirely unseen chemical systems cause additional prediction-range compression beyond the
+      shrinkage observed for held-out rows from represented chemical systems.
+    prior_probability: 0.40
+  - hypothesis_id: h2_generic_model_shrinkage
+    version: 1
+    role: alternative
+    statement: >-
+      Any observed prediction-range compression is generic random-forest shrinkage and is not
+      materially larger for unseen chemical systems than for the within-system control.
+    prior_probability: 0.30
+
+outcomes:
+  - outcome_id: ambiguous_pattern
+    description: The measurements do not satisfy any preregistered decisive pattern.
+  - outcome_id: generic_model_shrinkage
+    description: Both partitions compress materially and their compression differs by at most 0.05.
+  - outcome_id: no_material_compression
+    description: Neither partition reaches the preregistered 0.10 material-compression floor.
+  - outcome_id: unseen_system_specific_compression
+    description: >-
+      Unseen compression is at least 0.20, exceeds control by at least 0.05, and the cluster-bootstrap
+      confidence interval for that difference lies above zero.
+
+candidates:
+  - candidate_id: candidate.random_holdout_only
+    title: Random-row holdout compression without an unseen-system contrast
+    protocol_kind: random_holdout_compression_only
+    measurement_valid: true
+    capabilities_available: true
+    estimated_cost_usd: 0.25
+    estimated_duration_minutes: 1.0
+    likelihood_scenarios:
+      - &random_conservative
+        scenario_id: conservative
+        description: Weakly informative likelihoods for a control-only experiment.
+        likelihoods:
+          - hypothesis_id: h0_no_material_compression
+            probabilities:
+              - {outcome_id: ambiguous_pattern, probability: 0.25}
+              - {outcome_id: generic_model_shrinkage, probability: 0.25}
+              - {outcome_id: no_material_compression, probability: 0.30}
+              - {outcome_id: unseen_system_specific_compression, probability: 0.20}
+          - hypothesis_id: h1_unseen_system_extrapolation
+            probabilities:
+              - {outcome_id: ambiguous_pattern, probability: 0.25}
+              - {outcome_id: generic_model_shrinkage, probability: 0.26}
+              - {outcome_id: no_material_compression, probability: 0.24}
+              - {outcome_id: unseen_system_specific_compression, probability: 0.25}
+          - hypothesis_id: h2_generic_model_shrinkage
+            probabilities:
+              - {outcome_id: ambiguous_pattern, probability: 0.24}
+              - {outcome_id: generic_model_shrinkage, probability: 0.28}
+              - {outcome_id: no_material_compression, probability: 0.23}
+              - {outcome_id: unseen_system_specific_compression, probability: 0.25}
+      - <<: *random_conservative
+        scenario_id: nominal
+        description: Nominal weakly informative likelihoods for a control-only experiment.
+      - <<: *random_conservative
+        scenario_id: skeptical
+        description: Skeptical weakly informative likelihoods for a control-only experiment.
+
+  - candidate_id: candidate.unseen_vs_seen_control
+    title: Unseen chemical systems versus represented-system holdout control
+    protocol_kind: unseen_system_vs_within_system_control
+    measurement_valid: true
+    capabilities_available: true
+    estimated_cost_usd: 0.50
+    estimated_duration_minutes: 2.0
+    likelihood_scenarios:
+      - scenario_id: conservative
+        description: Reduced separation among hypotheses relative to the nominal commitment.
+        likelihoods:
+          - hypothesis_id: h0_no_material_compression
+            probabilities:
+              - {outcome_id: ambiguous_pattern, probability: 0.15}
+              - {outcome_id: generic_model_shrinkage, probability: 0.20}
+              - {outcome_id: no_material_compression, probability: 0.55}
+              - {outcome_id: unseen_system_specific_compression, probability: 0.10}
+          - hypothesis_id: h1_unseen_system_extrapolation
+            probabilities:
+              - {outcome_id: ambiguous_pattern, probability: 0.20}
+              - {outcome_id: generic_model_shrinkage, probability: 0.15}
+              - {outcome_id: no_material_compression, probability: 0.10}
+              - {outcome_id: unseen_system_specific_compression, probability: 0.55}
+          - hypothesis_id: h2_generic_model_shrinkage
+            probabilities:
+              - {outcome_id: ambiguous_pattern, probability: 0.15}
+              - {outcome_id: generic_model_shrinkage, probability: 0.55}
+              - {outcome_id: no_material_compression, probability: 0.15}
+              - {outcome_id: unseen_system_specific_compression, probability: 0.15}
+      - scenario_id: nominal
+        description: Exploration-informed but deliberately bounded likelihood commitment.
+        likelihoods:
+          - hypothesis_id: h0_no_material_compression
+            probabilities:
+              - {outcome_id: ambiguous_pattern, probability: 0.10}
+              - {outcome_id: generic_model_shrinkage, probability: 0.15}
+              - {outcome_id: no_material_compression, probability: 0.70}
+              - {outcome_id: unseen_system_specific_compression, probability: 0.05}
+          - hypothesis_id: h1_unseen_system_extrapolation
+            probabilities:
+              - {outcome_id: ambiguous_pattern, probability: 0.15}
+              - {outcome_id: generic_model_shrinkage, probability: 0.10}
+              - {outcome_id: no_material_compression, probability: 0.05}
+              - {outcome_id: unseen_system_specific_compression, probability: 0.70}
+          - hypothesis_id: h2_generic_model_shrinkage
+            probabilities:
+              - {outcome_id: ambiguous_pattern, probability: 0.10}
+              - {outcome_id: generic_model_shrinkage, probability: 0.65}
+              - {outcome_id: no_material_compression, probability: 0.10}
+              - {outcome_id: unseen_system_specific_compression, probability: 0.15}
+      - scenario_id: skeptical
+        description: Broad likelihood overlap used as the frozen robustness stress test.
+        likelihoods:
+          - hypothesis_id: h0_no_material_compression
+            probabilities:
+              - {outcome_id: ambiguous_pattern, probability: 0.20}
+              - {outcome_id: generic_model_shrinkage, probability: 0.25}
+              - {outcome_id: no_material_compression, probability: 0.40}
+              - {outcome_id: unseen_system_specific_compression, probability: 0.15}
+          - hypothesis_id: h1_unseen_system_extrapolation
+            probabilities:
+              - {outcome_id: ambiguous_pattern, probability: 0.20}
+              - {outcome_id: generic_model_shrinkage, probability: 0.20}
+              - {outcome_id: no_material_compression, probability: 0.10}
+              - {outcome_id: unseen_system_specific_compression, probability: 0.50}
+          - hypothesis_id: h2_generic_model_shrinkage
+            probabilities:
+              - {outcome_id: ambiguous_pattern, probability: 0.15}
+              - {outcome_id: generic_model_shrinkage, probability: 0.40}
+              - {outcome_id: no_material_compression, probability: 0.15}
+              - {outcome_id: unseen_system_specific_compression, probability: 0.30}
+
+model:
+  estimator: random_forest_regressor
+  n_estimators: 300
+  min_samples_leaf: 2
+  max_features: 0.70
+  random_state: 20260817
+  n_jobs: 1
+
+split:
+  algorithm: chemical_system_hash_partition_v1
+  partition_seed: 20260817
+  unseen_row_fraction: 0.20
+  within_system_holdout_fraction: 0.20
+
+bootstrap:
+  algorithm: chemical_system_cluster_bootstrap_v1
+  seed: 2026081701
+  resamples: 1000
+  confidence_level: 0.95
+
+outcome_rule:
+  minimum_unseen_compression: 0.20
+  minimum_unseen_minus_control_delta: 0.05
+  minimum_delta_ci_lower: 0.0
+  minimum_generic_compression: 0.10
+  generic_delta_tolerance: 0.05
+
+evidence_policy:
+  evidence_scope: retrospective_internal_confirmation
+  measurement_key_id: materials-measurement-local-v2
+  validation_key_id: materials-validation-local-v2
+  measurement_principal_sha256: 9b008bebac838f34d01ea0cc103a0002ffe46eed5e4f0db1a6ec2ff22f0a03bb
+  validation_principal_sha256: a5cc801b1f2e88405d5df56f4371d13bb7d961cc6b2a422961fad9e431ec97ab
+  update_principal_sha256: d315285f39df8433b3147d563e82e302dcf4b1884826b55b862e66fbe34fc6a8
+  minimum_effective_hypothesis_contraction: 0.10
+  retire_below_probability: 0.05
+  contamination_disclosure: >-
+    The public Matbench target, an exploratory 20260815 partition, and the superseded 20260816 v1
+    confirmation were inspected before this protocol. The 20260817 partition/model/bootstrap were
+    frozen afterward, but all rows come from the same public dataset; this is retrospective internal
+    confirmation, not a prospective blind dataset or laboratory result. The v1 result was superseded
+    because its revision policy could retire a hypothesis from nominal likelihoods alone.
+  custody_disclosure: >-
+    Measurement and validation use distinct locally generated HMAC keys and distinct declared
+    principals, but both keys remain under one operator's local custody. This authenticates artifact
+    integrity and process separation; it is not external institutional independence.
+
+frozen_at: 2026-08-15T05:16:11Z

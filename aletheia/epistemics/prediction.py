@@ -318,9 +318,7 @@ def derive_likelihood_calibration_metrics(
             )
         )
         log_terms.append(-math.log(max(observed_probability, scoring_epsilon)))
-        predicted_bin, confidence = max(
-            sorted(by_bin.items()), key=lambda item: item[1]
-        )
+        predicted_bin, confidence = max(sorted(by_bin.items()), key=lambda item: item[1])
         group_index = min(int(confidence * ece_bins), ece_bins - 1)
         ece_groups[group_index].append(
             (confidence, 1.0 if predicted_bin == trial.observed_bin_id else 0.0)
@@ -367,9 +365,7 @@ class LikelihoodCalibrationReport(EpistemicModel):
         namespaces = {item.validation_namespace_sha256 for item in self.trials}
         if namespaces != {self.validation_split_sha256}:
             raise ValueError("calibration trials must belong to the frozen validation split")
-        bin_spaces = {
-            tuple(item.bin_id for item in trial.probabilities) for trial in self.trials
-        }
+        bin_spaces = {tuple(item.bin_id for item in trial.probabilities) for trial in self.trials}
         if len(bin_spaces) != 1:
             raise ValueError("calibration trials must share one ordered outcome space")
         if self.completed_at < max(item.observed_at for item in self.trials):
@@ -415,7 +411,9 @@ class CalibrationEvaluatorManifest(EpistemicModel):
             raise ValueError("calibration evaluator uses another output schema")
         if self.tool_names:
             raise ValueError("calibration evaluator cannot receive ambient tool authority")
-        model_fields = self.instruction_sha256 is not None and self.model_identity_sha256 is not None
+        model_fields = (
+            self.instruction_sha256 is not None and self.model_identity_sha256 is not None
+        )
         if self.runtime is CausalAdapterRuntime.MODEL:
             if not model_fields or self.transport_policy != "model_transport_only":
                 raise ValueError("model calibration evaluator requires frozen model transport")
@@ -461,9 +459,7 @@ class HypothesisPrediction(EpistemicModel):
     probabilities: tuple[OutcomeProbability, ...] = Field(default=(), max_length=128)
     ordinal_order: tuple[str, ...] = Field(default=(), max_length=128)
     likelihood_model_sha256: str | None = Field(default=None, pattern=_SHA256_PATTERN)
-    sensitivity_predictions: tuple[SensitivityPrediction, ...] = Field(
-        default=(), max_length=32
-    )
+    sensitivity_predictions: tuple[SensitivityPrediction, ...] = Field(default=(), max_length=32)
     rationale_sha256: str = Field(pattern=_SHA256_PATTERN)
 
     @model_validator(mode="after")
@@ -472,7 +468,9 @@ class HypothesisPrediction(EpistemicModel):
             raise ValueError("prediction observable ID cannot be blank")
         if self.mode is PredictionMode.PROBABILISTIC:
             if not self.probabilities or self.ordinal_order or self.likelihood_model_sha256 is None:
-                raise ValueError("probabilistic prediction requires mass and a likelihood model only")
+                raise ValueError(
+                    "probabilistic prediction requires mass and a likelihood model only"
+                )
             _validate_probability_mass(self.probabilities, label="hypothesis")
             scenario_ids = [item.scenario_id for item in self.sensitivity_predictions]
             if scenario_ids != sorted(set(scenario_ids)):
@@ -544,7 +542,9 @@ class PredictionAuthorManifest(EpistemicModel):
             raise ValueError("prediction author uses another output schema")
         if self.tool_names:
             raise ValueError("prediction author cannot receive tool authority")
-        model_fields = self.instruction_sha256 is not None and self.model_identity_sha256 is not None
+        model_fields = (
+            self.instruction_sha256 is not None and self.model_identity_sha256 is not None
+        )
         if self.runtime is CausalAdapterRuntime.MODEL:
             if not model_fields or self.transport_policy != "model_transport_only":
                 raise ValueError("model prediction author requires frozen model transport")
@@ -645,7 +645,10 @@ class PredictionCommitmentRequest(EpistemicModel):
 
     @model_validator(mode="after")
     def _request_mode_has_correct_evidence(self) -> "PredictionCommitmentRequest":
-        if self.experiment_protocol.outcome_schema_sha256 != self.outcome_schema.outcome_schema_sha256:
+        if (
+            self.experiment_protocol.outcome_schema_sha256
+            != self.outcome_schema.outcome_schema_sha256
+        ):
             raise ValueError("experiment protocol is not bound to the supplied outcome schema")
         if self.prediction_mode is PredictionMode.PROBABILISTIC:
             if self.calibration_report is None:
@@ -665,9 +668,7 @@ class HypothesisPredictionDiagnostic(EpistemicModel):
     entropy_nats: float | None = Field(default=None, ge=0.0)
     minimum_probability: float | None = Field(default=None, ge=0.0, le=1.0)
     maximum_probability: float | None = Field(default=None, ge=0.0, le=1.0)
-    maximum_sensitivity_total_variation: float | None = Field(
-        default=None, ge=0.0, le=1.0
-    )
+    maximum_sensitivity_total_variation: float | None = Field(default=None, ge=0.0, le=1.0)
     sensitivity_scenario_count: int = Field(ge=0, le=32)
 
     @property
@@ -906,9 +907,7 @@ def _validate_actor_independence(
         source.author_manifest.author_principal_sha256,
         source.reviewer_manifest.reviewer_principal_sha256,
     }
-    if evaluator.evaluator_principal_sha256 in prior_principals | {
-        author.author_principal_sha256
-    }:
+    if evaluator.evaluator_principal_sha256 in prior_principals | {author.author_principal_sha256}:
         raise ValueError("calibration evaluator must be independent from proposal/review roles")
     if (
         author.model_identity_sha256 is not None
@@ -1079,9 +1078,7 @@ def build_prediction_commitment_request(
         experiment_protocol=experiment_protocol,
         outcome_schema=outcome_schema,
         author_manifest_sha256=author_manifest.manifest_sha256,
-        calibration_evaluator_manifest_sha256=(
-            calibration_evaluator_manifest.manifest_sha256
-        ),
+        calibration_evaluator_manifest_sha256=(calibration_evaluator_manifest.manifest_sha256),
         calibration_report=calibration_report,
         policy_sha256=policy.policy_sha256,
         issued_at=issued_at,
@@ -1121,8 +1118,7 @@ def _validate_prediction_batch(
         raise ValueError("prediction batch exceeds author hypothesis capacity")
     if len(request.outcome_schema.bins) > manifest.maximum_outcome_bins:
         raise ValueError("outcome schema exceeds author bin capacity")
-    snapshot = source_causal_campaign.source_campaign.world_model_snapshot
-    assert snapshot is not None
+    snapshot = source_causal_campaign.world_model_snapshot
     contract, process, indicator = _causal_components(source_causal_campaign)
     hypotheses = {item.hypothesis_id: item for item in snapshot.hypotheses}
     graphs = {item.hypothesis_id: item for item in contract.hypothesis_graphs}
@@ -1169,7 +1165,9 @@ def _validate_prediction_batch(
                 outcome_schema_sha256=request.outcome_schema.outcome_schema_sha256,
             )
             if prediction.likelihood_model_sha256 != expected_likelihood:
-                raise ValueError("hypothesis likelihood changed the calibrated implementation family")
+                raise ValueError(
+                    "hypothesis likelihood changed the calibrated implementation family"
+                )
             for scenario in prediction.sensitivity_predictions:
                 if tuple(item.bin_id for item in scenario.probabilities) != sorted_schema_bins:
                     raise ValueError("sensitivity scenario changed the outcome space")
@@ -1265,8 +1263,7 @@ def _derive_prediction_outputs(
             ),
             (entropy < policy.minimum_entropy_nats, "entropy_below_floor"),
             (
-                len(prediction.sensitivity_predictions)
-                < policy.minimum_sensitivity_scenarios,
+                len(prediction.sensitivity_predictions) < policy.minimum_sensitivity_scenarios,
                 "insufficient_sensitivity_scenarios",
             ),
             (
@@ -1275,9 +1272,7 @@ def _derive_prediction_outputs(
             ),
         )
         degeneracy_blockers.extend(
-            f"degeneracy:{prediction.hypothesis_id}:{label}"
-            for blocked, label in checks
-            if blocked
+            f"degeneracy:{prediction.hypothesis_id}:{label}" for blocked, label in checks if blocked
         )
     pairwise: list[PairwisePredictionDiscrimination] = []
     predictions = batch.predictions
@@ -1365,9 +1360,7 @@ def _failure(
         kind=kind,
         error_class=type(error).__name__,
         error_detail_sha256=hashlib.sha256(str(error).encode("utf-8")).hexdigest(),
-        raw_output_sha256=(
-            _opaque_output_sha256(raw_output) if raw_output is not None else None
-        ),
+        raw_output_sha256=(_opaque_output_sha256(raw_output) if raw_output is not None else None),
         occurred_at=occurred_at,
     )
 
@@ -1550,9 +1543,7 @@ class PredictionMutationViolation(EpistemicModel):
     violation_kind: Literal["post_observation_prediction_mutation"] = (
         "post_observation_prediction_mutation"
     )
-    severity: Literal["security_and_scientific_integrity"] = (
-        "security_and_scientific_integrity"
-    )
+    severity: Literal["security_and_scientific_integrity"] = "security_and_scientific_integrity"
     experiment_namespace_sha256: str = Field(pattern=_SHA256_PATTERN)
     sealed_commitment_sha256: str = Field(pattern=_SHA256_PATTERN)
     attempted_commitment_sha256: str = Field(pattern=_SHA256_PATTERN)
@@ -1769,8 +1760,7 @@ class ObservationStagingStore:
         if not media_type.strip():
             raise ObservationStagingError("observation media type cannot be blank")
         if any(
-            value.tzinfo is None or value.utcoffset() is None
-            for value in (observed_at, staged_at)
+            value.tzinfo is None or value.utcoffset() is None for value in (observed_at, staged_at)
         ):
             raise ObservationStagingError("observation timestamps must be timezone-aware")
         loaded = load_prediction_commitment_campaign(
@@ -1793,7 +1783,9 @@ class ObservationStagingStore:
             )
             raise PostObservationPredictionMutation(violation)
         if campaign.disposition is not PredictionCommitmentDisposition.READY:
-            raise ObservationStagingError("only a ready prediction commitment can stage observation")
+            raise ObservationStagingError(
+                "only a ready prediction commitment can stage observation"
+            )
         if observed_at <= committed_campaign.committed_at:
             raise ObservationStagingError("observation must occur after prediction commitment")
         if staged_at < observed_at:

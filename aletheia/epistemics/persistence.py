@@ -186,9 +186,7 @@ class EpistemicBeliefStateMemberRecord(Base):
             "probability >= 0.0 AND probability <= 1.0",
             name="ck_epistemic_belief_member_probability",
         ),
-        UniqueConstraint(
-            "belief_state_sha256", "ordinal", name="uq_epistemic_belief_member_order"
-        ),
+        UniqueConstraint("belief_state_sha256", "ordinal", name="uq_epistemic_belief_member_order"),
         UniqueConstraint(
             "belief_state_sha256",
             "hypothesis_id",
@@ -230,6 +228,38 @@ class EpistemicWorldModelSnapshotRecord(Base):
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
 
 
+class EpistemicWorldModelTransitionRecord(Base):
+    """Atomic F9-S8 hand-off from one validated update to the next research round."""
+
+    __tablename__ = "epistemic_world_model_transitions"
+    __table_args__ = (
+        UniqueConstraint("transition_id", name="uq_epistemic_world_model_transition_id"),
+        UniqueConstraint(
+            "source_update_receipt_sha256",
+            name="uq_epistemic_world_model_transition_update",
+        ),
+    )
+
+    transition_sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    transition_id: Mapped[str] = mapped_column(String(192), index=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    question_id: Mapped[str] = mapped_column(String(35), index=True)
+    belief_lineage_id: Mapped[str] = mapped_column(String(36), index=True)
+    source_update_receipt_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    source_snapshot_sha256: Mapped[str] = mapped_column(
+        ForeignKey("epistemic_world_model_snapshots.snapshot_sha256"), index=True
+    )
+    posterior_snapshot_sha256: Mapped[str] = mapped_column(
+        ForeignKey("epistemic_world_model_snapshots.snapshot_sha256"), index=True
+    )
+    next_round_snapshot_sha256: Mapped[str | None] = mapped_column(
+        ForeignKey("epistemic_world_model_snapshots.snapshot_sha256"), index=True
+    )
+    disposition: Mapped[str] = mapped_column(String(48), index=True)
+    persisted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
 @dataclass(frozen=True)
 class WorldModelStoreReceipt:
     snapshot_sha256: str
@@ -244,9 +274,7 @@ def _payload(model: BaseModel) -> dict[str, Any]:
     return model.model_dump(mode="json")
 
 
-def _parse_stored(
-    model_type: type[ModelT], payload: dict[str, Any], *, label: str
-) -> ModelT:
+def _parse_stored(model_type: type[ModelT], payload: dict[str, Any], *, label: str) -> ModelT:
     try:
         return model_type.model_validate(payload)
     except ValidationError as exc:
@@ -394,7 +422,9 @@ def _store_hypothesis(session: Session, hypothesis: HypothesisVersion) -> bool:
         if parent.question_id != hypothesis.question_id:
             raise EpistemicLineageError("hypothesis revision changed its question lineage")
         if parent.role is not hypothesis.role:
-            raise EpistemicLineageError("hypothesis revision changed its null/primary/alternative role")
+            raise EpistemicLineageError(
+                "hypothesis revision changed its null/primary/alternative role"
+            )
     return _insert_or_verify(
         session,
         record_type=EpistemicHypothesisVersionRecord,
@@ -629,43 +659,50 @@ def _store_belief_state(session: Session, belief: BeliefState) -> bool:
     return created
 
 
+def _store_world_model_snapshot(
+    session: Session, snapshot: WorldModelSnapshot
+) -> WorldModelStoreReceipt:
+    """Store one closed snapshot inside the caller's transaction."""
+
+    _store_question(session, snapshot.question)
+    for hypothesis in snapshot.hypotheses:
+        _store_hypothesis(session, hypothesis)
+    for assumption in snapshot.assumptions:
+        _store_assumption(session, assumption)
+    for prediction in snapshot.predictions:
+        _store_prediction(session, prediction)
+    _store_belief_state(session, snapshot.belief_state)
+    created = _insert_or_verify(
+        session,
+        record_type=EpistemicWorldModelSnapshotRecord,
+        content_key_name="snapshot_sha256",
+        content_key=snapshot.snapshot_sha256,
+        identity_predicates=(
+            EpistemicWorldModelSnapshotRecord.question_sha256 == snapshot.question.question_sha256,
+            EpistemicWorldModelSnapshotRecord.belief_state_sha256
+            == snapshot.belief_state.belief_state_sha256,
+        ),
+        values={
+            "snapshot_sha256": snapshot.snapshot_sha256,
+            "run_id": snapshot.question.run_id,
+            "question_id": snapshot.question.question_id,
+            "question_sha256": snapshot.question.question_sha256,
+            "belief_state_sha256": snapshot.belief_state.belief_state_sha256,
+            "frozen_at": snapshot.frozen_at,
+            "payload_json": _payload(snapshot),
+        },
+        model_type=WorldModelSnapshot,
+        model=snapshot,
+        label="world-model snapshot",
+    )
+    return WorldModelStoreReceipt(snapshot_sha256=snapshot.snapshot_sha256, created=created)
+
+
 def store_world_model_snapshot(snapshot: WorldModelSnapshot) -> WorldModelStoreReceipt:
     """Atomically store a closed immutable snapshot; identical retries are idempotent."""
 
     with session_scope() as session:
-        _store_question(session, snapshot.question)
-        for hypothesis in snapshot.hypotheses:
-            _store_hypothesis(session, hypothesis)
-        for assumption in snapshot.assumptions:
-            _store_assumption(session, assumption)
-        for prediction in snapshot.predictions:
-            _store_prediction(session, prediction)
-        _store_belief_state(session, snapshot.belief_state)
-        created = _insert_or_verify(
-            session,
-            record_type=EpistemicWorldModelSnapshotRecord,
-            content_key_name="snapshot_sha256",
-            content_key=snapshot.snapshot_sha256,
-            identity_predicates=(
-                EpistemicWorldModelSnapshotRecord.question_sha256
-                == snapshot.question.question_sha256,
-                EpistemicWorldModelSnapshotRecord.belief_state_sha256
-                == snapshot.belief_state.belief_state_sha256,
-            ),
-            values={
-                "snapshot_sha256": snapshot.snapshot_sha256,
-                "run_id": snapshot.question.run_id,
-                "question_id": snapshot.question.question_id,
-                "question_sha256": snapshot.question.question_sha256,
-                "belief_state_sha256": snapshot.belief_state.belief_state_sha256,
-                "frozen_at": snapshot.frozen_at,
-                "payload_json": _payload(snapshot),
-            },
-            model_type=WorldModelSnapshot,
-            model=snapshot,
-            label="world-model snapshot",
-        )
-    return WorldModelStoreReceipt(snapshot_sha256=snapshot.snapshot_sha256, created=created)
+        return _store_world_model_snapshot(session, snapshot)
 
 
 def _require_exact_row(
@@ -693,11 +730,11 @@ def get_world_model_snapshot(snapshot_sha256: str) -> WorldModelSnapshot:
         row = session.get(EpistemicWorldModelSnapshotRecord, snapshot_sha256)
         if row is None:
             raise EpistemicObjectNotFound(f"world-model snapshot not found: {snapshot_sha256}")
-        snapshot = _parse_stored(
-            WorldModelSnapshot, row.payload_json, label="world-model snapshot"
-        )
+        snapshot = _parse_stored(WorldModelSnapshot, row.payload_json, label="world-model snapshot")
         if snapshot.snapshot_sha256 != snapshot_sha256:
-            raise ImmutableEpistemicConflict("world-model snapshot SHA-256 no longer matches payload")
+            raise ImmutableEpistemicConflict(
+                "world-model snapshot SHA-256 no longer matches payload"
+            )
         _require_exact_row(
             session,
             record_type=EpistemicResearchQuestionRecord,
@@ -760,7 +797,9 @@ def get_world_model_snapshot(snapshot_sha256: str) -> WorldModelSnapshot:
             or member.hypothesis_id != expected.hypothesis_id
             or member.hypothesis_sha256 != expected.hypothesis_version_sha256
             or member.probability != expected.probability
-            for ordinal, (member, expected) in enumerate(zip(members, expected_members, strict=True))
+            for ordinal, (member, expected) in enumerate(
+                zip(members, expected_members, strict=True)
+            )
         ):
             raise ImmutableEpistemicConflict("world-model belief membership no longer matches")
         return snapshot

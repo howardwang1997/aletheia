@@ -1,0 +1,56 @@
+{
+  "audit_id": "materials-f10s6-current-readiness-v1",
+  "audited_at": "2026-08-15T16:30:00Z",
+  "available_capabilities": [
+    {
+      "action_type": "computational_experiment",
+      "capability_id": "materials.band_gap.range_compression",
+      "claim_types_supported": [
+        "descriptive",
+        "predictive"
+      ],
+      "family": null,
+      "family_qualification_sha256": null,
+      "lifecycle": "provisional",
+      "manifest_sha256": "33af6218c330569ca8800093d2bb8bae3db2b77d1407e94a2b6beaa7bba93d4b",
+      "maximum_evidence_level": "exploratory",
+      "version": "2.1.0"
+    },
+    {
+      "action_type": "simulation",
+      "capability_id": "materials.simulation.ase_emt_eos_reference",
+      "claim_types_supported": [
+        "descriptive"
+      ],
+      "family": null,
+      "family_qualification_sha256": null,
+      "lifecycle": "provisional",
+      "manifest_sha256": "ff5507f8fd891b6fea3354a2e963da74f3c5bd0c8af1d49ac1340eea97931546",
+      "maximum_evidence_level": "exploratory",
+      "version": "1.0.0"
+    }
+  ],
+  "blockers": [
+    "fewer_than_two_registered_confirmatory_families",
+    "fresh_confirmation_reservation_missing",
+    "independent_confirmation_missing",
+    "production_f8_direction_missing",
+    "ready_f9_causal_campaign_missing",
+    "ready_f9_hypothesis_campaign_missing",
+    "registered_intervention_or_simulation_missing",
+    "registered_mechanism_capability_missing"
+  ],
+  "engineering_template_available": true,
+  "execution_ready": false,
+  "family_qualifications": [],
+  "fresh_confirmation_reservation_sha256": null,
+  "independent_confirmation_kind": null,
+  "production_direction_gate_sha256": null,
+  "ready_causal_campaign_sha256": null,
+  "ready_hypothesis_campaign_sha256": null,
+  "registry_snapshot_sha256": "80ea6dfa5c250dbdb76a4b3b38ceb7460580d17d7cdb47695da93ff38930ad77",
+  "schema_name": "aletheia.mechanistic_campaign_readiness_audit",
+  "schema_version": 1,
+  "scientific_release_ready": false,
+  "state": "frozen"
+}

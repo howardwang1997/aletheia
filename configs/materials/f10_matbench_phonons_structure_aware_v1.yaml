@@ -1,0 +1,104 @@
+schema_name: aletheia.structure_aware_experiment_protocol
+schema_version: 1
+protocol_id: matbench-phonons-structure-aware-v1
+
+dataset:
+  schema_name: aletheia.structure_dataset_contract
+  schema_version: 1
+  dataset_ref: matbench_phonons
+  artifact_id: matbench-phonons-json-gz
+  media_type: application/gzip
+  expected_file_sha256: 4db551f21ec5f577e6202725f10e34dfc509aa7df3a6bdaac497da7f6dbbb9b3
+  expected_row_count: 1265
+  structure_column: structure
+  target_column: last phdos peak
+  target_quantity_kind_id: phonon.last_phdos_peak_frequency
+  target_unit_ucum: cm-1
+  source_uri: https://ml.materialsproject.org/projects/matbench_phonons.json.gz
+  license_expression: CC0-1.0
+  license_uri: https://springernature.figshare.com/articles/dataset/Parsed_phonon_data/5649298
+  license_evidence_sha256: 59e349b7bf7f51a76fcac0295fe39b0d5fe122806fcef9def97309c30533fb0f
+
+quality_policy:
+  schema_name: aletheia.structure_quality_policy
+  schema_version: 1
+  policy_id: matbench-phonons-structure-quality-v1
+  require_ordered: true
+  minimum_sites: 1
+  maximum_sites: 64
+  minimum_volume_per_atom_angstrom3: 2.0
+  maximum_volume_per_atom_angstrom3: 200.0
+  minimum_distinct_site_distance_angstrom: 0.5
+  maximum_lattice_condition_number: 25.0
+  symprec_angstrom: 0.001
+  angle_tolerance_degree: 5.0
+  coordinate_decimals: 10
+  lattice_decimals: 10
+  standardized_cell: primitive_standard
+
+geometry_feature_policy:
+  schema_name: aletheia.structure_geometry_feature_policy
+  schema_version: 1
+  policy_id: matbench-phonons-species-blind-geometry-v1
+  radial_bin_edges_angstrom: [0.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0]
+  include_symmetry: true
+  species_blind: true
+  standardization: primitive_standard
+
+split_policy:
+  schema_name: aletheia.structure_group_split_policy
+  schema_version: 1
+  algorithm: chemical_system_balanced_hash_v1
+  seed: 20260826
+  train_fraction: 0.60
+  internal_validation_fraction: 0.20
+  locked_holdout_fraction: 0.20
+  minimum_rows_per_role: 200
+  group_identity: chemical_system
+  target_blind_assignment: true
+
+estimator_policy:
+  schema_name: aletheia.matched_structure_estimator_policy
+  schema_version: 1
+  estimator: sklearn.random_forest_regressor
+  n_estimators: 512
+  max_depth: 18
+  min_samples_leaf: 2
+  max_features: 0.75
+  random_state: 20260826
+  n_jobs: 1
+  hyperparameter_tuning_forbidden: true
+  fit_once_per_arm: true
+
+bootstrap_policy:
+  schema_name: aletheia.structure_cluster_bootstrap_policy
+  schema_version: 1
+  resamples: 5000
+  confidence_level: 0.95
+  seed: 20260827
+  cluster_identity: chemical_system
+
+acceptance_policy:
+  schema_name: aletheia.structure_signal_acceptance_policy
+  schema_version: 1
+  minimum_relative_mae_improvement: 0.05
+  require_positive_cluster_ci_internal: true
+  require_positive_cluster_ci_holdout: true
+  require_both_roles: true
+  mechanism_or_causal_claim_forbidden: true
+
+composition_featurizer: matminer.magpie.v1
+structure_control: within_role_row_permutation
+permutation_seed: 20260828
+implementation_sha256: 308ab13e681800b52b6fc91a42b01a3cb664ea1b66df8b536b38e5f10597cb1d
+required_package_versions:
+  matminer: 0.10.1
+  numpy: 2.4.6
+  pandas: 2.3.3
+  pymatgen: 2026.5.4
+  scikit-learn: 1.8.0
+  spglib: 2.7.0
+public_retrospective_dataset: true
+independent_external_dataset_claim_forbidden: true
+frozen_at: 2026-08-15T08:18:05Z
+state: frozen

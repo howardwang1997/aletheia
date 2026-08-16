@@ -1,0 +1,26 @@
+{
+  "schema_name": "aletheia.material_identity_gold_cases",
+  "schema_version": 1,
+  "license": "CC0-1.0",
+  "formula_equivalence": [
+    {
+      "inputs": ["Fe2O3", "O3Fe2", "Fe0.5O0.75"],
+      "canonical_formula": "Fe2O3",
+      "chemical_system": "Fe-O"
+    },
+    {
+      "inputs": ["NaCl", "ClNa"],
+      "canonical_formula": "ClNa",
+      "chemical_system": "Cl-Na"
+    }
+  ],
+  "polymorph_pair": {
+    "formula": "NaCl",
+    "left_cif": "nacl_rocksalt.cif",
+    "left_space_group_number": 225,
+    "right_cif": "nacl_cscl_type.cif",
+    "right_space_group_number": 221,
+    "expect_same_formula_identity": true,
+    "expect_different_structure_identity": true
+  }
+}

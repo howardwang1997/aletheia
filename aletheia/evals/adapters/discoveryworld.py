@@ -582,6 +582,140 @@ class DiscoveryWorldHarnessResult(FrozenModel):
         return content_sha256(self)
 
 
+class DiscoveryWorldScientificExitMetrics(FrozenModel):
+    """Evaluator-only endpoints used by the frozen F9 K3 ablation.
+
+    The candidate never receives the governing hypothesis.  These values are derived only after
+    the trusted episode has ended, from the hidden rule and the authoritative action trace.  The
+    source trace identity is retained so an aggregate report cannot substitute self-reported
+    metrics for the hidden-world evidence.
+    """
+
+    schema_version: Literal[1] = 1
+    source_trace_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    trace_complete: bool
+    correct_hypothesis_preserved: bool
+    posterior_brier_score: float = Field(ge=0.0, le=1.0)
+    top_label_confidence: float = Field(ge=0.0, le=1.0)
+    top_label_correct: bool
+    mechanism_claimed: bool
+    false_mechanism_claim: bool
+    genuine_discriminating_trials: int = Field(ge=0, le=4)
+    discriminating_trial_rate: float = Field(ge=0.0, le=1.0)
+    wrong_explanation_elimination_score: float = Field(ge=0.0, le=1.0)
+    informative_trials_to_identification: int = Field(ge=1, le=5)
+    hypothesis_space_contracted: bool
+
+    @model_validator(mode="after")
+    def _claim_and_trace_metrics_are_consistent(self) -> "DiscoveryWorldScientificExitMetrics":
+        if self.false_mechanism_claim and not self.mechanism_claimed:
+            raise ValueError("a false mechanism requires an issued mechanism claim")
+        if not self.trace_complete and (
+            self.genuine_discriminating_trials
+            or self.discriminating_trial_rate
+            or self.wrong_explanation_elimination_score
+            or self.hypothesis_space_contracted
+        ):
+            raise ValueError("incomplete traces cannot receive positive scientific-exit credit")
+        return self
+
+    @property
+    def metrics_sha256(self) -> str:
+        return content_sha256(self)
+
+
+def derive_discoveryworld_scientific_exit_metrics(
+    *,
+    result: DiscoveryWorldHarnessResult,
+    correct_hypothesis_id: str,
+) -> DiscoveryWorldScientificExitMetrics:
+    """Derive truth-relative metrics without exposing the hidden rule to the candidate.
+
+    Elimination speed is the area under objective wrong-explanation exclusion over four possible
+    pure-substance trials.  Missing trial opportunities are padded with the last evaluator-owned
+    hypothesis state, so early correct exclusion scores higher while stopping without testing earns
+    no credit.  Posterior quality uses the normalized multiclass Brier score (zero is perfect).
+    """
+
+    if correct_hypothesis_id not in DISCOVERYWORLD_HYPOTHESIS_IDS:
+        raise ValueError("scientific-exit metrics require a frozen DiscoveryWorld hypothesis")
+    act_steps = [step for step in result.trace if step.kind == "act"]
+    trace_complete = len(act_steps) == result.action_count and tuple(
+        step.sequence for step in result.trace
+    ) == tuple(range(len(result.trace)))
+    final_beliefs = (
+        result.trace[-1].beliefs
+        if result.trace
+        else {hypothesis_id: 0.25 for hypothesis_id in DISCOVERYWORLD_HYPOTHESIS_IDS}
+    )
+    posterior_brier = 0.5 * sum(
+        (final_beliefs[hypothesis_id] - float(hypothesis_id == correct_hypothesis_id)) ** 2
+        for hypothesis_id in DISCOVERYWORLD_HYPOTHESIS_IDS
+    )
+    top_label = _argmax_unique(final_beliefs)
+    top_confidence = max(final_beliefs.values())
+    mechanism_claimed = result.stopped and result.final_hypothesis_id is not None
+    false_mechanism = bool(
+        mechanism_claimed and result.final_hypothesis_id != correct_hypothesis_id
+    )
+
+    preserved = True
+    contracted = False
+    genuine = 0
+    identification_trial = len(DISCOVERYWORLD_HYPOTHESIS_IDS) + 1
+    elimination_fractions: list[float] = []
+    if trace_complete:
+        remaining_before = set(DISCOVERYWORLD_HYPOTHESIS_IDS)
+        for step in result.trace:
+            remaining_after = set(step.objective_remaining_after)
+            preserved = preserved and correct_hypothesis_id in remaining_after
+            tested_id = step.informative_trial_hypothesis_id
+            if tested_id is not None:
+                if (
+                    tested_id in remaining_before
+                    and remaining_after < remaining_before
+                    and correct_hypothesis_id in remaining_after
+                ):
+                    genuine += 1
+                wrong_remaining = len(remaining_after - {correct_hypothesis_id})
+                elimination_fractions.append((3 - wrong_remaining) / 3)
+                if (
+                    remaining_after == {correct_hypothesis_id}
+                    and identification_trial == len(DISCOVERYWORLD_HYPOTHESIS_IDS) + 1
+                ):
+                    identification_trial = len(elimination_fractions)
+            remaining_before = remaining_after
+        contracted = preserved and len(remaining_before) < len(DISCOVERYWORLD_HYPOTHESIS_IDS)
+
+    if elimination_fractions:
+        padded = elimination_fractions + [elimination_fractions[-1]] * (
+            len(DISCOVERYWORLD_HYPOTHESIS_IDS) - len(elimination_fractions)
+        )
+        elimination_score = sum(padded[: len(DISCOVERYWORLD_HYPOTHESIS_IDS)]) / len(
+            DISCOVERYWORLD_HYPOTHESIS_IDS
+        )
+    else:
+        elimination_score = 0.0
+    informative_trials = len(elimination_fractions)
+    discrimination_rate = genuine / informative_trials if informative_trials else 0.0
+
+    return DiscoveryWorldScientificExitMetrics(
+        source_trace_sha256=result.trace_sha256,
+        trace_complete=trace_complete,
+        correct_hypothesis_preserved=preserved if trace_complete else False,
+        posterior_brier_score=posterior_brier,
+        top_label_confidence=top_confidence,
+        top_label_correct=top_label == correct_hypothesis_id,
+        mechanism_claimed=mechanism_claimed,
+        false_mechanism_claim=false_mechanism,
+        genuine_discriminating_trials=genuine if trace_complete else 0,
+        discriminating_trial_rate=discrimination_rate if trace_complete else 0.0,
+        wrong_explanation_elimination_score=elimination_score if trace_complete else 0.0,
+        informative_trials_to_identification=identification_trial,
+        hypothesis_space_contracted=contracted if trace_complete else False,
+    )
+
+
 class DiscoveryWorldHarness(Protocol):
     @property
     def manifest(self) -> DiscoveryWorldHarnessManifest: ...
@@ -1451,6 +1585,14 @@ class DiscoveryWorldScorer:
             )
 
         result = results[0]
+        scientific_exit_metrics = derive_discoveryworld_scientific_exit_metrics(
+            result=result,
+            correct_hypothesis_id=receipt.correct_hypothesis_id,
+        )
+        evidence_sha256s["scientific_exit_metrics"] = scientific_exit_metrics.metrics_sha256
+        evidence_objects["scientific_exit_metrics"] = scientific_exit_metrics.model_dump(
+            mode="json"
+        )
         runnable = result.program_exit_reason is ExecutionExitReason.COMPLETED
         valid_action_rate = (
             result.valid_action_count / result.action_count if result.action_count else 0.0
@@ -1483,6 +1625,21 @@ class DiscoveryWorldScorer:
                 "information_gain_bits_per_action": result.information_gain_bits_per_action,
                 "hypothesis_revision_rate": revision_rate,
                 "grounded_belief_update_rate": grounded_update_rate,
+                "posterior_brier_score": scientific_exit_metrics.posterior_brier_score,
+                "top_label_confidence": scientific_exit_metrics.top_label_confidence,
+                "top_label_correct": float(scientific_exit_metrics.top_label_correct),
+                "mechanism_claim_coverage": float(scientific_exit_metrics.mechanism_claimed),
+                "false_mechanism_rate": float(scientific_exit_metrics.false_mechanism_claim),
+                "genuine_discriminating_trials": float(
+                    scientific_exit_metrics.genuine_discriminating_trials
+                ),
+                "discriminating_trial_rate": (scientific_exit_metrics.discriminating_trial_rate),
+                "wrong_explanation_elimination_score": (
+                    scientific_exit_metrics.wrong_explanation_elimination_score
+                ),
+                "hypothesis_space_contracted": float(
+                    scientific_exit_metrics.hypothesis_space_contracted
+                ),
                 "reproducible": 1.0,
             },
             evidence_sha256s=evidence_sha256s,

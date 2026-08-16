@@ -272,11 +272,19 @@ with the same substantive hash is allowed.
   log, hardware attestation, signature authority, or authenticated operator identity yet.
 - Observation staging preserves raw bytes but does not parse, validate, classify exploration versus
   confirmation, or authorize posterior updates.
-- There is no EIG experiment selector, posterior update, hypothesis revision, negative-result policy,
-  K3 scorer, or scheduler wiring yet.
+- F9-S5 now provides an isolated EIG selector and F9-S6 provides the downstream validated-observation
+  posterior/revision boundary; F9-S4 itself still does not interpret observations.
+- F9-S7 now provides the isolated K3 scorer; scheduler transaction/event wiring and real-domain
+  scientific exit remain absent.
 - `ready` is not evidence that an experiment ran correctly or that any hypothesis or causal effect is
   true.
 
-The next slice, F9-S5, may use only `eig_eligible=true` probability commitments for EIG and must
-select experiments without target-observation access while accounting for cost, risk, measurement
-validity, confirmation freshness, and replication debt.
+F9-S5 consumes only `eig_eligible=true` probability commitments for EIG, physically verifies their
+archives, and selects without target-observation access under cost, time, risk, measurement-validity,
+proxy, capability, confirmation-freshness, and replication-debt policy. See
+[`CONSTRAINED_EXPERIMENT_SELECTION.md`](CONSTRAINED_EXPERIMENT_SELECTION.md). F9-S6 then validates a
+selected confirmation observation, derives posterior sensitivity, and emits append-only revision and
+contradiction artifacts; see
+[`VALIDATED_OBSERVATION_BELIEF_UPDATE.md`](VALIDATED_OBSERVATION_BELIEF_UPDATE.md). F9-S7 is now
+implemented as [`INDEPENDENT_K3_ACCEPTANCE.md`](INDEPENDENT_K3_ACCEPTANCE.md); remaining work is the
+F9 scientific-exit/integration bridge.

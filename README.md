@@ -200,6 +200,128 @@ write and persisted as a security/scientific-integrity violation. Fixtures remai
 `ready` is not evidence that an experiment, prediction, or causal claim is correct. See
 [`docs/epistemics/PREOBSERVATION_PREDICTION_COMMITMENT.md`](docs/epistemics/PREOBSERVATION_PREDICTION_COMMITMENT.md).
 
+F9-S5 now compares at least two physically reloaded F9-S4 commitments under one exact F9-S1 prior.
+It derives every outcome marginal and hypothetical posterior, expected entropy reduction, and
+pairwise likelihood separation, then applies non-compensable cost, time, risk, measurement-validity,
+proxy, capability, information, and fresh-confirmation gates. Only feasible candidates receive a
+policy-fixed utility combining information, replication debt, resources, and risk; rankings retain
+every winner, loser, blocker, and reason, while an all-infeasible set explicitly selects nothing. The
+independent assessor and request have no observation/tool access, and archive replay rederives the
+decision. Fixtures and assessments remain synthetic, so selection is not evidence of real
+feasibility, validity, safety, or mechanism truth. See
+[`docs/epistemics/CONSTRAINED_EXPERIMENT_SELECTION.md`](docs/epistemics/CONSTRAINED_EXPERIMENT_SELECTION.md).
+
+F9-S6 now separates raw-observation validation from belief update. An independently manifested,
+no-tool validator is the only role that receives exact staged bytes; it physically verifies the
+selection, selected prediction, observation receipt, fresh-confirmation reservation, and frozen
+analysis/measurement identities before applying confirmation, identity, custody, validity,
+blinding, protocol, audit, and sample hard gates. The updater can consume only a committed validated
+artifact, reloads it from archive, derives the exact nominal and every frozen likelihood-sensitivity
+posterior, and creates a child belief state without mutating the source snapshot. Negative and
+surprising evidence produces append-only retain/retire/narrow and world-level fork/new-measurement
+directives plus an open contradiction queue. Fixtures and validator assertions remain synthetic, so
+this is not evidence that any real observation, likelihood, measurement, or mechanism is valid. See
+[`docs/epistemics/VALIDATED_OBSERVATION_BELIEF_UPDATE.md`](docs/epistemics/VALIDATED_OBSERVATION_BELIEF_UPDATE.md).
+
+F9-S7 now independently reopens the committed selection, validation, update, and evidence-ledger
+archives and rederives eleven K3 checks covering competing hypotheses, chronology, valid-observation/
+update bijection, high-belief discrimination, belief lineage, mechanism claims, negative-result
+revision, contradictions, persistence, terminal action, and nonvacuous positive update. Missing or
+forged evidence fails closed; zero updates can be honest partial but never accepted; and narrowing
+must create new testable prediction versions rather than only new wording. The scheduler entry point
+delegates to the same no-tool/no-raw-data scorer. An accepted chain is an engineering verdict over
+synthetic artifacts, not the F9 hidden-world or real-materials scientific exit. See
+[`docs/epistemics/INDEPENDENT_K3_ACCEPTANCE.md`](docs/epistemics/INDEPENDENT_K3_ACCEPTANCE.md).
+
+F9-S8 closes the cross-round state hand-off. A successful update and its exact revision
+materializations now produce a closed `WorldModelTransition`; PostgreSQL commits source, posterior,
+revised versions, next snapshot, transition row, and one typed event atomically. Independent K3
+terminal evidence then authorizes the exact physical child snapshot as the next F9-S3 causal source.
+Narrowing rebinds assumptions, predictions, and belief members append-only; retirement, fork, and
+stop remain fail-closed. This has been exercised through a genuine second synthetic causal round,
+but is not the hidden-world or real-materials scientific exit. See
+[`docs/epistemics/TRANSACTIONAL_WORLD_MODEL_CONTINUATION.md`](docs/epistemics/TRANSACTIONAL_WORLD_MODEL_CONTINUATION.md).
+
+F9-S9 turns the hidden-world scientific exit into an executable preregistration. A separate matched
+headline/K2-single/K3-competing matrix now derives truth-relative elimination, discriminating-trial,
+posterior Brier/ECE, false-mechanism, claim-coverage, and contraction endpoints from signed
+DiscoveryWorld traces; validation freezes a held-out test config, paired task/repeat bootstrap and
+Holm statistics are recomputed from the ledger, and private custody is mandatory for a formal exit.
+The checked-in protocol currently reports `blocked`: its synthetic tests validate the machinery,
+while the private prospective suite and live same-model runner/receipts are still missing. See
+[`docs/benchmarks/K3_HIDDEN_WORLD_SCIENTIFIC_EXIT.md`](docs/benchmarks/K3_HIDDEN_WORLD_SCIENTIFIC_EXIT.md).
+
+F9-S10 adds the real-materials limb. A frozen Matbench band-gap protocol maintains null,
+unseen-system-specific, and generic-shrinkage explanations; observation-blind EIG selects a
+chemical-system contrast; distinct local keys sign measurement and full physical recomputation; and
+only the validated outcome drives nominal plus sensitivity posteriors. The authoritative v2 result
+favored generic shrinkage, but worst-case hypothesis-space contraction was only 1.34%, so it is an
+honest `valid_update_without_robust_contraction`, not a scientific-exit pass. The public benchmark
+and single-operator key custody make it retrospective internal confirmation, not external
+replication. See
+[`docs/benchmarks/K3_REAL_MATERIALS_EVIDENCE_CHAIN.md`](docs/benchmarks/K3_REAL_MATERIALS_EVIDENCE_CHAIN.md).
+
+F10-S1 now adds an immutable experiment-capability registry and an exact observation-blind planner.
+Provisional capabilities are exploratory-only; schema changes require append-only semantic
+versioning, and confirmatory requests fail closed. The real materials capability froze and ran all
+five registered partitions with two physical validator recomputations per slot. The outcome was
+honestly `partition_sensitive` (2 unseen-specific, 2 generic, 1 ambiguous): all point deltas were
+positive, but only two intervals excluded zero. Same-dataset partitions were not pooled into a
+joint posterior, and the capability remains provisional. See
+[`docs/benchmarks/F10_MATERIALS_CAPABILITY_REPLICATION.md`](docs/benchmarks/F10_MATERIALS_CAPABILITY_REPLICATION.md).
+
+F10-S2 now keeps raw executor artifacts, parser candidates, domain-validator reports, and final
+measurement admission as separate replayable layers. Values require a quantity kind, UCUM literal,
+uncertainty, method, conditions, sample count, and raw lineage. A real Matbench slot reexecution
+ended `validated_negative`, while its exact-reexecution purpose correctly prevented it from being
+counted again as new F9 evidence. Invalid units/conditions, failed execution, parser/validator
+failure, and scientific negatives have distinct terminal states. See
+[`docs/capabilities/TYPED_OBSERVATION_PIPELINE.md`](docs/capabilities/TYPED_OBSERVATION_PIPELINE.md).
+
+F10-S3 now separates formula, normalized structure, synthesis batch, physical sample, and source
+record identity. Required identity levels are checked independently across splits; failed, duplicate,
+condition-incompatible, and conflicting measurements cannot silently enter variability estimates.
+Gold fixtures distinguish two NaCl polymorphs and exercise sample leakage plus available/unavailable
+noise decomposition. A physical audit of all 4,604 `matbench_expt_gap` rows found three unresolved
+normalized-composition collisions, but correctly limits the table to composition benchmarking
+because its structure/sample/batch/method/condition/uncertainty/source metadata is absent. See
+[`docs/capabilities/MATERIALS_IDENTITY_AND_MEASUREMENT_AUDIT.md`](docs/capabilities/MATERIALS_IDENTITY_AND_MEASUREMENT_AUDIT.md).
+
+F10-S4 now freezes and physically replays a three-arm structure-discrimination experiment. All
+1,265 `matbench_phonons` structures pass an all-row quality gate and are split by 1,082 chemical
+systems before fitting. A 159-feature composition-plus-aligned-geometry model is compared with an
+equal-capacity within-role-permuted control and a 132-feature composition reference under the same
+fixed random-forest budget. Aligned geometry improved MAE over the matched control by 52.2% on
+internal validation and 47.8% on locked holdout; both chemical-system cluster intervals excluded
+zero and exact replay reproduced the immutable result. This is bounded same-public-dataset DFPT
+evidence, not an external replication or mechanism claim. See
+[`docs/capabilities/STRUCTURE_AWARE_MATERIALS_EXPERIMENT.md`](docs/capabilities/STRUCTURE_AWARE_MATERIALS_EXPERIMENT.md).
+
+F10-S5 now adds a real digest-pinned simulation lifecycle around ASE 3.29.0/EMT: a strict periodic
+EOS job, hardened no-network container, per-evaluation atomic checkpoints, content-addressed raw
+artifacts, typed timeout/quota/infrastructure/worker failures, eleven independently recomputed
+quality/gold checks, and exact evidence replay. The retained v1 bind-mount failure is superseded
+append-only by v2; two successful v2 Cu fcc attempts exactly match the frozen payload and the ASE
+reference lattice constant. The registry exposes this only as an explicitly opted-in provisional
+capability. It calibrates a classical potential execution boundary, not DFT, experiment,
+transferability, mechanism, or independent implementation replication. See
+[`docs/capabilities/ASE_EMT_REFERENCE_SIMULATION.md`](docs/capabilities/ASE_EMT_REFERENCE_SIMULATION.md).
+
+F10-S6 now closes an exact F8→F9→F10 mechanistic campaign before observation access. A protocol
+binds a frozen capability registry, independently reviewed family qualifications, at least two
+distinct experiment families including C3/C4,
+unique probabilistic prediction campaigns, executor/data/input identities, resource ceilings, a
+fresh independent-confirmation reservation, and a robust sensitivity-aware decision rule. Results
+must arrive through committed typed observation pipelines and an independent pre-frozen outcome
+mapper. Slots are scored separately and only concordance is used—no joint posterior or
+pseudoreplication. Claim release is intersected with F9 causal authority, registered capability
+claim types, confirmatory admission, and fresh/independent evidence. The engineering template and
+13 synthetic adversarial tests are complete, but the frozen current audit reports both execution
+and scientific release blocked because no production F8/F9 lineage, registered confirmatory
+mechanism capabilities, independently reviewed family qualifications, fresh reservation, or
+independent confirmation exists. See
+[`docs/capabilities/MECHANISTIC_CAMPAIGN_TEMPLATE.md`](docs/capabilities/MECHANISTIC_CAMPAIGN_TEMPLATE.md).
+
 ## Invariants (the safety/quality spine — never traded for a feature)
 
 1. **Deterministic FSM + hard gates** — capability is added as gated stages, not free-roaming autonomy.
@@ -352,11 +474,22 @@ Live-provider/extractor/matcher calibration plus a real prospective suite and re
 remain release gates. See `docs/F8_S5_CALIBRATED_NOVELTY_IMPLEMENTATION_REPORT_2026_08_15.md` and
 `docs/F8_S6_PROTOCOL_SAFE_SOTA_IMPLEMENTATION_REPORT_2026_08_15.md`.
 
-The isolated F9 chain now reaches pre-observation prediction commitment: competing hypotheses,
-explicit causal graphs/assumptions, calibrated-or-ordinal likelihood semantics, immutable receipts,
-and a sealed raw-observation entry boundary are synthetic-tested end to end. It still lacks an
-observation-blind constrained experiment selector, validated-observation-to-posterior update path,
-negative-result revision policy, K3 acceptance scorer, and real-domain calibration/replication.
+The isolated F9 chain now reaches independent K3 evidence-chain acceptance: competing hypotheses,
+explicit causal graphs/assumptions, calibrated-or-ordinal likelihood semantics, immutable prediction
+receipts, sealed raw-observation entry, archived-candidate verification, full EIG ledgers, hard
+validity/resource/safety gates, reasoned no-fallback selection, independent observation admission,
+exact posterior/sensitivity audits, child belief snapshots, append-only negative-result directives,
+contradiction retention, physical end-to-end replay, mechanism-claim gates, prediction-changing
+negative revision, exact persistence bundles, and nonvacuous verdicts are synthetic-tested end to
+end. F9-S8 now atomically persists source/posterior/revision-closed next snapshots with one typed
+event, physically reloads that transition, gates it on the independent K3 terminal verdict, and has
+verified that the exact child state drives a second F9-S3 causal round; retirement/fork/stop remain
+fail-closed. F9-S9 has completed the frozen K3-versus-K2/headline hidden-world evaluation machinery
+and truth-relative scorer, but no live/private execution has passed it. F9-S10 has completed one
+real Matbench alternatives/experiment/validated-update chain with locally authenticated evidence;
+its split-sensitive results did not pass robust contraction. The project still lacks contradiction
+resolution, a prospective custody-bound hidden-world result, external validator custody, and
+registered real-domain replication/calibration.
 
 **Honest caveat:** this is still stronger evidence for the *machinery* than for a scientific result.
 The first strict live campaign completed, but its external evaluation was negative and the external

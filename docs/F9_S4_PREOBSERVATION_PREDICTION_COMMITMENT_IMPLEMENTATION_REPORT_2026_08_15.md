@@ -211,15 +211,19 @@ out-of-scope exploratory/legacy failures; no new F9-S4 file is implicated.
   authentication for observation seals;
 - no intervention execution, randomization, parser, observation validity, or measurement validity
   result;
-- no posterior update, likelihood sensitivity of posterior, hypothesis revision, contradiction queue,
-  or negative-result policy;
-- no EIG selector, K3 acceptance scorer, scheduler wiring, F9 scientific exit, or causal discovery;
+- no posterior update, likelihood sensitivity, revision, or contradiction handling inside F9-S4;
+  those are now provided by the downstream isolated F9-S6 boundary;
+- no EIG selector inside F9-S4, K3 acceptance scorer, scheduler wiring, F9 scientific exit, or
+  causal discovery; the subsequent isolated F9-S5 selector does not change these F9-S4 guarantees;
 - no real evidence for any hypothesis, mechanism, effect, novelty, or SOTA claim.
 
-## Next slice
+## Subsequent slice
 
-F9-S5 should consume only immutable ready campaigns and use probability-based EIG only when
-`eig_eligible=true`. Selection must be observation-blind and combine discrimination with cost, time,
-risk, measurement validity, fresh confirmation availability, and replication debt. A high-EIG proxy
-with invalid measurement must lose to a lower-EIG valid experiment, and every unselected candidate
-needs a retained reason.
+F9-S5 now consumes immutable ready campaigns, uses probability-based EIG only when
+`eig_eligible=true`, and performs observation-blind constrained selection across discrimination,
+cost, time, risk, measurement validity, proxy risk, capability, fresh confirmation, and replication
+debt. Its high-EIG invalid-proxy and complete-reason acceptance fixtures pass. See
+`F9_S5_CONSTRAINED_EXPERIMENT_SELECTION_IMPLEMENTATION_REPORT_2026_08_15.md`. F9-S6 validated update
+and F9-S7 independent K3 acceptance are now also implemented. See
+`F9_S7_INDEPENDENT_K3_ACCEPTANCE_IMPLEMENTATION_REPORT_2026_08_15.md`; the next unfinished work is the
+F9 scientific-exit/integration bridge.

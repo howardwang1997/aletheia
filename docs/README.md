@@ -112,5 +112,87 @@ Recommended reading order:
     schemas, calibration, probability/ordinal semantics, execution, archive, and observation staging.
 52. `adr/0019-f9-pre-observation-prediction-commitment-and-observation-seal.md` — preregistration and
     forecast-verification basis, exact trust boundary, consequences, and rejected alternatives.
-53. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
-54. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.
+53. `F9_S5_CONSTRAINED_EXPERIMENT_SELECTION_IMPLEMENTATION_REPORT_2026_08_15.md` — physical
+    prediction-candidate verification, full EIG ledgers, hard constraints, fixed utility, complete
+    ranking reasons, no-feasible semantics, and acceptance evidence.
+54. `epistemics/CONSTRAINED_EXPERIMENT_SELECTION.md` — developer/operator guide for exact candidates,
+    independent assessment, EIG, constraints, utility, ranking, failure, archive, and current limits.
+55. `adr/0020-f9-observation-blind-constrained-experiment-selection.md` — Bayesian design,
+    model-discrimination, multicriterion, measurement-validity, and no-fallback design decisions.
+56. `F9_S6_VALIDATED_OBSERVATION_BELIEF_UPDATE_IMPLEMENTATION_REPORT_2026_08_15.md` — physical
+    validation boundaries, scientific admission gates, exact posterior/sensitivity ledgers,
+    immutable revision directives, contradiction queue, and acceptance evidence.
+57. `epistemics/VALIDATED_OBSERVATION_BELIEF_UPDATE.md` — developer/operator guide for independent
+    validation, raw-data isolation, Bayesian update, fragility, revisions, archive, and limitations.
+58. `adr/0021-f9-validated-observation-bayesian-revision.md` — Bayesian workflow, robust-update,
+    preregistration, protocol-deviation, truth-maintenance, and append-only design decisions.
+59. `F9_S7_INDEPENDENT_K3_ACCEPTANCE_IMPLEMENTATION_REPORT_2026_08_15.md` — physical full-chain
+    replay, eleven independent checks, nonvacuous verdicts, claim/revision/persistence gates, and
+    acceptance evidence.
+60. `epistemics/INDEPENDENT_K3_ACCEPTANCE.md` — developer/operator guide for round evidence,
+    persistence ledger, scoring, dispositions, mechanism/negative-result gates, archive, and limits.
+61. `adr/0022-f9-independent-k3-evidence-chain-acceptance.md` — strong-inference, prequential,
+    provenance, reproducibility, independent-scoring, and prediction-changing revision decisions.
+62. `F9_S8_TRANSACTIONAL_WORLD_MODEL_CONTINUATION_IMPLEMENTATION_REPORT_2026_08_15.md` — atomic
+    posterior/revision persistence, typed scheduler event, K3-gated authorization, and verified
+    second-round causal consumption.
+63. `epistemics/TRANSACTIONAL_WORLD_MODEL_CONTINUATION.md` — developer/operator guide for building,
+    committing, recovering, authorizing, and consuming F9 world-model transitions.
+64. `adr/0023-f9-transactional-world-model-continuation.md` — revision-closure, transaction,
+    event-projection, terminal-action, and fork decisions.
+65. `F9_S9_K3_HIDDEN_WORLD_SCIENTIFIC_EXIT_HARNESS_IMPLEMENTATION_REPORT_2026_08_15.md` — matched
+    headline/K2/K3 execution, truth-relative endpoints, paired statistics, threshold freeze, and
+    honest private-evidence blocker.
+66. `benchmarks/K3_HIDDEN_WORLD_SCIENTIFIC_EXIT.md` — evaluator runbook for protocol inspection,
+    three-arm execution, signed aggregation, acceptance freeze, and final decision semantics.
+67. `adr/0024-f9-frozen-k3-hidden-world-scientific-exit.md` — treatment isolation, hidden metrics,
+    calibration/false-mechanism, pairing, preregistration, and custody decisions.
+68. `F9_S10_REAL_MATERIALS_EVIDENCE_CHAIN_IMPLEMENTATION_REPORT_2026_08_15.md` — frozen real
+    Matbench alternatives, EIG selection, signed measurement/recomputation, posterior sensitivity,
+    retained unfavorable result, and explicit non-exit.
+69. `benchmarks/K3_REAL_MATERIALS_EVIDENCE_CHAIN.md` — operator runbook for preregistration,
+    separately keyed execution/validation, update, replay, and current evidence interpretation.
+70. `adr/0025-f9-authenticated-real-materials-evidence-chain.md` — retrospective evidence scope,
+    chemical-system control, all-scenarios revision, anti-best-of-N, and custody decisions.
+71. `F10_S1_CAPABILITY_REGISTRY_AND_REPLICATION_IMPLEMENTATION_REPORT_2026_08_15.md` — immutable
+    capability contracts, append-only schema correction, exact planning, full five-slot real matrix,
+    and honest partition-sensitive result.
+72. `benchmarks/F10_MATERIALS_CAPABILITY_REPLICATION.md` — operator runbook and frozen identities,
+    commands, result matrix, verification, and interpretation boundary.
+73. `adr/0026-f10-versioned-capability-registry-and-full-matrix-replication.md` — schema-version,
+    provisional-evidence, all-slot, no-pseudo-replication, and promotion-boundary decisions.
+74. `F10_S2_TYPED_OBSERVATION_PIPELINE_IMPLEMENTATION_REPORT_2026_08_15.md` — raw/parse/validate
+    separation, units/uncertainty/conditions, negative preservation, real reexecution, and admission.
+75. `capabilities/TYPED_OBSERVATION_PIPELINE.md` — state model, typed requirements, persistence,
+    replay command, and current limits.
+76. `adr/0027-f10-typed-observation-and-negative-result-boundary.md` — invalid-versus-negative,
+    UCUM, independent validation, provenance, and anti-double-counting decisions.
+77. `F10_S3_MATERIALS_IDENTITY_AND_MEASUREMENT_AUDIT_IMPLEMENTATION_REPORT_2026_08_15.md` —
+    formula/structure/sample/batch identity, multi-level split leakage, measurement audit, gold
+    fixtures, and real Matbench identity evidence.
+78. `capabilities/MATERIALS_IDENTITY_AND_MEASUREMENT_AUDIT.md` — identity hierarchy, pooling rules,
+    replay commands, unresolved composition collisions, and current limits.
+79. `adr/0028-f10-material-identity-and-conservative-measurement-audit.md` — CIF/sample/metrology
+    basis, fail-closed identity, conservative pooling, and licence-boundary decisions.
+80. `F10_S4_STRUCTURE_AWARE_EXPERIMENT_IMPLEMENTATION_REPORT_2026_08_15.md` — structure quality,
+    frozen three-arm matched control, real Matbench phonon result, replay, and claim boundary.
+81. `capabilities/STRUCTURE_AWARE_MATERIALS_EXPERIMENT.md` — acquisition, immutable plan/run/replay
+    commands, result interpretation, and current non-claims.
+82. `adr/0029-f10-precommitted-matched-structure-discrimination.md` — target-blind preflight,
+    chemical-system split, equal-capacity permutation, cluster bootstrap, and claim-ceiling decision.
+83. `F10_S5_REPRODUCIBLE_SIMULATION_CAPABILITY_IMPLEMENTATION_REPORT_2026_08_15.md` — digest-pinned
+    ASE/EMT execution, checkpoint/raw lineage, append-only infrastructure correction, reference
+    calibration, physical replay, provisional registry, and bounded claim.
+84. `capabilities/ASE_EMT_REFERENCE_SIMULATION.md` — frozen identities, execution/replay commands,
+    validation/failure semantics, current reference result, and promotion gates.
+85. `adr/0030-f10-digest-pinned-ase-emt-reference-simulation.md` — classical-before-DFT stack,
+    sandbox, failure retention, exact-repetition, append-only, and provisional-boundary decisions.
+86. `F10_S6_MECHANISTIC_CAMPAIGN_TEMPLATE_IMPLEMENTATION_REPORT_2026_08_16.md` — exact F8/F9/F10
+    lineage, registry-bound multi-family slots, fresh independence, robust per-slot scoring,
+    evidence bundle, current readiness blockers, and honest non-exit.
+87. `capabilities/MECHANISTIC_CAMPAIGN_TEMPLATE.md` — state model, disposition/claim semantics,
+    readiness CLI, real-protocol workflow, and current release work.
+88. `adr/0031-f10-fail-closed-mechanistic-campaign-composition.md` — registry trust, separate
+    execution/release gates, no-joint-posterior, fresh confirmation, and claim-ceiling decisions.
+89. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
+90. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.

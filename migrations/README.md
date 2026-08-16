@@ -34,3 +34,8 @@ from content SHA-256 version identities; database triggers reject mutation. The 
 `belief_states` table and historical K2 events are not rewritten. A read-only
 `k2_belief_state_compat` projection exposes their Beta mean and labels the representation explicitly
 so callers cannot confuse it with an F9 multi-hypothesis posterior.
+
+Revision `20260815_0005` adds immutable F9-S8 world-model transition records. Each record binds one
+committed update receipt to its source, posterior, and optional revision-closed next snapshot.
+Application code writes those objects and the corresponding typed scheduler event in one
+transaction; transition rows reject SQL `UPDATE` and `DELETE`.

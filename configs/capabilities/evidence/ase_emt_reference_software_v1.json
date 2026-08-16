@@ -1,0 +1,17 @@
+{
+  "schema_name": "aletheia.simulation_software_access_evidence",
+  "schema_version": 1,
+  "capability_id": "materials.simulation.ase_emt_eos_reference",
+  "software": "Atomic Simulation Environment 3.29.0, including its pure-Python EMT calculator",
+  "license": "GNU Lesser General Public License, version 2.1 or later",
+  "installed_license_sha256": "8ca76f9c8c2293e7563ac648d94770c2319d56be588eb190c5f0f9564c92d663",
+  "official_sources": [
+    "https://ase-lib.org/index.html",
+    "https://gitlab.com/ase/ase/-/blob/master/LICENSE",
+    "https://docs.ase-lib.org/ase/calculators/emt.html",
+    "https://docs.ase-lib.org/ase/eos.html"
+  ],
+  "permitted_scope": "Local no-network execution of operator-supplied periodic structures and retention of input, checkpoint, result, and failure artifacts.",
+  "limitation": "This operator record is not an independent legal review. The capability is a classical EMT calibration and cannot make DFT, experimental, transferability, or mechanism claims.",
+  "review_status": "operator_documented_not_independent_legal_review"
+}
