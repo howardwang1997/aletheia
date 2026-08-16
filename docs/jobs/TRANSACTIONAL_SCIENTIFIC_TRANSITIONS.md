@@ -23,7 +23,8 @@ conda run -n aletheia alembic upgrade head
 conda run -n aletheia alembic current
 ~~~
 
-The expected head is `20260817_0012`.
+The expected head is `20260817_0015`; its F11-S3 revisions permit portfolio-scoped commands and add
+the Quest/program graph without changing the F11-S2 receipt semantics.
 
 ## Scientific command lifecycle
 

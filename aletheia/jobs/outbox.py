@@ -53,6 +53,7 @@ class ScientificCommandType(str, Enum):
     ARTIFACT_COMMIT = "artifact.commit"
     STAGE_TRANSITION = "stage.transition"
     WORLD_MODEL_TRANSITION = "world_model.transition"
+    RESEARCH_GRAPH_MUTATION = "research_graph.mutation"
     GENERIC = "scientific.generic"
 
 
@@ -92,7 +93,10 @@ class ScientificCommandSpec(_FrozenModel):
     """Immutable input identity for one transactionally applied scientific mutation."""
 
     command_id: str | None = Field(default=None, pattern=_COMMAND_ID_PATTERN)
-    run_id: str = Field(pattern=_RUN_ID_PATTERN)
+    # Quest/program mutations exist above any legacy ``Run``.  A missing run_id therefore means
+    # portfolio-scoped scientific state, not an anonymous run mutation; aggregate identity remains
+    # mandatory and the durable event is emitted without a run filter.
+    run_id: str | None = Field(default=None, pattern=_RUN_ID_PATTERN)
     command_type: str = Field(pattern=_COMMAND_TYPE_PATTERN)
     aggregate_type: str = Field(pattern=_AGGREGATE_TYPE_PATTERN)
     aggregate_id: str = Field(min_length=1, max_length=192)
@@ -149,7 +153,7 @@ class ScientificMutation(_FrozenModel):
 
 class ScientificCommandReceipt(_FrozenModel):
     command_id: str = Field(pattern=_COMMAND_ID_PATTERN)
-    run_id: str = Field(pattern=_RUN_ID_PATTERN)
+    run_id: str | None = Field(default=None, pattern=_RUN_ID_PATTERN)
     command_type: str
     aggregate_type: str
     aggregate_id: str

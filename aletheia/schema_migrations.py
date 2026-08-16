@@ -14,6 +14,7 @@ import aletheia.memory.ledger  # noqa: F401  (register every ORM table)
 import aletheia.knowledge.persistence  # noqa: F401  (register F8 immutable tables)
 import aletheia.epistemics.persistence  # noqa: F401  (register F9 world-model tables)
 import aletheia.jobs.persistence  # noqa: F401  (register F11 durable queue tables)
+import aletheia.programs.persistence  # noqa: F401  (register F11 scientific graph tables)
 from aletheia.db import Base, SchemaCompatibilityError, alembic_config, engine
 
 LEGACY_BASELINE_REVISION = "20260813_0001"
@@ -51,6 +52,16 @@ POST_BASELINE_TABLES = frozenset(
         "scientific_commands",
         "one_time_external_actions",
         "external_action_receipts",
+        "research_graph_nodes",
+        "research_graph_transitions",
+        "research_scientific_families",
+        "research_campaign_families",
+        "research_graph_dependencies",
+        "research_program_questions",
+        "research_campaign_runs",
+        "research_campaign_experiments",
+        "research_data_role_allocations",
+        "research_budget_allocations",
     }
 )
 POST_BASELINE_COLUMNS = frozenset(
@@ -64,6 +75,8 @@ POST_BASELINE_COLUMNS = frozenset(
         ("campaign_split_ledgers", "final_action_receipt_sha256"),
         ("external_validation_ledgers", "action_id"),
         ("external_validation_ledgers", "action_receipt_sha256"),
+        ("budget_events", "research_budget_allocation_id"),
+        ("hypothesis_attempts", "research_family_id"),
     }
 )
 POST_BASELINE_CONSTRAINTS = frozenset(

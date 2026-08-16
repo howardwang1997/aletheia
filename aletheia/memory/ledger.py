@@ -380,6 +380,9 @@ class BudgetEvent(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    research_budget_allocation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("research_budget_allocations.allocation_id"), index=True
+    )
     kind: Mapped[str] = mapped_column(String(32))  # usd | gpu_hours | agent_sdk_credit | tokens
     amount: Mapped[float] = mapped_column(Float)
     cumulative: Mapped[float | None] = mapped_column(Float)
@@ -535,6 +538,9 @@ class HypothesisAttempt(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    research_family_id: Mapped[str | None] = mapped_column(
+        ForeignKey("research_scientific_families.family_id"), index=True
+    )
     experiment_id: Mapped[str | None] = mapped_column(ForeignKey("experiments.id"), index=True)
     family_key: Mapped[str] = mapped_column(String(64), index=True)
     hypothesis_key: Mapped[str] = mapped_column(String(64))

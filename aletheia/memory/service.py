@@ -44,6 +44,13 @@ from aletheia.memory.ledger import (
     SOTAResult,
     WorkerCache,
 )
+from aletheia.programs.persistence import (
+    ResearchBudgetAllocationRecord,
+    ResearchCampaignFamilyRecord,
+    ResearchCampaignRunRecord,
+    ResearchGraphNodeRecord,
+    ResearchScientificFamilyRecord,
+)
 from aletheia.reproducibility.manifest import content_sha256
 
 
@@ -640,9 +647,40 @@ def register_hypothesis_attempt(
     split_hash: str,
     alpha_allocated: float,
     confirmation_batch: int | None = None,
+    research_family_id: str | None = None,
 ) -> int:
     hypothesis_key = _dedup_hash(family_key, hypothesis_text)
     with session_scope() as s:
+        run_binding = (
+            s.query(ResearchCampaignRunRecord)
+            .filter(ResearchCampaignRunRecord.run_id == run_id)
+            .first()
+        )
+        resolved_family_id = research_family_id
+        if run_binding is not None:
+            campaign_family = s.get(
+                ResearchCampaignFamilyRecord,
+                run_binding.campaign_node_id,
+            )
+            if campaign_family is None:
+                raise RuntimeError("research campaign has no scientific family binding")
+            graph_family = s.get(
+                ResearchScientificFamilyRecord,
+                campaign_family.family_id,
+            )
+            if graph_family is None:
+                raise RuntimeError("research campaign scientific family is missing")
+            if resolved_family_id is not None and resolved_family_id != graph_family.family_id:
+                raise RuntimeError("hypothesis attempt changed scientific family identity")
+            if family_key != graph_family.family_key:
+                raise RuntimeError(
+                    "hypothesis family key does not match the campaign scientific family"
+                )
+            resolved_family_id = graph_family.family_id
+        elif resolved_family_id is not None:
+            graph_family = s.get(ResearchScientificFamilyRecord, resolved_family_id)
+            if graph_family is None or graph_family.family_key != family_key:
+                raise RuntimeError("hypothesis scientific family identity is invalid")
         existing = (
             s.query(HypothesisAttempt)
             .filter(
@@ -657,11 +695,13 @@ def register_hypothesis_attempt(
                 existing.split_hash != split_hash
                 or existing.hypothesis_key != hypothesis_key
                 or abs(float(existing.alpha_allocated) - float(alpha_allocated)) > 1e-12
+                or existing.research_family_id != resolved_family_id
             ):
                 raise RuntimeError("hypothesis attempt changed after registration")
             return int(existing.id)
         row = HypothesisAttempt(
             run_id=run_id,
+            research_family_id=resolved_family_id,
             experiment_id=experiment_id,
             family_key=family_key,
             hypothesis_key=hypothesis_key,
@@ -701,6 +741,41 @@ def list_hypothesis_attempts(run_id: str) -> list[dict[str, Any]]:
             {
                 "id": row.id,
                 "experiment_id": row.experiment_id,
+                "research_family_id": row.research_family_id,
+                "family_key": row.family_key,
+                "hypothesis_key": row.hypothesis_key,
+                "hypothesis_text": row.hypothesis_text,
+                "round": row.round_index,
+                "phase": row.phase,
+                "confirmation_batch": row.confirmation_batch,
+                "split_hash": row.split_hash,
+                "alpha_allocated": row.alpha_allocated,
+                "status": row.status,
+                "outcome": row.outcome_json,
+            }
+            for row in rows
+        ]
+
+
+def list_scientific_family_attempts(research_family_id: str) -> list[dict[str, Any]]:
+    """List attempts across every campaign/run bound to one immutable scientific family."""
+
+    with session_scope() as s:
+        family = s.get(ResearchScientificFamilyRecord, research_family_id)
+        if family is None:
+            raise RuntimeError("research scientific family is missing")
+        rows = (
+            s.query(HypothesisAttempt)
+            .filter(HypothesisAttempt.research_family_id == research_family_id)
+            .order_by(HypothesisAttempt.id)
+            .all()
+        )
+        return [
+            {
+                "id": row.id,
+                "run_id": row.run_id,
+                "experiment_id": row.experiment_id,
+                "research_family_id": row.research_family_id,
                 "family_key": row.family_key,
                 "hypothesis_key": row.hypothesis_key,
                 "hypothesis_text": row.hypothesis_text,
@@ -925,10 +1000,60 @@ def list_artifacts(experiment_id: str) -> list[dict[str, Any]]:
 # --- budget events (Phase 1) ----------------------------------------------
 
 
-def record_budget_event(run_id: str, kind: str, amount: float) -> float:
+def record_budget_event(
+    run_id: str,
+    kind: str,
+    amount: float,
+    *,
+    research_budget_allocation_id: str | None = None,
+) -> float:
     """Append a budget charge of ``kind`` and return the new running total for that
     kind (cumulative = previous cumulative + amount)."""
     with session_scope() as s:
+        allocation = None
+        if research_budget_allocation_id is not None:
+            if amount < 0:
+                raise RuntimeError("allocated budget charges cannot be negative")
+            allocation = (
+                s.query(ResearchBudgetAllocationRecord)
+                .filter(
+                    ResearchBudgetAllocationRecord.allocation_id
+                    == research_budget_allocation_id
+                )
+                .with_for_update()
+                .first()
+            )
+            if allocation is None:
+                raise RuntimeError("research budget allocation is missing")
+            if allocation.kind != kind:
+                raise RuntimeError("budget event kind does not match its allocation")
+            run_binding = (
+                s.query(ResearchCampaignRunRecord)
+                .filter(ResearchCampaignRunRecord.run_id == run_id)
+                .first()
+            )
+            if run_binding is None or run_binding.quest_id != allocation.quest_id:
+                raise RuntimeError("run is outside the budget allocation quest")
+            scope = s.get(ResearchGraphNodeRecord, allocation.scope_node_id)
+            campaign = s.get(ResearchGraphNodeRecord, run_binding.campaign_node_id)
+            if scope is None or campaign is None:
+                raise RuntimeError("budget allocation graph scope is missing")
+            if scope.node_type == "program" and campaign.parent_node_id != scope.node_id:
+                raise RuntimeError("run is outside the budget allocation program")
+            allocated_rows = (
+                s.query(BudgetEvent)
+                .filter(
+                    BudgetEvent.research_budget_allocation_id
+                    == research_budget_allocation_id
+                )
+                .all()
+            )
+            spent_microunits = sum(
+                int(round(float(row.amount) * 1_000_000)) for row in allocated_rows
+            )
+            charge_microunits = int(round(float(amount) * 1_000_000))
+            if spent_microunits + charge_microunits > int(allocation.cap_microunits):
+                raise RuntimeError("research budget allocation cap exceeded")
         last = (
             s.query(BudgetEvent)
             .filter(BudgetEvent.run_id == run_id, BudgetEvent.kind == kind)
@@ -937,7 +1062,17 @@ def record_budget_event(run_id: str, kind: str, amount: float) -> float:
         )
         prev = last.cumulative if last and last.cumulative is not None else 0.0
         cumulative = prev + float(amount)
-        s.add(BudgetEvent(run_id=run_id, kind=kind, amount=float(amount), cumulative=cumulative))
+        s.add(
+            BudgetEvent(
+                run_id=run_id,
+                research_budget_allocation_id=(
+                    allocation.allocation_id if allocation is not None else None
+                ),
+                kind=kind,
+                amount=float(amount),
+                cumulative=cumulative,
+            )
+        )
         return cumulative
 
 

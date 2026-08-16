@@ -164,7 +164,7 @@ class ScientificCommandRecord(Base):
     )
 
     command_id: Mapped[str] = mapped_column(String(96), primary_key=True)
-    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("runs.id"), index=True)
     command_type: Mapped[str] = mapped_column(String(96), index=True)
     aggregate_type: Mapped[str] = mapped_column(String(64), index=True)
     aggregate_id: Mapped[str] = mapped_column(String(192), index=True)

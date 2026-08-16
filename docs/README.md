@@ -216,5 +216,13 @@ Recommended reading order:
 97. `adr/0034-f11-transactional-scientific-commands-and-external-action-receipts.md` — database
     outbox atomicity, content-bound replay, stable provider keys, and rejected global exactly-once
     claim.
-98. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
-99. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.
+98. `F11_S3_RESEARCH_PROGRAM_GRAPH_IMPLEMENTATION_REPORT_2026_08_17.md` — reconstructible hierarchy,
+    cross-Campaign family disclosure, scientific DAG, typed allocations, controller-only UI, and
+    acceptance evidence.
+99. `programs/RESEARCH_PROGRAM_GRAPH.md` — deploy, creation/lifecycle/dependency operation,
+    family attempts, allocations, API/dashboard projection, reconstruction, and incident handling.
+100. `adr/0035-f11-reconstructible-scientific-program-graph.md` — hierarchy/task separation,
+    append-only lifecycle, concurrent cycle prevention, portfolio command scope, and rejected reset
+    paths.
+101. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
+102. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.

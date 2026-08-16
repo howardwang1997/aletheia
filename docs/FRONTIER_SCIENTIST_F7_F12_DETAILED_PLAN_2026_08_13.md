@@ -2268,6 +2268,23 @@ rebinding、DB trigger immutability、一次性 holdout/external retry 与三段
 - program 状态可从 ledger 重建；
 - UI 只作为 view/controller。
 
+**实现状态（2026-08-17）：工程完成。** Alembic `20260817_0013`–`0015` 新增 typed
+Quest/ResearchProgram/Campaign relational spine、append-only lifecycle transition、同类型 scientific
+dependency DAG、Program-owned cross-Campaign scientific family、F9 ResearchQuestion/legacy
+Run/Experiment binding，以及 Quest/Program budget 与 data-role allocation。节点 identity/spec、transition、
+family、edge、binding、allocation 均由 PostgreSQL FK/unique/check/trigger 保护；Quest-scoped lock 与数据库
+recursive cycle trigger 保证并发反向 edge 最多提交一条。
+
+所有 mutation 复用 F11-S2 command/outbox transaction；Quest 出现在 Run 之前，因此 scientific command
+扩展为显式 portfolio scope（nullable run_id），其他 aggregate/request/result/event receipt 不变。重建会
+重新验证 frozen spec/hash、完整 transition fold、command/event receipt、projection、DAG、family closure、
+external binding 与 allocation cap，输出 deterministic graph SHA-256。HypothesisAttempt 会从 bound Run
+自动取得 family ID，跨两个 Campaign/Run 聚合，因此新 Campaign 无法清零尝试数。FastAPI 绑定 authenticated
+principal，viewer 只读；Next.js panel 仅重新拉取 reconstructed ledger view，不拥有状态。下一切片为
+F11-S4 receipt-backed memory compaction。扩展 graph/queue/outbox/migration/budget/F9 integration matrix
+为 80 passed；最终全库非 Docker 1266 passed、1 skipped、29 deselected（765.25 s），Next.js production
+build、Ruff、Alembic head/current 与 ORM schema diff 均通过。
+
 ### F11-S4：Memory compaction with receipts
 
 - artifact-backed summary；

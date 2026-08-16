@@ -37,6 +37,36 @@ export async function listRuns() {
   return (await res.json()) as Array<Record<string, unknown>>;
 }
 
+// --- durable Quest / Program / Campaign graph ---
+
+export interface ResearchGraphNode {
+  node_id: string;
+  quest_id: string;
+  parent_node_id?: string | null;
+  node_type: "quest" | "program" | "campaign";
+  state: string;
+  state_version: number;
+  spec: Record<string, unknown>;
+}
+
+export interface QuestGraphSnapshot {
+  quest_id: string;
+  nodes: ResearchGraphNode[];
+  transitions: Array<Record<string, unknown>>;
+  dependencies: Array<Record<string, unknown>>;
+  scientific_families: Array<Record<string, unknown>>;
+  external_bindings: Array<Record<string, unknown>>;
+  data_allocations: Array<Record<string, unknown>>;
+  budget_allocations: Array<Record<string, unknown>>;
+  graph_sha256: string;
+}
+
+export async function listQuestGraphs(): Promise<QuestGraphSnapshot[]> {
+  const res = await fetch(`${API_BASE}/research-graph/quests`, withCreds());
+  if (!res.ok) throw new Error(`listQuestGraphs failed: ${res.status}`);
+  return (await res.json()) as QuestGraphSnapshot[];
+}
+
 // --- auth ---
 
 export interface AuthUser {
