@@ -10,7 +10,7 @@ conda run -n aletheia alembic upgrade head
 conda run -n aletheia alembic current
 ~~~
 
-Expected head: `20260818_0020`.
+Expected head: `20260818_0021`.
 
 - `0016` adds facts, task bindings, compactions, members, and context receipts;
 - `0017` adds append-only, command-binding, disposition, completeness, and context guards; and
@@ -175,7 +175,7 @@ When rebuild, artifact recovery, or context loading fails:
 
 1. stop delivery for the affected scope/task;
 2. preserve PostgreSQL, keyed events, and archive bytes;
-3. confirm deployed code and database are at `20260818_0020`;
+3. confirm deployed code and database are at `20260818_0021`;
 4. inspect the named fact, command, compaction, member, or context receipt;
 5. restore a verified database/archive pair or deploy matching code; and
 6. never repair an append-only row in place.

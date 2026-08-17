@@ -264,3 +264,70 @@ class ExternalActionReceiptRecord(Base):
     completion_event_key: Mapped[str] = mapped_column(String(128))
     completion_event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), index=True)
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class FaultInjectionCampaignRecord(Base):
+    """One append-only, replayable engineering resilience campaign report."""
+
+    __tablename__ = "fault_injection_campaigns"
+    __table_args__ = (
+        CheckConstraint(
+            "disposition IN ('passed','failed','blocked')",
+            name="ck_fault_injection_campaigns_disposition",
+        ),
+        CheckConstraint(
+            "scenario_count >= 10 AND passed_count >= 0 AND failed_count >= 0 "
+            "AND blocked_count >= 0 AND "
+            "scenario_count = passed_count + failed_count + blocked_count",
+            name="ck_fault_injection_campaigns_counts",
+        ),
+        CheckConstraint(
+            "(disposition = 'passed' AND passed_count = scenario_count "
+            "AND failed_count = 0 AND blocked_count = 0) OR "
+            "(disposition = 'failed' AND failed_count > 0) OR "
+            "(disposition = 'blocked' AND failed_count = 0 AND blocked_count > 0)",
+            name="ck_fault_injection_campaigns_verdict",
+        ),
+        CheckConstraint(
+            "scientific_state_loss_count >= 0 "
+            "AND duplicate_scientific_state_count >= 0 "
+            "AND duplicate_budget_charge_count >= 0 "
+            "AND duplicate_outward_authorization_count >= 0 "
+            "AND unresolved_ambiguity_without_block_count >= 0 "
+            "AND event_state_mismatch_count >= 0",
+            name="ck_fault_injection_campaigns_core_counts",
+        ),
+        UniqueConstraint("command_id", name="uq_fault_injection_campaigns_command"),
+        Index(
+            "ix_fault_injection_campaigns_quest_completed",
+            "quest_id",
+            "completed_at",
+        ),
+    )
+
+    campaign_id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    quest_id: Mapped[str | None] = mapped_column(
+        ForeignKey("research_graph_nodes.node_id"), index=True
+    )
+    manifest_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    report_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    report_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    disposition: Mapped[str] = mapped_column(String(16), index=True)
+    scenario_count: Mapped[int] = mapped_column(Integer)
+    passed_count: Mapped[int] = mapped_column(Integer)
+    failed_count: Mapped[int] = mapped_column(Integer)
+    blocked_count: Mapped[int] = mapped_column(Integer)
+    scientific_state_loss_count: Mapped[int] = mapped_column(Integer)
+    duplicate_scientific_state_count: Mapped[int] = mapped_column(Integer)
+    duplicate_budget_charge_count: Mapped[int] = mapped_column(Integer)
+    duplicate_outward_authorization_count: Mapped[int] = mapped_column(Integer)
+    unresolved_ambiguity_without_block_count: Mapped[int] = mapped_column(Integer)
+    event_state_mismatch_count: Mapped[int] = mapped_column(Integer)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    command_id: Mapped[str] = mapped_column(
+        ForeignKey("scientific_commands.command_id"), index=True
+    )
+    created_by: Mapped[str] = mapped_column(String(128), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )

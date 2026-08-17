@@ -239,5 +239,13 @@ Recommended reading order:
     deterministic scoring, hard/batch gates, API/CLI, readiness audit, and incident handling.
 106. `adr/0037-f11-observation-blind-shadow-research-portfolio.md` — no-self-score proposal,
     independent inputs, deterministic selection, shadow-only ledger, and rejected activation.
-107. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
-108. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.
+107. `F11_S6_DETERMINISTIC_FAULT_INJECTION_IMPLEMENTATION_REPORT_2026_08_18.md` — deterministic
+    ten-boundary campaign, independent invariant regrading, real failure/recovery evidence,
+    append-only persistence, and honest non-activation boundary.
+108. `jobs/FAULT_INJECTION_CAMPAIGNS.md` — manifest/executor contract, six zero-loss invariants,
+    CLI, persistence, recovery semantics, endurance-review audit, and incident handling.
+109. `adr/0038-f11-deterministic-replayable-fault-campaigns.md` — seeded order, observation-only
+    executors, full-transaction replay, remote reconciliation, failure retention, and rejected
+    exactly-once/automatic-activation claims.
+110. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
+111. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.

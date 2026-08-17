@@ -182,9 +182,9 @@ SSE replay, dependencies, finite retry, and automatic worker handling.
 
 ## Honest boundary
 
-F11-S1 prevents process-local orchestration from being the only execution truth. F11-S2 now couples
-the migrated scientific transitions to exact command/event receipts and gives one-time outward
-actions an at-most-one authorization plus reconciliation protocol. Neither slice claims globally
-atomic effects across an arbitrary provider. The Quest/Program/Campaign graph, long-term memory
-compaction, portfolio selection, broad fault injection, and the 72-hour endurance gate remain
-F11-S3 through F11-S7.
+F11-S1 prevents process-local orchestration from being the only execution truth. Later F11 slices
+now couple scientific transitions to command/event receipts, provide one-time-action
+reconciliation, reconstruct the research graph and memory, plan shadow portfolios, and run the
+deterministic F11-S6 fault campaign described in `FAULT_INJECTION_CAMPAIGNS.md`. None claims globally
+atomic effects across an arbitrary provider. The 72-hour F11-S7 endurance gate and separately
+authorized production activation remain.

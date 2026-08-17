@@ -16,7 +16,7 @@ from aletheia.db import (
 
 
 def test_repository_has_one_expected_alembic_head():
-    assert expected_schema_revision() == "20260818_0020"
+    assert expected_schema_revision() == "20260818_0021"
 
 
 def test_current_schema_is_accepted(monkeypatch):

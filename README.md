@@ -70,14 +70,16 @@ reliable autonomous frontier scientist.
    proposals, independent frozen assessments, harness-computed hard filters/EIG/cost/replication/
    diversity, constrained shadow batches, and a human plan committed before planner revelation.
    Every epoch is receipt-backed with `actions_enqueued=false`; the audit cannot enable autonomous
-   allocation.
+   allocation. F11-S6 adds deterministic ten-boundary fault campaigns, independent zero-loss/
+   zero-duplicate regrading, real process/transaction/lease/archive/identity/outward-action recovery,
+   and append-only reports whose audit still cannot activate allocation.
    The final output still needs a stable bundle containing the question, literature, data card,
    split metadata, code, artifacts, metrics, claims, audits, reproduction, limitations, paper, and
-   reproducibility package/PR; F11-S6–S7 and F12 remain.
+   reproducibility package/PR; F11-S7 and F12 remain.
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,
-production portfolio activation plus its fault/endurance gates, repeated lower-overlap or laboratory
+production portfolio activation plus its endurance gate, repeated lower-overlap or laboratory
 replication, and a complete evidence bundle.
 
 The executable plan for the next frontier program is
@@ -371,7 +373,7 @@ external-validation claims expose a raw token only once, persist only its SHA-25
 provider idempotency key, and atomically bind the result to an immutable external-action receipt.
 An expired claim becomes `reconciliation_required` and is never automatically reissued. This is an
 at-most-one Aletheia authorization guarantee, not cross-system exactly-once execution. Production
-portfolio activation, broad fault injection, and the 72-hour gate remain.
+portfolio activation and the 72-hour gate remain.
 See [`docs/jobs/TRANSACTIONAL_SCIENTIFIC_TRANSITIONS.md`](docs/jobs/TRANSACTIONAL_SCIENTIFIC_TRANSITIONS.md).
 
 F11-S3 gives each long-horizon effort a reconstructible Quest → Program → Campaign spine, durable
@@ -393,6 +395,13 @@ plan is committed with no planner-output access before the epoch exists. Graph, 
 change blocks a new epoch, while old epochs replay from frozen state. The readiness audit can only
 recommend human activation review and always reports autonomous allocation disabled. See
 [`docs/programs/SHADOW_RESEARCH_PORTFOLIO.md`](docs/programs/SHADOW_RESEARCH_PORTFOLIO.md).
+
+F11-S6 freezes ten failure boundaries and six mandatory exact-zero invariants, executes real
+process kills, PostgreSQL rollback/reconnect, retry, duplicate/stale delivery, archive exhaustion,
+runtime mismatch, and ambiguous outward-action recovery, then independently derives the verdict.
+Passing, failed, and blocked reports are append-only and regraded on every read. A passing latest
+campaign permits only F11-S7 review and always reports autonomous allocation disabled. See
+[`docs/jobs/FAULT_INJECTION_CAMPAIGNS.md`](docs/jobs/FAULT_INJECTION_CAMPAIGNS.md).
 
 ## Invariants (the safety/quality spine — never traded for a feature)
 

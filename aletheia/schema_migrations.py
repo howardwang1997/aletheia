@@ -52,6 +52,7 @@ POST_BASELINE_TABLES = frozenset(
         "scientific_commands",
         "one_time_external_actions",
         "external_action_receipts",
+        "fault_injection_campaigns",
         "research_graph_nodes",
         "research_graph_transitions",
         "research_scientific_families",

@@ -23,9 +23,9 @@ conda run -n aletheia alembic upgrade head
 conda run -n aletheia alembic current
 ~~~
 
-The current repository head is `20260818_0020`. Revisions through F11-S5 permit portfolio-scoped
-commands and add the Quest/program graph, receipt-backed memory, and shadow portfolio ledger without
-changing the F11-S2 command/receipt semantics.
+The current repository head is `20260818_0021`. Revisions through F11-S6 permit portfolio-scoped
+commands and add the Quest/program graph, receipt-backed memory, shadow portfolio ledger, and
+append-only fault-campaign evidence without changing the F11-S2 command/receipt semantics.
 
 ## Scientific command lifecycle
 
@@ -185,8 +185,8 @@ parity.
 
 ## Remaining boundary
 
-F11-S2 closes scientific-command and one-time-action replay for the migrated paths. It does not yet
-provide the Quest/Program graph (F11-S3), receipt-preserving memory compaction (F11-S4), portfolio
-selection (F11-S5), broad stochastic fault injection (F11-S6), or the 72-hour endurance run
-(F11-S7). Provider-specific receipt verification and production operator key custody must be
-commissioned before unattended real outward actions are enabled.
+F11-S2 closes scientific-command and one-time-action replay for the migrated paths. F11-S3 through
+F11-S6 now add the graph, receipt-preserving memory, shadow portfolio, and deterministic fault
+campaign on top; see `FAULT_INJECTION_CAMPAIGNS.md`. The 72-hour endurance run (F11-S7) remains.
+Provider-specific receipt verification, production operator key custody, and separate signed/IAM
+activation must be commissioned before unattended real outward actions are enabled.

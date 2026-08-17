@@ -10,7 +10,7 @@ conda run -n aletheia alembic upgrade head
 conda run -n aletheia alembic current
 ~~~
 
-Expected head: `20260818_0020`.
+Expected head: `20260818_0021`.
 
 - `0019` adds slate, candidate, human-plan, epoch, and score tables;
 - `0020` adds append-only, applying-command, parent binding, and deferred completeness guards.
@@ -228,8 +228,8 @@ audit = store.shadow_audit(
 ~~~
 
 Passing produces `eligible_for_human_activation_review=true` and still
-`autonomous_allocation_enabled=false`. F11-S6/F11-S7 and a separate signed activation design remain
-prerequisites.
+`autonomous_allocation_enabled=false`. F11-S6 now supplies deterministic fault evidence; F11-S7 and
+a separate signed activation design remain prerequisites.
 
 ## API
 
@@ -263,7 +263,7 @@ When registration/evaluation/replay fails:
 
 1. do not enqueue or manually translate the proposed actions;
 2. preserve PostgreSQL, keyed events, graph, memory archive, and assessment evidence;
-3. confirm deployed code and database are at `20260818_0020`;
+3. confirm deployed code and database are at `20260818_0021`;
 4. identify whether the failure is an invariant violation or normal graph/budget/memory staleness;
 5. for staleness, generate a new context, proposal, assessment, and slate—never rewrite the old one;
 6. for corruption, restore a verified database/archive pair or matching code; and

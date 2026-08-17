@@ -2364,6 +2364,25 @@ F11-S6。
 
 验证科学状态、费用和 outward action 均无重复/丢失。
 
+**实现状态（2026-08-18）：工程完成。** 新增完整十边界 manifest（在原九项之外显式加入
+outward-action unknown-outcome 边界）、seed + scenario ID 的稳定哈希执行顺序、真实边界 executor
+contract 与独立 evaluator。每个场景都不可省略或放宽六项 exact-zero invariant：scientific state loss、
+duplicate scientific state、duplicate budget charge、duplicate outward authorization、未阻断的远端
+ambiguity、state/event mismatch。未确认 injection、outcome/recovery 不符、metric/evidence 缺失、超时或
+比较失败均由 harness 推导为 blocked/failed；executor exception 不会被包装为通过。
+
+验收 campaign 真实执行两个 `os._exit` 子进程、PostgreSQL transaction rollback/reconnect、evaluator
+timeout、provider infrastructure failure、scientific-command duplicate、stale lease、archive `ENOSPC`、
+worker-manifest mismatch 与 one-time outward ambiguity/reconciliation，十项全部通过且六个核心合计均为
+零。Alembic `20260818_0021` 新增由 `resilience_fault_campaign.commit` + keyed event 保护的 append-only
+完整报告；所有读取重新评估 embedded observations 并核对 command/event receipt。通过、失败和阻塞报告
+都会保留；只有最新 Quest-scoped campaign 完整通过才可进入 F11-S7 review，且 audit 始终返回
+`autonomous_allocation_enabled=false`。聚焦套件 7 passed；详见
+`jobs/FAULT_INJECTION_CAMPAIGNS.md`、ADR 0038 与 F11-S6 implementation report。下一项为 F11-S7
+72-hour research endurance gate。最终跨组件回归 63 passed；全库非 Docker 回归为 1300 passed、
+2 skipped、29 deselected（772.97 s），Alembic current/head、ORM schema diff、changed-file Ruff、CLI
+smoke 与 `git diff --check` 均通过。
+
 ### F11-S7：72-hour research endurance gate
 
 一个冻结 quest：

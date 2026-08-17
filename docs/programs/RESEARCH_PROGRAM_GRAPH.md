@@ -29,7 +29,7 @@ conda run -n aletheia alembic upgrade head
 conda run -n aletheia alembic current
 ~~~
 
-Expected head: `20260818_0020` (`0013` creates the graph, `0014` freezes allocated DataAsset scope,
+Expected head: `20260818_0021` (`0013` creates the graph, `0014` freezes allocated DataAsset scope,
 `0015` guards legacy family/budget writes, `0016`–`0018` add receipt-backed memory, and
 `0019`–`0020` add the shadow portfolio ledger and integrity guards).
 
@@ -214,7 +214,7 @@ If rebuild fails:
 1. stop automated mutation for the affected Quest;
 2. retain database and keyed-event evidence unchanged;
 3. inspect the named node/command/allocation from the exception;
-4. compare deployed code to Alembic head `20260818_0020`; and
+4. compare deployed code to Alembic head `20260818_0021`; and
 5. restore a verified backup or deploy matching code—do not patch an append-only row in place.
 
 A missing UI card is not evidence that the Quest disappeared. The PostgreSQL ledger and successful
