@@ -4,8 +4,9 @@ Date: 2026-08-17
 
 ## Status
 
-Accepted for the F11-S4 engineering boundary. Autonomous portfolio choice, broad fault injection,
-the 72-hour endurance gate, and scientific exit remain open.
+Accepted for the F11-S4 engineering boundary. ADR 0037 subsequently adds shadow-only portfolio
+choice; production autonomous allocation, broad fault injection, the 72-hour endurance gate, and
+scientific exit remain open.
 
 ## Context
 

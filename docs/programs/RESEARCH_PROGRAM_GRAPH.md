@@ -1,7 +1,8 @@
 # Research program graph
 
 This guide describes the durable Quest, ResearchProgram, ScientificFamily, Campaign, Experiment,
-budget, and data-role boundary established in F11-S3 and consumed by F11-S4 scientific memory.
+budget, and data-role boundary established in F11-S3 and consumed by F11-S4 scientific memory and
+F11-S5 shadow portfolio planning.
 
 ## What this adds
 
@@ -28,9 +29,9 @@ conda run -n aletheia alembic upgrade head
 conda run -n aletheia alembic current
 ~~~
 
-Expected head: `20260817_0018` (`0013` creates the graph, `0014` freezes allocated DataAsset scope,
-`0015` guards legacy family/budget writes, and `0016`–`0018` add receipt-backed memory plus its
-integrity and linear-chain guards).
+Expected head: `20260818_0020` (`0013` creates the graph, `0014` freezes allocated DataAsset scope,
+`0015` guards legacy family/budget writes, `0016`–`0018` add receipt-backed memory, and
+`0019`–`0020` add the shadow portfolio ledger and integrity guards).
 
 Runtime startup continues to fail closed unless the database is exactly at that head. The migration
 adds ten graph/allocation tables, two nullable legacy bindings, portfolio-scoped scientific
@@ -213,7 +214,7 @@ If rebuild fails:
 1. stop automated mutation for the affected Quest;
 2. retain database and keyed-event evidence unchanged;
 3. inspect the named node/command/allocation from the exception;
-4. compare deployed code to Alembic head `20260817_0018`; and
+4. compare deployed code to Alembic head `20260818_0020`; and
 5. restore a verified backup or deploy matching code—do not patch an append-only row in place.
 
 A missing UI card is not evidence that the Quest disappeared. The PostgreSQL ledger and successful
@@ -221,8 +222,9 @@ rebuild are authoritative.
 
 ## Current boundary
 
-This graph slice provides durable strategic identity and allocations. F11-S4 now adds a separate
-receipt-backed memory ledger and uses graph ancestry for task-scoped context; see
-`RECEIPT_BACKED_SCIENTIFIC_MEMORY.md`. Neither slice chooses a portfolio, automatically grants
-budget, proves scientific quality, or completes the frontier-scientist exit. F11-S5 must propose
-and score allocations while consuming both ledgers without rewriting them.
+This graph slice provides durable strategic identity and allocations. F11-S4 adds a separate
+receipt-backed memory ledger and uses graph ancestry for task-scoped context; F11-S5 consumes both
+to generate a constrained shadow portfolio without rewriting either. See
+`RECEIPT_BACKED_SCIENTIFIC_MEMORY.md` and `SHADOW_RESEARCH_PORTFOLIO.md`. None of these layers
+automatically grants budget/action authority, proves scientific quality, or completes the
+frontier-scientist exit.

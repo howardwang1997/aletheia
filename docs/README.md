@@ -232,5 +232,12 @@ Recommended reading order:
 103. `adr/0036-f11-receipt-backed-task-scoped-scientific-memory.md` — authoritative ledger,
     task-minimal ancestry, non-destructive compaction, exact protected facts, and provider-switch
     decisions.
-104. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
-105. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.
+104. `F11_S5_SHADOW_RESEARCH_PORTFOLIO_IMPLEMENTATION_REPORT_2026_08_18.md` — observation-blind
+    proposal/assessment separation, harness-derived EIG/hard filters, constrained shadow batches,
+    pre-result human comparison, persistence, and honest non-activation boundary.
+105. `programs/SHADOW_RESEARCH_PORTFOLIO.md` — deployment, slate/human/epoch workflow,
+    deterministic scoring, hard/batch gates, API/CLI, readiness audit, and incident handling.
+106. `adr/0037-f11-observation-blind-shadow-research-portfolio.md` — no-self-score proposal,
+    independent inputs, deterministic selection, shadow-only ledger, and rejected activation.
+107. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
+108. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.

@@ -169,8 +169,8 @@ ledger state are byte-equivalent at the canonical JSON boundary.
   real foreign keys and typed uniqueness at every existing ledger boundary.
 - Current nodes have no general scientific-spec revision mechanism. A later design must preserve
   old nodes and introduce explicit lineage rather than relaxing immutability.
-- This slice allocates budgets; it does not choose allocations autonomously. F11-S5 owns portfolio
-  policy and must consume these ledgers.
+- This slice allocates budgets; it does not choose allocations autonomously. ADR 0037/F11-S5 now
+  consumes these ledgers for shadow-only portfolio policy without granting activation authority.
 
 ## Rejected alternatives
 

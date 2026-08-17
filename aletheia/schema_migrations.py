@@ -67,6 +67,11 @@ POST_BASELINE_TABLES = frozenset(
         "research_memory_compactions",
         "research_memory_compaction_members",
         "research_memory_context_receipts",
+        "research_portfolio_slates",
+        "research_portfolio_candidates",
+        "research_portfolio_human_plans",
+        "research_portfolio_epochs",
+        "research_portfolio_scores",
     }
 )
 POST_BASELINE_COLUMNS = frozenset(

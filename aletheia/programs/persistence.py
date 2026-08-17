@@ -11,6 +11,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -501,6 +502,183 @@ class ResearchMemoryContextReceiptRecord(Base):
     )
 
 
+class ResearchPortfolioSlateRecord(Base):
+    """Frozen proposal, independent assessment, graph, budget, and memory boundary."""
+
+    __tablename__ = "research_portfolio_slates"
+    __table_args__ = (
+        UniqueConstraint("command_id", name="uq_research_portfolio_slates_command"),
+        Index("ix_research_portfolio_slates_quest_created", "quest_id", "created_at"),
+    )
+
+    slate_id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    quest_id: Mapped[str] = mapped_column(ForeignKey("research_graph_nodes.node_id"), index=True)
+    memory_context_receipt_id: Mapped[str] = mapped_column(
+        ForeignKey("research_memory_context_receipts.context_receipt_id"), index=True
+    )
+    policy_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    proposal_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    assessment_batch_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    spec_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    spec_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    graph_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    graph_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    budget_state_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    budget_state_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
+    command_id: Mapped[str] = mapped_column(
+        ForeignKey("scientific_commands.command_id"), index=True
+    )
+    created_by: Mapped[str] = mapped_column(String(128), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+class ResearchPortfolioCandidateRecord(Base):
+    """One action and its independent inputs as frozen within a portfolio slate."""
+
+    __tablename__ = "research_portfolio_candidates"
+    __table_args__ = (
+        CheckConstraint(
+            "action_type IN ('advance_campaign','discriminating_experiment','replication',"
+            "'mechanism_test','acquire_data','repair_capability','start_campaign',"
+            "'pause_program','stop_program')",
+            name="ck_research_portfolio_candidates_action_type",
+        ),
+        ForeignKeyConstraint(
+            ["slate_id"],
+            ["research_portfolio_slates.slate_id"],
+            name="fk_research_portfolio_candidates_slate",
+        ),
+        UniqueConstraint(
+            "slate_id",
+            "action_sha256",
+            name="uq_research_portfolio_candidates_slate_action",
+        ),
+        Index(
+            "ix_research_portfolio_candidates_program",
+            "program_id",
+            "slate_id",
+        ),
+    )
+
+    slate_id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    candidate_id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    program_id: Mapped[str] = mapped_column(ForeignKey("research_graph_nodes.node_id"), index=True)
+    family_id: Mapped[str | None] = mapped_column(
+        ForeignKey("research_scientific_families.family_id"), index=True
+    )
+    action_type: Mapped[str] = mapped_column(String(48), index=True)
+    target_node_id: Mapped[str] = mapped_column(
+        ForeignKey("research_graph_nodes.node_id"), index=True
+    )
+    action_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    action_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    assessment_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    assessment_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
+class ResearchPortfolioHumanPlanRecord(Base):
+    """A human plan committed before planner scores are materialized."""
+
+    __tablename__ = "research_portfolio_human_plans"
+    __table_args__ = (
+        UniqueConstraint("slate_id", name="uq_research_portfolio_human_plans_slate"),
+        UniqueConstraint("command_id", name="uq_research_portfolio_human_plans_command"),
+    )
+
+    human_plan_id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    slate_id: Mapped[str] = mapped_column(
+        ForeignKey("research_portfolio_slates.slate_id"), index=True
+    )
+    plan_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    plan_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    command_id: Mapped[str] = mapped_column(
+        ForeignKey("scientific_commands.command_id"), index=True
+    )
+    created_by: Mapped[str] = mapped_column(String(128), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+class ResearchPortfolioEpochRecord(Base):
+    """One immutable shadow evaluation; it cannot enqueue work or reserve budget."""
+
+    __tablename__ = "research_portfolio_epochs"
+    __table_args__ = (
+        CheckConstraint("score_count >= 2", name="ck_research_portfolio_epochs_score_count"),
+        CheckConstraint(
+            "shadow_only IS TRUE AND actions_enqueued IS FALSE",
+            name="ck_research_portfolio_epochs_shadow_only",
+        ),
+        UniqueConstraint("slate_id", name="uq_research_portfolio_epochs_slate"),
+        UniqueConstraint("human_plan_id", name="uq_research_portfolio_epochs_human_plan"),
+        UniqueConstraint("command_id", name="uq_research_portfolio_epochs_command"),
+        Index("ix_research_portfolio_epochs_quest_evaluated", "quest_id", "evaluated_at"),
+    )
+
+    epoch_id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    slate_id: Mapped[str] = mapped_column(
+        ForeignKey("research_portfolio_slates.slate_id"), index=True
+    )
+    quest_id: Mapped[str] = mapped_column(ForeignKey("research_graph_nodes.node_id"), index=True)
+    human_plan_id: Mapped[str] = mapped_column(
+        ForeignKey("research_portfolio_human_plans.human_plan_id"), index=True
+    )
+    score_count: Mapped[int] = mapped_column(Integer)
+    decision_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    decision_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    comparison_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    comparison_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    epoch_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    shadow_only: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
+    actions_enqueued: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    command_id: Mapped[str] = mapped_column(
+        ForeignKey("scientific_commands.command_id"), index=True
+    )
+    created_by: Mapped[str] = mapped_column(String(128), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+class ResearchPortfolioScoreRecord(Base):
+    """Harness-derived candidate score within one frozen shadow epoch."""
+
+    __tablename__ = "research_portfolio_scores"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["slate_id", "candidate_id"],
+            [
+                "research_portfolio_candidates.slate_id",
+                "research_portfolio_candidates.candidate_id",
+            ],
+            name="fk_research_portfolio_scores_candidate",
+        ),
+        UniqueConstraint(
+            "epoch_id",
+            "rank",
+            name="uq_research_portfolio_scores_epoch_rank",
+        ),
+        CheckConstraint("rank >= 1", name="ck_research_portfolio_scores_rank"),
+        Index("ix_research_portfolio_scores_epoch_selected", "epoch_id", "selected"),
+    )
+
+    epoch_id: Mapped[str] = mapped_column(
+        ForeignKey("research_portfolio_epochs.epoch_id"), primary_key=True
+    )
+    slate_id: Mapped[str] = mapped_column(String(96))
+    candidate_id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    score_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    score_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    feasible: Mapped[bool] = mapped_column(Boolean, index=True)
+    base_utility_microscore: Mapped[int] = mapped_column(BigInteger)
+    selected: Mapped[bool] = mapped_column(Boolean, index=True)
+    rank: Mapped[int] = mapped_column(Integer)
+
+
 __all__ = [
     "ResearchBudgetAllocationRecord",
     "ResearchCampaignExperimentRecord",
@@ -515,6 +693,11 @@ __all__ = [
     "ResearchMemoryContextReceiptRecord",
     "ResearchMemoryFactRecord",
     "ResearchMemoryTaskBindingRecord",
+    "ResearchPortfolioCandidateRecord",
+    "ResearchPortfolioEpochRecord",
+    "ResearchPortfolioHumanPlanRecord",
+    "ResearchPortfolioScoreRecord",
+    "ResearchPortfolioSlateRecord",
     "ResearchProgramQuestionRecord",
     "ResearchScientificFamilyRecord",
 ]

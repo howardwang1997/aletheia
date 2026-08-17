@@ -56,6 +56,7 @@ class ScientificCommandType(str, Enum):
     RESEARCH_GRAPH_MUTATION = "research_graph.mutation"
     RESEARCH_MEMORY_MUTATION = "research_memory.mutation"
     RESEARCH_MEMORY_CONTEXT = "research_memory.context"
+    RESEARCH_PORTFOLIO_MUTATION = "research_portfolio.mutation"
     GENERIC = "scientific.generic"
 
 

@@ -232,3 +232,7 @@ F11-S5 is next: a portfolio planner with deterministic hard filters, harness-com
 replication debt/diversity terms, explicit proposal receipts, and shadow-mode comparison against
 human allocation before any autonomous budget authority. It must consume the graph and memory
 ledgers without rewriting either.
+
+Subsequent status (2026-08-18): F11-S5's shadow boundary is implemented in
+`programs/SHADOW_RESEARCH_PORTFOLIO.md` and ADR 0037. It deliberately does not grant autonomous
+budget authority; F11-S6 is next.

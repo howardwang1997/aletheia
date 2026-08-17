@@ -66,14 +66,18 @@ reliable autonomous frontier scientist.
    F11-S3 adds a reconstructible Quest/Program/Campaign graph with cross-Campaign family identity
    and frozen allocations. F11-S4 adds immutable task-bound memory facts, receipt-backed
    non-destructive compaction, exact preservation of negative/contradictory state, deterministic
-   recovery, and provider-neutral task context delivery.
+   recovery, and provider-neutral task context delivery. F11-S5 adds observation-blind portfolio
+   proposals, independent frozen assessments, harness-computed hard filters/EIG/cost/replication/
+   diversity, constrained shadow batches, and a human plan committed before planner revelation.
+   Every epoch is receipt-backed with `actions_enqueued=false`; the audit cannot enable autonomous
+   allocation.
    The final output still needs a stable bundle containing the question, literature, data card,
    split metadata, code, artifacts, metrics, claims, audits, reproduction, limitations, paper, and
-   reproducibility package/PR; F11-S5–S7 and F12 remain.
+   reproducibility package/PR; F11-S6–S7 and F12 remain.
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
-of causal/mechanistic experiments, production provider receipt/reconciliation commissioning, a
-durable quest/program portfolio and endurance gate, repeated lower-overlap or laboratory
+of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,
+production portfolio activation plus its fault/endurance gates, repeated lower-overlap or laboratory
 replication, and a complete evidence bundle.
 
 The executable plan for the next frontier program is
@@ -366,8 +370,8 @@ redelivery returns the first receipt without applying another update. One-time f
 external-validation claims expose a raw token only once, persist only its SHA-256, pass a stable
 provider idempotency key, and atomically bind the result to an immutable external-action receipt.
 An expired claim becomes `reconciliation_required` and is never automatically reissued. This is an
-at-most-one Aletheia authorization guarantee, not cross-system exactly-once execution. Portfolio
-planning, broad fault injection, and the 72-hour gate remain.
+at-most-one Aletheia authorization guarantee, not cross-system exactly-once execution. Production
+portfolio activation, broad fault injection, and the 72-hour gate remain.
 See [`docs/jobs/TRANSACTIONAL_SCIENTIFIC_TRANSITIONS.md`](docs/jobs/TRANSACTIONAL_SCIENTIFIC_TRANSITIONS.md).
 
 F11-S3 gives each long-horizon effort a reconstructible Quest → Program → Campaign spine, durable
@@ -380,6 +384,15 @@ provider/model mismatch fail closed. This proves recovery custody, not the seman
 model-written summary or autonomous research value. See
 [`docs/programs/RESEARCH_PROGRAM_GRAPH.md`](docs/programs/RESEARCH_PROGRAM_GRAPH.md) and
 [`docs/programs/RECEIPT_BACKED_SCIENTIFIC_MEMORY.md`](docs/programs/RECEIPT_BACKED_SCIENTIFIC_MEMORY.md).
+
+F11-S5 adds a cross-Program shadow portfolio layer without granting action authority. The proposer
+can only name typed actions and rationales; an independent assessment freezes evidence inputs; an
+integer/Decimal harness recomputes lifecycle/dependency/data/capability/measurement/risk/approval/
+budget/EIG gates, utility, replication quota, and diversity-constrained batch selection. A human
+plan is committed with no planner-output access before the epoch exists. Graph, budget, or memory
+change blocks a new epoch, while old epochs replay from frozen state. The readiness audit can only
+recommend human activation review and always reports autonomous allocation disabled. See
+[`docs/programs/SHADOW_RESEARCH_PORTFOLIO.md`](docs/programs/SHADOW_RESEARCH_PORTFOLIO.md).
 
 ## Invariants (the safety/quality spine — never traded for a feature)
 

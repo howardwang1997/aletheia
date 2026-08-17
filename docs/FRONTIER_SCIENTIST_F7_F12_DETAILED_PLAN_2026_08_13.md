@@ -2324,6 +2324,30 @@ planner。
 - 预算分配和 diversity policy；
 - shadow mode 与人工计划对比后才启用 autonomous allocation。
 
+**实现状态（2026-08-18）：shadow engineering boundary 完成。** 新增 observation-blind
+portfolio contract：LLM 只能提交 typed action 与 rationale，不能提交 cost/EIG/utility/total score；
+独立 assessor 冻结证据、成本、likelihood、measurement、capability、data role、risk/approval、
+replication debt 与 diversity/correlation 输入，且 principal（模型 assessor 还包括 model identity）必须
+与 proposer 分离。Harness 使用 Decimal + integer ppm 重算离散 EIG、hard blocker 和 base/marginal
+utility，再按 Program/family/target/correlation/cumulative-budget/replication-quota 约束生成确定性批次。
+
+每个 slate 精确冻结 Quest graph、Program budget availability 与最新 Quest-scoped `portfolio-plan`
+memory receipt。人工计划必须以 `planner_output_access=none` 先提交；之后才能物化一次 shadow epoch，
+并记录 Jaccard、hard-filter/batch violation 与 utility comparison。五张 append-only 表、
+`research_portfolio.mutation` command/outbox、insert guard、deferred completeness trigger 和 Quest/
+allocation locks 共同保证 one-shot、并发与重放。图、预算或 memory 在冻结后变化会阻止新 epoch；已提交
+epoch 仍从 frozen snapshot 精确重建。
+
+FastAPI 与只读 CLI 已接通；Alembic `20260818_0019`–`0020` 可 upgrade/downgrade/re-upgrade，ORM
+diff 为 0。聚焦套件覆盖自评分注入、角色分离、七类 hard gate、100 组随机 EIG 守恒、batch
+overspend、replication quota、并发人工计划、graph/budget/memory staleness、旧 epoch 重放和 HTTP
+workflow。重要边界：本项没有 enqueue、reserve/charge budget、graph transition 或 activation API；
+readiness 只能返回 `eligible_for_human_activation_review`，且
+`autonomous_allocation_enabled=false`。生产 autonomous allocation 仍需独立签名/IAM approval 设计、
+F11-S6 fault injection、F11-S7 endurance evidence 与人工审查。详见
+`programs/SHADOW_RESEARCH_PORTFOLIO.md`、ADR 0037 与 F11-S5 implementation report。下一项为
+F11-S6。
+
 ### F11-S6：Fault-injection harness
 
 在关键边界随机：

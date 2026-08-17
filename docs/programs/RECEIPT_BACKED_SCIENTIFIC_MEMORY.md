@@ -10,11 +10,12 @@ conda run -n aletheia alembic upgrade head
 conda run -n aletheia alembic current
 ~~~
 
-Expected head: `20260817_0018`.
+Expected head: `20260818_0020`.
 
 - `0016` adds facts, task bindings, compactions, members, and context receipts;
 - `0017` adds append-only, command-binding, disposition, completeness, and context guards; and
-- `0018` enforces a single root and single successor for each scope/task compaction chain.
+- `0018` enforces a single root and single successor for each scope/task compaction chain;
+- `0019`–`0020` add the F11-S5 shadow portfolio ledger and its integrity guards.
 
 API and worker startup fail closed at any other revision.
 
@@ -174,7 +175,7 @@ When rebuild, artifact recovery, or context loading fails:
 
 1. stop delivery for the affected scope/task;
 2. preserve PostgreSQL, keyed events, and archive bytes;
-3. confirm deployed code and database are at `20260817_0018`;
+3. confirm deployed code and database are at `20260818_0020`;
 4. inspect the named fact, command, compaction, member, or context receipt;
 5. restore a verified database/archive pair or deploy matching code; and
 6. never repair an append-only row in place.
@@ -189,4 +190,5 @@ delivered to a worker.
 This layer proves custody, complete source membership, exact negative-state retention, deterministic
 rebuild, and provider-neutral delivery. It does not prove narrative faithfulness, source truth,
 scientific validity, or portfolio value. Scheduler stages must explicitly emit typed facts and
-request fresh contexts; F11-S5 owns autonomous portfolio allocation.
+request fresh contexts. F11-S5 consumes those receipts for shadow planning but intentionally does
+not own production autonomous allocation; see `SHADOW_RESEARCH_PORTFOLIO.md`.

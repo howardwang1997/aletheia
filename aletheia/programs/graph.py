@@ -586,9 +586,10 @@ class ProgramGraphStore:
             )
             node.current_state = spec.to_state.value
             node.state_version = source_version + 1
-            # The projection timestamp is database-owned and transaction-stable.  ``now`` only
-            # controls the command/event receipt in deterministic fault tests.
-            node.updated_at = func.now()
+            # The projection timestamp is database-owned.  Preserve monotonicity across a brief
+            # database clock correction; ``now`` only controls command/event receipts in
+            # deterministic fault tests.
+            node.updated_at = func.greatest(ResearchGraphNodeRecord.updated_at, func.now())
             return ScientificMutation(
                 result={
                     "kind": "node_transition",

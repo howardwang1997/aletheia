@@ -29,6 +29,13 @@ from aletheia.programs import (
     MemoryMutationReceipt,
     MemorySummaryDraft,
     NodeTransitionSpec,
+    HumanPortfolioPlanSpec,
+    PortfolioEpochSnapshot,
+    PortfolioMutationReceipt,
+    PortfolioShadowAudit,
+    PortfolioShadowAuditPolicy,
+    PortfolioSlateSnapshot,
+    PortfolioSlateSpec,
     ProgramGraphConflict,
     ProgramGraphCycleError,
     ProgramGraphInvariantError,
@@ -47,6 +54,11 @@ from aletheia.programs import (
     ResearchMemoryStale,
     ResearchMemoryStore,
     ResearchProgramSpec,
+    ResearchPortfolioConflict,
+    ResearchPortfolioInvariantError,
+    ResearchPortfolioNotFound,
+    ResearchPortfolioStale,
+    ResearchPortfolioStore,
     ScientificFamilySpec,
     TaskContextReceipt,
     TaskContextRequest,
@@ -55,6 +67,7 @@ from aletheia.programs import (
 router = APIRouter(prefix="/research-graph", tags=["research-program-graph"])
 _STORE = ProgramGraphStore()
 _MEMORY_STORE = ResearchMemoryStore()
+_PORTFOLIO_STORE = ResearchPortfolioStore()
 _IDENTITY_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
 _T = TypeVar("_T")
 
@@ -129,6 +142,18 @@ class BuildMemoryContextRequest(CommandMetadata):
     request: TaskContextRequest
 
 
+class RegisterPortfolioSlateRequest(CommandMetadata):
+    slate: PortfolioSlateSpec
+
+
+class CommitHumanPortfolioPlanRequest(CommandMetadata):
+    plan: HumanPortfolioPlanSpec
+
+
+class EvaluatePortfolioSlateRequest(CommandMetadata):
+    pass
+
+
 def _context(request: CommandMetadata, user: dict[str, Any]) -> GraphCommandContext:
     return GraphCommandContext(
         idempotency_key=request.idempotency_key,
@@ -144,15 +169,21 @@ async def _invoke(call: Callable[[], _T]) -> _T:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ResearchMemoryNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ResearchPortfolioNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ProgramGraphInvariantError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except ResearchMemoryInvariantError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except ResearchPortfolioInvariantError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except ProgramGraphTransitionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (ProgramGraphConflict, ProgramGraphCycleError, ScientificIdempotencyConflict) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (ResearchMemoryConflict, ResearchMemoryStale) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (ResearchPortfolioConflict, ResearchPortfolioStale) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ResearchMemoryContextOverflow as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -338,6 +369,102 @@ async def load_memory_context(
     _user: dict[str, Any] = Depends(require_access),
 ) -> TaskContextReceipt:
     return await _invoke(lambda: _MEMORY_STORE.load_task_context(context_receipt_id))
+
+
+@router.post("/portfolios/slates", response_model=PortfolioMutationReceipt)
+async def register_portfolio_slate(
+    request: RegisterPortfolioSlateRequest,
+    user: dict[str, Any] = Depends(require_access),
+) -> PortfolioMutationReceipt:
+    return await _invoke(
+        lambda: _PORTFOLIO_STORE.register_slate(
+            request.slate,
+            _context(request, user),
+        )
+    )
+
+
+@router.get(
+    "/quests/{quest_id}/portfolios",
+    response_model=tuple[PortfolioSlateSnapshot, ...],
+)
+async def list_portfolio_slates(
+    quest_id: Annotated[str, Path(pattern=r"^qst_[0-9a-f]{32}$")],
+    _user: dict[str, Any] = Depends(require_access),
+) -> tuple[PortfolioSlateSnapshot, ...]:
+    return await _invoke(lambda: _PORTFOLIO_STORE.list_slates(quest_id))
+
+
+@router.get("/portfolios/slates/{slate_id}", response_model=PortfolioSlateSnapshot)
+async def get_portfolio_slate(
+    slate_id: Annotated[str, Path(pattern=r"^psl_[0-9a-f]{32}$")],
+    _user: dict[str, Any] = Depends(require_access),
+) -> PortfolioSlateSnapshot:
+    return await _invoke(lambda: _PORTFOLIO_STORE.get_slate(slate_id))
+
+
+@router.post(
+    "/portfolios/slates/{slate_id}/human-plan",
+    response_model=PortfolioMutationReceipt,
+)
+async def commit_human_portfolio_plan(
+    slate_id: Annotated[str, Path(pattern=r"^psl_[0-9a-f]{32}$")],
+    request: CommitHumanPortfolioPlanRequest,
+    user: dict[str, Any] = Depends(require_access),
+) -> PortfolioMutationReceipt:
+    return await _invoke(
+        lambda: _PORTFOLIO_STORE.commit_human_plan(
+            slate_id=slate_id,
+            plan=request.plan,
+            context=_context(request, user),
+        )
+    )
+
+
+@router.post(
+    "/portfolios/slates/{slate_id}/evaluate",
+    response_model=PortfolioMutationReceipt,
+)
+async def evaluate_portfolio_slate(
+    slate_id: Annotated[str, Path(pattern=r"^psl_[0-9a-f]{32}$")],
+    request: EvaluatePortfolioSlateRequest,
+    user: dict[str, Any] = Depends(require_access),
+) -> PortfolioMutationReceipt:
+    return await _invoke(
+        lambda: _PORTFOLIO_STORE.evaluate_slate(
+            slate_id=slate_id,
+            context=_context(request, user),
+        )
+    )
+
+
+@router.get("/portfolios/epochs/{epoch_id}", response_model=PortfolioEpochSnapshot)
+async def get_portfolio_epoch(
+    epoch_id: Annotated[str, Path(pattern=r"^pep_[0-9a-f]{32}$")],
+    _user: dict[str, Any] = Depends(require_access),
+) -> PortfolioEpochSnapshot:
+    return await _invoke(lambda: _PORTFOLIO_STORE.get_epoch(epoch_id))
+
+
+@router.get(
+    "/quests/{quest_id}/portfolio-shadow-audit",
+    response_model=PortfolioShadowAudit,
+)
+async def audit_shadow_portfolio(
+    quest_id: Annotated[str, Path(pattern=r"^qst_[0-9a-f]{32}$")],
+    minimum_epochs: Annotated[int, Query(ge=1, le=10_000)] = 20,
+    minimum_mean_jaccard_ppm: Annotated[int, Query(ge=0, le=1_000_000)] = 600_000,
+    maximum_human_hard_filter_violations: Annotated[int, Query(ge=0)] = 0,
+    maximum_planner_empty_epochs: Annotated[int, Query(ge=0)] = 0,
+    _user: dict[str, Any] = Depends(require_access),
+) -> PortfolioShadowAudit:
+    policy = PortfolioShadowAuditPolicy(
+        minimum_epochs=minimum_epochs,
+        minimum_mean_jaccard_ppm=minimum_mean_jaccard_ppm,
+        maximum_human_hard_filter_violations=maximum_human_hard_filter_violations,
+        maximum_planner_empty_epochs=maximum_planner_empty_epochs,
+    )
+    return await _invoke(lambda: _PORTFOLIO_STORE.shadow_audit(quest_id=quest_id, policy=policy))
 
 
 __all__ = ["router"]

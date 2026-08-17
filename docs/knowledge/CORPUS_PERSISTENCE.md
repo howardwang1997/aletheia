@@ -22,8 +22,9 @@ conda run -n aletheia python -c \
   "from aletheia.db import require_schema_current; print(require_schema_current())"
 ```
 
-The expected head is `20260814_0003`. Application startup fails closed when the database is behind
-or ahead.
+The current repository head is `20260818_0020`; `20260814_0003` is the revision that introduced
+this corpus ledger. Application startup fails closed when the database is behind or ahead of the
+current repository head.
 
 The migration creates sixteen `knowledge_*` tables. All reject SQL `UPDATE` and `DELETE`. Do not
 disable those triggers as an application workaround. A changed publication, corrected record,
