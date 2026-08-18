@@ -2371,13 +2371,16 @@ duplicate scientific state、duplicate budget charge、duplicate outward authori
 ambiguity、state/event mismatch。未确认 injection、outcome/recovery 不符、metric/evidence 缺失、超时或
 比较失败均由 harness 推导为 blocked/failed；executor exception 不会被包装为通过。
 
-验收 campaign 真实执行两个 `os._exit` 子进程、PostgreSQL transaction rollback/reconnect、evaluator
-timeout、provider infrastructure failure、scientific-command duplicate、stale lease、archive `ENOSPC`、
-worker-manifest mismatch 与 one-time outward ambiguity/reconciliation，十项全部通过且六个核心合计均为
-零。Alembic `20260818_0021` 新增由 `resilience_fault_campaign.commit` + keyed event 保护的 append-only
+正式 `aletheia.jobs.fault_harness`（测试与 CLI 共用，不再藏在 pytest fixture）冻结 Conda Python、
+平台、PostgreSQL target/server/Alembic、依赖版本与全部参与代码 hash；运行前重新捕获并在漂移时零 mutation
+失败。其 self-hashed evidence bundle 保留可重算的 diagnostic/metric 证据闭包且绝不保存 lease/outward raw
+token。验收 campaign 真实执行两个 `os._exit` 子进程、PostgreSQL transaction rollback/reconnect、
+evaluator timeout、provider infrastructure failure、scientific-command duplicate、stale lease、archive
+`ENOSPC`、worker-manifest mismatch 与 one-time outward ambiguity/reconciliation，十项全部通过且六个核心
+合计均为零。Alembic `20260818_0021` 新增由 `resilience_fault_campaign.commit` + keyed event 保护的 append-only
 完整报告；所有读取重新评估 embedded observations 并核对 command/event receipt。通过、失败和阻塞报告
 都会保留；只有最新 Quest-scoped campaign 完整通过才可进入 F11-S7 review，且 audit 始终返回
-`autonomous_allocation_enabled=false`。聚焦套件 7 passed；详见
+`autonomous_allocation_enabled=false`。生产 harness 与 CLI 聚焦套件 9 passed；详见
 `jobs/FAULT_INJECTION_CAMPAIGNS.md`、ADR 0038 与 F11-S6 implementation report。F11-S7 的耐久
 门禁工程能力现已实现，真实 72-hour run 仍待执行。最终跨组件回归 63 passed；全库非 Docker 回归为 1300 passed、
 2 skipped、29 deselected（772.97 s），Alembic current/head、ORM schema diff、changed-file Ruff、CLI

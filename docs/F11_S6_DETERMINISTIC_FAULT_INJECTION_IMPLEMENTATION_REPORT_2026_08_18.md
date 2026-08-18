@@ -67,10 +67,17 @@ counts.
 An executor cannot submit a verdict. A caught exception is insufficient: the executor must return
 measured post-recovery state and evidence hashes.
 
+`aletheia/jobs/fault_harness.py` now supplies the supported production executors that were
+previously local to the acceptance test. It freezes Conda Python/platform, a non-secret database
+target hash, PostgreSQL/Alembic and dependency versions, and the hashes of all participating code.
+Live execution recaptures this identity before its first mutation. It returns a self-hashed evidence
+bundle whose diagnostic and metric hashes can all be reconstructed; raw lease and outward-action
+tokens are excluded. The test and CLI invoke this exact production path.
+
 ## Real ten-boundary acceptance campaign
 
-`tests/jobs/test_fault_injection.py` runs one complete campaign against the real repository
-boundaries:
+`tests/jobs/test_fault_injection.py` runs complete direct-API and CLI campaigns against the real
+repository boundaries:
 
 | Boundary | Injection | Measured recovery |
 | --- | --- | --- |
@@ -117,8 +124,11 @@ review only when the latest campaign passes; it never grants execution authority
 
 `scripts/fault_campaign.py` provides:
 
+- `prepare QUEST --manifest-output ... --environment-output ...`;
+- `run MANIFEST ENVIRONMENT --principal ... [--output BUNDLE]`;
+- `verify-bundle BUNDLE`;
 - `evaluate MANIFEST OBSERVATIONS [--output REPORT]`;
-- `commit REPORT --idempotency-key ... --principal ...`;
+- `commit REPORT_OR_BUNDLE --idempotency-key ... --principal ...`;
 - `show fic_<32-hex>`;
 - `list [--quest-id qst_<32-hex>]`; and
 - `audit qst_<32-hex>`.
@@ -127,10 +137,11 @@ Evaluation is read-only. Persistence occurs only under the explicit `commit` com
 
 ## Acceptance evidence
 
-The focused F11-S6 suite passes:
+The focused F11-S6 suite, including environment-drift rejection and the production executor,
+passes:
 
 ~~~text
-7 passed in 3.26s
+9 passed in 7.75s
 ~~~
 
 It covers contract rejection, deterministic order, independent regrading, exact persistence replay,
@@ -153,6 +164,9 @@ F11-S6 changed-file Ruff: passed
 fault_campaign.py CLI smoke: passed
 ~~~
 
+The production-harness supplement also passes the queue, outbox, graph, memory, portfolio, and
+endurance regression matrix: `67 passed in 15.67s`.
+
 The 2,611 warnings are the existing `spglib` deprecation warnings in the materials-domain tests.
 Repository-wide Ruff also exposes 20 pre-existing violations in unrelated exploratory probe scripts;
 those clean tracked files were not changed as part of F11-S6. Every Python file changed or added by
@@ -160,12 +174,13 @@ this slice is Ruff-clean.
 
 ## Changed implementation surface
 
-- `aletheia/jobs/{fault_schemas,fault_injection,fault_campaign}.py`;
+- `aletheia/jobs/{fault_schemas,fault_injection,fault_harness,fault_campaign}.py`;
 - `aletheia/jobs/{__init__,outbox,persistence}.py`;
 - `aletheia/schema_migrations.py`;
 - `migrations/versions/20260818_0021_f11_fault_injection_campaigns.py`;
 - `scripts/fault_campaign.py`;
 - `tests/jobs/test_fault_injection.py`;
+- `aletheia/programs/memory.py` (explicit archive dependency for reviewed fault injection);
 - `docs/jobs/FAULT_INJECTION_CAMPAIGNS.md`;
 - `docs/adr/0038-f11-deterministic-replayable-fault-campaigns.md`; and
 - master plan, operator docs, and documentation index status updates.

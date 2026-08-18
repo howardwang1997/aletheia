@@ -71,8 +71,9 @@ reliable autonomous frontier scientist.
    diversity, constrained shadow batches, and a human plan committed before planner revelation.
    Every epoch is receipt-backed with `actions_enqueued=false`; the audit cannot enable autonomous
    allocation. F11-S6 adds deterministic ten-boundary fault campaigns, independent zero-loss/
-   zero-duplicate regrading, real process/transaction/lease/archive/identity/outward-action recovery,
-   and append-only reports whose audit still cannot activate allocation.
+   zero-duplicate regrading, a frozen-environment production harness shared by tests and CLI,
+   reconstructible diagnostic bundles, real process/transaction/lease/archive/identity/
+   outward-action recovery, and append-only reports whose audit still cannot activate allocation.
    F11-S7 adds a database-clock, append-only endurance gate with immutable starts, resumable
    parent-hashed checkpoints, typed reproduction/interruption/pivot evidence, final portfolio and
    efficiency reports, and an unforgeable split between accelerated engineering evidence and a
@@ -404,8 +405,10 @@ recommend human activation review and always reports autonomous allocation disab
 F11-S6 freezes ten failure boundaries and six mandatory exact-zero invariants, executes real
 process kills, PostgreSQL rollback/reconnect, retry, duplicate/stale delivery, archive exhaustion,
 runtime mismatch, and ambiguous outward-action recovery, then independently derives the verdict.
-Passing, failed, and blocked reports are append-only and regraded on every read. A passing latest
-campaign permits only F11-S7 review and always reports autonomous allocation disabled. See
+The production CLI freezes code/runtime identity and retains reconstructible diagnostics in a
+self-hashed evidence bundle; its tests invoke the identical executor path. Passing, failed, and
+blocked reports are append-only and regraded on every read. A passing latest campaign permits only
+F11-S7 review and always reports autonomous allocation disabled. See
 [`docs/jobs/FAULT_INJECTION_CAMPAIGNS.md`](docs/jobs/FAULT_INJECTION_CAMPAIGNS.md).
 
 F11-S7 now makes the endurance experiment durable without pretending that elapsed time can be unit

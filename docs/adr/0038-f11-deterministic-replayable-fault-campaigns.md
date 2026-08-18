@@ -84,6 +84,18 @@ The audit can only state eligibility for F11-S7 endurance-gate review. It always
 `autonomous_allocation_enabled=false`. No campaign result may enqueue portfolio actions, reserve or
 charge budget, transition the graph, reveal a holdout, or mint an outward-action token.
 
+### 9. Ship one supported production executor and a closed evidence bundle
+
+The ten local executors live in `aletheia.jobs.fault_harness`, not in pytest. Preparation freezes
+the Conda Python/platform identity, hashed database target, PostgreSQL/Alembic versions, dependency
+versions, and hashes of every participating code component. Execution recaptures this manifest and
+fails before mutation if anything differs.
+
+The harness returns a self-hashed bundle containing the frozen environment, independently graded
+report, and canonical diagnostics. Diagnostic and per-metric hashes are reconstructible from that
+bundle. Lease and outward-action tokens are deliberately omitted. Tests and the operator CLI call
+this same path; synthetic observations remain limited to schema/evaluator unit tests.
+
 ## Consequences
 
 - Campaigns are reproducible, content-bound, and independently regraded.
@@ -94,6 +106,8 @@ charge budget, transition the graph, reveal a holdout, or mint an outward-action
 - The campaign report is larger because it embeds complete observations and invariant results.
 - Real executors must measure their boundary state; a synthetic observation is suitable for contract
   testing but not production resilience evidence.
+- Environment drift or a missing diagnostic now blocks the production harness/bundle rather than
+  leaving an unverifiable hash in an otherwise passing report.
 - F11-S7 can consume an immutable prerequisite instead of relying on logs or CI status alone.
 
 ## Rejected alternatives

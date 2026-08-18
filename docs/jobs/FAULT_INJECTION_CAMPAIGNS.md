@@ -37,6 +37,20 @@ or one reconciliation-required action.
 
 ## Execution contract
 
+`aletheia.jobs.fault_harness` is the supported Quest-scoped executor. It freezes a non-secret
+environment manifest containing the Conda Python/runtime identity, PostgreSQL target hash and
+server/schema versions, relevant package versions, and SHA-256 for every code component that can
+affect a boundary. `run_durable_fault_campaign` recaptures that environment before doing any
+mutation and fails closed on drift.
+
+The production harness owns all ten executors. Diagnostics are retained in a
+`FaultHarnessEvidenceBundle`; every diagnostic and metric hash can be reconstructed from the
+bundle, and bundle validation also independently regrades the embedded campaign report. Raw lease
+or outward-action execution tokens are never included. The archive fault uses an explicit injected
+`ScientificMemoryArchive` dependency, rather than pytest monkeypatching.
+
+The lower-level contract remains available for additional reviewed adapters:
+
 Create a frozen `FaultCampaignManifest`, then provide one executor per manifested `scenario_id`:
 
 ~~~python
@@ -117,6 +131,29 @@ Every `get`, `list`, and `audit` operation:
 
 ## CLI
 
+First freeze the environment and manifest. Both output paths are write-once:
+
+~~~bash
+conda run -n aletheia python scripts/fault_campaign.py prepare qst_<32-hex> \
+  --campaign-key f11s6.real.<stable-logical-id> \
+  --seed 17 \
+  --manifest-output manifest.json \
+  --environment-output environment.json
+~~~
+
+Inspect both files, then execute the supported ten-boundary harness. This performs local database
+and process mutations but never calls a remote provider:
+
+~~~bash
+conda run -n aletheia python scripts/fault_campaign.py run \
+  manifest.json environment.json \
+  --principal harness:f11s6 \
+  --output evidence-bundle.json
+
+conda run -n aletheia python scripts/fault_campaign.py verify-bundle \
+  evidence-bundle.json
+~~~
+
 Recompute a report from JSON without writing the database:
 
 ~~~bash
@@ -127,7 +164,7 @@ conda run -n aletheia python scripts/fault_campaign.py evaluate \
 Commit only after the report has been inspected:
 
 ~~~bash
-conda run -n aletheia python scripts/fault_campaign.py commit report.json \
+conda run -n aletheia python scripts/fault_campaign.py commit evidence-bundle.json \
   --idempotency-key fault-campaign:<stable-logical-id> \
   --principal harness:f11s6
 ~~~
@@ -151,10 +188,11 @@ Run the focused suite:
 conda run -n aletheia pytest -q tests/jobs/test_fault_injection.py
 ~~~
 
-It uses actual child processes that exit with `os._exit`, real PostgreSQL rollback/reconnect, worker
-retry and lease recovery, scientific-command redelivery, archive `ENOSPC`, forged worker-manifest
-identity, and one-time action ambiguity. The passing campaign proves only the measured engineering
-invariants for that exact manifest/environment.
+The test invokes the same production harness used by the CLI. It uses actual child processes that
+exit with `os._exit`, real PostgreSQL rollback/reconnect, worker retry and lease recovery,
+scientific-command redelivery, archive `ENOSPC`, forged worker-manifest identity, and one-time
+action ambiguity. The passing campaign proves only the measured engineering invariants for that
+exact manifest/environment.
 
 If a campaign fails or blocks:
 

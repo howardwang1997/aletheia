@@ -352,9 +352,18 @@ def build_research_memory_snapshot(
 class ResearchMemoryStore:
     """Authoritative memory ledger, artifact compactor, and minimal-context assembler."""
 
-    def __init__(self, *, archive_root: Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        archive_root: Path | None = None,
+        archive: ScientificMemoryArchive | None = None,
+    ) -> None:
+        if archive_root is not None and archive is not None:
+            raise ValueError("memory store accepts archive_root or archive, not both")
         self._commands = ScientificTransitionStore()
-        self._archive = ScientificMemoryArchive(archive_root or research_memory_archive_dir())
+        self._archive = archive or ScientificMemoryArchive(
+            archive_root or research_memory_archive_dir()
+        )
 
     @staticmethod
     def _session():
