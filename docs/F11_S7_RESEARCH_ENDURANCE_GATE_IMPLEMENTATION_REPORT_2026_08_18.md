@@ -127,6 +127,12 @@ The CLI names the test clock `--accelerated-now`; passing it to a real manifest 
 
 There is deliberately no controller `finalize` subcommand and no production clock parameter.
 
+`scripts/submit_endurance_fault_evidence.py` closes the in-window fault-ingestion gap. It validates
+the complete F11-S6 bundle, requires exact replay of its append-only committed report, derives the
+API-process and provider receipts from the observed scenarios, rejects pre-window observations,
+and submits one content-addressed controller envelope. The pre-start prerequisite report remains a
+qualification only and cannot satisfy either in-window interruption count.
+
 ## Acceptance evidence
 
 The focused suite currently passes:
@@ -137,6 +143,12 @@ tests/programs/test_endurance_gate.py
 
 tests/programs/test_endurance_controller.py
 4 passed in 2.31s
+
+tests/programs/test_endurance_fault_evidence.py
+2 passed in 1.47s
+
+fault/endurance/controller/adapter/phonon-reproduction focused selection
+24 passed in 16.34s
 
 F11 durable-queue/outbox/graph/memory/portfolio/fault/endurance cross-component suite
 65 passed in 10.63s
@@ -160,6 +172,8 @@ It covers:
 The controller supplement covers committed-code/spool preflight, explicit start replay,
 advisory-lock exclusion, evidence submission replay, evidence-triggered and scheduled checkpoints,
 and recovery after a database commit immediately precedes process death/local archival.
+The fault adapter additionally covers pre-window and uncommitted-report rejection, deterministic
+typed receipt selection, content-addressed retry, and durable checkpoint ingestion.
 
 The first production scientific producer adds three synthetic acceptance tests for independently
 reconstructed feature-matrix parity, RandomForest/ExtraTrees separation, deterministic replay,
@@ -181,9 +195,11 @@ transport-only.
 - `migrations/versions/20260818_0022_f11_research_endurance_gate.py`;
 - `scripts/run_endurance_gate.py`;
 - `scripts/run_endurance_controller.py`;
+- `aletheia/programs/endurance_fault_evidence.py` and
+  `scripts/submit_endurance_fault_evidence.py`;
 - `aletheia/domains/materials/phonon_reproduction.py` and
   `scripts/run_phonon_reproduction.py`;
-- `tests/programs/{test_endurance_gate,test_endurance_controller}.py`;
+- `tests/programs/{test_endurance_gate,test_endurance_controller,test_endurance_fault_evidence}.py`;
 - `tests/domains/materials/test_phonon_reproduction.py`;
 - `docs/programs/RESEARCH_ENDURANCE_GATE.md`;
 - `docs/adr/0039-f11-durable-real-time-research-endurance-gate.md`; and
@@ -192,8 +208,9 @@ transport-only.
 ## Honest boundary and next work
 
 Engineering completion means the real experiment can be commissioned safely; it is not evidence
-that it has started or finished. The next non-mutating step is to freeze committed production gate
-and controller manifests and pass preflight. Only after the scientific workers and external
+that it has started or finished. The production gate is frozen, and code-bound controller and
+same-source reproduction manifests can pass read-only preflight against it; identities must be
+regenerated after any bound-component commit. Only after the scientific workers and external
 supervisor are deployed should an operator explicitly start one frozen Quest and let it accumulate
 at least 259,200 database-clock seconds with on-cadence checkpoints and real scientific/fault/
 portfolio receipts. Only then can its audit become eligible for F11 review.

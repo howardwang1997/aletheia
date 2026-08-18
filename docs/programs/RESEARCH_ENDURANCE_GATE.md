@@ -123,6 +123,27 @@ conda run -n aletheia python scripts/run_endurance_controller.py status \
   endurance-controller-manifest.json
 ~~~
 
+The passing F11-S6 report sealed into the gate manifest is only a pre-start qualification; it does
+not count as either required in-window interruption. During the live window, run and commit a new
+Quest-scoped fault bundle with the same frozen production harness/environment. Convert its exact
+committed report into content-addressed process/provider receipts without hand-written JSON:
+
+~~~bash
+conda run -n aletheia python scripts/submit_endurance_fault_evidence.py \
+  endurance-controller-manifest.json \
+  artifacts/fault-campaigns/in-window/evidence-bundle.json \
+  --producer harness:f11s6-production
+
+conda run -n aletheia python scripts/run_endurance_controller.py tick \
+  endurance-controller-manifest.json
+~~~
+
+The adapter independently revalidates the complete bundle, requires exact replay from the
+append-only fault store, selects exactly one passing API-process `process_exit` and one passing
+provider `unavailable`/`timeout` scenario, and rejects observations before the database-recorded
+gate start. Retrying the same bundle reuses the first evidence envelope; only the controller tick
+may append it to the endurance chain.
+
 The controller CLI has no caller-clock option and deliberately has no `finalize` command. It never
 turns elapsed time or partial evidence into a terminal claim. Finalization remains the separate,
 explicit review operation below. Do not pass `--accelerated-now` to a real low-level command; it
@@ -217,6 +238,7 @@ effect merely to make the endurance metrics green.
 ~~~bash
 conda run -n aletheia pytest -q tests/programs/test_endurance_gate.py
 conda run -n aletheia pytest -q tests/programs/test_endurance_controller.py
+conda run -n aletheia pytest -q tests/programs/test_endurance_fault_evidence.py
 ~~~
 
 The suite covers contract anti-forgery, non-cosmetic pivots, migration/trigger parity, persistent
@@ -227,6 +249,8 @@ recovery when the database commit wins immediately before a process crash. The a
 includes two questions, three Campaigns, an exact
 negative result, reproduction, process/provider faults, causal structural pivot, portfolio epoch,
 and efficiency receipt, but correctly remains ineligible for real 72-hour exit.
+Fault-evidence coverage additionally proves deterministic typed-receipt selection, exact committed
+report replay, pre-window rejection, content-addressed submission replay, and checkpoint ingestion.
 
 ## Honest boundary
 

@@ -2418,6 +2418,9 @@ parent-hash tail 决定 no-op 或 checkpoint；checkpoint command key 由 frozen
 envelope。preflight 复核 committed code、frozen Quest/gate sources、空 spool 与冲突 gate；真实模式无
 caller-clock 接口。controller 没有自动 finalization 路径，终结仍是独立显式科学审查。PostgreSQL
 专项覆盖 start replay、锁竞争、定时/证据 checkpoint 与 commit-before-archive 崩溃窗口，4 passed。
+窗口内故障适配器进一步要求完整 F11-S6 bundle 与 append-only store 精确重放，从 API-process / provider
+观测自动导出强类型 interruption receipts，拒绝把启动前 prerequisite 冒充窗口内证据，并以
+content-addressed envelope 幂等进入 controller spool；专项 2 passed，相关交叉选择 24 passed。
 
 **2026-08-18 production reproduction-producer status：** 已实现 gate-bound、zero-fit 的同源
 implementation-diverse replay。新路径不调用 F10 feature/estimator helpers，而从原始结构经公开
@@ -2444,9 +2447,11 @@ audit 与通用 graph CLI 均重建 SHA-256
 Campaign 处于 active，其余两条保持 planned。Matbench source 明确禁止被称为 external replication 或
 causal mechanism；Phonondb/Alexandria/Phonix 仅记录为未分配 candidate，Materials Project legacy DFPT
 因同源被排除。Quest-scoped production fault prerequisite 已实际通过十个边界，六项核心计数均为零；
-restart-safe controller 的工程实现与加速验收也已完成。当前待办是冻结 production gate/controller
-manifest 并通过只读 preflight、产出独立实现复现结果与独立数据 lineage/target audit，然后才可显式
-启动真实 72-hour clock。当前未启动时钟，也未开启 autonomous allocation/outward action。详见
+restart-safe controller 的工程实现与加速验收也已完成。冻结 production gate/controller manifest
+并通过只读 preflight 的工作已完成；代码绑定组件变化后会重建 controller/protocol 身份。当前
+待办是部署外部 supervisor、窗口内 fault/portfolio/pivot producers，产出独立实现复现结果与独立数据
+lineage/target audit，然后才可显式启动真实 72-hour clock。当前未启动时钟，也未开启 autonomous
+allocation/outward action。详见
 `programs/PHONON_QUEST_COMMISSIONING.md` 与 `programs/RESEARCH_ENDURANCE_GATE.md`。
 
 ## F11.8 建议代码边界

@@ -57,6 +57,12 @@ from aletheia.programs.endurance_controller import (
     submit_controller_evidence,
     verify_endurance_controller_code_identity,
 )
+from aletheia.programs.endurance_fault_evidence import (
+    EnduranceFaultEvidenceError,
+    EnduranceFaultEvidenceSubmission,
+    build_endurance_interruption_evidence,
+    submit_endurance_fault_evidence,
+)
 
 from aletheia.programs.graph import (
     ProgramGraphConflict,
@@ -189,6 +195,8 @@ __all__ = [
     "EnduranceEfficiencyMetric",
     "EnduranceEfficiencyReceipt",
     "EnduranceEvidenceClass",
+    "EnduranceFaultEvidenceError",
+    "EnduranceFaultEvidenceSubmission",
     "EnduranceGateAudit",
     "EnduranceGateDisposition",
     "EnduranceGateManifest",
@@ -292,6 +300,7 @@ __all__ = [
     "TaskContextReceipt",
     "TaskContextRequest",
     "build_research_memory_snapshot",
+    "build_endurance_interruption_evidence",
     "capture_endurance_controller_code_identity",
     "controller_advisory_key",
     "controller_status",
@@ -304,5 +313,6 @@ __all__ = [
     "run_controller_tick",
     "start_endurance_controller_gate",
     "submit_controller_evidence",
+    "submit_endurance_fault_evidence",
     "verify_endurance_controller_code_identity",
 ]

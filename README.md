@@ -84,8 +84,10 @@ reliable autonomous frontier scientist.
    its independent-implementation branch is active. Its Quest-scoped production fault prerequisite
    has passed all ten boundaries with every core loss/duplicate/mismatch count at zero. A
    committed-code, advisory-locked, write-once-spooled run-once endurance controller is implemented
-   and tested; the real controller/gate identities still must be frozen and pass production
-   preflight before an explicit start. A zero-fit same-source reproduction protocol now adds an
+   and tested; the real gate and current controller identities are frozen and production preflight
+   passes, but the clock has deliberately not started. A committed in-window F11-S6 report can now
+   be deterministically converted into typed process/provider interruption receipts without manual
+   evidence JSON. A zero-fit same-source reproduction protocol now adds an
    independently coded feature path, a distinct ExtraTrees estimator, target/split/matrix hash
    parity, exact negative/inconclusive outcome retention, and typed endurance evidence submission;
    it cannot fit until the real gate is live. Independent data, the still-unknown reproduction

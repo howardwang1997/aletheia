@@ -156,9 +156,16 @@ Real-time controller commands expose no injected clock, and the controller has n
 finalization path. Focused PostgreSQL acceptance covers start replay, lock competition, scheduled
 and evidence-triggered checkpoints, submit replay, dirty-spool/code preflight, and crash recovery.
 
-The production gate and controller manifests are intentionally generated only after this code is
-committed, because controller preparation rejects untracked or dirty components. Their read-only
-preflight does not start the 72-hour database clock.
+The production gate and controller manifests have been generated only from committed components,
+and their read-only preflight passes without starting the 72-hour database clock. Controller
+identity is intentionally regenerated after any bound-component commit; the immutable gate
+identity remains stable while its Quest graph and prerequisite evidence remain unchanged.
+
+An in-window fault adapter now consumes a complete production harness bundle rather than operator-
+authored checkpoint JSON. It requires an exact append-only fault-store replay and deterministically
+derives one process-kill and one provider-transport receipt from their real recovery evidence. The
+existing pre-start fault report remains only the gate prerequisite and is rejected as live-window
+evidence.
 
 The first scientific evidence producer is also implemented but deliberately remains zero-fit on
 production data. Its precommitted same-source reproduction path independently reconstructs the
@@ -181,11 +188,11 @@ The original commissioning receipts honestly retain the state at their creation 
 Quest-scoped fault pass and controller engineering work, the live blockers are:
 
 1. `independent_external_dataset_not_yet_qualified_or_registered`;
-2. `zero_fit_reproduction_protocol_not_yet_frozen_and_result_not_yet_committed`;
-3. `production_endurance_manifests_and_preflight_not_yet_frozen`; and
+2. `zero_fit_reproduction_result_not_yet_committed`;
+3. `external_supervisor_and_remaining_in_window_producers_not_yet_deployed`; and
 4. `real_72h_endurance_window_not_yet_started_or_completed`.
 
-The next safe step is to commit the controller, freeze both production manifests, and run the
-read-only preflight. Starting remains separate: the active scientific branch and its evidence
-producer plus the external five-minute supervisor must be deployed first. The branch must produce
-an honest reproduction outcome; it cannot be fabricated from the existing same-code replay.
+The next safe step is to deploy the active scientific producer, in-window fault/portfolio/pivot
+producers, and the external five-minute supervisor, then repeat read-only preflight. Starting
+remains a separate explicit act. The branch must produce an honest reproduction outcome; it cannot
+be fabricated from the existing same-code replay.
