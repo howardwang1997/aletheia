@@ -161,6 +161,12 @@ The controller supplement covers committed-code/spool preflight, explicit start 
 advisory-lock exclusion, evidence submission replay, evidence-triggered and scheduled checkpoints,
 and recovery after a database commit immediately precedes process death/local archival.
 
+The first production scientific producer adds three synthetic acceptance tests for independently
+reconstructed feature-matrix parity, RandomForest/ExtraTrees separation, deterministic replay,
+target drift and disposition relabel rejection, Campaign/path integrity, and the committed-code
+production boundary. It remains zero-fit on production data until the real gate starts.
+The expanded F9/F10/F11 cross-component selection passes `61 passed in 21.45s`.
+
 Changed-file Ruff, Python compilation, `git diff --check`, CLI help/list smoke, Alembic
 `current/head = 20260818_0022`, and ORM schema diff `0` also pass. The repository's pre-existing
 ESOL tests fetch a public remote CSV on each invocation; the final full run explicitly unset a
@@ -175,7 +181,10 @@ transport-only.
 - `migrations/versions/20260818_0022_f11_research_endurance_gate.py`;
 - `scripts/run_endurance_gate.py`;
 - `scripts/run_endurance_controller.py`;
+- `aletheia/domains/materials/phonon_reproduction.py` and
+  `scripts/run_phonon_reproduction.py`;
 - `tests/programs/{test_endurance_gate,test_endurance_controller}.py`;
+- `tests/domains/materials/test_phonon_reproduction.py`;
 - `docs/programs/RESEARCH_ENDURANCE_GATE.md`;
 - `docs/adr/0039-f11-durable-real-time-research-endurance-gate.md`; and
 - roadmap, README, and documentation-index status updates.

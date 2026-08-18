@@ -160,13 +160,28 @@ The production gate and controller manifests are intentionally generated only af
 committed, because controller preparation rejects untracked or dirty components. Their read-only
 preflight does not start the 72-hour database clock.
 
+The first scientific evidence producer is also implemented but deliberately remains zero-fit on
+production data. Its precommitted same-source reproduction path independently reconstructs the
+frozen Matminer/Pymatgen composition and geometry matrices and requires their hashes, target hash,
+and split hash to match the pre-fit F10 plan. It then uses `ExtraTreesRegressor`, not the F10
+`RandomForestRegressor`, with one capacity-matched fit per arm. Production execution fails unless
+the exact endurance gate is live and both distinct Campaigns are active; completion time comes from
+PostgreSQL. Confirmed, contradicted, and inconclusive outcomes are mechanically retained as result,
+negative-result, or limitation memory before typed evidence submission. Contradiction does not
+automatically manufacture a structural pivot. The three synthetic anti-forgery tests pass; no
+production model has been fit and the outcome remains unknown.
+
+The current reproduction/world-model/structure/commissioning/graph/fault/endurance cross-component
+selection passes `61 passed in 21.45s`; the warnings are upstream Spglib deprecations, not failed
+quality or symmetry checks.
+
 ## Remaining blockers
 
 The original commissioning receipts honestly retain the state at their creation time. After the
 Quest-scoped fault pass and controller engineering work, the live blockers are:
 
 1. `independent_external_dataset_not_yet_qualified_or_registered`;
-2. `independent_reproduction_result_not_yet_committed`;
+2. `zero_fit_reproduction_protocol_not_yet_frozen_and_result_not_yet_committed`;
 3. `production_endurance_manifests_and_preflight_not_yet_frozen`; and
 4. `real_72h_endurance_window_not_yet_started_or_completed`.
 

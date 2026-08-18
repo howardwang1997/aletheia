@@ -85,8 +85,11 @@ reliable autonomous frontier scientist.
    has passed all ten boundaries with every core loss/duplicate/mismatch count at zero. A
    committed-code, advisory-locked, write-once-spooled run-once endurance controller is implemented
    and tested; the real controller/gate identities still must be frozen and pass production
-   preflight before an explicit start. Independent data, the reproduction result, and the actual
-   72-hour window remain open.
+   preflight before an explicit start. A zero-fit same-source reproduction protocol now adds an
+   independently coded feature path, a distinct ExtraTrees estimator, target/split/matrix hash
+   parity, exact negative/inconclusive outcome retention, and typed endurance evidence submission;
+   it cannot fit until the real gate is live. Independent data, the still-unknown reproduction
+   result, and the actual 72-hour window remain open.
    The final output still needs a stable bundle containing the question, literature, data card,
    split metadata, code, artifacts, metrics, claims, audits, reproduction, limitations, paper, and
    reproducibility package/PR; the real-time F11-S7 run and F12 remain.
@@ -443,6 +446,15 @@ Alexandria, and Phonix sources remain unallocated pending lineage/target audits;
 legacy DFPT is explicitly excluded as independent source lineage. See
 [`docs/programs/PHONON_QUEST_COMMISSIONING.md`](docs/programs/PHONON_QUEST_COMMISSIONING.md) and the
 [`commissioning report`](docs/F11_PRODUCTION_PHONON_QUEST_COMMISSIONING_REPORT_2026_08_18.md).
+
+The first gate-bound scientific producer is an implementation-diverse same-source phonon replay.
+It independently rebuilds and hash-checks the frozen composition/geometry matrices, replaces the
+F10 RandomForest with one precommitted ExtraTrees fit per matched arm, obtains completion time from
+PostgreSQL, and retains confirmed, contradicted, or inconclusive outcomes in scientific memory
+before spooling a typed reproduction receipt. Production execution is impossible before the exact
+endurance gate starts, and the result remains unknown because the production model has not been
+fit. See
+[`docs/programs/PHONON_IMPLEMENTATION_REPRODUCTION.md`](docs/programs/PHONON_IMPLEMENTATION_REPRODUCTION.md).
 
 ## Invariants (the safety/quality spine — never traded for a feature)
 

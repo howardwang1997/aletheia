@@ -128,6 +128,11 @@ turns elapsed time or partial evidence into a terminal claim. Finalization remai
 explicit review operation below. Do not pass `--accelerated-now` to a real low-level command; it
 fails closed at every layer.
 
+For the commissioned phonon Quest, the first gate-bound scientific producer is the zero-fit
+implementation-diverse workflow in `programs/PHONON_IMPLEMENTATION_REPRODUCTION.md`. Its production
+protocol/result commands fail before this exact gate starts, and its same-source evidence cannot be
+relabeled as external replication.
+
 ## Checkpoint evidence
 
 An evidence JSON document has three arrays:

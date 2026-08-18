@@ -2419,6 +2419,16 @@ envelope。preflight 复核 committed code、frozen Quest/gate sources、空 spo
 caller-clock 接口。controller 没有自动 finalization 路径，终结仍是独立显式科学审查。PostgreSQL
 专项覆盖 start replay、锁竞争、定时/证据 checkpoint 与 commit-before-archive 崩溃窗口，4 passed。
 
+**2026-08-18 production reproduction-producer status：** 已实现 gate-bound、zero-fit 的同源
+implementation-diverse replay。新路径不调用 F10 feature/estimator helpers，而从原始结构经公开
+Matminer/Pymatgen API 独立重建 composition/species-blind geometry matrices，并要求 target、split 与
+两份 matrix hash 全部等于 pre-fit F10 plan；估计器从 RandomForest 换为冻结的 ExtraTrees，aligned /
+permuted 两臂仍保持容量与 fit 次数一致。production protocol 必须绑定 committed Git components、真实
+gate/controller 与两个不同 Campaign；preflight 在 gate start 前保持 `model_fit_count=0`。run 只在 gate
+live 且两 Campaign active 时执行，完成时间来自 PostgreSQL。confirmed/contradicted/inconclusive 机械
+映射到 result/negative-result/limitation memory，再进入 typed endurance evidence spool；negative result
+不会自动伪造 structural pivot。synthetic 反伪造专项 3 passed；production outcome 仍未知且尚未 fit。
+
 **2026-08-18 production commissioning status：** 已将真实 F10 `matbench_phonons` 工件从孤立结果
 转换为可恢复的生产形态 Quest，而不是复用 pytest fixture。两阶段 commissioning 先验证并冻结 dataset /
 pre-fit plan / result 三份本地工件和参与代码矩阵，再以 stable primary key + insert-or-verify 创建三个
@@ -2460,6 +2470,7 @@ aletheia/jobs/
 
 scripts/run_endurance_gate.py
 scripts/run_endurance_controller.py
+scripts/run_phonon_reproduction.py
 scripts/replay_program.py
 ~~~
 
@@ -2480,6 +2491,7 @@ tests/programs/test_stopping.py
 tests/programs/test_anti_loop.py
 tests/test_endurance_gate.py
 tests/programs/test_endurance_controller.py
+tests/domains/materials/test_phonon_reproduction.py
 ~~~
 
 **Engineering complete：**

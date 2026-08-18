@@ -262,5 +262,11 @@ Recommended reading order:
 114. `programs/PHONON_QUEST_COMMISSIONING.md` — real F10 evidence inspection, two competing world
     models, three bounded Campaigns, deterministic Run/DataAsset creation, frozen budgets,
     production apply/replay/audit identities, external-corpus triage, and explicit blockers.
-115. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
-116. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.
+115. `programs/PHONON_IMPLEMENTATION_REPRODUCTION.md` — zero-fit implementation-diverse protocol,
+    independent matrix reconstruction, distinct estimator, gate-bound execution, exact outcome
+    memory, endurance evidence submission, and same-source claim ceiling.
+116. `adr/0040-gate-bound-implementation-diverse-phonon-reproduction.md` — frozen invariants,
+    independent code/estimator variation, zero-fit gate binding, outcome retention, and rejected
+    self-replay/external/premature-fit/automatic-pivot alternatives.
+117. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
+118. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.

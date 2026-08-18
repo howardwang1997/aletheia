@@ -117,7 +117,7 @@ and completed the restart-safe controller engineering/accelerated acceptance. Th
 are therefore:
 
 1. qualify and register a genuinely independent calculation corpus;
-2. commit the independent implementation reproduction result;
+2. freeze the zero-fit implementation-diverse protocol and commit its still-unknown in-window result;
 3. freeze and preflight the committed production gate/controller manifests; and
 4. explicitly start and complete the real 72-hour gate after workers/supervisor are deployed.
 
@@ -125,6 +125,10 @@ F11 scientific exit additionally needs real database-clock elapsed time, on-cade
 negative result, a genuine hypothesis/prediction pivot, in-window process/provider interruptions,
 a replay-verified portfolio epoch, and material efficiency improvement. F12 requires stronger
 reality-linked independence beyond this commissioning.
+
+The gate-bound same-source producer is documented in
+`programs/PHONON_IMPLEMENTATION_REPRODUCTION.md`. Its claim ceiling remains below independent
+external replication even if the implementation-diverse result confirms the source signal.
 
 ## Tests
 
