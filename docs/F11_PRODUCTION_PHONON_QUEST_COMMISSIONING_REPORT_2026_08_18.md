@@ -137,16 +137,40 @@ It covers the closed scientific blueprint, honest external-source/data role boun
 drift before mutation, initial apply, exact replay, exact graph reconstruction, and read-only audit.
 Ruff and Python compilation pass for the changed code and CLI.
 
+## Quest-scoped resilience and controller readiness
+
+The commissioned Quest subsequently ran the production F11-S6 harness rather than inheriting a
+synthetic or cross-Quest result. Campaign `fic_60355afdf2c4a04d2fdc6a1f7ae7d542` passed all ten
+fault boundaries. Its six mandatory scientific-state-loss, duplicate-state, duplicate-budget,
+duplicate-authorization, unresolved-ambiguity, and event-state-mismatch counts are all zero. The
+self-verified report SHA-256 is
+`fac34a841a56959639bb29a58b92f5a50f6529da829bb10a19beac156fe16676`; the committed command is
+`scmd_cdaa0d0d4122a783e79662826944d843`, and exact replay returned the existing mutation.
+
+The restart-safe F11-S7 operational controller is now implemented behind
+`scripts/run_endurance_controller.py`. It freezes committed component hashes, uses one gate-specific
+PostgreSQL advisory-lock owner per run-once tick, derives stable checkpoint keys from the prior durable tail,
+and stores content-addressed pending/committed/tick receipts without overwrite. A retry recovers the
+case where the database checkpoint committed immediately before process death and local archival.
+Real-time controller commands expose no injected clock, and the controller has no automatic
+finalization path. Focused PostgreSQL acceptance covers start replay, lock competition, scheduled
+and evidence-triggered checkpoints, submit replay, dirty-spool/code preflight, and crash recovery.
+
+The production gate and controller manifests are intentionally generated only after this code is
+committed, because controller preparation rejects untracked or dirty components. Their read-only
+preflight does not start the 72-hour database clock.
+
 ## Remaining blockers
 
-The durable apply/audit receipts explicitly retain:
+The original commissioning receipts honestly retain the state at their creation time. After the
+Quest-scoped fault pass and controller engineering work, the live blockers are:
 
 1. `independent_external_dataset_not_yet_qualified_or_registered`;
 2. `independent_reproduction_result_not_yet_committed`;
-3. `quest_scoped_fault_prerequisite_not_yet_run`; and
-4. `restart_safe_real_time_endurance_controller_not_yet_commissioned`.
+3. `production_endurance_manifests_and_preflight_not_yet_frozen`; and
+4. `real_72h_endurance_window_not_yet_started_or_completed`.
 
-The next safe step is to commit this code, run the production ten-boundary fault prerequisite for
-the commissioned Quest, and implement the restart-safe hourly controller before starting the real
-database-clock window. The active scientific branch must also produce an honest reproduction
-outcome; it cannot be fabricated from the existing same-code replay.
+The next safe step is to commit the controller, freeze both production manifests, and run the
+read-only preflight. Starting remains separate: the active scientific branch and its evidence
+producer plus the external five-minute supervisor must be deployed first. The branch must produce
+an honest reproduction outcome; it cannot be fabricated from the existing same-code replay.

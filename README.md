@@ -81,9 +81,12 @@ reliable autonomous frontier scientist.
    completed and allocation remains disabled. The first production-shaped materials Quest is now
    commissioned from the real F10 phonon artifacts with two closed competing world models, three
    Campaigns, exploration-only source data, five hard budget dimensions, and exact replay/audit;
-   its independent-implementation branch is active, while external data, its reproduction result,
-   the Quest-scoped fault prerequisite, and the restart-safe endurance controller remain explicit
-   blockers.
+   its independent-implementation branch is active. Its Quest-scoped production fault prerequisite
+   has passed all ten boundaries with every core loss/duplicate/mismatch count at zero. A
+   committed-code, advisory-locked, write-once-spooled run-once endurance controller is implemented
+   and tested; the real controller/gate identities still must be frozen and pass production
+   preflight before an explicit start. Independent data, the reproduction result, and the actual
+   72-hour window remain open.
    The final output still needs a stable bundle containing the question, literature, data card,
    split metadata, code, artifacts, metrics, claims, audits, reproduction, limitations, paper, and
    reproducibility package/PR; the real-time F11-S7 run and F12 remain.
@@ -422,8 +425,11 @@ tested. One immutable start and a parent-hashed checkpoint chain use PostgreSQL 
 never set the real-72-hour verdict. Checkpoints reconstruct graph, negative-result memory, budgets,
 one-time actions, fault sources, and portfolio epochs; typed evidence proves reproduction,
 process/provider interruption, and a negative-result-caused structural pivot. Terminal reports
-retain pass/blocked/failed state and complete portfolio/efficiency evidence. The accelerated
-end-to-end acceptance passes, while the actual 72-hour Quest remains to be run. See
+retain pass/blocked/failed state and complete portfolio/efficiency evidence. The supervised
+run-once controller adds committed code identity, gate-specific PostgreSQL advisory-lock exclusion, stable
+tail-derived checkpoint keys, write-once evidence/receipt spooling, ambiguous-commit recovery, and
+no automatic finalization or caller-clock path. The accelerated end-to-end acceptance passes,
+while the actual 72-hour Quest remains to be run. See
 [`docs/programs/RESEARCH_ENDURANCE_GATE.md`](docs/programs/RESEARCH_ENDURANCE_GATE.md).
 
 Production commissioning now turns the real F10 structure-signal artifacts into a replay-safe F11

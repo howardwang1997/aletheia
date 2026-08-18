@@ -2410,6 +2410,15 @@ parent-hash checkpoint chain、复制/进程故障/provider 故障/结构性 piv
 head/current 为 `20260818_0022`，ORM schema diff 为 0；专项回归 6 passed，F11 跨组件回归
 65 passed，全库非 Docker 回归 1306 passed、2 skipped、29 deselected（925.41 s）。
 
+**2026-08-18 supervised-controller status：** 新增仅由外部 supervisor 周期调用的 run-once
+controller。每次 tick 先取得 gate-specific PostgreSQL advisory lock，再从数据库时钟与
+parent-hash tail 决定 no-op 或 checkpoint；checkpoint command key 由 frozen controller + prior tail
+确定。证据先进入不可覆盖的 content-addressed spool，数据库提交后才归档；若进程恰在两者之间退出，
+下次 tick 会从 ledger receipt ID 识别并完成归档。同一证据在提交时间/进程变化后重试仍返回首份
+envelope。preflight 复核 committed code、frozen Quest/gate sources、空 spool 与冲突 gate；真实模式无
+caller-clock 接口。controller 没有自动 finalization 路径，终结仍是独立显式科学审查。PostgreSQL
+专项覆盖 start replay、锁竞争、定时/证据 checkpoint 与 commit-before-archive 崩溃窗口，4 passed。
+
 **2026-08-18 production commissioning status：** 已将真实 F10 `matbench_phonons` 工件从孤立结果
 转换为可恢复的生产形态 Quest，而不是复用 pytest fixture。两阶段 commissioning 先验证并冻结 dataset /
 pre-fit plan / result 三份本地工件和参与代码矩阵，再以 stable primary key + insert-or-verify 创建三个
@@ -2424,9 +2433,11 @@ audit 与通用 graph CLI 均重建 SHA-256
 `41a47946b28c9685468b5946e6b782c7f9979a8c2e9fada6d201a4b2c34286b8`。只有 independent replay
 Campaign 处于 active，其余两条保持 planned。Matbench source 明确禁止被称为 external replication 或
 causal mechanism；Phonondb/Alexandria/Phonix 仅记录为未分配 candidate，Materials Project legacy DFPT
-因同源被排除。当前四项 blocker 为：独立数据 lineage/target audit、独立实现复现结果、最新 Quest-scoped
-fault prerequisite、restart-safe real-time controller。未启动 72-hour clock，也未开启 autonomous
-allocation/outward action。详见 `programs/PHONON_QUEST_COMMISSIONING.md`。
+因同源被排除。Quest-scoped production fault prerequisite 已实际通过十个边界，六项核心计数均为零；
+restart-safe controller 的工程实现与加速验收也已完成。当前待办是冻结 production gate/controller
+manifest 并通过只读 preflight、产出独立实现复现结果与独立数据 lineage/target audit，然后才可显式
+启动真实 72-hour clock。当前未启动时钟，也未开启 autonomous allocation/outward action。详见
+`programs/PHONON_QUEST_COMMISSIONING.md` 与 `programs/RESEARCH_ENDURANCE_GATE.md`。
 
 ## F11.8 建议代码边界
 
@@ -2448,6 +2459,7 @@ aletheia/jobs/
   outbox.py
 
 scripts/run_endurance_gate.py
+scripts/run_endurance_controller.py
 scripts/replay_program.py
 ~~~
 
@@ -2467,6 +2479,7 @@ tests/programs/test_portfolio.py
 tests/programs/test_stopping.py
 tests/programs/test_anti_loop.py
 tests/test_endurance_gate.py
+tests/programs/test_endurance_controller.py
 ~~~
 
 **Engineering complete：**

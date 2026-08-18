@@ -250,8 +250,9 @@ Recommended reading order:
 110. `F11_S7_RESEARCH_ENDURANCE_GATE_IMPLEMENTATION_REPORT_2026_08_18.md` — database-clock
     endurance lifecycle, resumable checkpoint chain, typed scientific/fault/pivot evidence,
     accelerated acceptance, and explicit pending real-72-hour boundary.
-111. `programs/RESEARCH_ENDURANCE_GATE.md` — deployment, evidence classes, start/checkpoint/finalize
-    CLI, recovery, audit, incident handling, and honest production-run boundary.
+111. `programs/RESEARCH_ENDURANCE_GATE.md` — deployment, evidence classes, advisory-locked
+    supervised run-once controller, write-once evidence spool, start/checkpoint/finalize boundary,
+    crash recovery, audit, incident handling, and honest production-run status.
 112. `adr/0039-f11-durable-real-time-research-endurance-gate.md` — durable clock, append-only
     lifecycle, frozen authority, structural-pivot semantics, cadence evidence, and rejected fake
     time/activation alternatives.

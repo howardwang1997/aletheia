@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -39,7 +41,40 @@ def _print(value: Any, output: str | None = None) -> None:
     if output is None:
         print(rendered, end="")
     else:
-        Path(output).write_text(rendered, encoding="utf-8")
+        _write_new(Path(output), rendered.encode("utf-8"))
+
+
+def _write_new(target: Path, payload: bytes) -> None:
+    """Durably create one evidence file without replacing an earlier manifest."""
+
+    destination = target.resolve(strict=False)
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{destination.name}.",
+        dir=destination.parent,
+    )
+    try:
+        view = memoryview(payload)
+        written = 0
+        while written < len(payload):
+            count = os.write(descriptor, view[written:])
+            if count <= 0:  # pragma: no cover - OS writes progress or raises
+                raise OSError("endurance manifest write made no progress")
+            written += count
+        os.fsync(descriptor)
+        os.fchmod(descriptor, 0o600)
+        os.close(descriptor)
+        descriptor = -1
+        os.link(temporary, destination)
+        directory_descriptor = os.open(destination.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        Path(temporary).unlink(missing_ok=True)
 
 
 def _context(args: argparse.Namespace) -> EnduranceCommandContext:

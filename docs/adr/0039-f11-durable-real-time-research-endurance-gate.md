@@ -100,7 +100,25 @@ work units, while synthetic load gives code coverage but limited state coverage:
 processing guidance recommends soak duration that covers worst-case runtime plus verification and
 peak load: [Reliable Data Processing with Minimal Toil](https://sre.google/static/pdf/reliable_data_processing_with_minimal_toil.pdf).
 
-### 7. Keep final scientific exit and activation separate
+### 7. Supervise run-once decisions instead of trusting one long-lived process
+
+Production invokes one controller tick repeatedly from an external supervisor. A frozen code
+identity and safe relative spool path are sealed before start. Each invocation takes a
+gate-specific PostgreSQL advisory lock, observes the database clock, reconstructs the ledger
+tail, and makes at most one checkpoint mutation. The checkpoint idempotency key derives from the
+controller identity and prior tail, so an ambiguous commit replays rather than forks.
+
+Typed scientific evidence first enters a content-addressed local pending spool through a durable
+hard-link create. It moves to the committed spool only after the receipt IDs resolve in the
+database checkpoint chain. If the process dies between those operations, the next tick recognizes
+the already-committed IDs and completes archival. Tick receipts bind the action, prior tail,
+database time, code identity, evidence envelopes, and next cadence/deadline.
+
+The production controller exposes neither a caller-supplied clock nor a finalization operation.
+Preparation and preflight do not start the gate; start remains a separate explicit action after the
+scientific workers and external supervisor exist.
+
+### 8. Keep final scientific exit and activation separate
 
 The terminal report derives duration, gaps, milestone counts, zero-loss invariants, an independent
 efficiency comparison, Campaign states/reasons, budget state, and the complete final portfolio.
@@ -114,6 +132,8 @@ activation decision remain separate gates.
 ## Consequences
 
 - A controller crash cannot reset elapsed time or checkpoint sequence.
+- A crash after database commit but before local archival cannot duplicate scientific evidence.
+- Concurrent supervisor invocations cannot append competing checkpoints.
 - A short test cannot be relabelled as 72-hour evidence in Python or PostgreSQL.
 - Missing cadence, evidence, portfolio output, efficiency improvement, or duration becomes an
   explicit blocker.

@@ -115,6 +115,18 @@ violations create `failed`. Both remain queryable.
 
 The CLI names the test clock `--accelerated-now`; passing it to a real manifest fails closed.
 
+`scripts/run_endurance_controller.py` adds the production operational boundary:
+
+- `prepare` freezes committed component hashes, the gate, principal, polling cadence, and spool;
+- `preflight` revalidates code/source identity, competing gates, and empty spool state;
+- explicit replay-safe `start` is separate from preparation and preflight;
+- supervised run-once `tick` uses a PostgreSQL advisory lock, database clock, durable tail, and
+  stable checkpoint command key;
+- `submit` creates replay-safe content-addressed evidence envelopes; and
+- `status` reports cadence/deadline state without mutating or finalizing the gate.
+
+There is deliberately no controller `finalize` subcommand and no production clock parameter.
+
 ## Acceptance evidence
 
 The focused suite currently passes:
@@ -122,6 +134,9 @@ The focused suite currently passes:
 ~~~text
 tests/programs/test_endurance_gate.py
 6 passed in 2.48s
+
+tests/programs/test_endurance_controller.py
+4 passed in 2.31s
 
 F11 durable-queue/outbox/graph/memory/portfolio/fault/endurance cross-component suite
 65 passed in 10.63s
@@ -142,6 +157,10 @@ It covers:
   negative result, one reproduction, process and provider interruption receipts, one causally
   ordered structural pivot, one replay-verified portfolio epoch, and material efficiency gain.
 
+The controller supplement covers committed-code/spool preflight, explicit start replay,
+advisory-lock exclusion, evidence submission replay, evidence-triggered and scheduled checkpoints,
+and recovery after a database commit immediately precedes process death/local archival.
+
 Changed-file Ruff, Python compilation, `git diff --check`, CLI help/list smoke, Alembic
 `current/head = 20260818_0022`, and ORM schema diff `0` also pass. The repository's pre-existing
 ESOL tests fetch a public remote CSV on each invocation; the final full run explicitly unset a
@@ -150,22 +169,25 @@ transport-only.
 
 ## Changed implementation surface
 
-- `aletheia/programs/{endurance,endurance_schemas,persistence,__init__}.py`;
+- `aletheia/programs/{endurance,endurance_controller,endurance_schemas,persistence,__init__}.py`;
 - `aletheia/jobs/outbox.py`;
 - `aletheia/schema_migrations.py`;
 - `migrations/versions/20260818_0022_f11_research_endurance_gate.py`;
 - `scripts/run_endurance_gate.py`;
-- `tests/programs/test_endurance_gate.py`;
+- `scripts/run_endurance_controller.py`;
+- `tests/programs/{test_endurance_gate,test_endurance_controller}.py`;
 - `docs/programs/RESEARCH_ENDURANCE_GATE.md`;
 - `docs/adr/0039-f11-durable-real-time-research-endurance-gate.md`; and
 - roadmap, README, and documentation-index status updates.
 
 ## Honest boundary and next work
 
-Engineering completion means the real experiment can start safely; it is not evidence that it has
-finished. The remaining F11 scientific exit is to prepare a production manifest and let one frozen
-Quest accumulate at least 259,200 database-clock seconds with on-cadence checkpoints and real
-scientific/fault/portfolio receipts. Only then can its audit become eligible for F11 review.
+Engineering completion means the real experiment can be commissioned safely; it is not evidence
+that it has started or finished. The next non-mutating step is to freeze committed production gate
+and controller manifests and pass preflight. Only after the scientific workers and external
+supervisor are deployed should an operator explicitly start one frozen Quest and let it accumulate
+at least 259,200 database-clock seconds with on-cadence checkpoints and real scientific/fault/
+portfolio receipts. Only then can its audit become eligible for F11 review.
 
 F12 still requires reality-linked execution and genuinely independent replication. Neither a real
 F11 pass nor F12 automatically grants spending, task, holdout, laboratory, or external-action

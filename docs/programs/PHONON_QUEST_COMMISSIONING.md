@@ -111,13 +111,15 @@ candidate corpus, spend money, open an external target, start a fault campaign, 
 
 ## Remaining commissioning blockers
 
-The apply receipt must continue to report all four blockers until separate receipt-backed work
-closes them:
+The immutable initial apply receipt continues to report the four blockers present when it was
+created. Subsequent receipt-backed work has now passed the Quest-scoped ten-boundary fault campaign
+and completed the restart-safe controller engineering/accelerated acceptance. The live blockers
+are therefore:
 
 1. qualify and register a genuinely independent calculation corpus;
 2. commit the independent implementation reproduction result;
-3. run and commit the latest Quest-scoped production fault campaign; and
-4. commission a restart-safe real-time endurance controller before starting the 72-hour gate.
+3. freeze and preflight the committed production gate/controller manifests; and
+4. explicitly start and complete the real 72-hour gate after workers/supervisor are deployed.
 
 F11 scientific exit additionally needs real database-clock elapsed time, on-cadence checkpoints, a
 negative result, a genuine hypothesis/prediction pivot, in-window process/provider interruptions,

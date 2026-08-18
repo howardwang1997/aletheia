@@ -63,17 +63,70 @@ conda run -n aletheia python scripts/run_endurance_gate.py prepare qst_<32-hex> 
   --output endurance-manifest.json
 ~~~
 
-The real defaults are 259,200 seconds, hourly checkpoints, and a two-hour maximum gap. Review the
-manifest, deploy the controller/worker, then commit the start:
+The real defaults are 259,200 seconds, hourly checkpoints, and a two-hour maximum gap. Production
+uses the supervised run-once controller; the low-level `start`/`checkpoint` commands remain useful
+for inspection and accelerated engineering, but are not the production scheduler.
+
+## Supervised run-once controller
+
+Freeze the committed controller code, gate identity, five-minute supervisor cadence, and safe
+write-once spool before starting:
 
 ~~~bash
-conda run -n aletheia python scripts/run_endurance_gate.py start \
+conda run -n aletheia python scripts/run_endurance_controller.py prepare \
   endurance-manifest.json \
-  --idempotency-key endurance:start:<stable-id> \
-  --principal controller:endurance
+  --controller-key quest-2026q3-real-72h-controller \
+  --principal controller:endurance \
+  --spool-root artifacts/endurance/quest-2026q3/spool \
+  --poll-seconds 300 \
+  --output endurance-controller-manifest.json
+
+conda run -n aletheia python scripts/run_endurance_controller.py preflight \
+  endurance-controller-manifest.json
 ~~~
 
-Do not pass `--accelerated-now` to a real manifest; it fails closed.
+Preparation fails unless every controller component is tracked and committed. Preflight rehashes
+the live code, reconstructs the frozen Quest/gate sources, rejects an unfinished competing gate,
+and requires an empty pending/committed/receipt spool. It does not start the clock.
+
+Only after the scientific workers and external supervisor are deployed, explicitly start once:
+
+~~~bash
+conda run -n aletheia python scripts/run_endurance_controller.py start \
+  endurance-controller-manifest.json
+~~~
+
+Configure the external supervisor (launchd, systemd, Kubernetes CronJob, or equivalent) to invoke
+one non-overlapping operation every five minutes:
+
+~~~bash
+conda run -n aletheia python scripts/run_endurance_controller.py tick \
+  endurance-controller-manifest.json
+~~~
+
+Every invocation obtains a gate-specific PostgreSQL advisory lock, observes
+`clock_timestamp()`, reconstructs the durable tail, and either does nothing, appends the next
+parent-hashed checkpoint, or recovers a spool item whose database commit preceded the process
+crash. Stable checkpoint command keys derive from the frozen controller and previous ledger tail.
+Lock contention is recorded and leaves the active owner in control.
+
+The spool has `pending`, `committed`, and `receipts` directories. Evidence is content-addressed and
+hard-link-created without overwrite; retrying identical evidence returns the first envelope even
+when the submitting process or local timestamp changed. Submit typed evidence with:
+
+~~~bash
+conda run -n aletheia python scripts/run_endurance_controller.py submit \
+  endurance-controller-manifest.json checkpoint-evidence.json \
+  --producer worker:phonon-reproduction
+
+conda run -n aletheia python scripts/run_endurance_controller.py status \
+  endurance-controller-manifest.json
+~~~
+
+The controller CLI has no caller-clock option and deliberately has no `finalize` command. It never
+turns elapsed time or partial evidence into a terminal claim. Finalization remains the separate,
+explicit review operation below. Do not pass `--accelerated-now` to a real low-level command; it
+fails closed at every layer.
 
 ## Checkpoint evidence
 
@@ -87,7 +140,8 @@ An evidence JSON document has three arrays:
 }
 ~~~
 
-Append it at the frozen cadence:
+The run-once controller appends it at the frozen cadence. The following low-level form is retained
+for accelerated engineering and incident diagnosis:
 
 ~~~bash
 conda run -n aletheia python scripts/run_endurance_gate.py checkpoint edg_<32-hex> \
@@ -144,9 +198,9 @@ enables autonomous allocation.
 After API/controller death:
 
 1. deploy the same frozen code/environment identity;
-2. run `show` and verify the start plus checkpoint chain;
-3. reuse the exact pending idempotency key if its commit outcome was unknown;
-4. otherwise append the next sequence from a new process; and
+2. run controller `status` plus gate `show` and verify the start/checkpoint tail;
+3. invoke one controller `tick`; it reconciles pending receipt IDs against the durable chain;
+4. let the stable tail-derived command key replay an ambiguous database commit; and
 5. do not reset the start time or repeat an evidence receipt.
 
 If a checkpoint is late, append it anyway. The final maximum-gap calculation will retain and block
@@ -157,11 +211,15 @@ effect merely to make the endurance metrics green.
 
 ~~~bash
 conda run -n aletheia pytest -q tests/programs/test_endurance_gate.py
+conda run -n aletheia pytest -q tests/programs/test_endurance_controller.py
 ~~~
 
 The suite covers contract anti-forgery, non-cosmetic pivots, migration/trigger parity, persistent
 resume/idempotency, retained blocked finalization, real-clock override rejection, and a complete
-accelerated end-to-end run. The accelerated run includes two questions, three Campaigns, an exact
+accelerated end-to-end run. Controller coverage adds advisory-lock exclusion, safe start replay,
+evidence-submit replay, scheduled and evidence-triggered checkpoints, code/spool preflight, and
+recovery when the database commit wins immediately before a process crash. The accelerated run
+includes two questions, three Campaigns, an exact
 negative result, reproduction, process/provider faults, causal structural pivot, portfolio epoch,
 and efficiency receipt, but correctly remains ineligible for real 72-hour exit.
 
