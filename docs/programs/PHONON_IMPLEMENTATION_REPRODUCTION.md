@@ -102,6 +102,10 @@ non-droppable negative fact for `pivot-analysis`; it does not automatically stop
 activate a successor, or claim that a structural pivot occurred. Such a pivot needs a separately
 assessed changed prediction/strategy and its actual graph transitions.
 
+The production contradiction-only implementation is documented in
+`PHONON_NEGATIVE_RESULT_PIVOT.md`. It accepts this commit receipt only when the exact conclusion is
+`contradicted`; confirmed and inconclusive outcomes remain non-pivots.
+
 ## Tests and honest boundary
 
 ~~~bash

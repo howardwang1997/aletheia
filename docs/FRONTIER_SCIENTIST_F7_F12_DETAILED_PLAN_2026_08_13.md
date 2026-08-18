@@ -2447,6 +2447,17 @@ epoch 必须在真实 gate 显式启动后、任何 Campaign transition 前由 P
 人工 baseline 尚未提交，真实时钟仍未启动。详见 ADR 0042 与
 `programs/PHONON_ENDURANCE_PORTFOLIO.md`。
 
+**2026-08-18 production negative-pivot status：** 已实现 contradiction-only 的预冻结 pivot
+工作单。它同时复核 reproduction commit、controller spool 中逐字节相同的 typed envelope，以及
+`pivot-analysis` 中 statement/detail/task binding/source/result identity 全闭合的不可丢弃负结果；只有
+`contradicted` 可触发，confirmed/inconclusive 均保持零 graph mutation。适用时以固定 command key 先将
+source Campaign 从 active 停止，再把 external-calculation Campaign 从 planned 激活为仅 lineage/target
+qualification；不创建 `external_validation` role、不分配数据、不读 external target、不授权 outward
+action。before/after fingerprint 改变 prediction、capability/input、analysis 与 discriminated pairs，
+transition 时间和因果顺序由 PostgreSQL 验证；partial/full retry 不重复迁移。pivot/endurance 交叉回归
+33 passed。production outcome 仍未知，因此此工作单不保证 gate 通过，也绝不伪造负结果。详见 ADR
+0043 与 `programs/PHONON_NEGATIVE_RESULT_PIVOT.md`。
+
 **2026-08-18 production commissioning status：** 已将真实 F10 `matbench_phonons` 工件从孤立结果
 转换为可恢复的生产形态 Quest，而不是复用 pytest fixture。两阶段 commissioning 先验证并冻结 dataset /
 pre-fit plan / result 三份本地工件和参与代码矩阵，再以 stable primary key + insert-or-verify 创建三个

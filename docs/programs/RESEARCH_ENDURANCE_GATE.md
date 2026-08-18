@@ -164,6 +164,11 @@ The production portfolio workflow in `programs/PHONON_ENDURANCE_PORTFOLIO.md` is
 start, requires a genuine human-blind baseline, and materializes one shadow epoch only after start
 and before any graph transition. It cannot enqueue its selected batch.
 
+If and only if the later committed reproduction is contradicted, the conditional workflow in
+`programs/PHONON_NEGATIVE_RESULT_PIVOT.md` verifies its exact negative fact and durable envelope,
+then records the two causal graph transitions and submits the typed pivot. Other reproduction
+outcomes do not mutate the graph merely to satisfy this gate.
+
 ## Checkpoint evidence
 
 An evidence JSON document has three arrays:

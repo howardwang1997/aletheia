@@ -468,6 +468,13 @@ the Quest has no audited `external_validation` data role. The workflow never enq
 starts/transitions Campaigns. See
 [`docs/programs/PHONON_ENDURANCE_PORTFOLIO.md`](docs/programs/PHONON_ENDURANCE_PORTFOLIO.md).
 
+A separate production pivot work order now reacts only to an exact committed `contradicted` replay.
+It verifies the byte-identical controller envelope and non-droppable negative memory fact before
+durably stopping the source Campaign and activating the external-calculation Campaign for
+lineage/target qualification only. Confirmed or inconclusive outcomes cause no graph change; the
+workflow allocates no data and authorizes no outward action. See
+[`docs/programs/PHONON_NEGATIVE_RESULT_PIVOT.md`](docs/programs/PHONON_NEGATIVE_RESULT_PIVOT.md).
+
 ## Invariants (the safety/quality spine — never traded for a feature)
 
 1. **Deterministic FSM + hard gates** — capability is added as gated stages, not free-roaming autonomy.

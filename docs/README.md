@@ -276,5 +276,9 @@ Recommended reading order:
     human-blind baseline, in-window shadow epoch, hard-filtered external data, and incident workflow.
 120. `adr/0042-precommitted-in-window-phonon-shadow-portfolio.md` — causal ordering, exact source
     binding, genuine human comparison, zero action authority, and rejected hindsight alternatives.
-121. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
-122. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.
+121. `programs/PHONON_NEGATIVE_RESULT_PIVOT.md` — contradiction-only trigger closure, durable
+    two-transition pivot, qualification-only successor authority, and crash recovery.
+122. `adr/0043-conditional-phonon-negative-result-pivot.md` — exact negative causality,
+    non-contradiction rejection, structural fingerprints, and rejected fabricated outcomes.
+123. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
+124. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.
