@@ -50,6 +50,7 @@ _GIT_SHA_PATTERN = r"^[0-9a-f]{40}$"
 _CODE_COMPONENTS = (
     "aletheia/domains/materials/phonon_endurance_portfolio.py",
     "aletheia/domains/materials/phonon_negative_pivot.py",
+    "aletheia/domains/materials/phonon_portfolio_efficiency.py",
     "aletheia/jobs/outbox.py",
     "aletheia/jobs/persistence.py",
     "aletheia/programs/__init__.py",
@@ -70,6 +71,7 @@ _CODE_COMPONENTS = (
     "scripts/run_endurance_supervisor.py",
     "scripts/run_phonon_endurance_portfolio.py",
     "scripts/run_phonon_negative_pivot.py",
+    "scripts/run_phonon_portfolio_efficiency.py",
     "scripts/submit_endurance_fault_evidence.py",
 )
 

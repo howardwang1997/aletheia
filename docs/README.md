@@ -280,5 +280,9 @@ Recommended reading order:
     two-transition pivot, qualification-only successor authority, and crash recovery.
 122. `adr/0043-conditional-phonon-negative-result-pivot.md` — exact negative causality,
     non-contradiction rejection, structural fingerprints, and rejected fabricated outcomes.
-123. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
-124. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.
+123. `programs/PHONON_PORTFOLIO_EFFICIENCY.md` — blind single-experiment baseline, derived expected
+    question-coverage efficiency, raw finalization receipt, and non-realized claim boundary.
+124. `adr/0044-derived-shadow-portfolio-efficiency.md` — non-self-graded value/cost derivation,
+    causal epoch timing, below-floor retention, and rejected hand-authored metrics.
+125. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
+126. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.

@@ -2458,6 +2458,18 @@ transition 时间和因果顺序由 PostgreSQL 验证；partial/full retry 不�
 33 passed。production outcome 仍未知，因此此工作单不保证 gate 通过，也绝不伪造负结果。详见 ADR
 0043 与 `programs/PHONON_NEGATIVE_RESULT_PIVOT.md`。
 
+**2026-08-18 production efficiency-producer status：** 已把最终 efficiency 从可手写 JSON 收紧为
+blind shadow epoch 的独立派生。人工在 planner output 不存在时必须只选一个 replication 或
+mechanism-test 实验候选；work order 冻结 candidate→question 映射与 precommitted duration，但启动前
+不计算 score/selection。窗口内 epoch 产生后，适配器分别计算 human baseline 与 planner shadow batch
+的 distinct frozen-question coverage / estimated-duration microseconds，经 `EnduranceEfficiencyReceipt`
+整数交叉乘法机械得到 improvement ppm，并绑定 work order/slate/epoch/decision/comparison/code 证据。
+低于 10% 或负 improvement 不得修复；infeasible baseline、blocked/empty batch 或 action enqueue 直接
+拒绝。所有工件显式标记这是 expected planning efficiency，不是已实现的科学产出或成本节省。工程样例
+超过冻结门槛，portfolio/efficiency/pivot/endurance 交叉回归仍为 33 passed；生产 baseline/epoch 尚
+不存在，故真实 improvement 未知。详见 ADR 0044 与
+`programs/PHONON_PORTFOLIO_EFFICIENCY.md`。
+
 **2026-08-18 production commissioning status：** 已将真实 F10 `matbench_phonons` 工件从孤立结果
 转换为可恢复的生产形态 Quest，而不是复用 pytest fixture。两阶段 commissioning 先验证并冻结 dataset /
 pre-fit plan / result 三份本地工件和参与代码矩阵，再以 stable primary key + insert-or-verify 创建三个

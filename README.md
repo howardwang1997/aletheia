@@ -475,6 +475,13 @@ lineage/target qualification only. Confirmed or inconclusive outcomes cause no g
 workflow allocates no data and authorizes no outward action. See
 [`docs/programs/PHONON_NEGATIVE_RESULT_PIVOT.md`](docs/programs/PHONON_NEGATIVE_RESULT_PIVOT.md).
 
+Final efficiency can no longer be supplied as operator-chosen production numbers. After one blind
+experimental baseline is frozen, the efficiency adapter reconstructs the in-window shadow epoch and
+derives expected question coverage per preregistered duration for the human and planner batches. It
+retains below-floor results and labels the metric as expected—not realized—because shadow actions
+are never enqueued. See
+[`docs/programs/PHONON_PORTFOLIO_EFFICIENCY.md`](docs/programs/PHONON_PORTFOLIO_EFFICIENCY.md).
+
 ## Invariants (the safety/quality spine — never traded for a feature)
 
 1. **Deterministic FSM + hard gates** — capability is added as gated stages, not free-roaming autonomy.

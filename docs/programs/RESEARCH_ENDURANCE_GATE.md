@@ -211,6 +211,11 @@ The efficiency receipt compares value per cost against a single-Campaign baselin
 either information-gain or question-coverage units, costs, an integer-derived improvement in ppm,
 source hashes, and an independent assessor.
 
+For the production phonon Quest, do not hand-author these fields. Use the blind-epoch derivation in
+`programs/PHONON_PORTFOLIO_EFFICIENCY.md`. Its question-coverage/duration result is explicitly
+expected planning efficiency because the shadow actions are not executed; a below-floor result is
+retained and blocks final passage.
+
 ~~~bash
 conda run -n aletheia python scripts/run_endurance_gate.py finalize edg_<32-hex> \
   --efficiency efficiency.json \

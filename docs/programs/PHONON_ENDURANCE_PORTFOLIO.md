@@ -89,6 +89,11 @@ Preflight is ready only when the exact human plan exists, no epoch exists, the g
 and code, files, graph, memory, and slate still match. Before the human commit its sole expected
 blocker is `human_plan:not_committed`.
 
+The generic shadow ledger permits zero or more human candidates. This production run's derived
+efficiency protocol is stricter: the reviewer must choose exactly one `replication` or
+`mechanism_test` candidate. That constraint is checked after the blind commit without calculating
+planner output; see `PHONON_PORTFOLIO_EFFICIENCY.md`.
+
 ## Materialize one in-window shadow epoch
 
 After the separate explicit gate start, and before any Campaign graph transition, run:
@@ -108,6 +113,10 @@ gate window and carries literal `shadow_only=true`, `actions_enqueued=false`, an
 The epoch is evidence for the endurance checkpoint and later policy calibration. It is not an
 instruction to execute its selected batch. Scientific work and any negative-result-caused pivot use
 their own typed, separately authorized workflows.
+
+Derive the expected portfolio efficiency receipt immediately after this epoch and still before the
+first graph transition. It compares frozen question coverage per estimated duration and does not
+claim realized scientific efficiency.
 
 ## Incident handling
 

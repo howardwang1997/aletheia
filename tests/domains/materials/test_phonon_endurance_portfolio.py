@@ -32,6 +32,13 @@ from aletheia.domains.materials.phonon_negative_pivot import (
     preflight_phonon_negative_pivot_start,
     prepare_phonon_negative_pivot_work_order,
 )
+from aletheia.domains.materials.phonon_portfolio_efficiency import (
+    assess_phonon_portfolio_efficiency,
+    preflight_phonon_portfolio_efficiency_start,
+    prepare_phonon_portfolio_efficiency_work_order,
+    verify_phonon_portfolio_efficiency_assessment,
+    verify_phonon_portfolio_efficiency_work_order,
+)
 from aletheia.domains.materials.phonon_reproduction import (
     IndependentExtraTreesPolicy,
     PhononIndependentReplayProtocol,
@@ -289,6 +296,8 @@ def test_portfolio_requires_human_plan_then_materializes_one_in_window_shadow_ep
     controller_path = root / "controller.json"
     protocol_path = root / "protocol.json"
     commissioning_path = root / "commissioning.json"
+    portfolio_path = root / "portfolio-work-order.json"
+    stage_path = root / "portfolio-stage.json"
     controller = prepare_endurance_controller_manifest(
         gate,
         controller_key=f"portfolio-controller-{seed}",
@@ -323,6 +332,8 @@ def test_portfolio_requires_human_plan_then_materializes_one_in_window_shadow_ep
             require_committed=False,
         )
         stage = stage_phonon_endurance_portfolio(work_order)
+        portfolio_path.write_bytes(_json_bytes(work_order))
+        stage_path.write_bytes(_json_bytes(stage))
         assert stage_phonon_endurance_portfolio(work_order) == stage
         assert stage.planner_output_materialized is False
         assert {item.action_type for item in stage.candidates} == {
@@ -371,6 +382,22 @@ def test_portfolio_requires_human_plan_then_materializes_one_in_window_shadow_ep
             )
             == plan
         )
+        efficiency_work_order = prepare_phonon_portfolio_efficiency_work_order(
+            portfolio=work_order,
+            portfolio_path=portfolio_path,
+            stage=stage,
+            stage_path=stage_path,
+            prepared_at=plan.committed_at,
+            require_committed=False,
+        )
+        verify_phonon_portfolio_efficiency_work_order(
+            efficiency_work_order,
+            require_no_epoch=True,
+        )
+        efficiency_preflight = preflight_phonon_portfolio_efficiency_start(
+            efficiency_work_order
+        )
+        assert efficiency_preflight.ready_for_explicit_gate_start is True
         ready = preflight_phonon_portfolio_start(work_order, stage)
         assert ready.ready_for_explicit_gate_start is True
         started = start_endurance_controller_gate(
@@ -382,6 +409,19 @@ def test_portfolio_requires_human_plan_then_materializes_one_in_window_shadow_ep
         assert epoch.epoch.evaluated_at >= started.database_observed_at
         assert epoch.epoch.decision.shadow_only is True
         assert epoch.epoch.decision.actions_enqueued is False
+        efficiency = assess_phonon_portfolio_efficiency(efficiency_work_order)
+        verify_phonon_portfolio_efficiency_assessment(
+            efficiency_work_order,
+            efficiency,
+        )
+        assert efficiency.receipt.assessed_at == epoch.epoch.evaluated_at
+        assert efficiency.baseline_candidate_ids == (replication.candidate_id,)
+        assert efficiency.meets_gate_floor is True
+        assert (
+            efficiency.receipt.improvement_ppm
+            >= gate.minimum_efficiency_improvement_ppm
+        )
+        assert efficiency.actions_enqueued is False
         slate_actions = {item.candidate_id: item for item in work_order.actions}
         external_score = next(
             item

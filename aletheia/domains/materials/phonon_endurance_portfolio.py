@@ -972,7 +972,18 @@ def stage_phonon_endurance_portfolio(
         ),
         now=_database_now(),
     )
-    frozen_at = context_receipt.command.committed_at
+    graph = ProgramGraphStore().get_quest(work_order.quest_id)
+    graph_times = [item.updated_at for item in graph.nodes]
+    graph_times.extend(item.created_at for item in graph.transitions)
+    graph_times.extend(item.created_at for item in graph.dependencies)
+    graph_times.extend(item.created_at for item in graph.scientific_families)
+    graph_times.extend(item.created_at for item in graph.external_bindings)
+    graph_times.extend(item.created_at for item in graph.data_allocations)
+    graph_times.extend(item.created_at for item in graph.budget_allocations)
+    frozen_at = max(
+        context_receipt.command.committed_at,
+        *graph_times,
+    )
     policy = PortfolioSelectionPolicy(
         policy_id=f"phonon-endurance-{work_order.work_order_id}",
         quest_id=work_order.quest_id,
@@ -1031,7 +1042,7 @@ def stage_phonon_endurance_portfolio(
             idempotency_key=f"{prefix}:slate",
             principal="controller:phonon-portfolio",
         ),
-        now=_database_now(),
+        now=max(_database_now(), frozen_at),
     )
     snapshot = portfolio.get_slate(spec.slate_id)
     if snapshot.human_plan_id is not None or snapshot.epoch_id is not None:
@@ -1116,10 +1127,11 @@ def commit_phonon_blind_portfolio_plan(
     if slate.epoch_id is not None:
         raise PhononEndurancePortfolioConflict("planner output already materialized")
     if slate.human_plan is None:
+        issued_at = max(_database_now(), slate.created_at)
         plan = HumanPortfolioPlanSpec(
             selected_candidate_ids=selection.selected_candidate_ids,
             rationale=selection.rationale,
-            issued_at=_database_now(),
+            issued_at=issued_at,
         )
     else:
         plan = slate.human_plan
@@ -1138,7 +1150,7 @@ def commit_phonon_blind_portfolio_plan(
             idempotency_key=f"{work_order.work_order_id}:human-plan",
             principal=human_principal,
         ),
-        now=_database_now(),
+        now=max(_database_now(), plan.issued_at),
     )
     return PhononPortfolioPlanReceipt(
         work_order_id=work_order.work_order_id,
@@ -1222,6 +1234,12 @@ def evaluate_phonon_endurance_portfolio(
     slate = _verify_stage(work_order, stage)
     if slate.human_plan_id is None:
         raise PhononEndurancePortfolioConflict("portfolio evaluation requires a human plan")
+    assert slate.human_plan is not None
+    evaluated_at = max(
+        _database_now(),
+        gate.started_at,
+        slate.human_plan.issued_at,
+    )
     assert work_order.work_order_id is not None
     mutation = ResearchPortfolioStore().evaluate_slate(
         slate_id=stage.slate_id,
@@ -1229,7 +1247,7 @@ def evaluate_phonon_endurance_portfolio(
             idempotency_key=f"{work_order.work_order_id}:evaluate",
             principal="harness:phonon-portfolio",
         ),
-        now=_database_now(),
+        now=evaluated_at,
     )
     epoch = ResearchPortfolioStore().get_epoch(mutation.object_id)
     if epoch.evaluated_at < gate.started_at:
