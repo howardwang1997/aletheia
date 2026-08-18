@@ -127,6 +127,13 @@ The CLI names the test clock `--accelerated-now`; passing it to a real manifest 
 
 There is deliberately no controller `finalize` subcommand and no production clock parameter.
 
+`aletheia/programs/endurance_supervisor.py` plus `scripts/run_endurance_supervisor.py` make the
+external scheduler a frozen production component instead of an operator convention. The generated
+launchd job binds Conda/Python executable hashes, repository/controller/plist/log paths, label,
+domain, and cadence. Before explicit gate start it only returns `waiting_for_explicit_start`; after
+start it delegates one locked controller tick. Preflight remains blocked until launchd reports the
+exact job loaded. Neither the manifest nor CLI contains automatic start/finalization.
+
 `scripts/submit_endurance_fault_evidence.py` closes the in-window fault-ingestion gap. It validates
 the complete F11-S6 bundle, requires exact replay of its append-only committed report, derives the
 API-process and provider receipts from the observed scenarios, rejects pre-window observations,
@@ -149,6 +156,9 @@ tests/programs/test_endurance_fault_evidence.py
 
 fault/endurance/controller/adapter/phonon-reproduction focused selection
 24 passed in 16.34s
+
+tests/programs/test_endurance_supervisor.py
+3 passed in 1.87s
 
 F11 durable-queue/outbox/graph/memory/portfolio/fault/endurance cross-component suite
 65 passed in 10.63s
@@ -174,6 +184,8 @@ advisory-lock exclusion, evidence submission replay, evidence-triggered and sche
 and recovery after a database commit immediately precedes process death/local archival.
 The fault adapter additionally covers pre-window and uncommitted-report rejection, deterministic
 typed receipt selection, content-addressed retry, and durable checkpoint ingestion.
+The supervisor supplement covers exact no-shell Conda arguments, loaded-state start gating,
+pre-start no-op cycles, live run-once delegation, and plist drift rejection.
 
 The first production scientific producer adds three synthetic acceptance tests for independently
 reconstructed feature-matrix parity, RandomForest/ExtraTrees separation, deterministic replay,
@@ -197,12 +209,17 @@ transport-only.
 - `scripts/run_endurance_controller.py`;
 - `aletheia/programs/endurance_fault_evidence.py` and
   `scripts/submit_endurance_fault_evidence.py`;
+- `aletheia/programs/endurance_supervisor.py` and
+  `scripts/run_endurance_supervisor.py`;
 - `aletheia/domains/materials/phonon_reproduction.py` and
   `scripts/run_phonon_reproduction.py`;
 - `tests/programs/{test_endurance_gate,test_endurance_controller,test_endurance_fault_evidence}.py`;
+- `tests/programs/test_endurance_supervisor.py`;
 - `tests/domains/materials/test_phonon_reproduction.py`;
 - `docs/programs/RESEARCH_ENDURANCE_GATE.md`;
-- `docs/adr/0039-f11-durable-real-time-research-endurance-gate.md`; and
+- `docs/programs/ENDURANCE_LAUNCHD_SUPERVISOR.md`;
+- `docs/adr/0039-f11-durable-real-time-research-endurance-gate.md` and
+  `docs/adr/0041-frozen-launchd-endurance-supervision.md`; and
 - roadmap, README, and documentation-index status updates.
 
 ## Honest boundary and next work

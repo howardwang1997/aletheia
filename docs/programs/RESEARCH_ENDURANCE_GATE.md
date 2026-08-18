@@ -96,8 +96,8 @@ conda run -n aletheia python scripts/run_endurance_controller.py start \
   endurance-controller-manifest.json
 ~~~
 
-Configure the external supervisor (launchd, systemd, Kubernetes CronJob, or equivalent) to invoke
-one non-overlapping operation every five minutes:
+On the commissioned macOS host, freeze and load the content-addressed launchd deployment described
+in `programs/ENDURANCE_LAUNCHD_SUPERVISOR.md`. It invokes one operation every five minutes:
 
 ~~~bash
 conda run -n aletheia python scripts/run_endurance_controller.py tick \
@@ -109,6 +109,12 @@ Every invocation obtains a gate-specific PostgreSQL advisory lock, observes
 parent-hashed checkpoint, or recovers a spool item whose database commit preceded the process
 crash. Stable checkpoint command keys derive from the frozen controller and previous ledger tail.
 Lock contention is recorded and leaves the active owner in control.
+
+The frozen launchd adapter binds exact Conda/Python executables, controller/manifest/plist bytes,
+paths, logs, label, domain, and cadence. `RunAtLoad` is safe before gate start: the supervisor cycle
+returns `waiting_for_explicit_start` without mutation. Final start readiness remains false until the
+expected job is loaded and independently reported by launchd. The supervisor exposes neither start
+nor finalize.
 
 The spool has `pending`, `committed`, and `receipts` directories. Evidence is content-addressed and
 hard-link-created without overwrite; retrying identical evidence returns the first envelope even
@@ -239,6 +245,7 @@ effect merely to make the endurance metrics green.
 conda run -n aletheia pytest -q tests/programs/test_endurance_gate.py
 conda run -n aletheia pytest -q tests/programs/test_endurance_controller.py
 conda run -n aletheia pytest -q tests/programs/test_endurance_fault_evidence.py
+conda run -n aletheia pytest -q tests/programs/test_endurance_supervisor.py
 ~~~
 
 The suite covers contract anti-forgery, non-cosmetic pivots, migration/trigger parity, persistent
@@ -251,6 +258,8 @@ negative result, reproduction, process/provider faults, causal structural pivot,
 and efficiency receipt, but correctly remains ineligible for real 72-hour exit.
 Fault-evidence coverage additionally proves deterministic typed-receipt selection, exact committed
 report replay, pre-window rejection, content-addressed submission replay, and checkpoint ingestion.
+Supervisor coverage proves exact no-shell Conda invocation, unloaded-job blocking, pre-start
+waiting, live run-once delegation, and deployment-plist drift rejection.
 
 ## Honest boundary
 

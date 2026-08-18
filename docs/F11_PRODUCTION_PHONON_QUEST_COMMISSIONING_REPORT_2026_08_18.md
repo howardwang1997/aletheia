@@ -167,6 +167,12 @@ derives one process-kill and one provider-transport receipt from their real reco
 existing pre-start fault report remains only the gate prerequisite and is rejected as live-window
 evidence.
 
+The external scheduler is now an implemented, content-addressed launchd adapter rather than a
+runbook-only assumption. It binds the Conda/Python executables, controller and deployment files,
+five-minute cadence, and logs; a pre-start cycle only waits, and neither automatic start nor
+finalization is exposed. Its production plist still must be generated from the final code commit,
+loaded, and re-preflighted together with the remaining work orders.
+
 The first scientific evidence producer is also implemented but deliberately remains zero-fit on
 production data. Its precommitted same-source reproduction path independently reconstructs the
 frozen Matminer/Pymatgen composition and geometry matrices and requires their hashes, target hash,

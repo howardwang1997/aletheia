@@ -87,7 +87,9 @@ reliable autonomous frontier scientist.
    and tested; the real gate and current controller identities are frozen and production preflight
    passes, but the clock has deliberately not started. A committed in-window F11-S6 report can now
    be deterministically converted into typed process/provider interruption receipts without manual
-   evidence JSON. A zero-fit same-source reproduction protocol now adds an
+   evidence JSON. A frozen launchd adapter binds the exact Conda/Python runtime, controller,
+   deployment files, five-minute cadence, and logs; before explicit start it only waits, and it has
+   no automatic start/finalize path. A zero-fit same-source reproduction protocol now adds an
    independently coded feature path, a distinct ExtraTrees estimator, target/split/matrix hash
    parity, exact negative/inconclusive outcome retention, and typed endurance evidence submission;
    it cannot fit until the real gate is live. Independent data, the still-unknown reproduction

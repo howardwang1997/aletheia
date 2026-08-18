@@ -53,11 +53,15 @@ _CODE_COMPONENTS = (
     "aletheia/programs/__init__.py",
     "aletheia/programs/endurance.py",
     "aletheia/programs/endurance_controller.py",
+    "aletheia/programs/endurance_fault_evidence.py",
     "aletheia/programs/endurance_schemas.py",
+    "aletheia/programs/endurance_supervisor.py",
     "aletheia/programs/graph.py",
     "aletheia/programs/persistence.py",
     "scripts/run_endurance_controller.py",
     "scripts/run_endurance_gate.py",
+    "scripts/run_endurance_supervisor.py",
+    "scripts/submit_endurance_fault_evidence.py",
 )
 
 

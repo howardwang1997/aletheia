@@ -29,19 +29,22 @@ production commissioning, real endurance gate/controller, original and reproduct
 exact source files and their internal model hashes, package versions, estimator/permutation/
 bootstrap policies, and the same-source claim ceiling.
 
+In the commands below, replace `vN` with the matching immutable controller/protocol versions from
+the final pre-start commit; older files remain historical and are never overwritten.
+
 ~~~bash
 conda run -n aletheia python scripts/run_phonon_reproduction.py prepare \
-  --controller artifacts/phonon-quest/endurance/controller-manifest-v2.json \
+  --controller artifacts/phonon-quest/endurance/controller-manifest-vN.json \
   --commissioning artifacts/phonon-quest/commissioning-manifest.json \
   --dataset workspaces/evaluator/materials-structure-phonons-v1/source/matbench_phonons.json.gz \
   --source-plan workspaces/evaluator/materials-structure-phonons-v1/plan.json \
   --source-result workspaces/evaluator/materials-structure-phonons-v1/result.json \
   --reproduction-campaign-id cmp_3343df54838b7b5a4742f46ab160f1b5 \
-  --output artifacts/phonon-quest/endurance/reproduction/protocol.json
+  --output artifacts/phonon-quest/endurance/reproduction/protocol-vN.json
 
 conda run -n aletheia python scripts/run_phonon_reproduction.py preflight \
-  artifacts/phonon-quest/endurance/reproduction/protocol.json \
-  --controller artifacts/phonon-quest/endurance/controller-manifest-v2.json
+  artifacts/phonon-quest/endurance/reproduction/protocol-vN.json \
+  --controller artifacts/phonon-quest/endurance/controller-manifest-vN.json
 ~~~
 
 Preflight rehashes committed code and source files, verifies the frozen Git commit contains those
@@ -57,7 +60,7 @@ branch:
 
 ~~~bash
 conda run -n aletheia python scripts/run_phonon_reproduction.py activate \
-  artifacts/phonon-quest/endurance/reproduction/protocol.json \
+  artifacts/phonon-quest/endurance/reproduction/protocol-vN.json \
   --principal controller:phonon-science
 ~~~
 
@@ -66,11 +69,11 @@ fits the three arms and takes `completed_at` from PostgreSQL only after computat
 
 ~~~bash
 conda run -n aletheia python scripts/run_phonon_reproduction.py run \
-  artifacts/phonon-quest/endurance/reproduction/protocol.json \
+  artifacts/phonon-quest/endurance/reproduction/protocol-vN.json \
   --output artifacts/phonon-quest/endurance/reproduction/result.json
 
 conda run -n aletheia python scripts/run_phonon_reproduction.py verify \
-  artifacts/phonon-quest/endurance/reproduction/protocol.json \
+  artifacts/phonon-quest/endurance/reproduction/protocol-vN.json \
   artifacts/phonon-quest/endurance/reproduction/result.json
 ~~~
 
@@ -86,9 +89,9 @@ reproduction envelope to the endurance controller spool:
 
 ~~~bash
 conda run -n aletheia python scripts/run_phonon_reproduction.py commit \
-  artifacts/phonon-quest/endurance/reproduction/protocol.json \
+  artifacts/phonon-quest/endurance/reproduction/protocol-vN.json \
   artifacts/phonon-quest/endurance/reproduction/result.json \
-  --controller artifacts/phonon-quest/endurance/controller-manifest-v2.json \
+  --controller artifacts/phonon-quest/endurance/controller-manifest-vN.json \
   --result-uri artifacts/phonon-quest/endurance/reproduction/result.json \
   --principal controller:phonon-science \
   --producer worker:phonon-independent-replay

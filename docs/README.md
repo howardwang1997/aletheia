@@ -268,5 +268,9 @@ Recommended reading order:
 116. `adr/0040-gate-bound-implementation-diverse-phonon-reproduction.md` — frozen invariants,
     independent code/estimator variation, zero-fit gate binding, outcome retention, and rejected
     self-replay/external/premature-fit/automatic-pivot alternatives.
-117. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
-118. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.
+117. `programs/ENDURANCE_LAUNCHD_SUPERVISOR.md` — frozen Conda/runtime/controller/plist identity,
+    pre-start waiting, loaded-job readiness, run-once operation, and incident/bootout workflow.
+118. `adr/0041-frozen-launchd-endurance-supervision.md` — scheduler failure-domain separation,
+    exact launchd deployment, explicit start/finalize boundaries, and rejected shell-loop options.
+119. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
+120. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.

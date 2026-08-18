@@ -2421,6 +2421,10 @@ caller-clock 接口。controller 没有自动 finalization 路径，终结仍是
 窗口内故障适配器进一步要求完整 F11-S6 bundle 与 append-only store 精确重放，从 API-process / provider
 观测自动导出强类型 interruption receipts，拒绝把启动前 prerequisite 冒充窗口内证据，并以
 content-addressed envelope 幂等进入 controller spool；专项 2 passed，相关交叉选择 24 passed。
+macOS 外部调度也从部署约定升级为 content-addressed launchd manifest/plist：冻结 Conda/Python
+可执行文件 hash、controller 文件、仓库/日志路径、label/domain 与五分钟节拍；启动前周期只返回
+`waiting_for_explicit_start`，加载状态未验证时最终启动资格为 false，且不存在自动 start/finalize 命令。
+专项 3 passed；详见 ADR 0041 与 `programs/ENDURANCE_LAUNCHD_SUPERVISOR.md`。
 
 **2026-08-18 production reproduction-producer status：** 已实现 gate-bound、zero-fit 的同源
 implementation-diverse replay。新路径不调用 F10 feature/estimator helpers，而从原始结构经公开

@@ -117,9 +117,9 @@ and completed the restart-safe controller engineering/accelerated acceptance. Th
 are therefore:
 
 1. qualify and register a genuinely independent calculation corpus;
-2. freeze the zero-fit implementation-diverse protocol and commit its still-unknown in-window result;
-3. freeze and preflight the committed production gate/controller manifests; and
-4. explicitly start and complete the real 72-hour gate after workers/supervisor are deployed.
+2. commit the zero-fit implementation-diverse protocol's still-unknown in-window result;
+3. deploy and preflight the frozen launchd supervisor plus remaining in-window work orders; and
+4. explicitly start and complete the real 72-hour gate.
 
 F11 scientific exit additionally needs real database-clock elapsed time, on-cadence checkpoints, a
 negative result, a genuine hypothesis/prediction pivot, in-window process/provider interruptions,
