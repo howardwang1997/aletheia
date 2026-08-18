@@ -460,6 +460,14 @@ endurance gate starts, and the result remains unknown because the production mod
 fit. See
 [`docs/programs/PHONON_IMPLEMENTATION_REPRODUCTION.md`](docs/programs/PHONON_IMPLEMENTATION_REPRODUCTION.md).
 
+The production portfolio producer now freezes four evidence-bound alternatives before the run,
+stages an observation-blind slate before gate start, requires an explicit `human:*` baseline while
+planner output is absent, and permits exactly one PostgreSQL-timed shadow epoch only after explicit
+start and before any graph transition. The external-corpus candidate remains hard-filtered because
+the Quest has no audited `external_validation` data role. The workflow never enqueues actions or
+starts/transitions Campaigns. See
+[`docs/programs/PHONON_ENDURANCE_PORTFOLIO.md`](docs/programs/PHONON_ENDURANCE_PORTFOLIO.md).
+
 ## Invariants (the safety/quality spine — never traded for a feature)
 
 1. **Deterministic FSM + hard gates** — capability is added as gated stages, not free-roaming autonomy.

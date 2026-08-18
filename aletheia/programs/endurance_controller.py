@@ -48,6 +48,7 @@ _TICK_ID_PATTERN = r"^edt_[0-9a-f]{32}$"
 _IDENTITY_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
 _GIT_SHA_PATTERN = r"^[0-9a-f]{40}$"
 _CODE_COMPONENTS = (
+    "aletheia/domains/materials/phonon_endurance_portfolio.py",
     "aletheia/jobs/outbox.py",
     "aletheia/jobs/persistence.py",
     "aletheia/programs/__init__.py",
@@ -57,10 +58,16 @@ _CODE_COMPONENTS = (
     "aletheia/programs/endurance_schemas.py",
     "aletheia/programs/endurance_supervisor.py",
     "aletheia/programs/graph.py",
+    "aletheia/programs/memory.py",
+    "aletheia/programs/memory_schemas.py",
     "aletheia/programs/persistence.py",
+    "aletheia/programs/portfolio.py",
+    "aletheia/programs/portfolio_harness.py",
+    "aletheia/programs/portfolio_schemas.py",
     "scripts/run_endurance_controller.py",
     "scripts/run_endurance_gate.py",
     "scripts/run_endurance_supervisor.py",
+    "scripts/run_phonon_endurance_portfolio.py",
     "scripts/submit_endurance_fault_evidence.py",
 )
 

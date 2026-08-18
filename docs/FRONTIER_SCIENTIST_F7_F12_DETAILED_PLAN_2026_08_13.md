@@ -2436,6 +2436,17 @@ live 且两 Campaign active 时执行，完成时间来自 PostgreSQL。confirme
 映射到 result/negative-result/limitation memory，再进入 typed endurance evidence spool；negative result
 不会自动伪造 structural pivot。synthetic 反伪造专项 3 passed；production outcome 仍未知且尚未 fit。
 
+**2026-08-18 production portfolio-producer status：** 已实现 observation-blind、content-addressed
+的四候选工作单：同源独立实现复制、局部/全局机制消融、激活预登记机制 Campaign、独立语料资格审计。
+所有 likelihood、cost、capability、data role、replication debt 与 evidence hash 在窗口前冻结；外部语料
+因缺少 `external_validation` role 必须进入 hard-filter ledger 而不可执行。staging 只登记唯一
+`portfolio-plan` memory/context 与 shadow slate，不产生 planner epoch、graph transition、gate start 或
+action enqueue；只有显式 `human:*` 在看不到 planner output 时提交 baseline 后，启动预检才可通过。
+epoch 必须在真实 gate 显式启动后、任何 Campaign transition 前由 PostgreSQL 时钟生成，且固定
+`shadow_only=true`、`actions_enqueued=false`。专项与交叉回归 26 passed；生产工作单尚未 staging，
+人工 baseline 尚未提交，真实时钟仍未启动。详见 ADR 0042 与
+`programs/PHONON_ENDURANCE_PORTFOLIO.md`。
+
 **2026-08-18 production commissioning status：** 已将真实 F10 `matbench_phonons` 工件从孤立结果
 转换为可恢复的生产形态 Quest，而不是复用 pytest fixture。两阶段 commissioning 先验证并冻结 dataset /
 pre-fit plan / result 三份本地工件和参与代码矩阵，再以 stable primary key + insert-or-verify 创建三个

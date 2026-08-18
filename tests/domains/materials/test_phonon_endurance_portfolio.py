@@ -1,0 +1,371 @@
+from __future__ import annotations
+
+import hashlib
+import importlib.metadata
+import json
+import shutil
+import uuid
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+
+from aletheia.db import REPO_ROOT, create_all
+from aletheia.domains.materials.phonon_commissioning import (
+    StructureSignalEvidenceReceipt,
+    apply_phonon_quest_commissioning,
+    build_phonon_quest_commissioning_manifest,
+    local_artifact_identity,
+)
+from aletheia.domains.materials.phonon_endurance_portfolio import (
+    PhononBlindPortfolioSelection,
+    PhononEndurancePortfolioConflict,
+    commit_phonon_blind_portfolio_plan,
+    evaluate_phonon_endurance_portfolio,
+    preflight_phonon_portfolio_start,
+    prepare_phonon_endurance_portfolio_work_order,
+    stage_phonon_endurance_portfolio,
+)
+from aletheia.domains.materials.phonon_reproduction import (
+    IndependentExtraTreesPolicy,
+    PhononIndependentReplayProtocol,
+    PhononReplayArtifact,
+    capture_phonon_replay_code_identity,
+)
+from aletheia.jobs import (
+    CORE_ZERO_METRICS,
+    FaultBoundary,
+    FaultCampaignCommitContext,
+    FaultCampaignManifest,
+    FaultCampaignStore,
+    FaultComparator,
+    FaultInjectionOutcome,
+    FaultInvariantExpectation,
+    FaultMetricObservation,
+    FaultRecoveryAction,
+    FaultScenarioObservation,
+    FaultScenarioSpec,
+    evaluate_fault_campaign,
+)
+from aletheia.programs import (
+    EnduranceEvidenceClass,
+    PortfolioActionType,
+    prepare_endurance_controller_manifest,
+    prepare_endurance_gate_manifest,
+    start_endurance_controller_gate,
+)
+
+_PACKAGES = ("matminer", "numpy", "pandas", "pymatgen", "scikit-learn", "spglib")
+
+_OUTCOMES = {
+    FaultBoundary.API_PROCESS: FaultInjectionOutcome.PROCESS_EXIT,
+    FaultBoundary.WORKER_PROCESS: FaultInjectionOutcome.PROCESS_EXIT,
+    FaultBoundary.DATABASE_CONNECTION: FaultInjectionOutcome.CONNECTION_LOST,
+    FaultBoundary.EVALUATOR: FaultInjectionOutcome.TIMEOUT,
+    FaultBoundary.PROVIDER: FaultInjectionOutcome.UNAVAILABLE,
+    FaultBoundary.DUPLICATE_DELIVERY: FaultInjectionOutcome.DUPLICATE_DELIVERED,
+    FaultBoundary.STALE_LEASE: FaultInjectionOutcome.LEASE_EXPIRED,
+    FaultBoundary.ARCHIVE_STORAGE: FaultInjectionOutcome.STORAGE_EXHAUSTED,
+    FaultBoundary.RUNTIME_IDENTITY: FaultInjectionOutcome.IDENTITY_MISMATCH,
+    FaultBoundary.OUTWARD_ACTION: FaultInjectionOutcome.AMBIGUOUS_REMOTE_RESULT,
+}
+
+
+@pytest.fixture(autouse=True)
+def _schema() -> None:
+    create_all()
+
+
+def _json_bytes(value: object) -> bytes:
+    assert hasattr(value, "model_dump")
+    payload = value.model_dump(mode="json")  # type: ignore[attr-defined]
+    return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()
+
+
+def _digest(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _passing_fault_report(seed: str, quest_id: str, base: datetime):
+    expectations = tuple(
+        FaultInvariantExpectation(
+            metric=metric,
+            comparator=FaultComparator.EXACT,
+            expected_value=0,
+        )
+        for metric in sorted(CORE_ZERO_METRICS, key=lambda item: item.value)
+    )
+    scenarios = tuple(
+        FaultScenarioSpec(
+            scenario_id=f"{boundary.value}-{seed[:12]}",
+            boundary=boundary,
+            injection_point=f"fixture:{boundary.value}",
+            expected_outcome=_OUTCOMES[boundary],
+            required_recovery_actions=(FaultRecoveryAction.REPLAY_EXACT_COMMAND,),
+            expectations=expectations,
+        )
+        for boundary in FaultBoundary
+    )
+    observations = tuple(
+        FaultScenarioObservation(
+            scenario_id=spec.scenario_id,
+            observed_outcome=spec.expected_outcome,
+            injection_confirmed=True,
+            recovery_actions=spec.required_recovery_actions,
+            metrics=tuple(
+                FaultMetricObservation(
+                    metric=expectation.metric,
+                    observed_value=0,
+                    evidence_sha256=_digest(
+                        f"{spec.scenario_id}:{expectation.metric.value}"
+                    ),
+                )
+                for expectation in expectations
+            ),
+            evidence_sha256s=(
+                _digest(f"{spec.scenario_id}:recovery"),
+                _digest(f"{spec.scenario_id}:diagnostic"),
+                *(
+                    _digest(f"{spec.scenario_id}:{expectation.metric.value}")
+                    for expectation in expectations
+                ),
+            ),
+            diagnostic_sha256=_digest(f"{spec.scenario_id}:diagnostic"),
+            started_at=base + timedelta(seconds=1),
+            completed_at=base + timedelta(seconds=2),
+        )
+        for spec in scenarios
+    )
+    return evaluate_fault_campaign(
+        FaultCampaignManifest(
+            campaign_key=f"portfolio-prerequisite-{seed}",
+            quest_id=quest_id,
+            seed=7,
+            harness_code_sha256=_digest(f"{seed}:fault-harness"),
+            environment_manifest_sha256=_digest(f"{seed}:fault-environment"),
+            scenarios=scenarios,
+            created_at=base,
+        ),
+        observations,
+        completed_at=base + timedelta(seconds=3),
+    )
+
+
+def _commissioning(seed: str):
+    evidence = StructureSignalEvidenceReceipt(
+        dataset_file=local_artifact_identity(REPO_ROOT / "pyproject.toml"),
+        plan_file=local_artifact_identity(REPO_ROOT / "environment.yml"),
+        result_file=local_artifact_identity(REPO_ROOT / "README.md"),
+        dataset_ref="test_phonons",
+        source_uri="https://example.invalid/test-phonons",
+        license_expression="CC0-1.0",
+        license_uri="https://example.invalid/license",
+        structure_column="structure",
+        target_column="last phdos peak",
+        target_quantity_kind_id="phonon.last_phdos_peak_frequency",
+        target_unit_ucum="cm-1",
+        row_count=1265,
+        protocol_sha256=_digest(f"{seed}:source-protocol"),
+        implementation_sha256=_digest(f"{seed}:source-implementation"),
+        plan_sha256=_digest(f"{seed}:source-plan"),
+        dataset_receipt_sha256=_digest(f"{seed}:source-dataset"),
+        result_sha256=_digest(f"{seed}:source-result"),
+        result_disposition="robust_aligned_structure_signal",
+        result_completed_at=datetime(2026, 8, 17, tzinfo=timezone.utc),
+    )
+    return build_phonon_quest_commissioning_manifest(
+        evidence,
+        prepared_at=datetime(2026, 8, 18, 1, tzinfo=timezone.utc),
+        command_principal="pytest:phonon-portfolio",
+        identity_namespace=f"test-portfolio-{seed}",
+    )
+
+
+def _protocol(
+    *,
+    commissioning,
+    gate,
+    controller,
+    reproduction_campaign_id: str,
+) -> PhononIndependentReplayProtocol:
+    return PhononIndependentReplayProtocol(
+        quest_id=commissioning.quest.node_id,
+        gate_id=gate.gate_id,
+        gate_manifest_sha256=gate.manifest_sha256,
+        controller_id=controller.controller_id,
+        controller_manifest_sha256=controller.manifest_sha256,
+        commissioning_id=commissioning.commissioning_id,
+        commissioning_manifest_sha256=commissioning.manifest_sha256,
+        original_campaign_id=commissioning.initial_active_campaign_id,
+        reproduction_campaign_id=reproduction_campaign_id,
+        dataset=PhononReplayArtifact(
+            relative_path="fixtures/phonons.json.gz",
+            file_sha256=_digest("dataset"),
+        ),
+        source_plan=PhononReplayArtifact(
+            relative_path="fixtures/plan.json",
+            file_sha256=_digest("plan-file"),
+            content_sha256=_digest("plan-content"),
+        ),
+        source_result=PhononReplayArtifact(
+            relative_path="fixtures/result.json",
+            file_sha256=_digest("result-file"),
+            content_sha256=commissioning.evidence.result_sha256,
+        ),
+        source_split_membership_sha256=_digest("split"),
+        source_composition_matrix_sha256=_digest("composition"),
+        source_structure_matrix_sha256=_digest("structure"),
+        estimator_policy=IndependentExtraTreesPolicy(
+            n_estimators=64,
+            max_depth=10,
+            min_samples_leaf=1,
+            random_state=20260829,
+        ),
+        permutation_seed=20260830,
+        bootstrap_seed=20260831,
+        bootstrap_resamples=200,
+        confidence_level=0.9,
+        minimum_relative_mae_improvement=0.01,
+        required_package_versions={
+            name: importlib.metadata.version(name) for name in _PACKAGES
+        },
+        code_identity=capture_phonon_replay_code_identity(require_committed=False),
+        prepared_at=datetime.now(timezone.utc),
+        execution_class="engineering",
+    )
+
+
+def test_portfolio_requires_human_plan_then_materializes_one_in_window_shadow_epoch() -> None:
+    seed = uuid.uuid4().hex
+    base = datetime.now(timezone.utc) - timedelta(minutes=2)
+    commissioning = _commissioning(seed)
+    apply_phonon_quest_commissioning(commissioning)
+    fault = _passing_fault_report(seed, commissioning.quest.node_id, base)
+    fault_receipt = FaultCampaignStore().commit(
+        fault,
+        FaultCampaignCommitContext(
+            idempotency_key=f"portfolio-fault:{seed}",
+            principal="harness:portfolio-test",
+        ),
+        now=base + timedelta(seconds=5),
+    )
+    gate = prepare_endurance_gate_manifest(
+        gate_key=f"portfolio-gate-{seed}",
+        quest_id=commissioning.quest.node_id,
+        evidence_class=EnduranceEvidenceClass.ACCELERATED_ENGINEERING,
+        required_duration_seconds=120,
+        checkpoint_interval_seconds=30,
+        maximum_checkpoint_gap_seconds=60,
+        prerequisite_fault_campaign_id=fault_receipt.campaign_id,
+        harness_code_sha256=_digest(f"{seed}:harness"),
+        environment_manifest_sha256=_digest(f"{seed}:environment"),
+    )
+    relative_root = Path("artifacts") / f"phonon-portfolio-test-{seed}"
+    root = REPO_ROOT / relative_root
+    controller_path = root / "controller.json"
+    protocol_path = root / "protocol.json"
+    commissioning_path = root / "commissioning.json"
+    controller = prepare_endurance_controller_manifest(
+        gate,
+        controller_key=f"portfolio-controller-{seed}",
+        principal="controller:portfolio-test",
+        spool_root=(relative_root / "spool").as_posix(),
+        supervisor_poll_seconds=5,
+        prepared_at=base,
+        require_committed=False,
+    )
+    campaigns = {
+        item.identity_key.rsplit(":", 1)[-1]: item for item in commissioning.campaigns
+    }
+    protocol = _protocol(
+        commissioning=commissioning,
+        gate=gate,
+        controller=controller,
+        reproduction_campaign_id=campaigns["mechanism-ablation"].node_id,
+    )
+    try:
+        root.mkdir(parents=True, mode=0o700)
+        controller_path.write_bytes(_json_bytes(controller))
+        protocol_path.write_bytes(_json_bytes(protocol))
+        commissioning_path.write_bytes(_json_bytes(commissioning))
+        work_order = prepare_phonon_endurance_portfolio_work_order(
+            controller=controller,
+            controller_path=controller_path,
+            protocol=protocol,
+            protocol_path=protocol_path,
+            commissioning=commissioning,
+            commissioning_path=commissioning_path,
+            prepared_at=base,
+            require_committed=False,
+        )
+        stage = stage_phonon_endurance_portfolio(work_order)
+        assert stage_phonon_endurance_portfolio(work_order) == stage
+        assert stage.planner_output_materialized is False
+        assert {item.action_type for item in stage.candidates} == {
+            PortfolioActionType.REPLICATION,
+            PortfolioActionType.MECHANISM_TEST,
+            PortfolioActionType.START_CAMPAIGN,
+            PortfolioActionType.ACQUIRE_DATA,
+        }
+        blocked = preflight_phonon_portfolio_start(work_order, stage)
+        assert blocked.ready_for_explicit_gate_start is False
+        assert blocked.blockers == ("human_plan:not_committed",)
+        with pytest.raises(PhononEndurancePortfolioConflict, match="explicit gate start"):
+            evaluate_phonon_endurance_portfolio(work_order, stage)
+
+        replication = next(
+            item
+            for item in stage.candidates
+            if item.action_type is PortfolioActionType.REPLICATION
+        )
+        selection = PhononBlindPortfolioSelection(
+            selected_candidate_ids=(replication.candidate_id,),
+            rationale="Human baseline prioritizes the frozen same-source replay first.",
+        )
+        with pytest.raises(
+            PhononEndurancePortfolioConflict,
+            match=r"explicit human:\* principal",
+        ):
+            commit_phonon_blind_portfolio_plan(
+                work_order,
+                stage,
+                selection,
+                human_principal="planner:portfolio-test",
+            )
+        plan = commit_phonon_blind_portfolio_plan(
+            work_order,
+            stage,
+            selection,
+            human_principal="human:portfolio-test",
+        )
+        assert (
+            commit_phonon_blind_portfolio_plan(
+                work_order,
+                stage,
+                selection,
+                human_principal="human:portfolio-test",
+            )
+            == plan
+        )
+        ready = preflight_phonon_portfolio_start(work_order, stage)
+        assert ready.ready_for_explicit_gate_start is True
+        started = start_endurance_controller_gate(
+            controller,
+            artifact_root=REPO_ROOT,
+        )
+        epoch = evaluate_phonon_endurance_portfolio(work_order, stage)
+        assert evaluate_phonon_endurance_portfolio(work_order, stage) == epoch
+        assert epoch.epoch.evaluated_at >= started.database_observed_at
+        assert epoch.epoch.decision.shadow_only is True
+        assert epoch.epoch.decision.actions_enqueued is False
+        slate_actions = {item.candidate_id: item for item in work_order.actions}
+        external_score = next(
+            item
+            for item in epoch.epoch.scores
+            if slate_actions[item.candidate_id].action_type
+            is PortfolioActionType.ACQUIRE_DATA
+        )
+        assert external_score.feasible is False
+        assert "data:missing_role:external_validation" in external_score.blockers
+    finally:
+        shutil.rmtree(root, ignore_errors=True)

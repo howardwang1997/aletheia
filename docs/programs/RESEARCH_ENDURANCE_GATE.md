@@ -160,6 +160,10 @@ implementation-diverse workflow in `programs/PHONON_IMPLEMENTATION_REPRODUCTION.
 protocol/result commands fail before this exact gate starts, and its same-source evidence cannot be
 relabeled as external replication.
 
+The production portfolio workflow in `programs/PHONON_ENDURANCE_PORTFOLIO.md` is staged before
+start, requires a genuine human-blind baseline, and materializes one shadow epoch only after start
+and before any graph transition. It cannot enqueue its selected batch.
+
 ## Checkpoint evidence
 
 An evidence JSON document has three arrays:

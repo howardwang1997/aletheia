@@ -272,5 +272,9 @@ Recommended reading order:
     pre-start waiting, loaded-job readiness, run-once operation, and incident/bootout workflow.
 118. `adr/0041-frozen-launchd-endurance-supervision.md` — scheduler failure-domain separation,
     exact launchd deployment, explicit start/finalize boundaries, and rejected shell-loop options.
-119. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
-120. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.
+119. `programs/PHONON_ENDURANCE_PORTFOLIO.md` — production candidate freeze, pre-start slate and
+    human-blind baseline, in-window shadow epoch, hard-filtered external data, and incident workflow.
+120. `adr/0042-precommitted-in-window-phonon-shadow-portfolio.md` — causal ordering, exact source
+    binding, genuine human comparison, zero action authority, and rejected hindsight alternatives.
+121. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
+122. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.

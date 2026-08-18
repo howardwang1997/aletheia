@@ -278,5 +278,6 @@ This layer proves observation-blind workflow ordering, exact frozen inputs, dete
 calculation, hard-filter/budget compliance, constrained shadow selection, and reconstructible
 human comparison. It does not prove that likelihoods or value assessments are calibrated, that a
 proposed experiment is scientifically important, that approval evidence is signed, or that
-autonomous allocation is safe. See ADR 0037 and the F11-S5 implementation report; F11-S6 is the
-next engineering slice.
+autonomous allocation is safe. See ADR 0037 and the F11-S5 implementation report. The production
+phonon adapter and its stricter gate-window ordering are documented in
+`PHONON_ENDURANCE_PORTFOLIO.md`; that adapter also remains shadow-only.
