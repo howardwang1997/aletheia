@@ -78,7 +78,12 @@ reliable autonomous frontier scientist.
    parent-hashed checkpoints, typed reproduction/interruption/pivot evidence, final portfolio and
    efficiency reports, and an unforgeable split between accelerated engineering evidence and a
    real 72-hour pass. The accelerated acceptance run passes, but no real 72-hour Quest has
-   completed and allocation remains disabled.
+   completed and allocation remains disabled. The first production-shaped materials Quest is now
+   commissioned from the real F10 phonon artifacts with two closed competing world models, three
+   Campaigns, exploration-only source data, five hard budget dimensions, and exact replay/audit;
+   its independent-implementation branch is active, while external data, its reproduction result,
+   the Quest-scoped fault prerequisite, and the restart-safe endurance controller remain explicit
+   blockers.
    The final output still needs a stable bundle containing the question, literature, data card,
    split metadata, code, artifacts, metrics, claims, audits, reproduction, limitations, paper, and
    reproducibility package/PR; the real-time F11-S7 run and F12 remain.
@@ -420,6 +425,18 @@ process/provider interruption, and a negative-result-caused structural pivot. Te
 retain pass/blocked/failed state and complete portfolio/efficiency evidence. The accelerated
 end-to-end acceptance passes, while the actual 72-hour Quest remains to be run. See
 [`docs/programs/RESEARCH_ENDURANCE_GATE.md`](docs/programs/RESEARCH_ENDURANCE_GATE.md).
+
+Production commissioning now turns the real F10 structure-signal artifacts into a replay-safe F11
+Quest rather than a test fixture. The applied Quest `qst_cd143727c9e8c48fcff45ab6087db3d2`
+contains two immutable research questions with null/primary/alternative hypotheses, three bounded
+Campaigns, exact Run/DataAsset identities, exploration-only Matbench source custody, and USD/GPU/
+token/wall-clock/experiment caps. First application created 31 objects; exact retry created zero,
+and both the commissioning audit and general graph rebuild produced graph SHA-256
+`41a47946b28c9685468b5946e6b782c7f9979a8c2e9fada6d201a4b2c34286b8`. Candidate Phonondb,
+Alexandria, and Phonix sources remain unallocated pending lineage/target audits; Materials Project
+legacy DFPT is explicitly excluded as independent source lineage. See
+[`docs/programs/PHONON_QUEST_COMMISSIONING.md`](docs/programs/PHONON_QUEST_COMMISSIONING.md) and the
+[`commissioning report`](docs/F11_PRODUCTION_PHONON_QUEST_COMMISSIONING_REPORT_2026_08_18.md).
 
 ## Invariants (the safety/quality spine — never traded for a feature)
 

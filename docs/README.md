@@ -255,5 +255,11 @@ Recommended reading order:
 112. `adr/0039-f11-durable-real-time-research-endurance-gate.md` — durable clock, append-only
     lifecycle, frozen authority, structural-pivot semantics, cadence evidence, and rejected fake
     time/activation alternatives.
-113. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
-114. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.
+113. `F11_PRODUCTION_PHONON_QUEST_COMMISSIONING_REPORT_2026_08_18.md` — applied real-evidence Quest,
+    exact identities, first-write/replay/audit results, scientific design, external-source research,
+    and retained blockers.
+114. `programs/PHONON_QUEST_COMMISSIONING.md` — real F10 evidence inspection, two competing world
+    models, three bounded Campaigns, deterministic Run/DataAsset creation, frozen budgets,
+    production apply/replay/audit identities, external-corpus triage, and explicit blockers.
+115. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
+116. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.

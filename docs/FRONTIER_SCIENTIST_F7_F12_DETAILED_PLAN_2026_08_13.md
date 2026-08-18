@@ -2410,6 +2410,24 @@ parent-hash checkpoint chain、复制/进程故障/provider 故障/结构性 piv
 head/current 为 `20260818_0022`，ORM schema diff 为 0；专项回归 6 passed，F11 跨组件回归
 65 passed，全库非 Docker 回归 1306 passed、2 skipped、29 deselected（925.41 s）。
 
+**2026-08-18 production commissioning status：** 已将真实 F10 `matbench_phonons` 工件从孤立结果
+转换为可恢复的生产形态 Quest，而不是复用 pytest fixture。两阶段 commissioning 先验证并冻结 dataset /
+pre-fit plan / result 三份本地工件和参与代码矩阵，再以 stable primary key + insert-or-verify 创建三个
+legacy Run 与一个 exploration-only DataAsset；两份完整 F9 world model 各含 null/primary/alternative、显式
+assumption/risk、discriminating prediction 和 prior。Quest 下创建 independent-implementation replay、
+local-vs-global mechanism ablation、independent-calculation corpus 三条共享 scientific-family 的 Campaign，
+并冻结 USD、GPU hour、token、wall-clock 与 experiment-count 五类 Quest/Program cap。
+
+已实际应用 commissioning `pcm_2bd8b42a47aab1afadb8781b0eec170d`：Quest
+`qst_cd143727c9e8c48fcff45ab6087db3d2` 首次创建 31 个对象，立即重放创建 0 个并复用 31 个；初始
+audit 与通用 graph CLI 均重建 SHA-256
+`41a47946b28c9685468b5946e6b782c7f9979a8c2e9fada6d201a4b2c34286b8`。只有 independent replay
+Campaign 处于 active，其余两条保持 planned。Matbench source 明确禁止被称为 external replication 或
+causal mechanism；Phonondb/Alexandria/Phonix 仅记录为未分配 candidate，Materials Project legacy DFPT
+因同源被排除。当前四项 blocker 为：独立数据 lineage/target audit、独立实现复现结果、最新 Quest-scoped
+fault prerequisite、restart-safe real-time controller。未启动 72-hour clock，也未开启 autonomous
+allocation/outward action。详见 `programs/PHONON_QUEST_COMMISSIONING.md`。
+
 ## F11.8 建议代码边界
 
 ~~~text
