@@ -73,14 +73,19 @@ reliable autonomous frontier scientist.
    allocation. F11-S6 adds deterministic ten-boundary fault campaigns, independent zero-loss/
    zero-duplicate regrading, real process/transaction/lease/archive/identity/outward-action recovery,
    and append-only reports whose audit still cannot activate allocation.
+   F11-S7 adds a database-clock, append-only endurance gate with immutable starts, resumable
+   parent-hashed checkpoints, typed reproduction/interruption/pivot evidence, final portfolio and
+   efficiency reports, and an unforgeable split between accelerated engineering evidence and a
+   real 72-hour pass. The accelerated acceptance run passes, but no real 72-hour Quest has
+   completed and allocation remains disabled.
    The final output still needs a stable bundle containing the question, literature, data card,
    split metadata, code, artifacts, metrics, claims, audits, reproduction, limitations, paper, and
-   reproducibility package/PR; F11-S7 and F12 remain.
+   reproducibility package/PR; the real-time F11-S7 run and F12 remain.
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,
-production portfolio activation plus its endurance gate, repeated lower-overlap or laboratory
-replication, and a complete evidence bundle.
+production portfolio activation plus the real 72-hour endurance run, repeated lower-overlap or
+laboratory replication, and a complete evidence bundle.
 
 The executable plan for the next frontier program is
 [`docs/FRONTIER_SCIENTIST_F7_F12_DETAILED_PLAN_2026_08_13.md`](docs/FRONTIER_SCIENTIST_F7_F12_DETAILED_PLAN_2026_08_13.md):
@@ -373,7 +378,7 @@ external-validation claims expose a raw token only once, persist only its SHA-25
 provider idempotency key, and atomically bind the result to an immutable external-action receipt.
 An expired claim becomes `reconciliation_required` and is never automatically reissued. This is an
 at-most-one Aletheia authorization guarantee, not cross-system exactly-once execution. Production
-portfolio activation and the 72-hour gate remain.
+portfolio activation and the actual 72-hour run remain.
 See [`docs/jobs/TRANSACTIONAL_SCIENTIFIC_TRANSITIONS.md`](docs/jobs/TRANSACTIONAL_SCIENTIFIC_TRANSITIONS.md).
 
 F11-S3 gives each long-horizon effort a reconstructible Quest → Program → Campaign spine, durable
@@ -402,6 +407,16 @@ runtime mismatch, and ambiguous outward-action recovery, then independently deri
 Passing, failed, and blocked reports are append-only and regraded on every read. A passing latest
 campaign permits only F11-S7 review and always reports autonomous allocation disabled. See
 [`docs/jobs/FAULT_INJECTION_CAMPAIGNS.md`](docs/jobs/FAULT_INJECTION_CAMPAIGNS.md).
+
+F11-S7 now makes the endurance experiment durable without pretending that elapsed time can be unit
+tested. One immutable start and a parent-hashed checkpoint chain use PostgreSQL wall-clock time in
+`real_time_72h`; explicit clocks exist only in `accelerated_engineering`, whose passing report can
+never set the real-72-hour verdict. Checkpoints reconstruct graph, negative-result memory, budgets,
+one-time actions, fault sources, and portfolio epochs; typed evidence proves reproduction,
+process/provider interruption, and a negative-result-caused structural pivot. Terminal reports
+retain pass/blocked/failed state and complete portfolio/efficiency evidence. The accelerated
+end-to-end acceptance passes, while the actual 72-hour Quest remains to be run. See
+[`docs/programs/RESEARCH_ENDURANCE_GATE.md`](docs/programs/RESEARCH_ENDURANCE_GATE.md).
 
 ## Invariants (the safety/quality spine — never traded for a feature)
 

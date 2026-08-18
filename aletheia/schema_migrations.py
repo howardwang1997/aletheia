@@ -73,6 +73,9 @@ POST_BASELINE_TABLES = frozenset(
         "research_portfolio_human_plans",
         "research_portfolio_epochs",
         "research_portfolio_scores",
+        "research_endurance_gates",
+        "research_endurance_checkpoints",
+        "research_endurance_reports",
     }
 )
 POST_BASELINE_COLUMNS = frozenset(

@@ -247,5 +247,13 @@ Recommended reading order:
 109. `adr/0038-f11-deterministic-replayable-fault-campaigns.md` — seeded order, observation-only
     executors, full-transaction replay, remote reconciliation, failure retention, and rejected
     exactly-once/automatic-activation claims.
-110. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
-111. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.
+110. `F11_S7_RESEARCH_ENDURANCE_GATE_IMPLEMENTATION_REPORT_2026_08_18.md` — database-clock
+    endurance lifecycle, resumable checkpoint chain, typed scientific/fault/pivot evidence,
+    accelerated acceptance, and explicit pending real-72-hour boundary.
+111. `programs/RESEARCH_ENDURANCE_GATE.md` — deployment, evidence classes, start/checkpoint/finalize
+    CLI, recovery, audit, incident handling, and honest production-run boundary.
+112. `adr/0039-f11-durable-real-time-research-endurance-gate.md` — durable clock, append-only
+    lifecycle, frozen authority, structural-pivot semantics, cadence evidence, and rejected fake
+    time/activation alternatives.
+113. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
+114. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.

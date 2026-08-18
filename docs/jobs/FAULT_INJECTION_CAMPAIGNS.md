@@ -97,8 +97,9 @@ conda run -n aletheia alembic upgrade head
 conda run -n aletheia alembic current
 ~~~
 
-The repository head is `20260818_0021`. `fault_injection_campaigns` stores the complete report plus
-queryable hashes, verdict counts, six core totals, Quest scope, and scientific command binding.
+The fault-campaign migration is `20260818_0021`; the repository head is now `20260818_0022` after
+the F11-S7 endurance ledger. `fault_injection_campaigns` stores the complete report plus queryable
+hashes, verdict counts, six core totals, Quest scope, and scientific command binding.
 
 Commit a recomputed report using `FaultCampaignStore.commit`. The report row, scientific command
 result, and keyed event commit in one PostgreSQL transaction. A database insert guard requires the
@@ -171,5 +172,6 @@ exhaustion as a scientific negative result. Do not repeat an ambiguous outward e
 F11-S6 establishes a deterministic campaign/evidence contract and demonstrates zero measured loss
 or duplication across the ten accepted local boundaries. It does not prove that every production
 network, kernel, provider, disk, multi-region database, or laboratory failure is covered. It does
-not execute the 72-hour gate, demonstrate a scientific pivot, validate portfolio utility, or enable
-autonomous spending/task/action authority. F11-S7 is the next gate.
+not itself execute a 72-hour gate, demonstrate a scientific pivot, validate portfolio utility, or
+enable autonomous spending/task/action authority. F11-S7 now provides the durable gate
+implementation, while its real 72-hour run remains pending.

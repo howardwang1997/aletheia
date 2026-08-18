@@ -679,6 +679,175 @@ class ResearchPortfolioScoreRecord(Base):
     rank: Mapped[int] = mapped_column(Integer)
 
 
+class ResearchEnduranceGateRecord(Base):
+    """Immutable start receipt for one Quest-scoped endurance window."""
+
+    __tablename__ = "research_endurance_gates"
+    __table_args__ = (
+        CheckConstraint(
+            "evidence_class IN ('accelerated_engineering','real_time_72h')",
+            name="ck_research_endurance_gates_evidence_class",
+        ),
+        CheckConstraint(
+            "required_duration_seconds > 0 AND checkpoint_interval_seconds > 0 "
+            "AND maximum_checkpoint_gap_seconds >= checkpoint_interval_seconds",
+            name="ck_research_endurance_gates_timing",
+        ),
+        CheckConstraint(
+            "evidence_class <> 'real_time_72h' OR required_duration_seconds >= 259200",
+            name="ck_research_endurance_gates_real_duration",
+        ),
+        UniqueConstraint("command_id", name="uq_research_endurance_gates_command"),
+        Index(
+            "ix_research_endurance_gates_quest_started",
+            "quest_id",
+            "started_at",
+        ),
+    )
+
+    gate_id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    quest_id: Mapped[str] = mapped_column(ForeignKey("research_graph_nodes.node_id"), index=True)
+    manifest_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    manifest_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    evidence_class: Mapped[str] = mapped_column(String(32), index=True)
+    required_duration_seconds: Mapped[int] = mapped_column(Integer)
+    checkpoint_interval_seconds: Mapped[int] = mapped_column(Integer)
+    maximum_checkpoint_gap_seconds: Mapped[int] = mapped_column(Integer)
+    frozen_quest_spec_sha256: Mapped[str] = mapped_column(String(64))
+    initial_graph_sha256: Mapped[str] = mapped_column(String(64))
+    frozen_budget_manifest_sha256: Mapped[str] = mapped_column(String(64))
+    frozen_data_role_manifest_sha256: Mapped[str] = mapped_column(String(64))
+    prerequisite_fault_campaign_id: Mapped[str] = mapped_column(
+        ForeignKey("fault_injection_campaigns.campaign_id"), index=True
+    )
+    prerequisite_fault_report_sha256: Mapped[str] = mapped_column(String(64))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    command_id: Mapped[str] = mapped_column(
+        ForeignKey("scientific_commands.command_id"), index=True
+    )
+    started_by: Mapped[str] = mapped_column(String(128), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+class ResearchEnduranceCheckpointRecord(Base):
+    """One append-only, parent-hashed observation in an endurance window."""
+
+    __tablename__ = "research_endurance_checkpoints"
+    __table_args__ = (
+        CheckConstraint("sequence >= 1", name="ck_research_endurance_checkpoints_sequence"),
+        CheckConstraint(
+            "reproduction_count >= 0 AND process_kill_count >= 0 "
+            "AND provider_interruption_count >= 0 AND structural_pivot_count >= 0",
+            name="ck_research_endurance_checkpoints_evidence_counts",
+        ),
+        UniqueConstraint(
+            "gate_id",
+            "sequence",
+            name="uq_research_endurance_checkpoints_gate_sequence",
+        ),
+        UniqueConstraint(
+            "checkpoint_sha256",
+            name="uq_research_endurance_checkpoints_sha256",
+        ),
+        UniqueConstraint("command_id", name="uq_research_endurance_checkpoints_command"),
+        Index(
+            "ix_research_endurance_checkpoints_gate_observed",
+            "gate_id",
+            "observed_at",
+        ),
+    )
+
+    checkpoint_id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    gate_id: Mapped[str] = mapped_column(
+        ForeignKey("research_endurance_gates.gate_id"), index=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer)
+    parent_sha256: Mapped[str] = mapped_column(String(64))
+    observation_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    checkpoint_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    checkpoint_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    reproduction_count: Mapped[int] = mapped_column(Integer)
+    process_kill_count: Mapped[int] = mapped_column(Integer)
+    provider_interruption_count: Mapped[int] = mapped_column(Integer)
+    structural_pivot_count: Mapped[int] = mapped_column(Integer)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    command_id: Mapped[str] = mapped_column(
+        ForeignKey("scientific_commands.command_id"), index=True
+    )
+    created_by: Mapped[str] = mapped_column(String(128), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+class ResearchEnduranceReportRecord(Base):
+    """Terminal report; accelerated and real-time evidence remain distinguishable forever."""
+
+    __tablename__ = "research_endurance_reports"
+    __table_args__ = (
+        CheckConstraint(
+            "evidence_class IN ('accelerated_engineering','real_time_72h')",
+            name="ck_research_endurance_reports_evidence_class",
+        ),
+        CheckConstraint(
+            "disposition IN ('passed','failed','blocked')",
+            name="ck_research_endurance_reports_disposition",
+        ),
+        CheckConstraint(
+            "elapsed_seconds >= 0 AND checkpoint_count >= 0 "
+            "AND negative_result_count >= 0 AND reproduction_count >= 0 "
+            "AND process_kill_count >= 0 AND provider_interruption_count >= 0 "
+            "AND structural_pivot_count >= 0 AND portfolio_epoch_count >= 0",
+            name="ck_research_endurance_reports_counts",
+        ),
+        CheckConstraint(
+            "real_72h_passed IS FALSE OR "
+            "(evidence_class = 'real_time_72h' AND disposition = 'passed' "
+            "AND elapsed_seconds >= 259200)",
+            name="ck_research_endurance_reports_real_verdict",
+        ),
+        CheckConstraint(
+            "eligible_for_f11_scientific_exit_review = real_72h_passed",
+            name="ck_research_endurance_reports_exit_review",
+        ),
+        UniqueConstraint("command_id", name="uq_research_endurance_reports_command"),
+        Index(
+            "ix_research_endurance_reports_quest_completed",
+            "quest_id",
+            "completed_at",
+        ),
+    )
+
+    gate_id: Mapped[str] = mapped_column(
+        ForeignKey("research_endurance_gates.gate_id"), primary_key=True
+    )
+    quest_id: Mapped[str] = mapped_column(ForeignKey("research_graph_nodes.node_id"), index=True)
+    report_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    report_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    evidence_class: Mapped[str] = mapped_column(String(32), index=True)
+    disposition: Mapped[str] = mapped_column(String(16), index=True)
+    elapsed_seconds: Mapped[int] = mapped_column(Integer)
+    checkpoint_count: Mapped[int] = mapped_column(Integer)
+    negative_result_count: Mapped[int] = mapped_column(Integer)
+    reproduction_count: Mapped[int] = mapped_column(Integer)
+    process_kill_count: Mapped[int] = mapped_column(Integer)
+    provider_interruption_count: Mapped[int] = mapped_column(Integer)
+    structural_pivot_count: Mapped[int] = mapped_column(Integer)
+    portfolio_epoch_count: Mapped[int] = mapped_column(Integer)
+    real_72h_passed: Mapped[bool] = mapped_column(Boolean)
+    eligible_for_f11_scientific_exit_review: Mapped[bool] = mapped_column(Boolean)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    command_id: Mapped[str] = mapped_column(
+        ForeignKey("scientific_commands.command_id"), index=True
+    )
+    created_by: Mapped[str] = mapped_column(String(128), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
 __all__ = [
     "ResearchBudgetAllocationRecord",
     "ResearchCampaignExperimentRecord",
@@ -688,6 +857,9 @@ __all__ = [
     "ResearchGraphDependencyRecord",
     "ResearchGraphNodeRecord",
     "ResearchGraphTransitionRecord",
+    "ResearchEnduranceCheckpointRecord",
+    "ResearchEnduranceGateRecord",
+    "ResearchEnduranceReportRecord",
     "ResearchMemoryCompactionMemberRecord",
     "ResearchMemoryCompactionRecord",
     "ResearchMemoryContextReceiptRecord",

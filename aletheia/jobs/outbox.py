@@ -58,6 +58,7 @@ class ScientificCommandType(str, Enum):
     RESEARCH_MEMORY_CONTEXT = "research_memory.context"
     RESEARCH_PORTFOLIO_MUTATION = "research_portfolio.mutation"
     RESILIENCE_FAULT_CAMPAIGN_COMMIT = "resilience_fault_campaign.commit"
+    RESEARCH_ENDURANCE_MUTATION = "research_endurance.mutation"
     GENERIC = "scientific.generic"
 
 

@@ -2378,8 +2378,8 @@ worker-manifest mismatch 与 one-time outward ambiguity/reconciliation，十项�
 完整报告；所有读取重新评估 embedded observations 并核对 command/event receipt。通过、失败和阻塞报告
 都会保留；只有最新 Quest-scoped campaign 完整通过才可进入 F11-S7 review，且 audit 始终返回
 `autonomous_allocation_enabled=false`。聚焦套件 7 passed；详见
-`jobs/FAULT_INJECTION_CAMPAIGNS.md`、ADR 0038 与 F11-S6 implementation report。下一项为 F11-S7
-72-hour research endurance gate。最终跨组件回归 63 passed；全库非 Docker 回归为 1300 passed、
+`jobs/FAULT_INJECTION_CAMPAIGNS.md`、ADR 0038 与 F11-S6 implementation report。F11-S7 的耐久
+门禁工程能力现已实现，真实 72-hour run 仍待执行。最终跨组件回归 63 passed；全库非 Docker 回归为 1300 passed、
 2 skipped、29 deselected（772.97 s），Alembic current/head、ORM schema diff、changed-file Ruff、CLI
 smoke 与 `git diff --check` 均通过。
 
@@ -2396,6 +2396,16 @@ smoke 与 `git diff --check` 均通过。
 - 结束时生成完整 portfolio report。
 
 不是要求全部结论为正，而是验证方向、证据和预算的一致性。
+
+**2026-08-18 engineering status：** 已实现不可变 start、PostgreSQL wall-clock、可跨进程恢复的
+parent-hash checkpoint chain、复制/进程故障/provider 故障/结构性 pivot 强类型收据、负结果因果顺序、
+冻结方向/问题/预算/数据角色、最终 portfolio/效率报告以及 pass/blocked/failed 追加式保留。生产
+`real_time_72h` 至少 259,200 秒且拒绝任何 caller clock；`accelerated_engineering` 已完成包含两问、
+三 Campaign、负结果、复制、两类故障、真正 pivot 和 portfolio epoch 的端到端验收，但永久返回
+`real_72h_passed=false`。因此 F11-S7 engineering complete，Scientific exit 的真实 72 小时证据仍未完成。
+详见 `programs/RESEARCH_ENDURANCE_GATE.md`、ADR 0039 和 F11-S7 implementation report；当前 Alembic
+head/current 为 `20260818_0022`，ORM schema diff 为 0；专项回归 6 passed，F11 跨组件回归
+65 passed，全库非 Docker 回归 1306 passed、2 skipped、29 deselected（925.41 s）。
 
 ## F11.8 建议代码边界
 
