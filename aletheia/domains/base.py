@@ -149,6 +149,10 @@ class DomainPlugin(ABC):
     tested offline (featurize/train on a tiny in-memory frame) and also composed by
     ``run_experiment`` for subprocess execution."""
 
+    COMPATIBILITY_API = True
+    MIGRATION_STATUS = "legacy_protocol_executor_port"
+    NEW_SCIENTIFIC_EXTENSIONS_ALLOWED = False
+
     name: str = "base"
 
     # The AI-AUTHORED demonstration capability (the frontier path): registered for EVERY

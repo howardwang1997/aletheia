@@ -24,7 +24,7 @@ from aletheia.memory.service import (
     list_claims,
     list_metrics,
 )
-from aletheia.scheduler.driver import ExperimentDriver
+from aletheia.scheduler.durable import run_legacy_driver_inline_compat
 
 
 def _short(p: dict, n: int = 170) -> str:
@@ -79,7 +79,7 @@ async def main() -> None:
 
     pt = asyncio.create_task(printer())
     try:
-        await ExperimentDriver(run_id, dry_run=False).run()
+        await run_legacy_driver_inline_compat(run_id, dry_run=False)
     finally:
         pt.cancel()
 

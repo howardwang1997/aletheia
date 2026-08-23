@@ -1,0 +1,477 @@
+{
+  "schema_name": "aletheia.legacy_golden_compatibility_contract",
+  "schema_version": 1,
+  "contract_id": "legacy-golden-compatibility-v1",
+  "contract_status": "frozen",
+  "purpose": "Preserve observable legacy engineering behavior while authority moves out of the legacy driver.",
+  "availability_semantics": "available means that the outcome is backed by a named, tracked, offline test at the frozen source identity below; it does not mean that the legacy implementation lacks other runtime branches.",
+  "use_policy": {
+    "claim_ceiling": "engineering_regression_only",
+    "scientific_admission": false,
+    "model_training": false,
+    "live_refresh": false,
+    "refresh_policy": "publish_a_new_explicit_contract_version"
+  },
+  "source_identities": [
+    {
+      "source_id": "legacy_event_skeleton_test_v1",
+      "kind": "offline_test",
+      "path": "tests/test_phase0_skeleton.py",
+      "sha256": "e9a334a502c4e1972e8b977bfec01d05bc04168cbfb692acc5ffe83aeb1b06d7",
+      "test_nodes": [
+        "test_dryrun_persists_events_and_worklog"
+      ]
+    },
+    {
+      "source_id": "materials_driver_test_v1",
+      "kind": "offline_test",
+      "path": "tests/test_driver_e2e.py",
+      "sha256": "55f3d7025aad8adef0a1227e84175418630a56ba0621147e31bc79a049f61764",
+      "test_nodes": [
+        "test_full_dry_run_loop"
+      ]
+    },
+    {
+      "source_id": "materials_plugin_test_v1",
+      "kind": "offline_test",
+      "path": "tests/test_domain_materials.py",
+      "sha256": "4f0450743ae5640f62b6feed4486e01717b298bff78665b7d0ec5a096a97a46d",
+      "test_nodes": [
+        "test_materials_plugin_trains_and_scores"
+      ]
+    },
+    {
+      "source_id": "molecules_plugin_test_v1",
+      "kind": "offline_test",
+      "path": "tests/test_domain_molecules.py",
+      "sha256": "3726a72bc936807a27ef14bd4eef6f86f3eb09c12e26d2372ec592fc2782f1c0",
+      "test_nodes": [
+        "test_molecule_plugin_trains_and_scores"
+      ]
+    },
+    {
+      "source_id": "rag_driver_test_v1",
+      "kind": "offline_test",
+      "path": "tests/test_rag_e2e.py",
+      "sha256": "cf84e57a44815016d27f204dfccd779feaff763299784041fba94889f59e7884",
+      "test_nodes": [
+        "test_rag_dry_run_reaches_archive"
+      ]
+    },
+    {
+      "source_id": "rag_plugin_test_v1",
+      "kind": "offline_test",
+      "path": "tests/test_domain_rag.py",
+      "sha256": "5f7bca1fabedb332a3f05359bc03e95bdf5a718d159c99b22b6d1835c5aa9570",
+      "test_nodes": [
+        "test_run_experiment_returns_quality_metrics"
+      ]
+    }
+  ],
+  "outcome_coverage": [
+    {
+      "domain": "materials",
+      "completed": {
+        "available": true,
+        "case_ids": [
+          "materials.plugin.completed.v1",
+          "materials.driver_dry.completed.v1"
+        ]
+      },
+      "results_rejected": {
+        "available": false,
+        "case_ids": [],
+        "reason_code": "no_named_offline_domain_results_rejected_test_at_freeze",
+        "required_terminal_status_if_captured": "results_rejected"
+      }
+    },
+    {
+      "domain": "molecules",
+      "completed": {
+        "available": true,
+        "case_ids": [
+          "molecules.plugin.completed.v1"
+        ]
+      },
+      "results_rejected": {
+        "available": false,
+        "case_ids": [],
+        "reason_code": "no_named_offline_domain_results_rejected_test_at_freeze",
+        "required_terminal_status_if_captured": "results_rejected"
+      }
+    },
+    {
+      "domain": "rag",
+      "completed": {
+        "available": true,
+        "case_ids": [
+          "rag.plugin.completed.v1",
+          "rag.driver_dry.completed.v1"
+        ]
+      },
+      "results_rejected": {
+        "available": false,
+        "case_ids": [],
+        "reason_code": "no_named_offline_domain_results_rejected_test_at_freeze",
+        "required_terminal_status_if_captured": "results_rejected"
+      }
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "materials.plugin.completed.v1",
+      "identity": {
+        "material": {
+          "case_id": "materials.plugin.completed.v1",
+          "domain": "materials",
+          "execution_surface": "domain_plugin",
+          "outcome": "completed",
+          "source_bindings": [
+            "materials_plugin_test_v1"
+          ]
+        },
+        "sha256": "3b9bac38a456c83f5fd46327ef44865e78aecf5ffcba57daac3dbfafbc28fbf7"
+      },
+      "bindings": [
+        {
+          "source_id": "materials_plugin_test_v1",
+          "test_node": "test_materials_plugin_trains_and_scores",
+          "supports": [
+            "metrics",
+            "artifacts",
+            "terminal"
+          ]
+        }
+      ],
+      "metrics": {
+        "required_keys": [
+          "mae",
+          "r2",
+          "rmse",
+          "mae_lcso",
+          "r2_lcso",
+          "rmse_lcso",
+          "mae_cv_mean",
+          "mae_cv_std",
+          "r2_cv_mean",
+          "mae_holdout",
+          "r2_holdout",
+          "rmse_holdout"
+        ],
+        "exact_values": {},
+        "relational_invariants": [
+          "mae == mae_lcso",
+          "r2 == r2_lcso",
+          "rmse == rmse_lcso",
+          "mae >= 0",
+          "mae_cv_std >= 0"
+        ],
+        "excluded_from_freeze": [
+          "environment_sensitive_exact_ml_metrics"
+        ]
+      },
+      "events": {
+        "legacy_identity_class": "unkeyed_unhashed",
+        "surface_mode": "not_emitted_by_domain_plugin",
+        "required_types": [],
+        "required_order": [],
+        "payload_bytes_frozen": false
+      },
+      "artifacts": {
+        "required_kinds": [
+          "eval",
+          "model"
+        ],
+        "required_relative_paths": [
+          "eval.json",
+          "model.joblib"
+        ],
+        "content_bytes_frozen": false,
+        "semantic_invariants": [
+          "eval_summary identifies LCSO provenance"
+        ]
+      },
+      "terminal": {
+        "surface": "plugin_return",
+        "required_status": "returned_successfully"
+      }
+    },
+    {
+      "case_id": "materials.driver_dry.completed.v1",
+      "identity": {
+        "material": {
+          "case_id": "materials.driver_dry.completed.v1",
+          "domain": "materials",
+          "execution_surface": "legacy_driver_dry_run",
+          "outcome": "completed",
+          "source_bindings": [
+            "legacy_event_skeleton_test_v1",
+            "materials_driver_test_v1"
+          ]
+        },
+        "sha256": "d944d4f4521adf459119b3fdbd775079ecd1295852c36e4a17e80c7b45949b49"
+      },
+      "bindings": [
+        {
+          "source_id": "materials_driver_test_v1",
+          "test_node": "test_full_dry_run_loop",
+          "supports": [
+            "metrics",
+            "artifacts",
+            "terminal"
+          ]
+        },
+        {
+          "source_id": "legacy_event_skeleton_test_v1",
+          "test_node": "test_dryrun_persists_events_and_worklog",
+          "supports": [
+            "legacy_event_vocabulary"
+          ]
+        }
+      ],
+      "metrics": {
+        "required_keys": [
+          "mae",
+          "r2",
+          "rmse"
+        ],
+        "exact_values": {},
+        "relational_invariants": [],
+        "excluded_from_freeze": [
+          "environment_sensitive_exact_ml_metrics"
+        ]
+      },
+      "events": {
+        "legacy_identity_class": "unkeyed_unhashed",
+        "surface_mode": "persisted_legacy_events",
+        "required_types": [
+          "run_started",
+          "run_finished"
+        ],
+        "required_order": [
+          "run_started",
+          "run_finished"
+        ],
+        "payload_bytes_frozen": false
+      },
+      "artifacts": {
+        "required_kinds": [
+          "bibliography",
+          "report",
+          "survey"
+        ],
+        "required_relative_paths": [
+          "report.md"
+        ],
+        "content_bytes_frozen": false,
+        "semantic_invariants": [
+          "report contains an inline citation",
+          "report contains a References section"
+        ]
+      },
+      "terminal": {
+        "surface": "run_ledger",
+        "required_status": "completed"
+      }
+    },
+    {
+      "case_id": "molecules.plugin.completed.v1",
+      "identity": {
+        "material": {
+          "case_id": "molecules.plugin.completed.v1",
+          "domain": "molecules",
+          "execution_surface": "domain_plugin",
+          "outcome": "completed",
+          "source_bindings": [
+            "molecules_plugin_test_v1"
+          ]
+        },
+        "sha256": "56f0d77e1d5a4fc89227986b6841c7a23d6bded588367633bbdb8f2ec173e68e"
+      },
+      "bindings": [
+        {
+          "source_id": "molecules_plugin_test_v1",
+          "test_node": "test_molecule_plugin_trains_and_scores",
+          "supports": [
+            "metrics",
+            "artifacts",
+            "terminal"
+          ]
+        }
+      ],
+      "metrics": {
+        "required_keys": [
+          "mae",
+          "r2",
+          "rmse",
+          "mae_scaffold",
+          "r2_scaffold",
+          "rmse_scaffold",
+          "mae_cv_mean",
+          "mae_holdout"
+        ],
+        "exact_values": {},
+        "relational_invariants": [
+          "rmse == rmse_scaffold"
+        ],
+        "excluded_from_freeze": [
+          "environment_sensitive_exact_ml_metrics"
+        ]
+      },
+      "events": {
+        "legacy_identity_class": "unkeyed_unhashed",
+        "surface_mode": "not_emitted_by_domain_plugin",
+        "required_types": [],
+        "required_order": [],
+        "payload_bytes_frozen": false
+      },
+      "artifacts": {
+        "required_kinds": [
+          "eval",
+          "model"
+        ],
+        "required_relative_paths": [
+          "eval.json"
+        ],
+        "content_bytes_frozen": false,
+        "semantic_invariants": [
+          "eval_summary identifies scaffold-split provenance"
+        ]
+      },
+      "terminal": {
+        "surface": "plugin_return",
+        "required_status": "returned_successfully"
+      }
+    },
+    {
+      "case_id": "rag.plugin.completed.v1",
+      "identity": {
+        "material": {
+          "case_id": "rag.plugin.completed.v1",
+          "domain": "rag",
+          "execution_surface": "domain_plugin",
+          "outcome": "completed",
+          "source_bindings": [
+            "rag_plugin_test_v1"
+          ]
+        },
+        "sha256": "a4216676b4cab56455e7a4ee030477bf8d91d149a256b99788c480603a03d6ff"
+      },
+      "bindings": [
+        {
+          "source_id": "rag_plugin_test_v1",
+          "test_node": "test_run_experiment_returns_quality_metrics",
+          "supports": [
+            "metrics",
+            "artifacts",
+            "terminal"
+          ]
+        }
+      ],
+      "metrics": {
+        "required_keys": [
+          "answer_f1",
+          "recall_at_k",
+          "exact_match",
+          "latency_ms",
+          "cost_usd"
+        ],
+        "exact_values": {
+          "cost_usd": 0.0,
+          "recall_at_k": 1.0
+        },
+        "relational_invariants": [
+          "0 <= answer_f1 <= 1"
+        ],
+        "excluded_from_freeze": [
+          "exact_answer_f1",
+          "exact_latency_ms"
+        ]
+      },
+      "events": {
+        "legacy_identity_class": "unkeyed_unhashed",
+        "surface_mode": "not_emitted_by_domain_plugin",
+        "required_types": [],
+        "required_order": [],
+        "payload_bytes_frozen": false
+      },
+      "artifacts": {
+        "required_kinds": [
+          "eval"
+        ],
+        "required_relative_paths": [
+          "eval.json"
+        ],
+        "content_bytes_frozen": false,
+        "semantic_invariants": [
+          "faithfulness inputs include question, context, and answer"
+        ]
+      },
+      "terminal": {
+        "surface": "plugin_return",
+        "required_status": "returned_successfully"
+      }
+    },
+    {
+      "case_id": "rag.driver_dry.completed.v1",
+      "identity": {
+        "material": {
+          "case_id": "rag.driver_dry.completed.v1",
+          "domain": "rag",
+          "execution_surface": "legacy_driver_dry_run",
+          "outcome": "completed",
+          "source_bindings": [
+            "rag_driver_test_v1"
+          ]
+        },
+        "sha256": "515ba1472eb79963a0198d6827e434580a2a2818b4aa1e632ffb2b673d74c6b2"
+      },
+      "bindings": [
+        {
+          "source_id": "rag_driver_test_v1",
+          "test_node": "test_rag_dry_run_reaches_archive",
+          "supports": [
+            "metrics",
+            "events",
+            "terminal"
+          ]
+        }
+      ],
+      "metrics": {
+        "required_keys": [
+          "answer_f1",
+          "faithfulness"
+        ],
+        "exact_values": {
+          "faithfulness": 0.8
+        },
+        "relational_invariants": [],
+        "excluded_from_freeze": [
+          "exact_answer_f1",
+          "exact_latency_ms"
+        ]
+      },
+      "events": {
+        "legacy_identity_class": "unkeyed_unhashed",
+        "surface_mode": "persisted_legacy_events",
+        "required_types": [
+          "run_finished"
+        ],
+        "required_order": [
+          "run_finished"
+        ],
+        "payload_bytes_frozen": false
+      },
+      "artifacts": {
+        "required_kinds": [],
+        "required_relative_paths": [],
+        "content_bytes_frozen": false,
+        "semantic_invariants": []
+      },
+      "terminal": {
+        "surface": "run_ledger",
+        "required_status": "completed"
+      }
+    }
+  ]
+}

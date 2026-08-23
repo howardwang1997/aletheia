@@ -1,5 +1,12 @@
 # Aletheia — Architecture
 
+> **Status note (2026-08-22):** this file describes the currently implemented/legacy execution
+> architecture. The proposed target direction is
+> [`END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md`](END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md).
+> In particular, the fixed global FSM and regression-shaped `DomainPlugin` are compatibility paths
+> to be migrated; new scientific functionality should target the event-driven scientific kernel,
+> Protocol IR, capability ports, and execution fabric defined in that RFC.
+
 ## Ultimate goal
 
 **用AI做最前沿的科学研究 — AI conducting frontier scientific research, end to end.**

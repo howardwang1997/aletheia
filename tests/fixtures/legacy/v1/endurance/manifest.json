@@ -1,0 +1,36 @@
+{
+  "autonomous_allocation_enabled": false,
+  "checkpoint_interval_seconds": 3600,
+  "environment_manifest_sha256": "d3900207de8fb17ac1a9218b0c3be2871e3693127f698ce8959fcc594dc200f5",
+  "evidence_class": "real_time_72h",
+  "frozen_budget_manifest_sha256": "0e133465cb95a1dd4a168326101633d4c52811a15a8d59fef0b4b1b7d49ed1ea",
+  "frozen_data_role_manifest_sha256": "f17f01faf46c55186438f3a9b7f78cae3fc20391ad08474b5dcfd373a9fb8891",
+  "frozen_quest_spec_sha256": "bf8291f702135c8aa6435d959a86b6143fb02a3a8fac749526a8048a1a5f5715",
+  "frozen_question_sha256s": [
+    "a30344ed76e8af0f7f60b7e788067dab3319b3f5e9f083731a9b8a2059dae506",
+    "fd2009117c9e2ccb61e626f0ff3c4de61c7b6af92169fca567e66a525013a762"
+  ],
+  "gate_id": "edg_720570e0ac6b219638b5c14f3ff1b2bc",
+  "gate_key": "phonon-quest-real-72h-v1",
+  "harness_code_sha256": "bab1ad31f36171491a32ee05027bed7b6f429874e93e17eabcf50cc9e481c7f7",
+  "initial_campaign_ids": [
+    "cmp_3343df54838b7b5a4742f46ab160f1b5",
+    "cmp_a269864873184e324da89875e1a52c9e",
+    "cmp_d086e91cc4cf05413a20a5bc580a69ad"
+  ],
+  "initial_graph_sha256": "41a47946b28c9685468b5946e6b782c7f9979a8c2e9fada6d201a4b2c34286b8",
+  "maximum_checkpoint_gap_seconds": 7200,
+  "minimum_efficiency_improvement_ppm": 100000,
+  "minimum_negative_results": 1,
+  "minimum_portfolio_epochs": 1,
+  "minimum_process_kills": 1,
+  "minimum_provider_interruptions": 1,
+  "minimum_reproductions": 1,
+  "minimum_structural_pivots": 1,
+  "outward_actions_allowed": false,
+  "prerequisite_fault_campaign_id": "fic_60355afdf2c4a04d2fdc6a1f7ae7d542",
+  "prerequisite_fault_report_sha256": "fac34a841a56959639bb29a58b92f5a50f6529da829bb10a19beac156fe16676",
+  "quest_id": "qst_cd143727c9e8c48fcff45ab6087db3d2",
+  "required_duration_seconds": 259200,
+  "schema_version": 1
+}

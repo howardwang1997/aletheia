@@ -7,12 +7,16 @@ the official evaluation programs, or gold programs.
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import os
 import tempfile
 from pathlib import Path
 from typing import Any
+
+try:
+    from aletheia.migration.dynamic_loader import load_guarded_source_module
+except ModuleNotFoundError:  # Standalone evaluator mount intentionally excludes Aletheia.
+    from dynamic_loader import load_guarded_source_module
 
 
 def _write_terminal_receipt(path: Path, payload: dict[str, Any]) -> None:
@@ -42,11 +46,7 @@ def _write_terminal_receipt(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _load_evaluator(path: Path):
-    spec = importlib.util.spec_from_file_location("aletheia_scienceagentbench_eval", path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("could not load the pinned ScienceAgentBench evaluator")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_guarded_source_module("aletheia_scienceagentbench_eval", path)
     evaluator = getattr(module, "eval", None)
     if not callable(evaluator):
         raise RuntimeError("ScienceAgentBench evaluator has no callable eval()")

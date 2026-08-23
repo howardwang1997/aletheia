@@ -77,31 +77,34 @@ reliable autonomous frontier scientist.
    F11-S7 adds a database-clock, append-only endurance gate with immutable starts, resumable
    parent-hashed checkpoints, typed reproduction/interruption/pivot evidence, final portfolio and
    efficiency reports, and an unforgeable split between accelerated engineering evidence and a
-   real 72-hour pass. The accelerated acceptance run passes, but no real 72-hour Quest has
-   completed and allocation remains disabled. The first production-shaped materials Quest is now
+   real 72-hour pass. The accelerated acceptance run passes. The first real 72-hour Quest has now
+   completed, but its immutable report is `blocked` because structural pivots reached `0/1`; it is
+   not a real 72-hour pass, is ineligible for scientific-exit review, and allocation remains disabled.
+   The first production-shaped materials Quest is now
    commissioned from the real F10 phonon artifacts with two closed competing world models, three
    Campaigns, exploration-only source data, five hard budget dimensions, and exact replay/audit;
    its independent-implementation branch is active. Its Quest-scoped production fault prerequisite
    has passed all ten boundaries with every core loss/duplicate/mismatch count at zero. A
    committed-code, advisory-locked, write-once-spooled run-once endurance controller is implemented
-   and tested; the real gate and current controller identities are frozen and production preflight
-   passes, but the clock has deliberately not started. A committed in-window F11-S6 report can now
+   and tested; the historical v1 gate and controller identities are frozen, and that gate finalized
+   without satisfying its precommitted scientific floor. A committed in-window F11-S6 report can now
    be deterministically converted into typed process/provider interruption receipts without manual
-   evidence JSON. A frozen launchd adapter binds the exact Conda/Python runtime, controller,
-   deployment files, five-minute cadence, and logs; before explicit start it only waits, and it has
-   no automatic start/finalize path. A zero-fit same-source reproduction protocol now adds an
+   evidence JSON. A frozen launchd adapter bound the exact Conda/Python runtime, controller,
+   deployment files, five-minute cadence, and logs; it had no automatic start/finalize path. A
+   zero-fit same-source reproduction protocol now adds an
    independently coded feature path, a distinct ExtraTrees estimator, target/split/matrix hash
-   parity, exact negative/inconclusive outcome retention, and typed endurance evidence submission;
-   it cannot fit until the real gate is live. Independent data, the still-unknown reproduction
-   result, and the actual 72-hour window remain open.
+   parity, exact negative/inconclusive outcome retention, and typed endurance evidence submission.
+   The frozen v1 report records one reproduction, one negative result, and operational recovery,
+   but it does not establish independent F12 replication or a qualifying structural pivot.
    The final output still needs a stable bundle containing the question, literature, data card,
    split metadata, code, artifacts, metrics, claims, audits, reproduction, limitations, paper, and
-   reproducibility package/PR; the real-time F11-S7 run and F12 remain.
+   reproducibility package/PR; a qualifying scientific-exit gate and F12 remain.
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,
-production portfolio activation plus the real 72-hour endurance run, repeated lower-overlap or
-laboratory replication, and a complete evidence bundle.
+production portfolio activation after a qualifying gate, repeated lower-overlap or laboratory
+replication, and a complete evidence bundle. The completed v1 72-hour gate remains blocked and is
+not retroactively repaired by these next steps.
 
 The executable plan for the next frontier program is
 [`docs/FRONTIER_SCIENTIST_F7_F12_DETAILED_PLAN_2026_08_13.md`](docs/FRONTIER_SCIENTIST_F7_F12_DETAILED_PLAN_2026_08_13.md):
@@ -394,7 +397,8 @@ external-validation claims expose a raw token only once, persist only its SHA-25
 provider idempotency key, and atomically bind the result to an immutable external-action receipt.
 An expired claim becomes `reconciliation_required` and is never automatically reissued. This is an
 at-most-one Aletheia authorization guarantee, not cross-system exactly-once execution. Production
-portfolio activation and the actual 72-hour run remain.
+portfolio activation and a qualifying scientific-exit gate remain; the first actual 72-hour run
+completed with a blocked disposition.
 See [`docs/jobs/TRANSACTIONAL_SCIENTIFIC_TRANSITIONS.md`](docs/jobs/TRANSACTIONAL_SCIENTIFIC_TRANSITIONS.md).
 
 F11-S3 gives each long-horizon effort a reconstructible Quest → Program → Campaign spine, durable
@@ -435,8 +439,9 @@ process/provider interruption, and a negative-result-caused structural pivot. Te
 retain pass/blocked/failed state and complete portfolio/efficiency evidence. The supervised
 run-once controller adds committed code identity, gate-specific PostgreSQL advisory-lock exclusion, stable
 tail-derived checkpoint keys, write-once evidence/receipt spooling, ambiguous-commit recovery, and
-no automatic finalization or caller-clock path. The accelerated end-to-end acceptance passes,
-while the actual 72-hour Quest remains to be run. See
+no automatic finalization or caller-clock path. The accelerated end-to-end acceptance passes. The
+actual v1 72-hour Quest subsequently completed, but its frozen report is blocked by
+`structural_pivots:minimum_not_met:0/1`; it cannot be presented as a pass. See
 [`docs/programs/RESEARCH_ENDURANCE_GATE.md`](docs/programs/RESEARCH_ENDURANCE_GATE.md).
 
 Production commissioning now turns the real F10 structure-signal artifacts into a replay-safe F11
@@ -455,9 +460,9 @@ The first gate-bound scientific producer is an implementation-diverse same-sourc
 It independently rebuilds and hash-checks the frozen composition/geometry matrices, replaces the
 F10 RandomForest with one precommitted ExtraTrees fit per matched arm, obtains completion time from
 PostgreSQL, and retains confirmed, contradicted, or inconclusive outcomes in scientific memory
-before spooling a typed reproduction receipt. Production execution is impossible before the exact
-endurance gate starts, and the result remains unknown because the production model has not been
-fit. See
+before spooling a typed reproduction receipt. The historical v1 endurance report now records the
+terminal evidence counts, but remains blocked; this pre-run producer description does not override
+that report or establish independent replication. See
 [`docs/programs/PHONON_IMPLEMENTATION_REPRODUCTION.md`](docs/programs/PHONON_IMPLEMENTATION_REPRODUCTION.md).
 
 The production portfolio producer now freezes four evidence-bound alternatives before the run,

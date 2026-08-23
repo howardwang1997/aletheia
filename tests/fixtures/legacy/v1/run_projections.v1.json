@@ -1,0 +1,321 @@
+{
+  "bundle_sha256": "ef86995b3a07a2a05137d124c7e1696ac5262556125da443a6cfdb2be13653fd",
+  "capture_policy": {
+    "artifact_payloads_included": false,
+    "claim_ceiling": "engineering_regression_only",
+    "event_payloads_included": false,
+    "live_refresh": false,
+    "refresh_policy": "publish_new_explicit_version",
+    "scientific_admission": false,
+    "training_use": false
+  },
+  "cases": [
+    {
+      "artifact_projection": {
+        "artifact_count": 15,
+        "artifact_role_counts": {
+          "rendered_report": 4,
+          "structured_result": 11
+        },
+        "artifact_tree_sha256": "7e1a311d62524d581ce579dc08dfdea350edfa24d20aa09490d1d4d2536569ab",
+        "excluded_patterns": [
+          "**/__pycache__/**",
+          "**/*.py",
+          "**/*.pyc",
+          "**/job.log",
+          "**/payload.json",
+          "**/transcript*"
+        ],
+        "opaque_blobs_are_never_deserialized": true,
+        "payload_bytes_in_fixture": false,
+        "total_bytes": 59757
+      },
+      "case_projection_sha256": "ba8e8e70233389abf069d4c54cb4c3013971ca0971cb46dc29d97440c4389ced",
+      "domain": "materials",
+      "event_projection": {
+        "all_source_rows_unkeyed_unhashed": true,
+        "event_count": 169,
+        "event_type_counts": {
+          "assistant_text": 35,
+          "belief_prediction": 3,
+          "belief_prior": 2,
+          "budget": 12,
+          "campaign_finished": 1,
+          "campaign_plan": 2,
+          "campaign_reason": 3,
+          "claims": 3,
+          "code": 3,
+          "compute_status": 9,
+          "compute_submitted": 9,
+          "critique_panel": 9,
+          "experiment": 3,
+          "iam": 3,
+          "ideation_debate": 1,
+          "method_drift": 1,
+          "optimize": 3,
+          "report": 3,
+          "reproduction": 3,
+          "run_finished": 1,
+          "run_manifest_frozen": 1,
+          "run_started": 1,
+          "scorecard": 3,
+          "stage": 23,
+          "status": 30,
+          "survey_health": 1,
+          "survey_recorded": 1
+        },
+        "event_type_sequence_sha256": "af1682abb3426c94e306d56bb5d05d5551420b470010a387fd5097b3656ce6ae",
+        "first_event_type": "run_manifest_frozen",
+        "last_event_type": "status",
+        "legacy_identity_class": "unkeyed_unhashed"
+      },
+      "run_id": "cd3b7cbd3ca046d98dbeb02937e84b07",
+      "terminal_status": "completed"
+    },
+    {
+      "artifact_projection": {
+        "artifact_count": 15,
+        "artifact_role_counts": {
+          "opaque_model_blob": 3,
+          "plot": 3,
+          "rendered_report": 3,
+          "structured_result": 6
+        },
+        "artifact_tree_sha256": "aab9a95999d1fcfab3bc45c877c8e3ec01b5921b7650a57b90eb8f1a28cd9772",
+        "excluded_patterns": [
+          "**/__pycache__/**",
+          "**/*.py",
+          "**/*.pyc",
+          "**/job.log",
+          "**/payload.json",
+          "**/transcript*"
+        ],
+        "opaque_blobs_are_never_deserialized": true,
+        "payload_bytes_in_fixture": false,
+        "total_bytes": 99421972
+      },
+      "case_projection_sha256": "0c4abbcac6609757695c3809b4a4957425cb54f7ee9f8f0dda950241cf9206c4",
+      "domain": "molecules",
+      "event_projection": {
+        "all_source_rows_unkeyed_unhashed": true,
+        "event_count": 220,
+        "event_type_counts": {
+          "assistant_text": 31,
+          "budget": 4,
+          "code": 1,
+          "compute_status": 3,
+          "compute_submitted": 3,
+          "critique_panel": 5,
+          "critique_round": 5,
+          "experiment": 1,
+          "iam": 1,
+          "literature": 18,
+          "method_drift": 1,
+          "optimize": 1,
+          "report": 1,
+          "reproduction": 1,
+          "result": 19,
+          "run_finished": 1,
+          "run_started": 1,
+          "scorecard": 1,
+          "stage": 10,
+          "status": 11,
+          "survey_recorded": 1,
+          "system": 38,
+          "thinking": 18,
+          "tool_result": 22,
+          "tool_use": 22
+        },
+        "event_type_sequence_sha256": "c412a432ee32e8f9b05b05e4c888d303ed61e3921bf2850c05a14e58bcd6f532",
+        "first_event_type": "run_started",
+        "last_event_type": "status",
+        "legacy_identity_class": "unkeyed_unhashed"
+      },
+      "run_id": "718ca2a1cb8a4ef9b515326bc68f580c",
+      "terminal_status": "completed"
+    },
+    {
+      "artifact_projection": {
+        "artifact_count": 11,
+        "artifact_role_counts": {
+          "opaque_model_blob": 2,
+          "plot": 2,
+          "rendered_report": 3,
+          "structured_result": 4
+        },
+        "artifact_tree_sha256": "cc262be85c6277cf25d088b947fdc98caa99aec0c78bb0a3493001b069d7b56d",
+        "excluded_patterns": [
+          "**/__pycache__/**",
+          "**/*.py",
+          "**/*.pyc",
+          "**/job.log",
+          "**/payload.json",
+          "**/transcript*"
+        ],
+        "opaque_blobs_are_never_deserialized": true,
+        "payload_bytes_in_fixture": false,
+        "total_bytes": 1577624
+      },
+      "case_projection_sha256": "338c4482acefddb22e4ef72bb18a20e49540947d917b9cd1d0d44bfa9c2659cd",
+      "domain": "molecules",
+      "event_projection": {
+        "all_source_rows_unkeyed_unhashed": true,
+        "event_count": 234,
+        "event_type_counts": {
+          "assistant_text": 28,
+          "budget": 4,
+          "code": 1,
+          "compute_status": 2,
+          "compute_submitted": 2,
+          "critique_panel": 3,
+          "critique_round": 3,
+          "demonstration": 2,
+          "experiment": 1,
+          "iam": 1,
+          "ideation_debate": 2,
+          "literature": 19,
+          "optimize": 1,
+          "report": 1,
+          "reproduction": 1,
+          "result": 22,
+          "run_finished": 1,
+          "run_started": 1,
+          "scorecard": 1,
+          "stage": 9,
+          "status": 11,
+          "survey_health": 1,
+          "survey_recorded": 1,
+          "system": 44,
+          "thinking": 24,
+          "tool_result": 24,
+          "tool_use": 24
+        },
+        "event_type_sequence_sha256": "a47ca20948bd15f0521c5c55d4989ab9e59d953e0464c2ba6762d8cf5e6bfdf8",
+        "first_event_type": "run_started",
+        "last_event_type": "status",
+        "legacy_identity_class": "unkeyed_unhashed"
+      },
+      "run_id": "c76f87cd553c4e0eab7d3d48dfd259c8",
+      "terminal_status": "results_rejected"
+    },
+    {
+      "artifact_projection": {
+        "artifact_count": 8,
+        "artifact_role_counts": {
+          "rendered_report": 4,
+          "structured_result": 4
+        },
+        "artifact_tree_sha256": "e6c8a8bcf984d7a135b95e23262336787d4ec29f203305727be3b97db856cb86",
+        "excluded_patterns": [
+          "**/__pycache__/**",
+          "**/*.py",
+          "**/*.pyc",
+          "**/job.log",
+          "**/payload.json",
+          "**/transcript*"
+        ],
+        "opaque_blobs_are_never_deserialized": true,
+        "payload_bytes_in_fixture": false,
+        "total_bytes": 11749
+      },
+      "case_projection_sha256": "17e745f61268c97a78da31acabee8a84fe42836969f3d77522112bbbbada0bc9",
+      "domain": "rag",
+      "event_projection": {
+        "all_source_rows_unkeyed_unhashed": true,
+        "event_count": 110,
+        "event_type_counts": {
+          "assistant_text": 23,
+          "budget": 8,
+          "campaign_finished": 1,
+          "campaign_plan": 1,
+          "code": 2,
+          "compute_status": 6,
+          "critique_panel": 6,
+          "experiment": 2,
+          "faithfulness": 2,
+          "iam": 2,
+          "optimize": 2,
+          "report": 2,
+          "reproduction": 2,
+          "retriever": 3,
+          "run_finished": 1,
+          "run_started": 1,
+          "scorecard": 2,
+          "stage": 16,
+          "status": 27,
+          "survey_recorded": 1
+        },
+        "event_type_sequence_sha256": "1757b5f8eaca2c16f95a9dc34cf63b087ee73275abc5aa729e27a87e2e5bae8a",
+        "first_event_type": "run_started",
+        "last_event_type": "status",
+        "legacy_identity_class": "unkeyed_unhashed"
+      },
+      "run_id": "b069b66196354056ba82f0885e665c79",
+      "terminal_status": "completed"
+    },
+    {
+      "artifact_projection": {
+        "artifact_count": 4,
+        "artifact_role_counts": {
+          "rendered_report": 3,
+          "structured_result": 1
+        },
+        "artifact_tree_sha256": "3ac243527b7079594f4e1022c677e309c1418c17007598fb7e20cc4ce8c48b65",
+        "excluded_patterns": [
+          "**/__pycache__/**",
+          "**/*.py",
+          "**/*.pyc",
+          "**/job.log",
+          "**/payload.json",
+          "**/transcript*"
+        ],
+        "opaque_blobs_are_never_deserialized": true,
+        "payload_bytes_in_fixture": false,
+        "total_bytes": 21285
+      },
+      "case_projection_sha256": "6b0d81c02c5e6b31bf0757c3ae8341dc67c2f61ed91d7373610a29b6973f2616",
+      "domain": "rag",
+      "event_projection": {
+        "all_source_rows_unkeyed_unhashed": true,
+        "event_count": 250,
+        "event_type_counts": {
+          "assistant_text": 36,
+          "budget": 6,
+          "code": 1,
+          "compute_status": 2,
+          "critique_panel": 3,
+          "critique_round": 7,
+          "experiment": 1,
+          "faithfulness": 1,
+          "iam": 1,
+          "literature": 11,
+          "optimize": 1,
+          "report": 1,
+          "reproduction": 1,
+          "result": 31,
+          "retriever": 2,
+          "run_finished": 1,
+          "run_started": 1,
+          "scorecard": 1,
+          "stage": 9,
+          "status": 13,
+          "survey_recorded": 1,
+          "system": 62,
+          "thinking": 27,
+          "tool_result": 15,
+          "tool_use": 15
+        },
+        "event_type_sequence_sha256": "75ba3ac1eb217064da22952e15901de451111c5963e517bb5ab135fcd0bd3be3",
+        "first_event_type": "run_started",
+        "last_event_type": "status",
+        "legacy_identity_class": "unkeyed_unhashed"
+      },
+      "run_id": "0217e7274c8648608d9798e5b8276105",
+      "terminal_status": "results_rejected"
+    }
+  ],
+  "database_schema_revision": "20260818_0022",
+  "schema_name": "aletheia.legacy_run_projection_bundle",
+  "schema_version": 1,
+  "source_authority": "validating_postgresql_store_and_local_workspace"
+}

@@ -358,10 +358,21 @@ def test_real_systematic_experiment_discovers_rule_and_completes_task(evaluator_
     assert score.objective_scores["objective_information_gain_bits"] == 2
     assert score.objective_scores["hypothesis_revision_rate"] == 1
     assert score.objective_scores["reproducible"] == 1
-    assert set(score.evidence_objects) == {"harness_run_0", "harness_run_1"}
-    assert {evidence["final_hypothesis_id"] for evidence in score.evidence_objects.values()} == {
-        "substance_b"
+    assert set(score.evidence_objects) == {
+        "harness_run_0",
+        "harness_run_1",
+        "scientific_exit_metrics",
     }
+    harness_evidence = [
+        score.evidence_objects[f"harness_run_{run_index}"] for run_index in range(2)
+    ]
+    assert {evidence["final_hypothesis_id"] for evidence in harness_evidence} == {"substance_b"}
+    scientific_exit = score.evidence_objects["scientific_exit_metrics"]
+    assert scientific_exit["source_trace_sha256"] in {
+        evidence["trace_sha256"] for evidence in harness_evidence
+    }
+    assert scientific_exit["trace_complete"] is True
+    assert scientific_exit["top_label_correct"] is True
 
 
 def test_real_randomized_trace_is_invalid_not_best_of_two(evaluator_bundle):

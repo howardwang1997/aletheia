@@ -164,6 +164,11 @@ def detect_method_drift(hypothesis_text: str, requested: str, executed_impl: str
 
 
 class ExperimentDriver:
+    # Frozen PR-0 compatibility controller; new science belongs in the research kernel.
+    COMPATIBILITY_API = True
+    MIGRATION_STATUS = "legacy_protocol_executor"
+    NEW_SCIENTIFIC_EXTENSIONS_ALLOWED = False
+
     def __init__(
         self,
         run_id: str,

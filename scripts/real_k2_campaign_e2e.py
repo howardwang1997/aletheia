@@ -64,7 +64,7 @@ from aletheia.memory.service import (
     list_credences,
     list_metrics,
 )
-from aletheia.scheduler.driver import ExperimentDriver
+from aletheia.scheduler.durable import run_legacy_driver_inline_compat
 from aletheia.scheduler.k2_acceptance import score_k2
 
 
@@ -125,7 +125,7 @@ async def _drive_and_report(run_id: str, exp_id: str, timestamp: str) -> None:
 
     pt = asyncio.create_task(printer())
     try:
-        await ExperimentDriver(run_id, dry_run=False).run()
+        await run_legacy_driver_inline_compat(run_id, dry_run=False)
     finally:
         await asyncio.sleep(0.2)  # let the final events drain into the recorder
         pt.cancel()

@@ -737,6 +737,9 @@ class DockerScienceAgentBenchHarness:
         self.entrypoint = (
             Path(__file__).with_name("scienceagentbench_scorer_entrypoint.py").resolve(strict=True)
         )
+        self.dynamic_loader = (
+            Path(__file__).resolve().parents[2] / "migration" / "dynamic_loader.py"
+        ).resolve(strict=True)
         if _sha256_file(self.entrypoint) != manifest.scorer_entrypoint_sha256:
             raise ValueError("ScienceAgentBench scorer entrypoint hash does not match its manifest")
         self.datasets_root = (self.benchmark_root / "datasets").resolve(strict=True)
@@ -947,6 +950,7 @@ class DockerScienceAgentBenchHarness:
                 command=["python", "/evaluator/scienceagentbench_scorer_entrypoint.py"],
                 additional_mounts=(
                     (self.entrypoint.parent, "/evaluator", False),
+                    (self.dynamic_loader.parent, "/migration", False),
                     *dataset_mounts,
                     evaluator_mount,
                     (run_root / "pred_results", "/testbed/pred_results", False),
@@ -958,7 +962,10 @@ class DockerScienceAgentBenchHarness:
                     self.manifest.scorer_cpu_seconds / self.manifest.scorer_wall_time_s,
                 ),
                 cpu_seconds=self.manifest.scorer_cpu_seconds,
-                environment={"SAB_EVAL_SCRIPT": eval_container_path},
+                environment={
+                    "PYTHONPATH": "/migration",
+                    "SAB_EVAL_SCRIPT": eval_container_path,
+                },
                 include_aletheia_pythonpath=False,
             )
             result_path = receipt_dir / "result.json"

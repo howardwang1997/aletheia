@@ -1,0 +1,26 @@
+{
+  "interpretation": {
+    "claims": [
+      "The validating store recorded 268393 elapsed seconds, exceeding the 259200-second real-time duration floor.",
+      "The 73-checkpoint identity chain is continuous and its largest observed gap of 3837 seconds is below the 7200-second limit.",
+      "Negative-result, reproduction, process-kill recovery, provider-interruption recovery, portfolio-epoch, and efficiency minima were met.",
+      "The only terminal blocker is structural_pivots:minimum_not_met:0/1."
+    ],
+    "scientific_exit_eligible": false,
+    "terminal_disposition": "blocked",
+    "verdict": "The run is durable real-time evidence, but it did not pass the real 72-hour scientific gate because no qualifying structural pivot was committed."
+  },
+  "mutates_source": false,
+  "schema": "aletheia.legacy.endurance_derived_interpretation",
+  "schema_version": 1,
+  "source_binding": {
+    "checkpoint_chain_sha256": "e038e168917637f2afb77d9a4c275d0295835a7ea31f0c536a29748acd133dcc",
+    "checkpoint_count": 73,
+    "checkpoint_identity_projection_sha256": "fddea56a11c2e72c305d0894722a5a14c2f780c2347a5770baae51cbb8e28ac0",
+    "gate_id": "edg_720570e0ac6b219638b5c14f3ff1b2bc",
+    "manifest_sha256": "720570e0ac6b219638b5c14f3ff1b2bc42f45bb6c28362f16cc20dfda4e7f8de",
+    "report_sha256": "20bc3e61474ccb39e217f2528f80b5f084c5c56c1ff2312000ffeb5e33cab56c"
+  },
+  "status": "derived_non_authoritative",
+  "supersedes": false
+}

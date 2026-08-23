@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import importlib
 import json
 import os
 import tempfile
@@ -32,6 +31,7 @@ from aletheia.evals.ledger import EvaluationLedger
 from aletheia.evals.runner import IndependentEvaluationRunner
 from aletheia.evals.schemas import EvaluationSuite, EvaluationTask
 from aletheia.evals.statistics import aggregate_baseline_matrix
+from aletheia.migration.dynamic_loader import resolve_guarded_dynamic_attribute
 
 
 def _read_json(path: Path) -> Any:
@@ -85,7 +85,7 @@ def _factory(reference: str) -> Callable[..., Mapping[Any, IndependentEvaluation
     module_name, separator, attribute_name = reference.partition(":")
     if not separator or not module_name or not attribute_name:
         raise ValueError("runner factories must use MODULE:CALLABLE")
-    value = getattr(importlib.import_module(module_name), attribute_name)
+    value = resolve_guarded_dynamic_attribute(module_name, attribute_name)
     if not callable(value):
         raise TypeError(f"runner factory {reference!r} is not callable")
     return value

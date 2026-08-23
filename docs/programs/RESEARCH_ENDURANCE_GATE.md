@@ -1,7 +1,9 @@
 # Research endurance gate
 
 F11-S7 supplies a restart-safe, append-only endurance ledger for one frozen Quest. The engineering
-path is implemented and accelerated acceptance passes. No real 72-hour Quest has completed yet.
+path is implemented and accelerated acceptance passes. The first real 72-hour Quest completed in
+2026-08, but its authoritative report is `blocked`, not `passed`, because the precommitted structural
+pivot floor was `1` and the observed count was `0`. It is ineligible for scientific-exit review.
 
 ## What is frozen
 
@@ -277,7 +279,8 @@ waiting, live run-once delegation, and deployment-plist drift rejection.
 
 ## Honest boundary
 
-This implementation makes the 72-hour experiment executable and auditable. It does not claim that
-the 72 hours have elapsed, that supplied scientific measurements are true, that a reproduction is
-independent enough for F12, or that portfolio allocation may be activated. Those require the actual
-production run, reality-linked independent replication, and separate signed/IAM authorization.
+This implementation makes the 72-hour experiment executable and auditable. For v1, the 72 hours did
+elapse and the terminal report was frozen, but elapsed time alone did not satisfy the scientific gate.
+The report does not prove that supplied scientific measurements are true, that its reproduction is
+independent enough for F12, or that portfolio allocation may be activated. Those require a qualifying
+precommitted gate, reality-linked independent replication, and separate signed/IAM authorization.

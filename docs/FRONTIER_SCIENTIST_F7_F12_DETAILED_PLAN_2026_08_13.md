@@ -2410,6 +2410,10 @@ parent-hash checkpoint chain、复制/进程故障/provider 故障/结构性 piv
 head/current 为 `20260818_0022`，ORM schema diff 为 0；专项回归 6 passed，F11 跨组件回归
 65 passed，全库非 Docker 回归 1306 passed、2 skipped、29 deselected（925.41 s）。
 
+**2026-08-23 terminal update：** 第一轮真实 72 小时 gate 已完成，但权威 disposition 为 `blocked`，
+唯一 blocker 是 `structural_pivots:minimum_not_met:0/1`；`real_72h_passed=false`，不具备 F11 scientific
+exit review 资格。此前“尚未完成”是 2026-08-18 的时点状态，不得用于覆盖最终报告。
+
 **2026-08-18 supervised-controller status：** 新增仅由外部 supervisor 周期调用的 run-once
 controller。每次 tick 先取得 gate-specific PostgreSQL advisory lock，再从数据库时钟与
 parent-hash tail 决定 no-op 或 checkpoint；checkpoint command key 由 frozen controller + prior tail

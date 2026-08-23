@@ -2,6 +2,11 @@
 
 Date: 2026-08-18
 
+> Historical status note (2026-08-23): this report predates the first actual 72-hour run. That run
+> subsequently completed with authoritative disposition `blocked`, not `passed`, because
+> `structural_pivots` was `0/1`. The frozen v1 report in `tests/fixtures/legacy/v1/endurance/` is the
+> terminal source of truth.
+
 ## Outcome
 
 The F11-S7 engineering capability is complete. Aletheia can now freeze one eligible Quest, start a
@@ -19,7 +24,8 @@ eligible_for_f11_scientific_exit_review = false
 autonomous_allocation_enabled = false
 ~~~
 
-No actual 72-hour run has completed. F11 scientific exit therefore remains open.
+At this 2026-08-18 snapshot, no actual 72-hour run had completed. F11 scientific exit therefore
+remained open; the 2026-08-23 status note above records the later blocked terminal result.
 
 ## Related-work decisions
 

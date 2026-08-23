@@ -78,10 +78,7 @@ async def run_driver_task(task: TaskSnapshot) -> TaskExecutionResult:
     if task.run_id != inputs.run_id:
         raise ValueError("driver task run_id conflicts with its queue scope")
 
-    # Imported lazily so API control-plane processes do not instantiate driver dependencies.
-    from aletheia.scheduler.driver import ExperimentDriver
-
-    await ExperimentDriver(inputs.run_id, dry_run=inputs.dry_run).run()
+    await run_legacy_driver_inline_compat(inputs.run_id, dry_run=inputs.dry_run)
     run: dict[str, Any] | None = get_run(inputs.run_id)
     return TaskExecutionResult(
         result_artifact_id=f"ledger:run:{inputs.run_id}",
@@ -93,9 +90,24 @@ async def run_driver_task(task: TaskSnapshot) -> TaskExecutionResult:
     )
 
 
+async def run_legacy_driver_inline_compat(run_id: str, *, dry_run: bool) -> None:
+    """Run the frozen driver inline for legacy scripts that cannot yet use the task queue.
+
+    This is deliberately a compatibility seam, not a new scheduler path.  Production control-plane
+    callers must continue to use :func:`enqueue_driver_task`; keeping the lazy driver import here
+    makes this durable adapter the sole production module allowed to depend on the legacy driver.
+    """
+
+    # Imported lazily so API control-plane processes do not instantiate driver dependencies.
+    from aletheia.scheduler.driver import ExperimentDriver
+
+    await ExperimentDriver(run_id, dry_run=dry_run).run()
+
+
 __all__ = [
     "DriverTaskInputs",
     "RESEARCH_DRIVER_TASK_TYPE",
     "enqueue_driver_task",
+    "run_legacy_driver_inline_compat",
     "run_driver_task",
 ]

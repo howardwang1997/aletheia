@@ -111,6 +111,10 @@ candidate corpus, spend money, open an external target, start a fault campaign, 
 
 ## Remaining commissioning blockers
 
+> Historical pre-run list. The v1 real 72-hour gate later completed, but its immutable report is
+> `blocked` on `structural_pivots:minimum_not_met:0/1`. Completion of elapsed time does not mark these
+> scientific conditions satisfied; consult the frozen endurance report for terminal authority.
+
 The immutable initial apply receipt continues to report the four blockers present when it was
 created. Subsequent receipt-backed work has now passed the Quest-scoped ten-boundary fault campaign
 and completed the restart-safe controller engineering/accelerated acceptance. The live blockers

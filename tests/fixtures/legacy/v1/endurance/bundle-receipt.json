@@ -1,0 +1,57 @@
+{
+  "authoritative_objects": [
+    {
+      "byte_length": 1777,
+      "file": "manifest.json",
+      "file_sha256": "c8686519a6aac67636cf78cb47b9380997e42ba3a593cc973bd6eb1f19782a27",
+      "identity_algorithm": "EnduranceGateManifest.manifest_sha256",
+      "object_sha256": "720570e0ac6b219638b5c14f3ff1b2bc42f45bb6c28362f16cc20dfda4e7f8de"
+    },
+    {
+      "byte_length": 8444,
+      "file": "report.json",
+      "file_sha256": "f4cc6bb4873744a4fae4eb6d243929ddd86c96891f6ccab8cb9825a6bf3c6c49",
+      "identity_algorithm": "EnduranceGateReport.report_sha256",
+      "object_sha256": "20bc3e61474ccb39e217f2528f80b5f084c5c56c1ff2312000ffeb5e33cab56c"
+    }
+  ],
+  "authoritative_source_projections": [
+    {
+      "authority_limit": "identities_and_durable_references_only_not_original_checkpoint_objects",
+      "byte_length": 66546,
+      "can_recalculate_original_checkpoint_sha256": false,
+      "classification": "authoritative_source_projection",
+      "file": "checkpoint-identities.json",
+      "file_sha256": "c0edd03bd15dd17e89b250662d8e01e69e4b83151144539dea55f7594c26e587",
+      "identity_algorithm": "content_sha256",
+      "object_sha256": "fddea56a11c2e72c305d0894722a5a14c2f780c2347a5770baae51cbb8e28ac0",
+      "source_payloads_included": false
+    }
+  ],
+  "capture": {
+    "exported_on": "2026-08-23",
+    "projection_excludes": [
+      "absolute_paths",
+      "credentials",
+      "hidden_evaluator_data",
+      "raw_command_payloads",
+      "raw_event_payloads",
+      "transcripts"
+    ],
+    "read_only": true,
+    "source_authority": "validating_postgresql_store"
+  },
+  "derived_objects": [
+    {
+      "byte_length": 1443,
+      "file": "derived-interpretation.json",
+      "file_sha256": "6fee2801e87c659d6380314d70ee2ec9bee9bc7483ae96e9eacd3b40eb6b7fb1",
+      "identity_algorithm": "content_sha256",
+      "object_sha256": "2bcd79f3ccf335a5488704ebb0b5afde02573dd19d91432bec45c10cb6a4261e",
+      "supersedes": false
+    }
+  ],
+  "gate_id": "edg_720570e0ac6b219638b5c14f3ff1b2bc",
+  "schema": "aletheia.legacy.endurance_evidence_bundle_receipt",
+  "schema_version": 1
+}

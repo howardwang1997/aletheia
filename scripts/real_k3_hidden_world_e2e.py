@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import importlib
 import json
 import os
 import tempfile
@@ -45,6 +44,7 @@ from aletheia.evals.k3_hidden_world import (
 from aletheia.evals.ledger import EvaluationLedger
 from aletheia.evals.runner import IndependentEvaluationRunner
 from aletheia.evals.schemas import EvaluationSuite, EvaluationTask, FrozenModel, content_sha256
+from aletheia.migration.dynamic_loader import resolve_guarded_dynamic_attribute
 
 
 class FrozenK3ProtocolFile(FrozenModel):
@@ -153,7 +153,7 @@ def _factory(reference: str) -> Callable[..., Mapping[Any, IndependentEvaluation
     module_name, separator, attribute_name = reference.partition(":")
     if not separator or not module_name or not attribute_name:
         raise ValueError("K3 runner factories must use MODULE:CALLABLE")
-    value = getattr(importlib.import_module(module_name), attribute_name)
+    value = resolve_guarded_dynamic_attribute(module_name, attribute_name)
     if not callable(value):
         raise TypeError(f"K3 runner factory {reference!r} is not callable")
     return value

@@ -1,0 +1,31 @@
+{
+  "schema_name": "aletheia.legacy_freeze_request",
+  "schema_version": 1,
+  "source_system": "aletheia-legacy-v1-fixtures",
+  "source_scope": "migration/pr0",
+  "source_version": "legacy-fixtures/v1/2026-08-23",
+  "redaction_manifest_sha256": "71e24e7a127004526e855b2d9fc24398f95d809301db33377dc8f30a98763031",
+  "exporter_identity_scheme": "git_tracked_entrypoint_v1",
+  "exporter_git_commit": "605964af640d4f24ad66eaa833f005790e312858",
+  "exporter_git_tree": "06fd277358e7992940714a3f50ef33463be5b1af",
+  "exporter_entrypoint": "exporter.py",
+  "exporter_entrypoint_sha256": "c00d87ac4ac9b352114b4deab7546edc8366c2ff85f7a0489ae1bf84ad0801f8",
+  "exporter_code_sha256": "fb35c84fba0865893237862b30b2a6833f810379fdb783a6b86d2cb1514572ac",
+  "exporter_execution_assurance": "operator_attested",
+  "objects": [
+    {
+      "logical_name": "endurance-terminal-report",
+      "source_relative_path": "endurance/report.json",
+      "role": "report",
+      "media_type": "application/json",
+      "data_class": "internal_sanitized"
+    },
+    {
+      "logical_name": "legacy-run-projections",
+      "source_relative_path": "run_projections.v1.json",
+      "role": "manifest",
+      "media_type": "application/json",
+      "data_class": "internal_sanitized"
+    }
+  ]
+}

@@ -73,7 +73,6 @@ from aletheia.jobs.persistence import (
 from aletheia.jobs.queue import DurableTaskQueue, InvalidTaskTransition, LeaseMismatch
 from aletheia.jobs.worker import DurableWorker, InfrastructureTaskFailure
 from aletheia.memory.ledger import Decision, Event
-from aletheia.memory.service import create_run
 from aletheia.paths import artifacts_dir
 from aletheia.programs.memory import ResearchMemoryStore
 from aletheia.programs.memory_archive import ScientificMemoryArchive
@@ -822,6 +821,8 @@ class DurableFaultHarness:
         )
 
     def _database_connection(self, spec: FaultScenarioSpec) -> FaultScenarioObservation:
+        from aletheia.memory.service import create_run
+
         started = datetime.now(timezone.utc)
         run_id = create_run(
             f"F11-S6 database reconnect {self._attempt_id}", domain="resilience"
@@ -1027,6 +1028,8 @@ class DurableFaultHarness:
         )
 
     def _duplicate_delivery(self, spec: FaultScenarioSpec) -> FaultScenarioObservation:
+        from aletheia.memory.service import create_run
+
         started = datetime.now(timezone.utc)
         run_id = create_run(
             f"F11-S6 duplicate delivery {self._attempt_id}", domain="resilience"
@@ -1361,6 +1364,8 @@ class DurableFaultHarness:
         )
 
     def _outward_action(self, spec: FaultScenarioSpec) -> FaultScenarioObservation:
+        from aletheia.memory.service import create_run
+
         started = datetime.now(timezone.utc)
         run_id = create_run(
             f"F11-S6 ambiguous outward action {self._attempt_id}", domain="resilience"

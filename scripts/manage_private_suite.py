@@ -9,7 +9,6 @@ custody ledger; neither plaintext nor key bytes are serialized by this command.
 from __future__ import annotations
 
 import argparse
-import importlib
 import json
 import os
 import tempfile
@@ -31,6 +30,7 @@ from aletheia.evals.private_suite import (
     load_materialized_private_suite,
     materialize_private_suite,
 )
+from aletheia.migration.dynamic_loader import resolve_guarded_dynamic_attribute
 
 
 def _read_json(path: Path) -> Any:
@@ -98,7 +98,7 @@ def _operator_factory(reference: str) -> Callable[..., Any]:
     module_name, separator, attribute_name = reference.partition(":")
     if not separator or not module_name or not attribute_name:
         raise ValueError("operator factories must use MODULE:CALLABLE")
-    value = getattr(importlib.import_module(module_name), attribute_name)
+    value = resolve_guarded_dynamic_attribute(module_name, attribute_name)
     if not callable(value):
         raise TypeError(f"operator factory {reference!r} is not callable")
     return value

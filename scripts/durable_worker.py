@@ -5,12 +5,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import importlib
 import signal
 from collections.abc import Callable
 
 from aletheia.db import require_schema_current
 from aletheia.jobs.worker import DurableWorker, TaskHandler
+from aletheia.migration.dynamic_loader import resolve_guarded_dynamic_attribute
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -37,7 +37,7 @@ def _resolve_handler(reference: str) -> tuple[str, TaskHandler]:
         raise ValueError("handler must use TASK_TYPE=MODULE:CALLABLE") from exc
     if not task_type or not module_name or not attribute:
         raise ValueError("handler task type, module, and callable cannot be empty")
-    handler = getattr(importlib.import_module(module_name), attribute)
+    handler = resolve_guarded_dynamic_attribute(module_name, attribute)
     if not isinstance(handler, Callable):
         raise TypeError(f"handler is not callable: {target}")
     return task_type, handler

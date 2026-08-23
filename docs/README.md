@@ -3,7 +3,28 @@
 This directory contains the architecture, project review, roadmap, and implementation RFCs for
 Aletheia.
 
-Recommended reading order:
+Current target-architecture RFC:
+
+- `END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md` — the first-principles architecture for
+  turning Aletheia into an end-to-end autonomous research system: one scientific authority, an
+  event-derived research graph, executable protocol IR, capability composition, reality execution,
+  independent validation, distributed compute, migration slices, and prospective discovery gates.
+
+Current implementation slice:
+
+- `migration/PR0_LEGACY_FREEZE.md` — operator/developer guide for the content-addressed legacy freeze,
+  dependency boundary, write-owner inventory, golden projections, and immutable endurance evidence.
+- `adr/0045-pr0-legacy-freeze-and-scientific-authority-boundary.md` — why legacy behavior remains
+  engineering-only evidence and how PR-0 prevents a second scientific authority.
+
+Supporting technology research (not the system architecture):
+
+- `CODEX_HARNESS_LDM_BENCHMARK_STRATEGY_2026_08_21.md` — how to combine the Codex agent harness,
+  Large Discovery Model search, Aletheia's scientific control plane, and a causal benchmark matrix
+  without weakening the independent evidence boundary. Its named components are optional proposal/
+  execution strategies; they do not define the target module graph or implementation order.
+
+After the target-architecture RFC above, use this order for the current implementation history:
 
 1. `ARCHITECTURE.md` — current system architecture and invariants.
 2. `PROJECT_REVIEW.md` — neutral assessment of strengths, risks, and gaps.
