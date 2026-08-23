@@ -866,7 +866,7 @@ def test_portfolio_api_exposes_only_shadow_receipts_and_readiness_review(
     try:
         with TestClient(app) as client:
             registered = client.post(
-                "/research-graph/portfolios/slates",
+                "/legacy/research-graph/portfolios/slates",
                 json={
                     "idempotency_key": f"api:{seed}:register",
                     "slate": spec.model_dump(mode="json"),
@@ -882,7 +882,7 @@ def test_portfolio_api_exposes_only_shadow_receipts_and_readiness_review(
                 issued_at=datetime.fromisoformat(registered.json()["command"]["committed_at"]),
             )
             committed = client.post(
-                f"/research-graph/portfolios/slates/{spec.slate_id}/human-plan",
+                f"/legacy/research-graph/portfolios/slates/{spec.slate_id}/human-plan",
                 json={
                     "idempotency_key": f"api:{seed}:human",
                     "plan": plan.model_dump(mode="json"),
@@ -890,20 +890,22 @@ def test_portfolio_api_exposes_only_shadow_receipts_and_readiness_review(
             )
             assert committed.status_code == 200, committed.text
             evaluated = client.post(
-                f"/research-graph/portfolios/slates/{spec.slate_id}/evaluate",
+                f"/legacy/research-graph/portfolios/slates/{spec.slate_id}/evaluate",
                 json={"idempotency_key": f"api:{seed}:evaluate"},
             )
             assert evaluated.status_code == 200, evaluated.text
             epoch_id = evaluated.json()["object_id"]
-            epoch = client.get(f"/research-graph/portfolios/epochs/{epoch_id}")
+            epoch = client.get(f"/legacy/research-graph/portfolios/epochs/{epoch_id}")
             assert epoch.status_code == 200
             assert epoch.json()["decision"]["shadow_only"] is True
             assert epoch.json()["decision"]["actions_enqueued"] is False
-            listed = client.get(f"/research-graph/quests/{fixture['quest'].node_id}/portfolios")
+            listed = client.get(
+                f"/legacy/research-graph/quests/{fixture['quest'].node_id}/portfolios"
+            )
             assert listed.status_code == 200
             assert listed.json()[0]["epoch_id"] == epoch_id
             audit = client.get(
-                f"/research-graph/quests/{fixture['quest'].node_id}/portfolio-shadow-audit",
+                f"/legacy/research-graph/quests/{fixture['quest'].node_id}/portfolio-shadow-audit",
                 params={
                     "minimum_epochs": 1,
                     "minimum_mean_jaccard_ppm": 1_000_000,

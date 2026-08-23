@@ -34,7 +34,8 @@ passing accelerated report always has `real_72h_passed=false`.
 
 ## Durable lifecycle
 
-The schema head is `20260818_0022`:
+The endurance ledger was introduced at `20260818_0022`; deploy the current repository head
+`20260824_0023`:
 
 ~~~bash
 conda run -n aletheia alembic upgrade head

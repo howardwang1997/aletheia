@@ -1,7 +1,8 @@
-"""Authenticated controller endpoints for the scientific program graph.
+"""Deprecated authenticated controller endpoints for the legacy program graph.
 
 No lifecycle or graph state is held in FastAPI.  Every mutation delegates to the transactional
-store and every read is a fresh deterministic ledger reconstruction.
+legacy store and every read is a fresh deterministic ledger reconstruction.  This surface remains
+available during migration, but it is not an authoritative research-kernel command boundary.
 """
 
 from __future__ import annotations
@@ -64,7 +65,11 @@ from aletheia.programs import (
     TaskContextRequest,
 )
 
-router = APIRouter(prefix="/research-graph", tags=["research-program-graph"])
+router = APIRouter(
+    prefix="/legacy/research-graph",
+    tags=["deprecated-legacy-research-program-graph"],
+    deprecated=True,
+)
 _STORE = ProgramGraphStore()
 _MEMORY_STORE = ResearchMemoryStore()
 _PORTFOLIO_STORE = ResearchPortfolioStore()

@@ -17,6 +17,7 @@ from typing import Iterable
 
 DEFAULT_TARGET_PACKAGES = (
     "research_kernel",
+    "research_store",
     "protocols",
     "execution",
     "planning",
@@ -79,6 +80,7 @@ DEFAULT_STRICT_FORBIDDEN_MODULE_PREFIXES = (
     "aletheia.programs.memory",
     "aletheia.programs.persistence",
     "aletheia.programs.portfolio",
+    "aletheia.research_store",
     "asyncpg",
     "psycopg",
     "psycopg2",
@@ -87,7 +89,36 @@ DEFAULT_STRICT_FORBIDDEN_MODULE_PREFIXES = (
     "sys",
 )
 
+# The event-store adapter may use SQLAlchemy and ``aletheia.db``, but it must not recover
+# authority by reaching into any mutable legacy scientific store.  This keeps the dependency
+# direction one-way: research_store -> research_kernel, never research_store -> legacy authority.
+DEFAULT_ADAPTER_TARGET_PACKAGES = ("research_store",)
+DEFAULT_ADAPTER_FORBIDDEN_MODULE_PREFIXES = (
+    "aletheia.epistemics.persistence",
+    "aletheia.jobs.outbox",
+    "aletheia.knowledge.persistence",
+    "aletheia.programs.endurance",
+    "aletheia.programs.graph",
+    "aletheia.programs.memory",
+    "aletheia.programs.persistence",
+    "aletheia.programs.portfolio",
+)
+
 DEFAULT_LEGACY_DRIVER_IMPORTERS = ("aletheia.scheduler.durable",)
+DEFAULT_RESEARCH_STORE_PERSISTENCE_IMPORTERS = (
+    "aletheia.research_store.store",
+    "aletheia.schema_migrations",
+    "migrations.env",
+)
+DEFAULT_PRIVATE_RESEARCH_STORE_RECORD_SYMBOLS = (
+    "ResearchKernelCommandReceiptRecord",
+    "ResearchKernelEventRecord",
+    "ResearchKernelObjectRecord",
+    "ResearchKernelOutboxRecord",
+    "ResearchKernelSnapshotRecord",
+    "ResearchQuestAuthorityRecord",
+    "ResearchQuestStreamRecord",
+)
 # Python entry points shipped outside the importable ``aletheia`` package still participate in
 # the production driver boundary. Keep this finite registry explicit: CLIs, container workers, and
 # Alembic migrations are all executable production inputs even though only the first two belong in
@@ -959,6 +990,8 @@ def find_dependency_boundary_violations(
     forbidden_module_prefixes: Iterable[str] = DEFAULT_FORBIDDEN_MODULE_PREFIXES,
     strict_target_packages: Iterable[str] = DEFAULT_STRICT_TARGET_PACKAGES,
     strict_forbidden_module_prefixes: Iterable[str] = DEFAULT_STRICT_FORBIDDEN_MODULE_PREFIXES,
+    adapter_target_packages: Iterable[str] = DEFAULT_ADAPTER_TARGET_PACKAGES,
+    adapter_forbidden_module_prefixes: Iterable[str] = DEFAULT_ADAPTER_FORBIDDEN_MODULE_PREFIXES,
 ) -> tuple[DependencyBoundaryViolation, ...]:
     """Return direct and transitive protected-package violations in canonical order."""
 
@@ -968,6 +1001,8 @@ def find_dependency_boundary_violations(
     common_forbidden = tuple(sorted(set(forbidden_module_prefixes)))
     strict_targets = set(strict_target_packages)
     strict_forbidden = tuple(sorted(set(strict_forbidden_module_prefixes)))
+    adapter_targets = set(adapter_target_packages)
+    adapter_forbidden = tuple(sorted(set(adapter_forbidden_module_prefixes)))
     sources, graph, unsafe_edges = _load_internal_graph(root_path)
     module_names = set(sources) | {edge.source for edge in unsafe_edges}
     violations = [
@@ -1000,7 +1035,11 @@ def find_dependency_boundary_violations(
             for module in module_names
             if module == package_prefix or module.startswith(f"{package_prefix}.")
         )
-        forbidden = common_forbidden + (strict_forbidden if package in strict_targets else ())
+        forbidden = (
+            common_forbidden
+            + (strict_forbidden if package in strict_targets else ())
+            + (adapter_forbidden if package in adapter_targets else ())
+        )
         for root_module in roots:
             initial_modules = (*_import_initializers(root_module, module_names), root_module)
             queue: deque[tuple[str, tuple[str, ...]]] = deque(
@@ -1209,4 +1248,200 @@ def find_legacy_driver_import_violations(
                     dependency_chain=(module, driver),
                 )
             )
+    return tuple(sorted(set(violations)))
+
+
+def find_research_store_persistence_import_violations(
+    repository_root: Path,
+    *,
+    allowed_importers: Iterable[str] = DEFAULT_RESEARCH_STORE_PERSISTENCE_IMPORTERS,
+) -> tuple[DependencyBoundaryViolation, ...]:
+    """Keep authoritative ORM records private to the one command transaction adapter.
+
+    Schema registration is intentionally read-only and explicitly enumerated.  Any other
+    production import would create a second application-level route around
+    ``ResearchKernelStore.commit``.
+    """
+
+    root_path = repository_root.resolve(strict=True)
+    sources, graph, _unsafe_edges = _load_internal_graph(root_path)
+    operational_sources, operational_graph, _operational_unsafe = _load_operational_graph(root_path)
+    allowed = set(allowed_importers)
+    persistence = "aletheia.research_store.persistence"
+    violations: list[DependencyBoundaryViolation] = []
+    actual_importers: set[str] = set()
+
+    for module, edges in (*graph.items(), *operational_graph.items()):
+        for edge in edges:
+            if not _matches_prefix(edge.target, (persistence,)) or module == persistence:
+                continue
+            actual_importers.add(module)
+            if module not in allowed:
+                violations.append(_violation(edge, root=module, chain=(module, edge.target)))
+
+    all_sources = {**sources, **operational_sources}
+    public_store_module = "aletheia.research_store.store"
+    private_symbols = set(DEFAULT_PRIVATE_RESEARCH_STORE_RECORD_SYMBOLS)
+    private_store_bindings = private_symbols | {f"_{symbol}" for symbol in private_symbols}
+
+    def dotted_name(node: ast.AST) -> str | None:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            prefix = dotted_name(node.value)
+            return f"{prefix}.{node.attr}" if prefix is not None else None
+        return None
+
+    def private_symbol_violation(
+        *,
+        source: _ModuleSource,
+        module: str,
+        node: ast.AST,
+        symbol: str,
+        kind: str = "private-authority-symbol",
+    ) -> DependencyBoundaryViolation:
+        return DependencyBoundaryViolation(
+            path=source.relative_path,
+            line=getattr(node, "lineno", 1),
+            imported_module=f"{public_store_module}:{symbol}",
+            import_kind=kind,
+            root_module=module,
+            dependency_chain=(module, public_store_module, symbol),
+        )
+
+    # The adapter itself may import persistence records, but only under private names.  Otherwise
+    # ``store.ResearchKernelEventRecord`` silently becomes a second public ORM writer surface.
+    store_source = all_sources.get(public_store_module)
+    if store_source is not None:
+        store_tree = ast.parse(
+            store_source.path.read_text(encoding="utf-8"),
+            filename=str(store_source.path),
+        )
+        for node in ast.walk(store_tree):
+            if isinstance(node, ast.ImportFrom) and node.module == persistence:
+                for alias in node.names:
+                    if alias.name not in private_symbols:
+                        continue
+                    if alias.asname is None or not alias.asname.startswith("_"):
+                        violations.append(
+                            private_symbol_violation(
+                                source=store_source,
+                                module=public_store_module,
+                                node=node,
+                                symbol=alias.name,
+                                kind="public-authority-symbol",
+                            )
+                        )
+            elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+                targets: tuple[ast.AST, ...]
+                if isinstance(node, ast.Assign):
+                    targets = tuple(node.targets)
+                else:
+                    targets = (node.target,)
+                for target in targets:
+                    if isinstance(target, ast.Name) and target.id in private_symbols:
+                        violations.append(
+                            private_symbol_violation(
+                                source=store_source,
+                                module=public_store_module,
+                                node=node,
+                                symbol=target.id,
+                                kind="public-authority-symbol",
+                            )
+                        )
+
+    for module, source in sorted(all_sources.items()):
+        if module == public_store_module:
+            continue
+        tree = ast.parse(source.path.read_text(encoding="utf-8"), filename=str(source.path))
+
+        store_module_names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == public_store_module:
+                        store_module_names.add(alias.asname or public_store_module)
+            elif isinstance(node, ast.ImportFrom) and node.module == "aletheia.research_store":
+                for alias in node.names:
+                    if alias.name == "store":
+                        store_module_names.add(alias.asname or alias.name)
+
+        # Resolve conventional local aliases such as ``adapter = store``.  This is deliberately
+        # finite and side-effect-free; dynamic namespace tricks remain forbidden by the broader
+        # runtime-loader boundary.
+        changed = True
+        while changed:
+            changed = False
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+                    continue
+                value = node.value
+                if dotted_name(value) not in store_module_names:
+                    continue
+                targets = tuple(node.targets) if isinstance(node, ast.Assign) else (node.target,)
+                for target in targets:
+                    if isinstance(target, ast.Name) and target.id not in store_module_names:
+                        store_module_names.add(target.id)
+                        changed = True
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == public_store_module:
+                for alias in node.names:
+                    if alias.name in private_store_bindings or alias.name == "*":
+                        violations.append(
+                            private_symbol_violation(
+                                source=source,
+                                module=module,
+                                node=node,
+                                symbol=alias.name,
+                            )
+                        )
+                continue
+            if (
+                isinstance(node, ast.Attribute)
+                and dotted_name(node.value) in store_module_names
+                and node.attr in private_store_bindings
+            ):
+                violations.append(
+                    private_symbol_violation(
+                        source=source,
+                        module=module,
+                        node=node,
+                        symbol=node.attr,
+                    )
+                )
+                continue
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "getattr"
+                and node.args
+                and dotted_name(node.args[0]) in store_module_names
+            ):
+                symbol = _static_string(node.args[1]) if len(node.args) >= 2 else None
+                if symbol is None or symbol in private_store_bindings:
+                    violations.append(
+                        private_symbol_violation(
+                            source=source,
+                            module=module,
+                            node=node,
+                            symbol=symbol or "<dynamic-attribute>",
+                        )
+                    )
+    for missing in sorted(allowed - actual_importers):
+        source = all_sources.get(missing)
+        violations.append(
+            DependencyBoundaryViolation(
+                path=(
+                    source.relative_path
+                    if source is not None
+                    else missing.replace(".", "/") + ".py"
+                ),
+                line=1,
+                imported_module="<missing-authoritative-store-importer>",
+                import_kind="policy",
+                root_module=missing,
+                dependency_chain=(missing, persistence),
+            )
+        )
     return tuple(sorted(set(violations)))

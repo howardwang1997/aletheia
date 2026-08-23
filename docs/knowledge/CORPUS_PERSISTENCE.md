@@ -22,7 +22,7 @@ conda run -n aletheia python -c \
   "from aletheia.db import require_schema_current; print(require_schema_current())"
 ```
 
-The current repository head is `20260818_0021`; `20260814_0003` is the revision that introduced
+The current repository head is `20260824_0023`; `20260814_0003` is the revision that introduced
 this corpus ledger. Application startup fails closed when the database is behind or ahead of the
 current repository head.
 

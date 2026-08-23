@@ -1352,15 +1352,57 @@ backtrack 和 terminal 后追加。Hypothesis replay、schema/invalid-transition
 
 ### PR-2：Authoritative event store
 
-- Alembic + append-only tables；
-- command/idempotency/expected-version；
-- snapshot/replay/audit；
-- Quest/Program/Campaign 绑定；
-- 将新 scope 下 `/programs`、`ScientificTransitionStore` 等 mutation API cut over 到 kernel command；旧 scope
-  降为明确的 legacy API，不允许直接改变新 graph。
+- Alembic + 七张 durable tables：跨 store Quest authority namespace、stream head、CAS object metadata、
+  signed-command receipt、event、snapshot 和 transactional outbox；
+- root-certified Ed25519 command、idempotency、expected version/tail、PostgreSQL authorization
+  linearization time；
+- content-addressed object/snapshot custody、deterministic replay 和 full audit；
+- immutable Quest/Program/Campaign scope binding，以及阻止同一 `qst_*` identity 同时属于 legacy 和 kernel
+  authority 的数据库 claim；
+- 新 scope 只接受 `/research-kernel/programs/{program_id}/quests/{quest_id}/commands` 的完整
+  `AuthorizedResearchCommand`；旧 mutation surface 只保留在 deprecated `/legacy/research-graph` scope。
 
 验收：并发 mutation、crash-after-commit、replay conflict、cross-scope isolation；静态/运行时测试均找不到
 绕过 kernel command transaction 的新 scope write path。
+
+实现状态（2026-08-24）：PR-2 implementation cut 已完成。`ResearchKernelStore.commit` 是新 Quest 唯一写入
+入口；模型生成的 `ResearchCommandProposal` 没有持久化权限。每次命令的完整 payload、scope、expected
+parent、idempotency identity、principal、trust root/policy digest 和授权时间由签名绑定；HTTP 登录身份只提供
+transport access，不能替换签名 principal。API 对 path 中的 Quest/Program 做 exact scope check，并只通过
+full audit 返回 audit/replay。原 `/research-graph` URL 已移除，compatibility surface 显式迁至 deprecated
+`/legacy/research-graph`，不 dual-write 新 graph；`ScientificTransitionStore` 和 `ProgramGraphStore` 也标记为
+legacy-only。
+
+迁移 `20260824_0023` 创建 `research_quest_authorities`、`research_quest_streams`、
+`research_kernel_objects`、`research_kernel_command_receipts`、`research_kernel_events`、
+`research_kernel_snapshots` 和 `research_kernel_outbox`。其中 namespace claim 是两套 store 唯一共享的
+identity guard，不是第二套科学状态：migration 在锁住 legacy Quest insert 的窗口内回填旧 root 并安装
+trigger，之后两种创建路径原子 claim `legacy_program_graph` 或 `research_kernel_v1`；immutable claim 和
+deferred binding constraint 防止 orphan、wrong-kind 和同 ID 双权威。其余六表只归 kernel；object/snapshot
+payload 仍只在 CAS，事务失败只能留下可回收 orphan，不能留下缺 bytes 的 accepted event。
+
+固定 policy v1 要求 Charter `expires_at` 有限。commissioning 和 amendment 时，每个 delegated amendment/
+emergency principal 必须从 authorization linearization time 到 Charter expiry 都有连续同角色 key coverage，
+并至少有一个 ordinary principal 连续可用；`revoked_at` 截断 coverage。紧急命令在 emergency key 仍 active
+时可越过 Charter expiry，使用绑定当前 Charter 的 deterministic virtual marker，无需普通 Action/CAS object，
+并原子停止所有 `admitted`、`active`、`paused` branches，使 graph terminal 且拒绝后续 event。
+
+生产 API 没有 authority 默认值：必须同时 pin absolute trust-root path + raw file SHA-256、canonically ordered
+Quest genesis-policy registry path + raw file SHA-256 和现存 CAS root；缺失、hash mismatch、symlink、错误文件
+类型、无 exact Quest policy 或无效 root certificate 都返回 `503`。v1 字段 `committed_at` 的准确含义是：
+Quest head lock 和 lock-wait 后 idempotency recheck 之后读取的 PostgreSQL authorization linearization time，
+而不是 CAS/audit 完成后的 physical COMMIT timestamp。
+
+PR-2 仍不是长周期 autonomous controller。每个 Quest 只有一个 immutable policy epoch，尚无 stream 内 key
+rotation/revocation epoch；key 疑似泄露时只能在 emergency key active 期间 halt 并 commission 新 Quest。
+每次 append 前后都做 locked full audit，因此 N 个 event 的生命周期累计工作为 `O(N²)` 并重复读取历史
+CAS snapshot；incremental proof、catalog reuse、periodic full audit 和 retention policy 必须在长 campaign 前
+补齐。最终 clean acceptance（2026-08-24）为：kernel/store focused `158 passed`，inventory/boundary/schema
+`116 passed`，完整 PR-0 compatibility gate `166 passed`；全量非 Docker 分区为
+`1643 passed, 3 skipped, 29 deselected`，真实 Docker 分区为 `29 passed, 1646 deselected`。fresh PostgreSQL
+验证还覆盖了空库升级、旧 Quest backfill、`0023 → 0022 → 0023` 往返、双向 authority collision、14 项
+store integration、11 项 schema gate 和无 Alembic drift。一次真实约 4.2 秒的数据库时钟回退被 monotonic
+guard 正确拒绝；时钟恢复后 store `14/14` 通过，未为测试放宽授权语义。
 
 ### PR-3：Protocol IR pure contracts
 
@@ -1461,13 +1503,15 @@ PR-5 的本地 vertical cut 通过后，才依据 fresh inventory 选择远程 c
 
 ## 21. 下一步执行决定
 
-**PR-0：Legacy freeze 与 migration boundary** 和 **PR-1：Research kernel pure contracts** 均已完成。
-下一项代码工作是 **PR-2：Authoritative event store**：为已冻结的 event/reducer contract 增加 append-only
-持久化、expected-version、idempotency、command transaction、snapshot replay/audit 和 scope isolation，
-而不是接入新模型或在三台服务器上启动新实验。与此同时可以单独准备 GPU node 的 deployment threat model 和
-onboarding checklist，
-但直到 PR-4 的 execution/receipt contract 和 PR-5 的 durable local vertical cut 都通过前，不部署逐任务
-remote execution。
+**PR-0：Legacy freeze 与 migration boundary**、**PR-1：Research kernel pure contracts** 和
+**PR-2：Authoritative event store** 均已完成。下一项代码工作是 **PR-3：Protocol IR pure contracts**：建立
+objective/design-space/method/observable/`EpistemicContract`/protocol/work-order schema、
+`CapabilityManifestV2`、最小 execution ports、graph-scoped F9 v2 identity，以及只依赖 in-memory capability
+catalog 的 compiler/type-checker 和异构 fixtures。PR-3 只冻结科研意图如何被机械编译、检查和拒绝，尚不
+运行模型、legacy optimize、远程 GPU 或真实实验。
+
+GPU node 的 deployment threat model 和 onboarding checklist 可以继续独立准备，但直到 PR-4 的
+execution/receipt contract 和 PR-5 的 durable local vertical cut 都通过前，不部署逐任务 remote execution。
 
 本文的判断标准很简单：每个新增组件都必须能回答“它改变了哪一个类型化科学状态、依据哪份可验证证据、
 谁有权提交这次改变，以及第三方怎样重放”。如果不能回答，它最多是一个 proposal 工具，不是自主科学家

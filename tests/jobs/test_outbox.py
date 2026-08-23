@@ -88,6 +88,8 @@ def _decision_mutation(spec: ScientificCommandSpec, calls: list[str]):
 
 
 def test_scientific_command_exact_replay_and_duplicate_source_event_apply_once():
+    assert ScientificTransitionStore.AUTHORITY_SCOPE == "legacy_compatibility_only"
+    assert ScientificTransitionStore.NEW_RESEARCH_QUEST_MUTATIONS_ALLOWED is False
     run_id = create_run("F11-S2 duplicate scientific event", domain="materials")
     spec = _command(run_id, "replay")
     calls: list[str] = []

@@ -7,7 +7,16 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from aletheia.api import auth, datasets, events_sse, programs, runs, sessions, tasks
+from aletheia.api import (
+    auth,
+    datasets,
+    events_sse,
+    programs,
+    research_kernel,
+    runs,
+    sessions,
+    tasks,
+)
 from aletheia.api.deps import require_access
 from aletheia.auth.users import bootstrap_owner
 from aletheia.db import require_schema_current
@@ -44,9 +53,12 @@ app.include_router(sessions.router, dependencies=_protected)
 app.include_router(datasets.router, dependencies=_protected)
 app.include_router(events_sse.router, dependencies=_protected)
 app.include_router(tasks.router, dependencies=_protected)
-# Program routes resolve the same dependency themselves so mutation provenance can bind the
-# authenticated user rather than accepting a caller-supplied principal.
+# Deprecated legacy-program routes resolve the same dependency themselves so their legacy
+# mutation provenance can bind the authenticated user rather than caller-supplied provenance.
 app.include_router(programs.router)
+# Kernel routes also resolve auth themselves: HTTP identity permits transport, while the exact
+# signed command principal remains the sole scientific mutation authority.
+app.include_router(research_kernel.router)
 
 
 @app.get("/healthz", tags=["meta"])

@@ -8,8 +8,9 @@ orchestrator coordinates isolated worker contexts through the Claude Agent SDK o
 API, alongside a **cross-vendor critic panel**
 that reviews designs/results from supportive and adversarial angles. A Postgres
 **experiment ledger** is the source-of-truth work log; a **Next.js + FastAPI** dashboard
-streams live activity and lets you steer the lab. See the full design in
-`docs/` and the approved plan.
+streams live activity and lets you steer the lab. The current control-plane target and executable
+PR sequence are in
+[`docs/END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md`](docs/END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md).
 
 ## Ultimate goal
 
@@ -99,6 +100,17 @@ reliable autonomous frontier scientist.
    The final output still needs a stable bundle containing the question, literature, data card,
    split metadata, code, artifacts, metrics, claims, audits, reproduction, limitations, paper, and
    reproducibility package/PR; a qualifying scientific-exit gate and F12 remain.
+
+The new-Quest control-plane migration has completed PR-0 through PR-2. A deployment-pinned,
+root-certified Ed25519 policy now gates full signed commands into an append-only event/CAS store;
+deterministic replay, full audit, crash-safe idempotency, a Quest-wide emergency halt, and an
+immutable cross-store namespace prevent the legacy Program graph and research kernel from owning
+the same Quest. The authoritative API is under `/research-kernel/...`; compatibility mutations are
+explicitly deprecated under `/legacy/research-graph/...` and never dual-write. This is a durable
+scientific authority substrate, not yet an autonomous experiment controller: v1 has one immutable
+policy epoch and full per-append audits make a Quest lifecycle `O(N²)`. PR-3 next freezes the
+domain-independent Protocol IR contracts. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md)
+and the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,

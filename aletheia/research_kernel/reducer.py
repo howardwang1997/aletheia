@@ -22,9 +22,12 @@ from aletheia.research_kernel.schemas import (
     KernelObjectKind,
     KernelObjectRef,
     ResearchEvent,
+    StopDirective,
+    StopReason,
     TransitionDecision,
     canonical_json_bytes,
     canonical_sha256,
+    emergency_halt_action_ref,
 )
 
 REDUCER_VERSION = 1
@@ -719,7 +722,7 @@ def _directive_branch_id(decision: TransitionDecision) -> str:
     return getattr(directive, "branch_id", getattr(directive, "source_branch_id", ""))
 
 
-def _validate_decision(state: ResearchStateGraph, decision: TransitionDecision) -> ActionSnapshot:
+def _validate_decision_context(state: ResearchStateGraph, decision: TransitionDecision) -> None:
     if decision.source_graph_sha256 != state.snapshot_sha256:
         raise InvalidTransitionError("transition decision was made from a different graph snapshot")
     if decision.quest_id != state.quest_id or decision.charter_ref != state.charter_ref:
@@ -734,6 +737,10 @@ def _validate_decision(state: ResearchStateGraph, decision: TransitionDecision) 
         raise InvalidTransitionError(
             f"transition decision references unknown evidence events: {sorted(missing)}"
         )
+
+
+def _validate_decision(state: ResearchStateGraph, decision: TransitionDecision) -> ActionSnapshot:
+    _validate_decision_context(state, decision)
     action = _actions(state).get(decision.selected_action_ref.object_id)
     if action is None or action.action_ref != decision.selected_action_ref:
         raise InvalidTransitionError("transition selected an unknown action version")
@@ -971,8 +978,54 @@ def _reduce_backtrack(state: ResearchStateGraph, event: ResearchEvent) -> Resear
 
 def _reduce_stop(state: ResearchStateGraph, event: ResearchEvent) -> ResearchStateGraph:
     payload = event.payload
-    _validate_decision(state, payload.decision)
     directive = payload.decision.directive
+    if not isinstance(directive, StopDirective):
+        raise InvalidTransitionError("stop event requires a typed stop directive")
+    if directive.stop_reason is StopReason.EMERGENCY_STOP:
+        _validate_decision_context(state, payload.decision)
+        if state.charter_ref is None or payload.decision.selected_action_ref != (
+            emergency_halt_action_ref(
+                quest_id=event.quest_id,
+                charter_ref=state.charter_ref,
+            )
+        ):
+            raise InvalidTransitionError(
+                "emergency stop lacks its deterministic global-halt authority marker"
+            )
+        if payload.decision.rejected_alternatives:
+            raise InvalidTransitionError(
+                "emergency stop cannot carry action-selection alternatives"
+            )
+        branches = _branches(state)
+        if directive.branch_id not in branches:
+            raise InvalidTransitionError(
+                f"unknown emergency-stop initiating branch: {directive.branch_id}"
+            )
+        event_sha256 = _event_hash(event)
+        for branch_id, branch in tuple(branches.items()):
+            if branch.lifecycle in {
+                BranchLifecycle.ADMITTED,
+                BranchLifecycle.ACTIVE,
+                BranchLifecycle.PAUSED,
+            }:
+                branches[branch_id] = branch.model_copy(
+                    update={
+                        "head_event_sha256": event_sha256,
+                        "lifecycle": BranchLifecycle.STOPPED,
+                    }
+                )
+        return _finalize(
+            state,
+            event,
+            branches=branches,
+            decisions=(*state.transition_decisions, payload.decision),
+            evidence_refs=_merge_evidence(
+                state.evidence_refs,
+                (*payload.decision.evidence_refs, *directive.unresolved_refs),
+            ),
+        )
+
+    _validate_decision(state, payload.decision)
     branches = _branches(state)
     branch = _assert_nonterminal(branches, directive.branch_id)
     if not payload.decision.evidence_refs and not payload.decision.evidence_event_sha256s:
@@ -1225,9 +1278,32 @@ def assert_graph_invariants(state: ResearchStateGraph) -> None:
     if len(transition_ids) != len(set(transition_ids)):
         raise InvalidTransitionError("snapshot contains duplicate transition ids")
     applied_action_refs: set[tuple[str, str]] = set()
-    for decision in state.transition_decisions:
+    for decision_index, decision in enumerate(state.transition_decisions):
         if decision.quest_id != state.quest_id or decision.charter_ref not in state.charter_history:
             raise InvalidTransitionError("transition decision crosses quest or charter history")
+        if (
+            isinstance(decision.directive, StopDirective)
+            and decision.directive.stop_reason is StopReason.EMERGENCY_STOP
+        ):
+            expected_marker = emergency_halt_action_ref(
+                quest_id=state.quest_id,
+                charter_ref=decision.charter_ref,
+            )
+            if decision.selected_action_ref != expected_marker:
+                raise InvalidTransitionError(
+                    "emergency stop lacks its deterministic global-halt authority marker"
+                )
+            if decision.rejected_alternatives:
+                raise InvalidTransitionError(
+                    "emergency stop cannot carry action-selection alternatives"
+                )
+            if not state.terminal or decision_index != len(state.transition_decisions) - 1:
+                raise InvalidTransitionError(
+                    "emergency stop must be the terminal transition decision"
+                )
+            if any(ref not in state.event_sha256s for ref in decision.evidence_event_sha256s):
+                raise InvalidTransitionError("transition decision cites an unknown event")
+            continue
         action = actions.get(decision.selected_action_ref.object_id)
         if action is None or action.action_ref != decision.selected_action_ref:
             raise InvalidTransitionError("transition decision selected an unknown action")

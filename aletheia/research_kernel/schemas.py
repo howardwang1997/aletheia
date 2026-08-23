@@ -180,6 +180,32 @@ class KernelObjectRef(KernelModel):
 ResearchObjectRef = KernelObjectRef
 
 
+def emergency_halt_action_ref(*, quest_id: str, charter_ref: KernelObjectRef) -> KernelObjectRef:
+    """Return the deterministic virtual authority marker for a global emergency halt.
+
+    The marker is not an admitted scientific action and therefore has no CAS payload. It occupies
+    the existing v1 ``selected_action_ref`` field so emergency halt semantics can remain wire
+    compatible without depending on an ordinary-role action proposal.
+    """
+
+    if charter_ref.quest_id != quest_id or charter_ref.object_kind is not KernelObjectKind.CHARTER:
+        raise ValueError("emergency halt marker requires the active Quest charter")
+    digest = canonical_sha256(
+        {
+            "schema_name": "aletheia.emergency_halt_authority",
+            "schema_version": 1,
+            "quest_id": quest_id,
+            "charter_sha256": charter_ref.object_sha256,
+        }
+    )
+    return KernelObjectRef(
+        object_kind=KernelObjectKind.ACTION,
+        object_id="action:emergency-halt",
+        object_sha256=digest,
+        quest_id=quest_id,
+    )
+
+
 class EvidenceRef(KernelModel):
     kind: EvidenceKind
     object_sha256: str = Field(pattern=_SHA256_PATTERN)
@@ -209,6 +235,7 @@ class ResearchCharterVersion(KernelModel):
     amendment_principal_ids: tuple[str, ...] = Field(min_length=1, max_length=64)
     emergency_stop_principal_ids: tuple[str, ...] = Field(min_length=1, max_length=64)
     authorized_by_principal_id: str = Field(pattern=_PRINCIPAL_ID_PATTERN)
+    # External charter provenance, not the cryptographic per-command authorization receipt.
     authority_receipt_sha256: str = Field(pattern=_SHA256_PATTERN)
     authorized_at: AwareDatetime
     expires_at: AwareDatetime | None = None

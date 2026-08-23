@@ -179,7 +179,10 @@ ApplyScientificMutation = Callable[[Session], ScientificMutation]
 
 
 class ScientificTransitionStore:
-    """Execute and replay exact scientific mutations under one database transaction."""
+    """Legacy-scope transaction adapter; never owns a research-kernel Quest stream."""
+
+    AUTHORITY_SCOPE = "legacy_compatibility_only"
+    NEW_RESEARCH_QUEST_MUTATIONS_ALLOWED = False
 
     @staticmethod
     def _receipt(row: ScientificCommandRecord, *, created: bool) -> ScientificCommandReceipt:

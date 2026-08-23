@@ -12,6 +12,7 @@ from aletheia.migration.boundary import (
     DEFAULT_OPERATIONAL_PYTHON_ROOTS,
     find_dependency_boundary_violations,
     find_legacy_driver_import_violations,
+    find_research_store_persistence_import_violations,
 )
 from aletheia.migration.dynamic_loader import (
     load_guarded_source_module,
@@ -61,8 +62,169 @@ def test_repository_dependency_boundary_is_non_vacuous_and_clean() -> None:
     assert find_dependency_boundary_violations(REPOSITORY_ROOT) == ()
 
 
+def test_pure_kernel_cannot_import_operational_research_store(tmp_path: Path) -> None:
+    root = _minimal_repository(tmp_path)
+    _source(root, "aletheia/research_store/__init__.py")
+    _source(
+        root,
+        "aletheia/research_kernel/escape.py",
+        "from aletheia.research_store import store\n",
+    )
+
+    violations = find_dependency_boundary_violations(root)
+
+    assert any(
+        violation.root_module == "aletheia.research_kernel.escape"
+        and violation.imported_module == "aletheia.research_store"
+        for violation in violations
+    )
+
+
+def test_research_store_adapter_cannot_import_legacy_authority(tmp_path: Path) -> None:
+    root = _minimal_repository(tmp_path)
+    _source(
+        root,
+        "aletheia/research_store/__init__.py",
+        "from aletheia.jobs import outbox\n",
+    )
+    _source(root, "aletheia/jobs/__init__.py")
+    _source(root, "aletheia/jobs/outbox.py")
+
+    violations = find_dependency_boundary_violations(root)
+
+    assert any(
+        violation.root_module == "aletheia.research_store"
+        and violation.imported_module == "aletheia.jobs.outbox"
+        for violation in violations
+    )
+
+
 def test_repository_freezes_legacy_driver_to_durable_worker() -> None:
     assert find_legacy_driver_import_violations(REPOSITORY_ROOT) == ()
+
+
+def test_repository_has_one_authoritative_research_store_writer() -> None:
+    assert find_research_store_persistence_import_violations(REPOSITORY_ROOT) == ()
+
+
+def test_new_module_cannot_import_authoritative_store_records(tmp_path: Path) -> None:
+    root = _minimal_repository(tmp_path)
+    _source(root, "aletheia/research_store/__init__.py")
+    _source(root, "aletheia/research_store/persistence.py")
+    _source(
+        root,
+        "aletheia/rogue_writer.py",
+        "from aletheia.research_store.persistence import ResearchKernelEventRecord\n",
+    )
+
+    violations = find_research_store_persistence_import_violations(
+        root,
+        allowed_importers=(),
+    )
+
+    assert any(
+        violation.root_module == "aletheia.rogue_writer"
+        and violation.imported_module == "aletheia.research_store.persistence"
+        for violation in violations
+    )
+
+
+def test_public_store_module_cannot_reexport_private_orm_records(tmp_path: Path) -> None:
+    root = _minimal_repository(tmp_path)
+    _source(root, "aletheia/research_store/__init__.py")
+    _source(root, "aletheia/research_store/persistence.py")
+    _source(
+        root,
+        "aletheia/research_store/store.py",
+        "from aletheia.research_store.persistence import ResearchKernelEventRecord\n",
+    )
+    _source(
+        root,
+        "aletheia/rogue_writer.py",
+        "from aletheia.research_store.store import ResearchKernelEventRecord\n",
+    )
+
+    violations = find_research_store_persistence_import_violations(
+        root,
+        allowed_importers=("aletheia.research_store.store",),
+    )
+
+    assert any(
+        violation.root_module == "aletheia.rogue_writer"
+        and violation.import_kind == "private-authority-symbol"
+        for violation in violations
+    )
+    assert any(
+        violation.root_module == "aletheia.research_store.store"
+        and violation.import_kind == "public-authority-symbol"
+        for violation in violations
+    )
+
+
+@pytest.mark.parametrize(
+    ("rogue_source", "symbol"),
+    [
+        (
+            "import aletheia.research_store.store as adapter\n"
+            "record = adapter.ResearchKernelEventRecord\n",
+            "ResearchKernelEventRecord",
+        ),
+        (
+            "import aletheia.research_store.store as adapter\n"
+            "record = adapter.ResearchQuestAuthorityRecord\n",
+            "ResearchQuestAuthorityRecord",
+        ),
+        (
+            "from aletheia.research_store import store as imported_store\n"
+            "adapter = imported_store\n"
+            "record = adapter._ResearchKernelEventRecord\n",
+            "_ResearchKernelEventRecord",
+        ),
+        (
+            "import aletheia.research_store.store as adapter\n"
+            "record = getattr(adapter, 'ResearchKernelEventRecord')\n",
+            "ResearchKernelEventRecord",
+        ),
+        (
+            "from aletheia.research_store.store import _ResearchKernelEventRecord\n",
+            "_ResearchKernelEventRecord",
+        ),
+        (
+            "import aletheia.research_store.store as adapter\n"
+            "name = input()\n"
+            "record = getattr(adapter, name)\n",
+            "<dynamic-attribute>",
+        ),
+    ],
+)
+def test_private_orm_records_cannot_escape_through_store_module_attributes(
+    tmp_path: Path,
+    rogue_source: str,
+    symbol: str,
+) -> None:
+    root = _minimal_repository(tmp_path)
+    _source(root, "aletheia/research_store/__init__.py")
+    _source(root, "aletheia/research_store/persistence.py")
+    _source(
+        root,
+        "aletheia/research_store/store.py",
+        "from aletheia.research_store.persistence import (\n"
+        "    ResearchKernelEventRecord as _ResearchKernelEventRecord,\n"
+        ")\n",
+    )
+    _source(root, "aletheia/rogue_writer.py", rogue_source)
+
+    violations = find_research_store_persistence_import_violations(
+        root,
+        allowed_importers=("aletheia.research_store.store",),
+    )
+
+    assert any(
+        violation.root_module == "aletheia.rogue_writer"
+        and violation.import_kind == "private-authority-symbol"
+        and violation.imported_module == f"aletheia.research_store.store:{symbol}"
+        for violation in violations
+    )
 
 
 def test_dynamic_worker_registration_cannot_load_raw_legacy_driver() -> None:

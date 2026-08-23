@@ -52,16 +52,17 @@ def test_api_is_controller_over_transactional_store_and_rebuild_view() -> None:
     seed = uuid.uuid4().hex
     body = _body(seed)
     with TestClient(app) as client:
-        created = client.post("/research-graph/quests", json=body)
+        assert client.post("/research-graph/quests", json=body).status_code == 404
+        created = client.post("/legacy/research-graph/quests", json=body)
         assert created.status_code == 200
         assert created.json()["command"]["created"] is True
         quest_id = created.json()["object_id"]
 
-        replay = client.post("/research-graph/quests", json=body)
+        replay = client.post("/legacy/research-graph/quests", json=body)
         assert replay.status_code == 200
         assert replay.json()["command"]["created"] is False
 
-        snapshot = client.get(f"/research-graph/quests/{quest_id}")
+        snapshot = client.get(f"/legacy/research-graph/quests/{quest_id}")
         assert snapshot.status_code == 200
         assert snapshot.json()["quest_id"] == quest_id
         assert snapshot.json()["nodes"][0]["spec"]["title"] == "API Quest"
@@ -76,8 +77,8 @@ def test_viewer_can_rebuild_but_cannot_mutate() -> None:
 
     app.dependency_overrides[require_access] = viewer_gate
     with TestClient(app) as client:
-        assert client.get("/research-graph/quests").status_code == 200
-        denied = client.post("/research-graph/quests", json=_body(uuid.uuid4().hex))
+        assert client.get("/legacy/research-graph/quests").status_code == 200
+        denied = client.post("/legacy/research-graph/quests", json=_body(uuid.uuid4().hex))
         assert denied.status_code == 403
 
 
@@ -120,7 +121,7 @@ def test_memory_api_is_a_controller_over_receipts(tmp_path, monkeypatch) -> None
     )
     with TestClient(app) as client:
         registered = client.post(
-            "/research-graph/memory/facts",
+            "/legacy/research-graph/memory/facts",
             json={
                 "idempotency_key": f"api-memory:{seed}:fact",
                 "fact": fact.model_dump(mode="json"),
@@ -137,7 +138,7 @@ def test_memory_api_is_a_controller_over_receipts(tmp_path, monkeypatch) -> None
             covered_fact_ids=(fact.fact_id,),
         )
         compacted = client.post(
-            "/research-graph/memory/compactions",
+            "/legacy/research-graph/memory/compactions",
             json={
                 "idempotency_key": f"api-memory:{seed}:compact",
                 "scope_node_id": quest.node_id,
@@ -149,7 +150,7 @@ def test_memory_api_is_a_controller_over_receipts(tmp_path, monkeypatch) -> None
         compaction_id = compacted.json()["object_id"]
 
         built = client.post(
-            "/research-graph/memory/contexts",
+            "/legacy/research-graph/memory/contexts",
             json={
                 "idempotency_key": f"api-memory:{seed}:context",
                 "request": {
@@ -168,15 +169,17 @@ def test_memory_api_is_a_controller_over_receipts(tmp_path, monkeypatch) -> None
         context_id = body["context_receipt_id"]
 
         rebuilt = client.get(
-            f"/research-graph/memory/{quest.node_id}",
+            f"/legacy/research-graph/memory/{quest.node_id}",
             params={"task_key": "api-task"},
         )
         assert rebuilt.status_code == 200
         assert rebuilt.json()["facts"][0]["created_by"] == "api:graph-owner"
         assert (
-            client.get(f"/research-graph/memory/compactions/{compaction_id}/artifact").status_code
+            client.get(
+                f"/legacy/research-graph/memory/compactions/{compaction_id}/artifact"
+            ).status_code
             == 200
         )
-        loaded = client.get(f"/research-graph/memory/contexts/{context_id}")
+        loaded = client.get(f"/legacy/research-graph/memory/contexts/{context_id}")
         assert loaded.status_code == 200
         assert loaded.json()["context"]["context_sha256"] == body["context"]["context_sha256"]

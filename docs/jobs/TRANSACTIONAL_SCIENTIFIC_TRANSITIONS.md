@@ -23,9 +23,9 @@ conda run -n aletheia alembic upgrade head
 conda run -n aletheia alembic current
 ~~~
 
-The current repository head is `20260818_0021`. Revisions through F11-S6 permit portfolio-scoped
-commands and add the Quest/program graph, receipt-backed memory, shadow portfolio ledger, and
-append-only fault-campaign evidence without changing the F11-S2 command/receipt semantics.
+The current repository head is `20260824_0023`. Later revisions add the Quest/program graph,
+receipt-backed memory, shadow portfolio and fault/endurance evidence, plus a separate
+research-kernel authority store, without changing the F11-S2 legacy command/receipt semantics.
 
 ## Scientific command lifecycle
 

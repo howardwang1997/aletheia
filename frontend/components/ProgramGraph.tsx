@@ -1,22 +1,22 @@
 "use client";
 
-import { listQuestGraphs, QuestGraphSnapshot } from "@/lib/api";
+import { LegacyQuestGraphSnapshot, listLegacyQuestGraphs } from "@/lib/api";
 import { useCallback, useEffect, useState } from "react";
 
-function titleOf(graph: QuestGraphSnapshot): string {
+function titleOf(graph: LegacyQuestGraphSnapshot): string {
   const quest = graph.nodes.find((node) => node.node_type === "quest");
   return typeof quest?.spec.title === "string" ? quest.spec.title : graph.quest_id;
 }
 
 export function ProgramGraph() {
-  const [graphs, setGraphs] = useState<QuestGraphSnapshot[]>([]);
+  const [graphs, setGraphs] = useState<LegacyQuestGraphSnapshot[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      setGraphs(await listQuestGraphs());
+      setGraphs(await listLegacyQuestGraphs());
       setError(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "program graph unavailable");
@@ -30,9 +30,9 @@ export function ProgramGraph() {
   }, [refresh]);
 
   return (
-    <section className="program-graph" aria-label="Scientific program graph">
+    <section className="program-graph" aria-label="Legacy scientific program graph">
       <div className="pg-head">
-        <strong>Scientific program ledger</strong>
+        <strong>Legacy scientific program ledger (deprecated)</strong>
         <span>{loading ? "rebuilding…" : `${graphs.length} quest${graphs.length === 1 ? "" : "s"}`}</span>
         <button type="button" onClick={() => void refresh()} disabled={loading}>
           Rebuild view

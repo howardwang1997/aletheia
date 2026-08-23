@@ -59,6 +59,7 @@ from aletheia.research_kernel.schemas import (
     StopDirective,
     StopReason,
     TransitionDecision,
+    emergency_halt_action_ref,
 )
 
 NOW = datetime(2026, 8, 23, tzinfo=timezone.utc)
@@ -561,6 +562,113 @@ def test_continue_pause_activate_refine_and_terminal_stop_have_no_stage_order() 
     )
     with pytest.raises(InvalidTransitionError, match="terminal"):
         reduce_event(case.state, event, case.objects)
+
+
+def test_emergency_halt_needs_no_action_and_stops_every_live_branch() -> None:
+    case = _started()
+    _, _, question = _admit_problem_and_question(case)
+    fork_action = _propose(case, question, case.root_branch_id, ActionKind.FORK, "emergency-fork")
+    child_branches = tuple(sorted((_id("rbr", "emergency-a"), _id("rbr", "emergency-b"))))
+    case.commit(
+        EventType.FORK_COMMITTED,
+        ForkCommittedPayload(
+            decision=_decision(
+                case,
+                fork_action,
+                ForkDirective(
+                    source_branch_id=case.root_branch_id,
+                    child_branch_ids=child_branches,
+                ),
+                "emergency-fork",
+            )
+        ),
+    )
+    assert {
+        branch.lifecycle
+        for branch in case.state.branches
+        if branch.branch_id in {case.root_branch_id, *child_branches}
+    } == {BranchLifecycle.ACTIVE, BranchLifecycle.ADMITTED}
+
+    assert case.charter is not None
+    halt_marker = emergency_halt_action_ref(
+        quest_id=case.quest_id,
+        charter_ref=case.charter.object_ref,
+    )
+    decision = TransitionDecision(
+        transition_id=_id("transition", "emergency-global-halt"),
+        quest_id=case.quest_id,
+        charter_ref=case.charter.object_ref,
+        source_graph_sha256=case.state.snapshot_sha256,
+        selected_action_ref=halt_marker,
+        directive=StopDirective(
+            branch_id=child_branches[0],
+            stop_reason=StopReason.EMERGENCY_STOP,
+        ),
+        budget_receipt_sha256=_sha("emergency-budget"),
+        risk_receipt_sha256=_sha("emergency-risk"),
+        policy_receipt_sha256=_sha("emergency-policy"),
+        reason_codes=("emergency_authority",),
+        rationale="Globally halt every live branch without ordinary action authority.",
+        decided_by_principal_id="test:emergency",
+        decided_at=NOW + timedelta(hours=1),
+    )
+    case.commit(
+        EventType.STOP_COMMITTED,
+        StopCommittedPayload(decision=decision),
+    )
+
+    assert case.state.terminal
+    assert all(
+        branch.lifecycle
+        not in {BranchLifecycle.ADMITTED, BranchLifecycle.ACTIVE, BranchLifecycle.PAUSED}
+        for branch in case.state.branches
+    )
+    assert {
+        branch.lifecycle
+        for branch in case.state.branches
+        if branch.branch_id in {case.root_branch_id, *child_branches}
+    } == {BranchLifecycle.STOPPED}
+    assert not any(action.action_ref == halt_marker for action in case.state.actions)
+    assert replay(case.events, case.objects) == case.state
+
+    later_event = ResearchEvent(
+        quest_id=case.quest_id,
+        sequence=len(case.events) + 1,
+        parent_event_sha256=case.events[-1].event_sha256,
+        event_type=EventType.STOP_COMMITTED,
+        payload=StopCommittedPayload(decision=decision),
+        command_sha256=_sha("post-emergency-command"),
+        principal_id="test:kernel",
+        authorization_receipt_sha256=_sha("post-emergency-auth"),
+        committed_at=NOW + timedelta(hours=2),
+    )
+    with pytest.raises(InvalidTransitionError, match="terminal"):
+        reduce_event(case.state, later_event, case.objects)
+
+
+def test_stop_event_rejects_a_non_stop_directive() -> None:
+    case = _started()
+    _, _, question = _admit_problem_and_question(case)
+    action = _propose(case, question, case.root_branch_id, ActionKind.CONTINUE, "wrong-stop")
+    with pytest.raises(ValueError, match="directive kind"):
+        ResearchEvent(
+            quest_id=case.quest_id,
+            sequence=len(case.events) + 1,
+            parent_event_sha256=case.events[-1].event_sha256,
+            event_type=EventType.STOP_COMMITTED,
+            payload=StopCommittedPayload(
+                decision=_decision(
+                    case,
+                    action,
+                    ContinueDirective(branch_id=case.root_branch_id),
+                    "wrong-stop",
+                )
+            ),
+            command_sha256=_sha("wrong-stop-command"),
+            principal_id="test:kernel",
+            authorization_receipt_sha256=_sha("wrong-stop-auth"),
+            committed_at=NOW + timedelta(hours=1),
+        )
 
 
 def test_transition_rejects_authorized_action_stale_graph_and_empty_stop_basis() -> None:

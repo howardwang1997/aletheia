@@ -111,8 +111,9 @@ conda run -n aletheia alembic upgrade head
 conda run -n aletheia alembic current
 ~~~
 
-The fault-campaign migration is `20260818_0021`; the repository head is now `20260818_0022` after
-the F11-S7 endurance ledger. `fault_injection_campaigns` stores the complete report plus queryable
+The fault-campaign migration is `20260818_0021`; the current repository head is
+`20260824_0023` after the endurance ledger and research-kernel authority store.
+`fault_injection_campaigns` stores the complete report plus queryable
 hashes, verdict counts, six core totals, Quest scope, and scientific command binding.
 
 Commit a recomputed report using `FaultCampaignStore.commit`. The report row, scientific command

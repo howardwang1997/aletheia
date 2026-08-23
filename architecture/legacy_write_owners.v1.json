@@ -12,20 +12,22 @@
     },
     "legacy_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "legacy_source_ast_excluded_roots": {
+      "aletheia/api/research_kernel.py": "new_authority_adapter",
       "aletheia/execution": "new_authority",
       "aletheia/migration": "migration_tooling",
       "aletheia/observations": "new_authority",
       "aletheia/planning": "new_authority",
       "aletheia/protocols": "new_authority",
-      "aletheia/research_kernel": "new_authority"
+      "aletheia/research_kernel": "new_authority",
+      "aletheia/research_store": "new_authority_adapter"
     },
-    "legacy_source_ast_file_count": 281,
-    "legacy_source_ast_graph_sha256": "a14bf42f36744e191ce6baadb5ef23a38ea0d45bceda1a1ed47d59c43fe954f4",
+    "legacy_source_ast_file_count": 282,
+    "legacy_source_ast_graph_sha256": "d7ae255a71a5166c77b6a525f920646085285deb72953420352906f628cac21b",
     "legacy_source_ast_review_limit": "This normalized-AST backstop freezes every parseable Python file in the declared legacy production roots after explicitly removing new-authority and migration-tooling roots. It catches added, removed or semantically changed legacy Python source even when a specialized sink scanner does not recognize the syntax; comments, formatting, generated runtime code, non-Python launchers and the explicitly excluded roots are outside this digest.",
     "migration_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "migration_source_ast_roots": ["aletheia/migration", "migrations"],
-    "migration_source_ast_file_count": 27,
-    "migration_source_ast_graph_sha256": "dd925abf6a2402b081c73b29e2398b100abedccc0e90811a70d2040e28337358",
+    "migration_source_ast_file_count": 28,
+    "migration_source_ast_graph_sha256": "6547a853094792e758f0e1a5ad5fc0a2d8488135a1ccf05375e8090923cc3152",
     "migration_source_ast_review_limit": "Migration tooling and immutable Alembic revision history have a separate normalized-AST freeze. Historical schema DML/backfills remain deployment authority reviewed through the migration chain rather than runtime scientific write owners.",
     "non_python_invocation_source_scheme": "git_index_regular_mode_path_byte_sha256_v1",
     "non_python_invocation_source_roots": [
@@ -40,7 +42,7 @@
       "docker/**/*.py"
     ],
     "non_python_invocation_source_file_count": 28,
-    "non_python_invocation_source_graph_sha256": "5a4ba9f8d6b977878b03de551a9169de1797b34716020b7dcd0ef05f5311eaf0",
+    "non_python_invocation_source_graph_sha256": "f18124ba95289a258f9ba9d626dea7d7f7c1ddc46dcba0e57099225cf3ced1d6",
     "non_python_invocation_source_review_limit": "Every Git-indexed frontend source/configuration file, recursive shell launcher, non-Python docker launcher and root docker-compose YAML is frozen by exact relative path, regular-file Git mode and byte SHA. Symlinks and non-regular Git modes fail closed. Generated frontend/.next, frontend/node_modules and docker Python already covered by the production AST graph are excluded. The byte freeze catches otherwise-unrecognized syntax but does not infer runtime behavior of generated or third-party code.",
     "frontend_http_mutation_methods": ["DELETE", "PATCH", "POST", "PUT"],
     "non_python_invocation_authority_profiles": {
@@ -72,8 +74,8 @@
     "service_mutator_call_graph_sha256": "13e491fdfcf7637e3ee2652a465eb9e119126e1360f379985cf628bf38138f5f",
     "service_boundary_limit": "This mechanically freezes statically declared aletheia.memory.service imports and imported-name uses across aletheia and operational scripts in module and nested lexical scopes. It does not claim to discover arbitrary dynamic imports or direct ORM, SQL, filesystem or external-system mutations; those are handled by separate reviewed surface baselines.",
     "writer_surface_usage_scheme": "ast_all_scope_import_alias_instance_scope_v2",
-    "writer_surface_usage_count": 304,
-    "writer_surface_call_graph_sha256": "1c6ce3b96492527f046eb609568d78fad0c7e2ead0809c0f88582a377ef8dd0d",
+    "writer_surface_usage_count": 310,
+    "writer_surface_call_graph_sha256": "20096fdce6b4b679ed7bab22a0a18851759d6636d47fa7b9f2b583f739464d8c",
     "allowed_legacy_caller_scope": "Every current aletheia-package caller must be covered by allowed_legacy_callers. Operational scripts are fully frozen in call_sites and may be omitted from the post-cutover application allowlist.",
     "writer_surface_static_resolution_exceptions": {
       "compute_workspace.local": "ExperimentDriver dispatches submit through the ComputeBackend protocol; the declared caller body is checked lexically.",
@@ -86,9 +88,9 @@
       "decision.transition": "Two fault-harness transaction callbacks directly append transition decisions; their exact ORM mutation scopes are frozen by the direct-ORM audit."
     },
     "direct_file_sink_scheme": "ast_reviewed_direct_file_sink_v1",
-    "direct_file_sink_scope_count": 165,
-    "direct_file_sink_call_count": 187,
-    "direct_file_sink_graph_sha256": "060613fa49e632fbb37ed0b80231069516e21a7e228865bf983a3a946004e373",
+    "direct_file_sink_scope_count": 166,
+    "direct_file_sink_call_count": 188,
+    "direct_file_sink_graph_sha256": "304d251e154c3fb32792fecefc8bcbefe907f919e89cb5a27273028d3d59b74a",
     "direct_file_sink_review_limit": "The baseline covers direct Path/open/os.write, archive-open modes, atomic replace, serializer, dataframe and plotting file sinks across the declared aletheia, deployed docker-worker and recursive operational-script roots. Indirect library-internal writes, arbitrary dynamic dispatch and external systems remain separate reviewed boundaries.",
     "direct_file_sink_profiles": {
       "scientific_artifact": {
@@ -162,6 +164,14 @@
         "migration_mode": "retain_immutable_migration_evidence",
         "cutover_pr": "PR-0",
         "dual_write_policy": "none"
+      },
+      "research_kernel_cas": {
+        "authority_class": "scientific_state",
+        "current_owner_rule": "sink_module",
+        "target_owner": "aletheia.research_store.cas",
+        "migration_mode": "retain_content_addressed_authority",
+        "cutover_pr": "PR-2",
+        "dual_write_policy": "none"
       }
     },
     "direct_file_sink_profile_by_prefix": {
@@ -180,6 +190,7 @@
       "aletheia.orchestrator.": "operational_workspace",
       "aletheia.programs.": "scientific_program",
       "aletheia.reproducibility.": "scientific_artifact",
+      "aletheia.research_store.cas": "research_kernel_cas",
       "aletheia.scheduler.driver": "scientific_artifact",
       "docker.simulation.emt_worker": "scientific_artifact",
       "scripts.": "platform_operations",
@@ -246,9 +257,9 @@
       "aletheia.notify.feishu|provider.http_post": ["feishu.notify"]
     },
     "direct_orm_mutation_scheme": "ast_import_bound_orm_mutation_v2",
-    "direct_orm_mutation_scope_count": 171,
-    "direct_orm_mutation_call_count": 270,
-    "direct_orm_mutation_graph_sha256": "db0ba3559911aafc995c085608a02582a90725dd34dad7f32aa98d3e2d57f66f",
+    "direct_orm_mutation_scope_count": 184,
+    "direct_orm_mutation_call_count": 285,
+    "direct_orm_mutation_graph_sha256": "b3d2609e979c03cc8dd60e7a8014788b53405c2be1967723310bb4bfebc8039a",
     "direct_orm_authority_source": "Every resolved table is classified by the postgres storage_target/storage_targets records in this inventory; non-constructor mutation scopes must match a declared legacy_entrypoint or additional_writers symbol.",
     "direct_orm_review_limit": "This static AST baseline resolves explicit imports/re-exports and aliases for every declared SQLAlchemy model; ORM class self/cls bindings; model construction; query/get/select/scalar result flows; attribute, setattr and relationship mutation; explicit aliases of recognized setattr/session/query/table/SQLAlchemy mutation callables; session add/delete/merge/bulk APIs; SQLAlchemy/table/query insert/update/delete; literal mutating SQL; and fail-closed f-string/binary SQL edges. It does not claim to resolve dynamic imports, reflection-generated models, runtime monkeypatching, helper-returned model instances, dynamically selected mutator callables, or dynamic SQL hidden behind an untyped variable; any semantic change in legacy Python remains guarded by the separate normalized-AST source freeze.",
     "protected_orm_reference_scheme": "ast_explicit_import_and_reference_scope_v1",
@@ -2494,6 +2505,154 @@
       "status": "inventoried",
       "post_cutover_legacy_mode": "read_only_projection",
       "blocker": "Execution-fabric qualification admission is not implemented yet.",
+      "exception_expiry": null
+    },
+    {
+      "write_id": "research_store.quest_authority_namespace",
+      "legacy_entrypoint": {
+        "module": "aletheia.programs.graph",
+        "symbol": "ProgramGraphStore.create_quest"
+      },
+      "additional_writers": [
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.commit"
+        }
+      ],
+      "call_sites": [
+        {
+          "module": "aletheia.api.programs",
+          "symbol": "create_quest"
+        },
+        {
+          "module": "aletheia.api.research_kernel",
+          "symbol": "commit_authorized_command"
+        },
+        {
+          "module": "aletheia.domains.materials.phonon_commissioning",
+          "symbol": "apply_phonon_quest_commissioning"
+        }
+      ],
+      "storage_target": "postgres.research_store_persistence.research_quest_authorities",
+      "mutation_kind": "immutable_cross_store_quest_authority_claim",
+      "scientific_semantics": "Selects exactly one legacy-program or research-kernel scientific authority for a qst identity; it stores no scientific payload and exists solely to make parallel authority impossible.",
+      "authority_class": "scientific_state",
+      "current_owner": "postgres.trigger.aletheia_claim_research_quest_authority",
+      "current_commit_boundary": "the same transaction that inserts either the legacy Quest root or kernel Quest stream, with deferred exact-source binding",
+      "target_owner": "aletheia.research_store.authority_namespace",
+      "target_command_or_object": "ImmutableQuestAuthorityClaim",
+      "migration_mode": "shared_identity_guard_then_kernel_default",
+      "allowed_legacy_callers": [
+        {
+          "module": "aletheia.api.programs",
+          "symbol": "create_quest"
+        },
+        {
+          "module": "aletheia.api.research_kernel",
+          "symbol": "commit_authorized_command"
+        },
+        {
+          "module": "aletheia.domains.materials.phonon_commissioning",
+          "symbol": "apply_phonon_quest_commissioning"
+        }
+      ],
+      "dual_write_policy": "none",
+      "cutover_pr": "PR-2",
+      "golden_fixture": "tests/research_kernel/test_store.py",
+      "status": "authoritative_shared_namespace_guard",
+      "post_cutover_legacy_mode": "shared_identity_guard_only",
+      "blocker": null,
+      "exception_expiry": null
+    },
+    {
+      "write_id": "research_store.scientific_authority",
+      "legacy_entrypoint": {
+        "module": "aletheia.research_store.store",
+        "symbol": "ResearchKernelStore.commit"
+      },
+      "additional_writers": [
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "_register_object"
+        }
+      ],
+      "call_sites": [
+        {
+          "module": "aletheia.api.research_kernel",
+          "symbol": "commit_authorized_command"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.commit"
+        }
+      ],
+      "storage_target": "postgres.research_store_persistence.research_quest_streams",
+      "storage_targets": [
+        "postgres.research_store_persistence.research_quest_streams",
+        "postgres.research_store_persistence.research_kernel_objects",
+        "postgres.research_store_persistence.research_kernel_command_receipts",
+        "postgres.research_store_persistence.research_kernel_events",
+        "postgres.research_store_persistence.research_kernel_snapshots"
+      ],
+      "mutation_kind": "authorized_append_only_event_bundle",
+      "scientific_semantics": "Commits the immutable Quest stream head, exact signed-command receipt, linear hash-chained event, admitted CAS object metadata and replay-derived snapshot metadata as one authoritative scientific transaction; payload bytes remain in the constructor-pinned CAS.",
+      "authority_class": "scientific_state",
+      "current_owner": "aletheia.research_store.store.ResearchKernelStore.commit",
+      "current_commit_boundary": "one ResearchKernelStore.commit PostgreSQL transaction after exact CAS verification and snapshot staging",
+      "target_owner": "aletheia.research_store.store.ResearchKernelStore.commit",
+      "target_command_or_object": "AuthorizedResearchCommandEventBundle",
+      "migration_mode": "authoritative_kernel_event_store",
+      "allowed_legacy_callers": [
+        {
+          "module": "aletheia.api.research_kernel",
+          "symbol": "commit_authorized_command"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.commit"
+        }
+      ],
+      "dual_write_policy": "none",
+      "cutover_pr": "PR-2",
+      "golden_fixture": "tests/research_kernel/test_store.py",
+      "status": "authoritative_new_owner",
+      "post_cutover_legacy_mode": "not_applicable_new_authority",
+      "blocker": null,
+      "exception_expiry": null
+    },
+    {
+      "write_id": "research_store.transactional_outbox",
+      "legacy_entrypoint": {
+        "module": "aletheia.research_store.store",
+        "symbol": "ResearchKernelStore.commit"
+      },
+      "call_sites": [
+        {
+          "module": "aletheia.api.research_kernel",
+          "symbol": "commit_authorized_command"
+        }
+      ],
+      "storage_target": "postgres.research_store_persistence.research_kernel_outbox",
+      "mutation_kind": "transactional_at_least_once_delivery_intent",
+      "scientific_semantics": "Stores only the immutable event-delivery intent plus mutable at-least-once delivery bookkeeping; it references an authoritative event but is operational transport state, never scientific truth.",
+      "authority_class": "operational_state",
+      "current_owner": "aletheia.research_store.store.ResearchKernelStore.commit",
+      "current_commit_boundary": "the same ResearchKernelStore.commit PostgreSQL transaction as the authoritative event bundle",
+      "target_owner": "aletheia.research_store.store.ResearchKernelStore.commit",
+      "target_command_or_object": "TransactionalResearchEventOutboxIntent",
+      "migration_mode": "retain_transactional_operational_projection",
+      "allowed_legacy_callers": [
+        {
+          "module": "aletheia.api.research_kernel",
+          "symbol": "commit_authorized_command"
+        }
+      ],
+      "dual_write_policy": "none",
+      "cutover_pr": "PR-2",
+      "golden_fixture": null,
+      "status": "authoritative_new_owner",
+      "post_cutover_legacy_mode": "not_applicable_new_authority",
+      "blocker": null,
       "exception_expiry": null
     }
   ]

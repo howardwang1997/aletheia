@@ -29,9 +29,11 @@ conda run -n aletheia alembic upgrade head
 conda run -n aletheia alembic current
 ~~~
 
-Expected head: `20260818_0021` (`0013` creates the graph, `0014` freezes allocated DataAsset scope,
+Expected repository head: `20260824_0023` (`0013` creates the graph, `0014` freezes allocated DataAsset scope,
 `0015` guards legacy family/budget writes, `0016`–`0018` add receipt-backed memory, and
-`0019`–`0020` add the shadow portfolio ledger and integrity guards).
+`0019`–`0020` add the shadow portfolio ledger and integrity guards). Revisions `0021`–`0022`
+add fault/endurance evidence; `0023` adds the separate research-kernel authority store and the
+shared Quest identity guard without making this legacy graph authoritative for new Quests.
 
 Runtime startup continues to fail closed unless the database is exactly at that head. The migration
 adds ten graph/allocation tables, two nullable legacy bindings, portfolio-scoped scientific
@@ -184,11 +186,12 @@ Existing one-time external-validation receipts still control information release
 
 Read endpoints:
 
-- `GET /research-graph/quests`
-- `GET /research-graph/quests/{quest_id}`
+- `GET /legacy/research-graph/quests`
+- `GET /legacy/research-graph/quests/{quest_id}`
 
 Mutation endpoints cover Quest, Program, Family, Campaign, transition, dependency, external
-binding, and allocation creation under `/research-graph`. Requests carry idempotency/source-event
+binding, and allocation creation under the deprecated `/legacy/research-graph` compatibility
+surface. Requests carry idempotency/source-event
 metadata, but the server derives `principal` from the authenticated identity. Viewers receive 403
 for mutations.
 
@@ -214,7 +217,7 @@ If rebuild fails:
 1. stop automated mutation for the affected Quest;
 2. retain database and keyed-event evidence unchanged;
 3. inspect the named node/command/allocation from the exception;
-4. compare deployed code to Alembic head `20260818_0021`; and
+4. compare deployed code to Alembic head `20260824_0023`; and
 5. restore a verified backup or deploy matching code—do not patch an append-only row in place.
 
 A missing UI card is not evidence that the Quest disappeared. The PostgreSQL ledger and successful

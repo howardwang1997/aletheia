@@ -19,12 +19,14 @@ LEDGER_PATH = REPOSITORY_ROOT / "aletheia" / "memory" / "ledger.py"
 DRIVER_PATH = REPOSITORY_ROOT / "aletheia" / "scheduler" / "driver.py"
 
 LEGACY_SOURCE_AST_EXCLUDED_ROOTS = {
+    "aletheia/api/research_kernel.py": "new_authority_adapter",
     "aletheia/execution": "new_authority",
     "aletheia/migration": "migration_tooling",
     "aletheia/observations": "new_authority",
     "aletheia/planning": "new_authority",
     "aletheia/protocols": "new_authority",
     "aletheia/research_kernel": "new_authority",
+    "aletheia/research_store": "new_authority_adapter",
 }
 MIGRATION_SOURCE_AST_ROOTS = ("aletheia/migration", "migrations")
 FRONTEND_HTTP_MUTATION_METHODS = ("DELETE", "PATCH", "POST", "PUT")
@@ -1516,7 +1518,7 @@ def test_inventory_schema_is_complete_and_has_no_dual_writes() -> None:
     assert inventory["inventory_id"] == "aletheia.legacy_write_owners.v1"
     assert inventory["policy"]["dual_write_policy"] == "none"
     writes = inventory["writes"]
-    assert len(writes) == 68
+    assert len(writes) == 71
     ids = [write["write_id"] for write in writes]
     assert len(ids) == len(set(ids)), "write_id values must be unique"
 
@@ -1787,6 +1789,75 @@ def test_each_scientific_storage_target_has_one_future_owner() -> None:
     assert not conflicts
 
 
+def test_research_store_tables_have_one_authoritative_writer_and_split_semantics() -> None:
+    inventory = _inventory()
+    policy = inventory["policy"]
+    assert policy["legacy_source_ast_excluded_roots"]["aletheia/research_store"] == (
+        "new_authority_adapter"
+    )
+
+    writes = {write["write_id"]: write for write in inventory["writes"]}
+    namespace = writes["research_store.quest_authority_namespace"]
+    scientific = writes["research_store.scientific_authority"]
+    outbox = writes["research_store.transactional_outbox"]
+    commit = {
+        "module": "aletheia.research_store.store",
+        "symbol": "ResearchKernelStore.commit",
+    }
+    assert scientific["legacy_entrypoint"] == commit
+    assert outbox["legacy_entrypoint"] == commit
+    assert scientific["current_owner"] == (
+        "aletheia.research_store.store.ResearchKernelStore.commit"
+    )
+    assert outbox["current_owner"] == scientific["current_owner"]
+    assert scientific["authority_class"] == "scientific_state"
+    assert namespace["authority_class"] == "scientific_state"
+    assert namespace["current_owner"] == (
+        "postgres.trigger.aletheia_claim_research_quest_authority"
+    )
+    assert namespace["target_owner"] == "aletheia.research_store.authority_namespace"
+    assert _storage_targets(namespace) == (
+        "postgres.research_store_persistence.research_quest_authorities",
+    )
+    assert {
+        reference["module"] + "." + reference["symbol"]
+        for reference in [namespace["legacy_entrypoint"], *namespace["additional_writers"]]
+    } == {
+        "aletheia.programs.graph.ProgramGraphStore.create_quest",
+        "aletheia.research_store.store.ResearchKernelStore.commit",
+    }
+    assert set(_storage_targets(scientific)) == {
+        "postgres.research_store_persistence.research_quest_streams",
+        "postgres.research_store_persistence.research_kernel_objects",
+        "postgres.research_store_persistence.research_kernel_command_receipts",
+        "postgres.research_store_persistence.research_kernel_events",
+        "postgres.research_store_persistence.research_kernel_snapshots",
+    }
+    assert outbox["authority_class"] == "operational_state"
+    assert _storage_targets(outbox) == (
+        "postgres.research_store_persistence.research_kernel_outbox",
+    )
+    assert "never scientific truth" in outbox["scientific_semantics"]
+    assert {
+        reference["module"] + "." + reference["symbol"]
+        for reference in scientific.get("additional_writers", [])
+    } == {"aletheia.research_store.store._register_object"}
+
+    cas_profile = policy["direct_file_sink_profiles"]["research_kernel_cas"]
+    assert cas_profile == {
+        "authority_class": "scientific_state",
+        "current_owner_rule": "sink_module",
+        "target_owner": "aletheia.research_store.cas",
+        "migration_mode": "retain_content_addressed_authority",
+        "cutover_pr": "PR-2",
+        "dual_write_policy": "none",
+    }
+    assert (
+        policy["direct_file_sink_profile_by_prefix"]["aletheia.research_store.cas"]
+        == "research_kernel_cas"
+    )
+
+
 def test_claim_evidence_and_belief_cut_over_without_mutable_mirroring() -> None:
     protected_targets = {
         "postgres.memory_ledger.claims",
@@ -1946,6 +2017,12 @@ def test_every_writer_surface_caller_graph_is_frozen_and_declared() -> None:
     for write in inventory["writes"]:
         declared = write["call_sites"]
         allowed = write["allowed_legacy_callers"]
+        actual = usages_by_write[write["write_id"]]
+        if write["status"] == "authoritative_new_owner" and not actual:
+            assert not declared, write["write_id"]
+            assert not allowed, write["write_id"]
+            assert write["write_id"] in exceptions
+            continue
         assert allowed, f"{write['write_id']} needs an explicit legacy caller allowlist"
         for candidate in allowed:
             assert any(
@@ -1957,7 +2034,6 @@ def test_every_writer_surface_caller_graph_is_frozen_and_declared() -> None:
                 )
                 for caller in declared
             ), (write["write_id"], candidate)
-        actual = usages_by_write[write["write_id"]]
         if actual:
             assert declared, f"{write['write_id']} has statically resolved callers"
             uncovered = [

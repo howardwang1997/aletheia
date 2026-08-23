@@ -220,7 +220,10 @@ def _scientifically_completed(session: Session, node: ResearchGraphNodeRecord) -
 
 
 class ProgramGraphStore:
-    """Own the scientific hierarchy; API/UI code only invokes this store and renders snapshots."""
+    """Own the legacy program hierarchy; new Quest authority uses ResearchKernelStore."""
+
+    AUTHORITY_SCOPE = "legacy_program_graph_only"
+    NEW_RESEARCH_QUEST_MUTATIONS_ALLOWED = False
 
     def __init__(self) -> None:
         self._commands = ScientificTransitionStore()
@@ -240,7 +243,9 @@ class ProgramGraphStore:
         try:
             receipt = self._commands.execute(command, apply, now=now)
         except IntegrityError as exc:
-            raise ProgramGraphConflict("research graph identity already has different content") from exc
+            raise ProgramGraphConflict(
+                "research graph identity already has different content"
+            ) from exc
         return self._receipt(object_id, receipt)
 
     @staticmethod
@@ -523,7 +528,9 @@ class ProgramGraphStore:
             )
         ).all()
         if target == GraphNodeState.COMPLETED:
-            incomplete = [child.node_id for child in children if not _scientifically_completed(session, child)]
+            incomplete = [
+                child.node_id for child in children if not _scientifically_completed(session, child)
+            ]
             if incomplete:
                 raise ProgramGraphTransitionError(
                     "cannot complete a node with incomplete scientific children: "
@@ -642,7 +649,10 @@ class ProgramGraphStore:
             dependency = _node_or_error(session, spec.dependency_node_id)
             if node.quest_id != dependency.quest_id:
                 raise ProgramGraphConflict("scientific dependencies cannot cross quests")
-            if node.node_type != dependency.node_type or node.node_type == GraphNodeType.QUEST.value:
+            if (
+                node.node_type != dependency.node_type
+                or node.node_type == GraphNodeType.QUEST.value
+            ):
                 raise ProgramGraphConflict(
                     "scientific dependencies must connect programs to programs or campaigns to campaigns"
                 )
@@ -840,9 +850,7 @@ class ProgramGraphStore:
                 raise ProgramGraphConflict("question scope must be a program")
             question = session.get(EpistemicResearchQuestionRecord, spec.question_sha256)
             if question is None:
-                raise ProgramGraphNotFound(
-                    f"research question not found: {spec.question_sha256}"
-                )
+                raise ProgramGraphNotFound(f"research question not found: {spec.question_sha256}")
             campaign_ids = session.scalars(
                 select(ResearchGraphNodeRecord.node_id).where(
                     ResearchGraphNodeRecord.parent_node_id == program.node_id,
@@ -911,7 +919,9 @@ class ProgramGraphStore:
             scope = _node_or_error(session, spec.scope_node_id)
             _lock_quest(session, scope.quest_id)
             if scope.node_type not in {GraphNodeType.QUEST.value, GraphNodeType.PROGRAM.value}:
-                raise ProgramGraphConflict("data roles can only be allocated at quest/program scope")
+                raise ProgramGraphConflict(
+                    "data roles can only be allocated at quest/program scope"
+                )
             asset = session.get(DataAsset, spec.data_asset_id)
             if asset is None:
                 raise ProgramGraphNotFound(f"data asset not found: {spec.data_asset_id}")
@@ -946,8 +956,7 @@ class ProgramGraphStore:
                 )
             ).all()
             if any(
-                row.scope_node_id != scope.node_id
-                and (row.exclusive or spec.exclusive)
+                row.scope_node_id != scope.node_id and (row.exclusive or spec.exclusive)
                 for row in existing
             ):
                 raise ProgramGraphConflict("exclusive data asset is already allocated elsewhere")
@@ -1028,9 +1037,7 @@ class ProgramGraphStore:
             else:
                 if spec.parent_allocation_id is None:
                     raise ProgramGraphConflict("program budget requires a quest parent allocation")
-                parent = session.get(
-                    ResearchBudgetAllocationRecord, spec.parent_allocation_id
-                )
+                parent = session.get(ResearchBudgetAllocationRecord, spec.parent_allocation_id)
                 if (
                     parent is None
                     or parent.quest_id != scope.quest_id
@@ -1042,8 +1049,7 @@ class ProgramGraphStore:
                     )
                 siblings = session.scalars(
                     select(ResearchBudgetAllocationRecord).where(
-                        ResearchBudgetAllocationRecord.parent_allocation_id
-                        == parent.allocation_id
+                        ResearchBudgetAllocationRecord.parent_allocation_id == parent.allocation_id
                     )
                 ).all()
                 allocated = sum(int(row.cap_microunits) for row in siblings)
@@ -1246,12 +1252,8 @@ class ProgramGraphStore:
                     node_type = GraphNodeType(node.node_type)
                     if index == 1:
                         if target != INITIAL_STATE[node_type]:
-                            raise ProgramGraphInvariantError(
-                                f"wrong initial state: {node.node_id}"
-                            )
-                    elif target not in ALLOWED_TRANSITIONS[node_type].get(
-                        expected_state, set()
-                    ):
+                            raise ProgramGraphInvariantError(f"wrong initial state: {node.node_id}")
+                    elif target not in ALLOWED_TRANSITIONS[node_type].get(expected_state, set()):
                         raise ProgramGraphInvariantError(
                             f"invalid persisted transition: {node.node_id}"
                         )
@@ -1309,7 +1311,9 @@ class ProgramGraphStore:
                     or left.node_type != right.node_type
                     or left.node_type == GraphNodeType.QUEST.value
                 ):
-                    raise ProgramGraphInvariantError(f"invalid dependency endpoints: {edge.edge_id}")
+                    raise ProgramGraphInvariantError(
+                        f"invalid dependency endpoints: {edge.edge_id}"
+                    )
                 self._verify_command(session, edge.command_id, edge.edge_id)
                 dependency_snapshots.append(
                     ResearchDependencySnapshot(
@@ -1362,9 +1366,7 @@ class ProgramGraphStore:
             campaign_family_by_campaign = {
                 row.campaign_node_id: row for row in campaign_family_rows
             }
-            campaigns = [
-                row for row in node_rows if row.node_type == GraphNodeType.CAMPAIGN.value
-            ]
+            campaigns = [row for row in node_rows if row.node_type == GraphNodeType.CAMPAIGN.value]
             if set(campaign_family_by_campaign) != {row.node_id for row in campaigns}:
                 raise ProgramGraphInvariantError("every campaign must have exactly one family")
             for binding in campaign_family_rows:
@@ -1470,7 +1472,9 @@ class ProgramGraphStore:
             external_snapshots.sort(key=lambda item: item.binding_id)
 
             data_snapshots: list[DataRoleAllocationSnapshot] = []
-            allocated_by_asset: dict[str, list[ResearchDataRoleAllocationRecord]] = defaultdict(list)
+            allocated_by_asset: dict[str, list[ResearchDataRoleAllocationRecord]] = defaultdict(
+                list
+            )
             for row in data_rows:
                 scope = node_by_id.get(row.scope_node_id)
                 if scope is None or scope.node_type not in {"quest", "program"}:
@@ -1519,7 +1523,10 @@ class ProgramGraphStore:
                     raise ProgramGraphInvariantError(
                         f"external data has an adaptive role: {row.allocation_id}"
                     )
-                if asset.role != "external_validation" and row.role == DataRole.EXTERNAL_VALIDATION.value:
+                if (
+                    asset.role != "external_validation"
+                    and row.role == DataRole.EXTERNAL_VALIDATION.value
+                ):
                     raise ProgramGraphInvariantError(
                         f"adaptive data is relabeled external: {row.allocation_id}"
                     )

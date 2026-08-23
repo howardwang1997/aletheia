@@ -85,6 +85,16 @@ class Settings(BaseSettings):
     # --- database ---
     database_url: str = "postgresql+psycopg://aletheia:aletheia@localhost:5432/aletheia"
 
+    # --- authoritative research-kernel custody ---
+    # There are deliberately no development defaults for scientific authority.  Production must
+    # pin exact, pre-existing custody paths and the raw SHA-256 of both JSON control files.  The API
+    # refuses kernel traffic with 503 until all five values are configured and verified.
+    research_kernel_trust_root_path: Path | None = None
+    research_kernel_trust_root_file_sha256: str | None = None
+    research_kernel_genesis_policy_registry_path: Path | None = None
+    research_kernel_genesis_policy_registry_file_sha256: str | None = None
+    research_kernel_cas_root: Path | None = None
+
     # --- reproducibility identity ---
     # Formal scientific runs freeze an immutable manifest before the first scientific action.
     # Development/dry runs may use the same mechanism, but only a clean git tree qualifies for a
@@ -207,7 +217,9 @@ class Settings(BaseSettings):
     discoveryworld_docker_image: str = "aletheia-discoveryworld:latest"
     sandbox_docker_cpus: float = 2.0
     sandbox_docker_pids: int = 256
-    sandbox_allow_network: bool = False  # deprecated compatibility field; authored code is always offline
+    sandbox_allow_network: bool = (
+        False  # deprecated compatibility field; authored code is always offline
+    )
 
     # --- budget guardrails (per run) ---
     budget_usd: float = 20.0
@@ -258,8 +270,12 @@ class Settings(BaseSettings):
     # window to the wall and dying mid-stream. Resume on a fresh window replays the prefix for 0 tokens,
     # so work spreads across windows rather than burning one. None = off (0..1, e.g. 0.85).
     window_stop_utilization: float | None = None
-    max_experiments_per_campaign: int = 3  # one Run -> up to N linked experiments (go/no-go decides)
-    min_experiments_per_campaign: int = 1  # validation runs may require a genuinely multi-round trace
+    max_experiments_per_campaign: int = (
+        3  # one Run -> up to N linked experiments (go/no-go decides)
+    )
+    min_experiments_per_campaign: int = (
+        1  # validation runs may require a genuinely multi-round trace
+    )
     # Epistemic Seal v2: roles are allocated ONCE before ideation. Confirmation batches are
     # mutually exclusive across adaptive rounds; the final holdout is opened exactly once.
     campaign_split_seed: int = 20260812
@@ -281,7 +297,9 @@ class Settings(BaseSettings):
     # dimensions that make an experiment worth running at all.
     hypothesis_min_novelty: float = 0.4
     hypothesis_min_eval_clarity: float = 0.4
-    campaign_min_eig: float = 0.3  # stop the campaign when expected information gain drops below this
+    campaign_min_eig: float = (
+        0.3  # stop the campaign when expected information gain drops below this
+    )
 
     # --- reproduction pass (a metric claim earns `strong` only when re-run confirms it) ---
     reproduction_enabled: bool = True
@@ -312,9 +330,15 @@ class Settings(BaseSettings):
     github_app_id: str | None = Field(default=None, alias="GITHUB_APP_ID")
     github_app_installation_id: str | None = Field(default=None, alias="GITHUB_APP_INSTALLATION_ID")
     github_app_private_key: str | None = Field(default=None, alias="GITHUB_APP_PRIVATE_KEY")
-    github_app_private_key_path: str | None = Field(default=None, alias="GITHUB_APP_PRIVATE_KEY_PATH")
-    github_owner: str | None = Field(default=None, alias="GITHUB_OWNER")  # else derived from install
-    github_owner_is_org: bool = Field(default=False, alias="GITHUB_OWNER_IS_ORG")  # org vs personal acct
+    github_app_private_key_path: str | None = Field(
+        default=None, alias="GITHUB_APP_PRIVATE_KEY_PATH"
+    )
+    github_owner: str | None = Field(
+        default=None, alias="GITHUB_OWNER"
+    )  # else derived from install
+    github_owner_is_org: bool = Field(
+        default=False, alias="GITHUB_OWNER_IS_ORG"
+    )  # org vs personal acct
 
     # --- IAM policy (irreversible-op guardrails) ---
     iam_repo_prefix: str = "aletheia"  # repos the agent may touch must start with this
@@ -453,7 +477,9 @@ def _sciminer_grok_key() -> str | None:
     override = _os.environ.get("SCIMINER_ENV")
     # settings.py -> .../aletheia/aletheia/config/settings.py; parents[3] = the dir that
     # holds both the aletheia repo and its sibling sciminer.
-    path = _Path(override) if override else _Path(__file__).resolve().parents[3] / "sciminer" / ".env"
+    path = (
+        _Path(override) if override else _Path(__file__).resolve().parents[3] / "sciminer" / ".env"
+    )
     try:
         m = _re.search(r"^GROK_API_KEY=(.+)$", _Path(path).read_text(), _re.M)
         return m.group(1).strip().strip('"').strip("'") if m else None

@@ -10,12 +10,14 @@ conda run -n aletheia alembic upgrade head
 conda run -n aletheia alembic current
 ~~~
 
-Expected head: `20260818_0021`.
+Expected repository head: `20260824_0023`.
 
 - `0016` adds facts, task bindings, compactions, members, and context receipts;
 - `0017` adds append-only, command-binding, disposition, completeness, and context guards; and
 - `0018` enforces a single root and single successor for each scope/task compaction chain;
 - `0019`–`0020` add the F11-S5 shadow portfolio ledger and its integrity guards.
+- `0021`–`0023` add later fault/endurance evidence and the separate research-kernel authority
+  store; they do not change this legacy memory's authority scope.
 
 API and worker startup fail closed at any other revision.
 
@@ -146,7 +148,7 @@ No call to the old provider is made during `load_task_context`.
 
 ## API
 
-Authenticated endpoints under `/research-graph`:
+Deprecated compatibility endpoints under `/legacy/research-graph` (authenticated):
 
 - `POST /memory/facts`;
 - `POST /memory/compactions`;
@@ -175,7 +177,7 @@ When rebuild, artifact recovery, or context loading fails:
 
 1. stop delivery for the affected scope/task;
 2. preserve PostgreSQL, keyed events, and archive bytes;
-3. confirm deployed code and database are at `20260818_0021`;
+3. confirm deployed code and database are at `20260824_0023`;
 4. inspect the named fact, command, compaction, member, or context receipt;
 5. restore a verified database/archive pair or deploy matching code; and
 6. never repair an append-only row in place.

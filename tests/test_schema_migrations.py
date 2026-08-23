@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,7 +17,20 @@ from aletheia.db import (
 
 
 def test_repository_has_one_expected_alembic_head():
-    assert expected_schema_revision() == "20260818_0022"
+    assert expected_schema_revision() == "20260824_0023"
+
+
+def test_research_authority_backfill_is_closed_against_concurrent_legacy_inserts():
+    source = (
+        Path(__file__).parents[1]
+        / "migrations"
+        / "versions"
+        / "20260824_0023_research_kernel_event_store.py"
+    ).read_text()
+    lock = source.index("LOCK TABLE research_graph_nodes IN SHARE ROW EXCLUSIVE MODE")
+    backfill = source.index("INSERT INTO research_quest_authorities")
+    legacy_trigger = source.index("CREATE TRIGGER trg_legacy_program_quest_authority_claim")
+    assert lock < backfill < legacy_trigger
 
 
 def test_current_schema_is_accepted(monkeypatch):

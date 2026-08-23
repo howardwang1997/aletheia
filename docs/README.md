@@ -16,6 +16,10 @@ Current implementation slice:
   dependency boundary, write-owner inventory, golden projections, and immutable endurance evidence.
 - `adr/0045-pr0-legacy-freeze-and-scientific-authority-boundary.md` — why legacy behavior remains
   engineering-only evidence and how PR-0 prevents a second scientific authority.
+- `adr/0046-root-certified-research-command-event-store.md` — why root-certified signed commands,
+  replay, CAS custody, and a cross-store Quest namespace form the PR-2 authority boundary.
+- `migration/PR2_RESEARCH_EVENT_STORE.md` — deployment pins, migration, API cutover, audit/replay,
+  emergency halt, failure recovery, and current scaling limits for the PR-2 event store.
 
 Supporting technology research (not the system architecture):
 
