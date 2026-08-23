@@ -1325,8 +1325,8 @@ attempt 上限、aggregation、stopping、missing-run 和 promotion rule，禁�
 payload-free 来源清单，以及真实 endurance v1 authoritative manifest/blocked report、73-checkpoint
 identity/reference source projection 和非覆盖式派生解释。`tests/migration` 为 `148 passed`，完整 PR-0 gate
 为 `154 passed`；全量非 Docker 分区为 `1473 passed, 2 skipped, 29 deselected`，真实 Docker 分区为
-`29 passed, 1471 deselected`。PR-0 的工程退出条件已满足，PR-1 可以开始，但这不改变任何历史科学 gate 的
-disposition。操作与威胁边界见
+`29 passed, 1471 deselected`。PR-0 的工程退出条件已满足，并已为下述 PR-1 提供前置边界；这不改变任何
+历史科学 gate 的 disposition。操作与威胁边界见
 `migration/PR0_LEGACY_FREEZE.md` 和 ADR 0045。
 
 ### PR-1：Research kernel pure contracts
@@ -1337,6 +1337,18 @@ disposition。操作与威胁边界见
 - 不接数据库、不调用模型、不改 legacy driver。
 
 验收：property-based replay、canonical hash、invalid transition tests。
+
+实现状态（2026-08-23）：PR-1 pure-contract cut 已完成。`research_kernel/schemas.py` 固定了 immutable、
+显式版本化的 charter、opportunity、problem、graph-scoped question、action、transition 和 event contracts；
+其中补入 `ResearchQuestionVersion`，因为 A1 退出条件要求重建 problem/question branches，且不能复用绑定
+legacy `run_id` 的 F9 question。`research_kernel/reducer.py` 以纯函数从 typed event chain 与 content-addressed
+object catalog 重建无 wall-clock 字段的 `ResearchStateGraph`，支持 continue/activate/refine/fork/backtrack/
+pause/stop，严格拒绝 stale parent、跨 Quest 引用、对象/hash/type 不一致、lineage gap、cycle、非因果
+backtrack 和 terminal 后追加。Hypothesis replay、schema/invalid-transition 与 fresh-process canonical replay
+共 `99 passed`；PR-0 migration suite 仍为 `148 passed`，完整 PR-0 gate 仍为 `154 passed`。本 cut 没有新增
+数据库、command store、controller、模型、scheduler、domain、execution 或远程 GPU 接口；全量非 Docker
+分区为 `1572 passed, 2 skipped, 29 deselected`，真实 Docker 分区在两次独立启动超时均经对应单测立即通过后，
+最终 clean rerun 为 `29 passed, 1574 deselected`。这些权威写入与幂等事务从 PR-2 开始。
 
 ### PR-2：Authoritative event store
 
@@ -1449,9 +1461,10 @@ PR-5 的本地 vertical cut 通过后，才依据 fresh inventory 选择远程 c
 
 ## 21. 下一步执行决定
 
-**PR-0：Legacy freeze 与 migration boundary 已完成**。下一项代码工作是 **PR-1：Research kernel pure
-contracts**，而不是接入新模型或在三台服务器上启动新实验。PR-1 要固定 charter、problem、action、
-event、transition 和 reducer 的唯一权威语义。与此同时可以单独准备 GPU node 的 deployment threat model 和
+**PR-0：Legacy freeze 与 migration boundary** 和 **PR-1：Research kernel pure contracts** 均已完成。
+下一项代码工作是 **PR-2：Authoritative event store**：为已冻结的 event/reducer contract 增加 append-only
+持久化、expected-version、idempotency、command transaction、snapshot replay/audit 和 scope isolation，
+而不是接入新模型或在三台服务器上启动新实验。与此同时可以单独准备 GPU node 的 deployment threat model 和
 onboarding checklist，
 但直到 PR-4 的 execution/receipt contract 和 PR-5 的 durable local vertical cut 都通过前，不部署逐任务
 remote execution。

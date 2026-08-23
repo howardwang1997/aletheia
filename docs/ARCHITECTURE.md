@@ -1,11 +1,12 @@
 # Aletheia — Architecture
 
-> **Status note (2026-08-22):** this file describes the currently implemented/legacy execution
+> **Status note (2026-08-23):** this file describes the currently implemented/legacy execution
 > architecture. The proposed target direction is
 > [`END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md`](END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md).
-> In particular, the fixed global FSM and regression-shaped `DomainPlugin` are compatibility paths
-> to be migrated; new scientific functionality should target the event-driven scientific kernel,
-> Protocol IR, capability ports, and execution fabric defined in that RFC.
+> PR-0 now freezes the legacy authority boundary, and PR-1 supplies the pure, deterministic
+> `research_kernel` contracts/reducer. The fixed global FSM and regression-shaped `DomainPlugin`
+> remain compatibility paths; there is not yet an authoritative kernel event store, controller,
+> Protocol IR, or execution fabric. New scientific functionality must target those RFC boundaries.
 
 ## Ultimate goal
 
