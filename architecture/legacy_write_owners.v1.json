@@ -26,8 +26,8 @@
     "legacy_source_ast_review_limit": "This normalized-AST backstop freezes every parseable Python file in the declared legacy production roots after explicitly removing new-authority and migration-tooling roots. It catches added, removed or semantically changed legacy Python source even when a specialized sink scanner does not recognize the syntax; comments, formatting, generated runtime code, non-Python launchers and the explicitly excluded roots are outside this digest.",
     "migration_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "migration_source_ast_roots": ["aletheia/migration", "migrations"],
-    "migration_source_ast_file_count": 28,
-    "migration_source_ast_graph_sha256": "6547a853094792e758f0e1a5ad5fc0a2d8488135a1ccf05375e8090923cc3152",
+    "migration_source_ast_file_count": 29,
+    "migration_source_ast_graph_sha256": "5f8f3a12afe0d47a4de501d686ea68230f7059712bf17330e10a2ff504e5b35c",
     "migration_source_ast_review_limit": "Migration tooling and immutable Alembic revision history have a separate normalized-AST freeze. Historical schema DML/backfills remain deployment authority reviewed through the migration chain rather than runtime scientific write owners.",
     "non_python_invocation_source_scheme": "git_index_regular_mode_path_byte_sha256_v1",
     "non_python_invocation_source_roots": [
@@ -608,7 +608,7 @@
       "golden_fixture": "tests/fixtures/legacy/v1/golden_contract.v1.json",
       "status": "inventoried",
       "post_cutover_legacy_mode": "read_only",
-      "blocker": "Typed ProtocolIR is scheduled for PR-3.",
+      "blocker": "PR-3 provides pure ProtocolIR compilation, but the mutable legacy plan is not an admitted ProtocolIR and no signed kernel command bridges this writer; the legacy path must be read-only after cutover.",
       "exception_expiry": null
     },
     {
@@ -1091,7 +1091,7 @@
       "golden_fixture": "tests/fixtures/legacy/v1/golden_contract.v1.json",
       "status": "inventoried",
       "post_cutover_legacy_mode": "compatibility_leaf_only",
-      "blocker": "Typed evidence/claim contracts are scheduled for PR-3.",
+      "blocker": "PR-3 provides pure claim contracts, but the mutable legacy review bundle has no typed review/admission bridge and remains compatibility-only.",
       "exception_expiry": null
     },
     {

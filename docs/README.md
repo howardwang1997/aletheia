@@ -20,6 +20,12 @@ Current implementation slice:
   replay, CAS custody, and a cross-store Quest namespace form the PR-2 authority boundary.
 - `migration/PR2_RESEARCH_EVENT_STORE.md` — deployment pins, migration, API cutover, audit/replay,
   emergency halt, failure recovery, and current scaling limits for the PR-2 event store.
+- `architecture/0047-scientific-protocol-compiler.md` — the PR-3 decision to keep protocol
+  compilation pure, graph-scoped, domain-independent, and separate from execution/admission, with
+  mandatory pure intent/retry checks at the future launch boundary.
+- `PR3_PROTOCOL_COMPILER.md` — PR-3 contract map, hard gates, canonical compilation workflow,
+  typed input-receipt and retry bindings, heterogeneous fixtures, frozen v1 bindings, verification
+  commands, and PR-4 boundary.
 
 Supporting technology research (not the system architecture):
 
@@ -311,3 +317,9 @@ After the target-architecture RFC above, use this order for the current implemen
     causal epoch timing, below-floor retention, and rejected hand-authored metrics.
 125. `AUTONOMOUS_RESEARCH_ROADMAP.md` — historical 3-month, 6-month, and long-term improvement plan.
 126. `RFC_GUARDRAILS_AND_EVIDENCE.md` — historical engineering RFC for guardrails and evidence.
+127. `architecture/0047-scientific-protocol-compiler.md` — graph-scoped Protocol IR, atomic
+    capability resolution, static compilation, exact intent/retry bindings,
+    engineering/scientific result separation, and deferred execution authority.
+128. `PR3_PROTOCOL_COMPILER.md` — developer guide for constructing, checking, compiling, and
+    independently verifying PR-3 work orders, input-receipt identities, and retry lineage without
+    live execution or launch authority.

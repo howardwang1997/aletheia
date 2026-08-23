@@ -311,7 +311,8 @@ validation plane 与 proposal/execution 隔离，负责：
 | `ObservableSpec` | 理论如何映射到可测量量？ | unit、uncertainty、instrument、calibration、identity |
 | `ResearchActionProposal` | 为什么执行这个行动？ | epistemic purpose、候选 outcomes、成本/风险、alternatives；不限定为实验 |
 | `ProtocolIR` | 精确要怎么做和怎么判？ | 预注册、步骤 DAG、controls、analysis、stopping、claim ceiling |
-| `WorkOrder` | 哪个 executor 执行哪一步？ | capability、typed ports、resources、policy、expected artifacts |
+| `WorkOrder` | 哪个 executor 执行哪一步？ | capability、command hash、typed ports、resources、expected artifacts、replicate kind/count/seeds/site |
+| `ExecutionIntent` | 一个 WorkOrder node 的哪次执行可进入 placement？ | exact node/command/resource/replicate binding 与逐 input-port 的 typed artifact-receipt binding |
 | `ExecutionAttempt` | 现实中实际发生了什么？ | node/site、环境、raw output、deviation、usage、failure category |
 | `ValidatedObservation` | 哪些 raw bytes 可进入科学状态？ | validator independence、uncertainty、positive/negative/inconclusive |
 | `BeliefStateVersion` | 新观察怎样改变竞争解释？ | frozen likelihood/update receipts 与 sensitivity |
@@ -391,7 +392,8 @@ ResearchActionProposal
   → kernel verifies audit receipts and policy
   → capability resolution
   → WorkOrder DAG
-  → signed CompilationReceipt
+  → content-addressed CompilationReceipt（compiler evidence，本身不签名）
+  → kernel re-verifies bindings/policy and signs an authorization command
   → allocator checks current inventory and atomically reserves budget/resources
 ```
 
@@ -1414,6 +1416,51 @@ guard 正确拒绝；时钟恢复后 store `14/14` 通过，未为测试放宽�
 
 验收：canonical compile 和第 6.3 节 fail-closed matrix。
 
+实现状态（2026-08-24）：PR-3 implementation cut 已完成。`ProtocolScope` 复用 PR-2
+`ResearchScopeBinding`、最具体 graph node、branch、kernel `ResearchQuestionVersion` reference 和 graph
+snapshot hash，没有创建第二套 question/Quest 权威。新增的 objective、design-space、method、observable、
+七类 tagged `EpistemicContract`、per-kind claim ceiling、graph-scoped F9 v2 world model、atomic
+`CapabilityManifestV2`、`ProtocolIR`、typed blocker、canonical `WorkOrderDAG` 与 compilation receipt 都是
+frozen pure values。
+
+compiler 只读取调用者提供的 frozen capability/resource catalog；capability 必须 exact-pin 或唯一匹配，
+schema/unit/classification/license/egress 必须 exact equality 或 direction-bound audit receipt。它机械检查第
+6.3 节可由静态 contract 判定的 hard gates。每个 capability requirement 必须具备 exact-manifest、
+qualification-evidence 与 protocol freeze time 闭合的 applicability、failure-mode、sample-floor、runtime、
+safety、license/egress typed audit binding；calibrated manifest 还必须有 calibration binding。时间顺序为
+`audit.valid_from <= qualification.qualified_at <= manifest.frozen_at <= protocol.authored_at`，且 audit expiry
+（若存在）晚于 protocol `authored_at`。当前 independence check 只证明声明的 principal ID 不相等，不认证
+身份，也不证明不同 group/site/organization/credential/implementation。compiler
+不读取 receipt bytes、不验签/custody/revocation，也不自行伪造 identifiability、power、calibration 或 safety
+的领域裁决。三类异构 fixtures 覆盖 grouped regression、structural intervention/simulation 和 external
+measurement；共享 compiler 不知道 materials、MatBench、phonon、MAE 或 `X/y/groups`。
+
+`aletheia.execution` 目前只冻结 static resource、intent、scientific replicate slot、infrastructure attempt、
+artifact/verification/receipt contract 和 ports。工程成功、raw artifact 或 executor 报告的 positive/negative/
+inconclusive 都不是 admitted observation。`WorkOrderNode` 投影 deterministic node identity/hash、logical
+`command_sha256`、capability/resource envelope、expected artifacts、contract/observable/caller bindings，以及
+replicate kind/count/preregistered seeds/site requirement。PR-4 在 placement/launch 前必须调用纯函数
+`verify_execution_intent_binding`，逐字段核对 WorkOrder node，并要求每个 input port 都有 typed artifact-
+receipt binding；中间产物还必须绑定 exact producer node 和 replicate slot。v1 中间边只允许 producer/
+consumer replicate count 相等并按预注册 ordinal `i -> i` 配对；`1 -> N`、`N -> 1`、聚合或运行时择优
+slot 在没有显式 assignment contract 时一律 fail closed。该函数只核对 identity，不读取 receipt bytes、
+不重算 input hash、不验证 custody，也不产生 authorization 或执行。
+
+direct idempotent infrastructure retry 前还必须调用 `verify_execution_retry_binding`：previous receipt 必须包含 exact prior intent
+和 confirmed-terminated retryable engineering failure；next attempt 必须精确绑定 prior receipt/attempt/failure，
+其余 intent 字段 byte-identical。reconciliation 与 checkpoint-resume 需要 PR-4 专用 custody/state transition，
+不能通过该 generic helper。`READ_ONLY_EXTERNAL` 虽为 replay-safe，仍必须走 external runtime、explicit
+action kind 和匹配的 static external resource，但不声明 mutation provider-receipt artifact；one-time
+external effect 只允许一次 infrastructure attempt，不可 retry。v1 没有 claim-to-step assignment 可排除某个
+branch，因此只有 protocol 中每个
+`SCIENTIFIC_EXECUTOR` step/branch 都预注册至少两个 slot 时才机械证明 exact reexecution；
+`INDEPENDENT_IMPLEMENTATION` / `EXTERNAL_INDEPENDENT` 因缺少显式
+implementation/principal/site assignment contract 一律 fail closed，不能用 slot 或 DAG node 数量冒充独立复现。
+F9 v1 只能作为保留 run scope 的 opaque whole-object read-only binding；F10 v1 只能作为不可拆分 opaque
+bundle binding；二者都不产生 v2 identity、执行权或 admission。PR-3 没有新增 DB、Alembic、API、controller、
+CAS writer、model/network/process/GPU 调用，也不检查 live availability。详见
+`architecture/0047-scientific-protocol-compiler.md` 与 `PR3_PROTOCOL_COMPILER.md`。
+
 ### PR-4：Local node agent + artifact receipts
 
 - execution persistence 与 `LocalNodeAgent`；
@@ -1503,12 +1550,11 @@ PR-5 的本地 vertical cut 通过后，才依据 fresh inventory 选择远程 c
 
 ## 21. 下一步执行决定
 
-**PR-0：Legacy freeze 与 migration boundary**、**PR-1：Research kernel pure contracts** 和
-**PR-2：Authoritative event store** 均已完成。下一项代码工作是 **PR-3：Protocol IR pure contracts**：建立
-objective/design-space/method/observable/`EpistemicContract`/protocol/work-order schema、
-`CapabilityManifestV2`、最小 execution ports、graph-scoped F9 v2 identity，以及只依赖 in-memory capability
-catalog 的 compiler/type-checker 和异构 fixtures。PR-3 只冻结科研意图如何被机械编译、检查和拒绝，尚不
-运行模型、legacy optimize、远程 GPU 或真实实验。
+**PR-0：Legacy freeze 与 migration boundary**、**PR-1：Research kernel pure contracts**、
+**PR-2：Authoritative event store** 和 **PR-3：Protocol IR pure contracts** 均已完成。下一项代码工作是
+**PR-4：Local node agent + artifact receipts**：实现 local inventory、原子 resource/budget reservation、
+node agent、quarantine/CAS、central rehash、artifact verification、durable attempt receipt、fencing/adoption、
+checkpoint 与 reconciliation，并在 fault injection 下证明一个 infrastructure attempt 不会并发重复。
 
 GPU node 的 deployment threat model 和 onboarding checklist 可以继续独立准备，但直到 PR-4 的
 execution/receipt contract 和 PR-5 的 durable local vertical cut 都通过前，不部署逐任务 remote execution。

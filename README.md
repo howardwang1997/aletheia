@@ -101,16 +101,25 @@ reliable autonomous frontier scientist.
    split metadata, code, artifacts, metrics, claims, audits, reproduction, limitations, paper, and
    reproducibility package/PR; a qualifying scientific-exit gate and F12 remain.
 
-The new-Quest control-plane migration has completed PR-0 through PR-2. A deployment-pinned,
+The new-Quest control-plane migration has completed PR-0 through PR-3. A deployment-pinned,
 root-certified Ed25519 policy now gates full signed commands into an append-only event/CAS store;
 deterministic replay, full audit, crash-safe idempotency, a Quest-wide emergency halt, and an
 immutable cross-store namespace prevent the legacy Program graph and research kernel from owning
 the same Quest. The authoritative API is under `/research-kernel/...`; compatibility mutations are
 explicitly deprecated under `/legacy/research-graph/...` and never dual-write. This is a durable
-scientific authority substrate, not yet an autonomous experiment controller: v1 has one immutable
-policy epoch and full per-append audits make a Quest lifecycle `O(N²)`. PR-3 next freezes the
-domain-independent Protocol IR contracts. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md)
-and the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md).
+scientific authority substrate plus a pure, domain-independent scientific Protocol IR/compiler,
+not yet an autonomous experiment controller. PR-3 can reject or canonically compile frozen
+protocols against atomic capability manifests and static resource classes. Work-order nodes now
+freeze logical command, input/output, artifact, and replicate kind/count/seed/site identities;
+PR-4 must run the pure intent-binding verifier before launch and the confirmed-failure retry
+verifier before another infrastructure attempt. Exact reexecution requires at least two
+preregistered slots on every scientific-executor branch; it does not prove independent
+implementation or site. PR-3 still cannot inspect live capacity, validate input receipt bytes or
+custody, reserve hardware or budget, authorize or run work, or admit evidence. PR-4 next implements
+the local node and artifact-receipt boundary; the PR-2 store also still has one immutable policy
+epoch and `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
+the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
+[PR-3 compiler guide](docs/PR3_PROTOCOL_COMPILER.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,

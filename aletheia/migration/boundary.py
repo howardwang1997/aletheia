@@ -89,6 +89,79 @@ DEFAULT_STRICT_FORBIDDEN_MODULE_PREFIXES = (
     "sys",
 )
 
+# PR-3's protocol compiler and the small execution schema/port surface are pure contracts.  Keep
+# the execution list exact: PR-4 will add operational allocators and node agents under the same
+# package, and those adapters will legitimately need process, network, and persistence APIs.  The
+# package initializer is listed because Python executes it before every execution submodule.
+DEFAULT_PURE_CONTRACT_TARGET_PACKAGES = ("protocols",)
+DEFAULT_PURE_CONTRACT_TARGET_MODULES = (
+    "aletheia.execution",
+    "aletheia.execution.ports",
+    "aletheia.execution.schemas",
+)
+DEFAULT_PURE_CONTRACT_FORBIDDEN_MODULE_PREFIXES = (
+    # Existing mutable/runtime scientific control planes.
+    "aletheia.api",
+    "aletheia.capabilities",
+    "aletheia.config",
+    "aletheia.db",
+    "aletheia.domains",
+    "aletheia.epistemics",
+    "aletheia.evals",
+    "aletheia.jobs",
+    "aletheia.migration",
+    "aletheia.research_store",
+    "aletheia.scheduler",
+    # Database clients and ORMs.
+    "alembic",
+    "asyncpg",
+    "databases",
+    "django.db",
+    "pymongo",
+    "psycopg",
+    "psycopg2",
+    "redis",
+    "sqlite3",
+    "sqlalchemy",
+    # Filesystem and host-resource APIs. ``open`` itself is represented by the sentinel below.
+    "aiofiles",
+    "fileinput",
+    "glob",
+    "io.open",
+    "os",
+    "pathlib",
+    "shutil",
+    "tempfile",
+    # Network clients and transports.
+    "aiohttp",
+    "boto3",
+    "ftplib",
+    "grpc",
+    "http",
+    "httpx",
+    "paramiko",
+    "requests",
+    "smtplib",
+    "socket",
+    "socketserver",
+    "urllib",
+    "websockets",
+    # Process, thread, and host-control APIs.
+    "asyncio",
+    "concurrent.futures",
+    "ctypes",
+    "multiprocessing",
+    "pty",
+    "signal",
+    "subprocess",
+    "threading",
+)
+
+# The temporary v1 compatibility binders are intentionally leaf modules.  They fingerprint opaque
+# legacy bytes but must never import either authority graph, and their parent package must not make
+# them an ambient migration API by importing/re-exporting them from ``__init__``.
+DEFAULT_READ_ONLY_COMPATIBILITY_LEAF_MODULES = ("aletheia.migration.protocol_v1_compatibility",)
+
 # The event-store adapter may use SQLAlchemy and ``aletheia.db``, but it must not recover
 # authority by reaching into any mutable legacy scientific store.  This keeps the dependency
 # direction one-way: research_store -> research_kernel, never research_store -> legacy authority.
@@ -127,6 +200,7 @@ DEFAULT_OPERATIONAL_PYTHON_ROOTS = ("scripts", "docker", "migrations")
 _DYNAMIC_ESCAPE = "<non-literal-dynamic-import>"
 _FILE_LOADER_ESCAPE = "<runtime-file-loader>"
 _RUNTIME_CODE_ESCAPE = "<runtime-code-execution>"
+_FILESYSTEM_API_ESCAPE = "<filesystem-api>"
 
 # Non-literal runtime loading is centralized in one small, content-pinned guard.  Changing either
 # its implementation or the identity of the permitted module therefore requires an explicit policy
@@ -540,6 +614,24 @@ def _runtime_code_call(
     )
 
 
+def _filesystem_api_call(
+    node: ast.Call,
+    *,
+    filesystem_modules: set[str],
+    filesystem_names: set[str],
+) -> bool:
+    """Recognize direct/aliased access to the ambient built-in filesystem opener."""
+
+    function = _unwrap_conventional_callable_reference(node.func)
+    return (
+        isinstance(function, ast.Name) and function.id in filesystem_names
+    ) or _module_attribute(
+        function,
+        modules=filesystem_modules,
+        attributes={"open"},
+    )
+
+
 def _parse_edges(source: _ModuleSource) -> tuple[_ImportEdge, ...]:
     tree = ast.parse(source.path.read_text(encoding="utf-8"), filename=str(source.path))
     builtin_import_names = {"__import__"}
@@ -561,6 +653,8 @@ def _parse_edges(source: _ModuleSource) -> tuple[_ImportEdge, ...]:
     sys_module_names: set[str] = set()
     module_cache_names: set[str] = set()
     runtime_names = {"compile", "eval", "exec"}
+    filesystem_names = {"open"}
+    io_modules: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             importlib_modules.update(
@@ -592,6 +686,9 @@ def _parse_edges(source: _ModuleSource) -> tuple[_ImportEdge, ...]:
             sys_module_names.update(
                 alias.asname or alias.name for alias in node.names if alias.name == "sys"
             )
+            io_modules.update(
+                alias.asname or alias.name for alias in node.names if alias.name == "io"
+            )
         elif isinstance(node, ast.ImportFrom) and node.module == "importlib":
             importlib_names.update(
                 alias.asname or alias.name for alias in node.names if alias.name == "import_module"
@@ -621,6 +718,13 @@ def _parse_edges(source: _ModuleSource) -> tuple[_ImportEdge, ...]:
                 alias.asname or alias.name
                 for alias in node.names
                 if alias.name in {"compile", "eval", "exec"}
+            )
+            filesystem_names.update(
+                alias.asname or alias.name for alias in node.names if alias.name == "open"
+            )
+        elif isinstance(node, ast.ImportFrom) and node.module == "io":
+            filesystem_names.update(
+                alias.asname or alias.name for alias in node.names if alias.name == "open"
             )
         elif isinstance(node, ast.ImportFrom) and node.module == "pkgutil":
             pkgutil_names.update(
@@ -723,6 +827,13 @@ def _parse_edges(source: _ModuleSource) -> tuple[_ImportEdge, ...]:
                 modules=builtins_modules,
                 attributes={"compile", "eval", "exec"},
             )
+            is_filesystem_api = (
+                isinstance(value, ast.Name) and value.id in filesystem_names
+            ) or _module_attribute(
+                value,
+                modules=builtins_modules | io_modules,
+                attributes={"open"},
+            )
             is_importlib_alias = isinstance(value, ast.Name) and value.id in importlib_modules
             is_importlib_util_package_alias = (
                 isinstance(value, ast.Name) and value.id in importlib_util_package_roots
@@ -736,6 +847,7 @@ def _parse_edges(source: _ModuleSource) -> tuple[_ImportEdge, ...]:
                 sys_module_names=sys_module_names,
                 module_cache_names=module_cache_names,
             )
+            is_io_alias = isinstance(value, ast.Name) and value.id in io_modules
             if is_builtin_loader and not aliases <= builtin_import_names:
                 builtin_import_names.update(aliases)
                 changed = True
@@ -766,6 +878,9 @@ def _parse_edges(source: _ModuleSource) -> tuple[_ImportEdge, ...]:
             if is_runtime_loader and not aliases <= runtime_names:
                 runtime_names.update(aliases)
                 changed = True
+            if is_filesystem_api and not aliases <= filesystem_names:
+                filesystem_names.update(aliases)
+                changed = True
             if is_importlib_alias and not aliases <= importlib_modules:
                 importlib_modules.update(aliases)
                 changed = True
@@ -786,6 +901,9 @@ def _parse_edges(source: _ModuleSource) -> tuple[_ImportEdge, ...]:
                 changed = True
             if is_module_cache_alias and not aliases <= module_cache_names:
                 module_cache_names.update(aliases)
+                changed = True
+            if is_io_alias and not aliases <= io_modules:
+                io_modules.update(aliases)
                 changed = True
     edges: list[_ImportEdge] = []
     for node in ast.walk(tree):
@@ -845,6 +963,13 @@ def _parse_edges(source: _ModuleSource) -> tuple[_ImportEdge, ...]:
             ):
                 targets = (_RUNTIME_CODE_ESCAPE,)
                 kind = "runtime-code"
+            elif not (is_module_cache_lookup or is_file_loader) and _filesystem_api_call(
+                node,
+                filesystem_modules=builtins_modules | io_modules,
+                filesystem_names=filesystem_names,
+            ):
+                targets = (_FILESYSTEM_API_ESCAPE,)
+                kind = "filesystem-api"
             elif not (is_module_cache_lookup or is_file_loader) and _opaque_module_attribute(
                 node,
                 modules=builtins_modules | importlib_modules | pkgutil_modules | runpy_modules,
@@ -982,6 +1107,69 @@ def _violation(
     )
 
 
+def _find_read_only_compatibility_leaf_violations(
+    *,
+    sources: dict[str, _ModuleSource],
+    graph: dict[str, tuple[_ImportEdge, ...]],
+    leaf_modules: Iterable[str],
+) -> tuple[DependencyBoundaryViolation, ...]:
+    """Keep temporary legacy binders source-leaf-only and out of package initializers."""
+
+    module_names = set(sources)
+    forbidden_leaf_dependencies = tuple(
+        sorted(
+            {
+                "aletheia",
+                *DEFAULT_FORBIDDEN_RUNTIME_LOADER_PREFIXES,
+                *DEFAULT_PURE_CONTRACT_FORBIDDEN_MODULE_PREFIXES,
+            }
+        )
+    )
+    escape_targets = {
+        _DYNAMIC_ESCAPE,
+        _FILE_LOADER_ESCAPE,
+        _RUNTIME_CODE_ESCAPE,
+        _FILESYSTEM_API_ESCAPE,
+    }
+    violations: list[DependencyBoundaryViolation] = []
+    for leaf in sorted(set(leaf_modules)):
+        # PR-0/PR-1 fixture repositories legitimately predate this adapter.  PR-3's separate
+        # non-vacuity canary requires the real leaf; if present, its policy is mandatory here.
+        if leaf not in sources:
+            continue
+        for edge in graph.get(leaf, ()):
+            if edge.target in escape_targets or _matches_prefix(
+                edge.target, forbidden_leaf_dependencies
+            ):
+                violations.append(_violation(edge, root=leaf, chain=(leaf, edge.target)))
+
+        parent_package = leaf.rpartition(".")[0]
+        queue: deque[tuple[str, tuple[str, ...]]] = deque([(parent_package, (parent_package,))])
+        visited: set[str] = set()
+        while queue:
+            module, chain = queue.popleft()
+            if module in visited:
+                continue
+            visited.add(module)
+            for edge in graph.get(module, ()):
+                next_chain = (*chain, edge.target)
+                if edge.target in {
+                    _DYNAMIC_ESCAPE,
+                    _FILE_LOADER_ESCAPE,
+                    _RUNTIME_CODE_ESCAPE,
+                }:
+                    violations.append(_violation(edge, root=parent_package, chain=next_chain))
+                    continue
+                internal_targets = _internal_targets(edge, module_names)
+                if leaf in internal_targets:
+                    violations.append(_violation(edge, root=parent_package, chain=next_chain))
+                    continue
+                for target in internal_targets:
+                    if target not in visited:
+                        queue.append((target, (*chain, target)))
+    return tuple(sorted(set(violations)))
+
+
 def find_dependency_boundary_violations(
     repository_root: Path,
     *,
@@ -990,6 +1178,14 @@ def find_dependency_boundary_violations(
     forbidden_module_prefixes: Iterable[str] = DEFAULT_FORBIDDEN_MODULE_PREFIXES,
     strict_target_packages: Iterable[str] = DEFAULT_STRICT_TARGET_PACKAGES,
     strict_forbidden_module_prefixes: Iterable[str] = DEFAULT_STRICT_FORBIDDEN_MODULE_PREFIXES,
+    pure_contract_target_packages: Iterable[str] = DEFAULT_PURE_CONTRACT_TARGET_PACKAGES,
+    pure_contract_target_modules: Iterable[str] = DEFAULT_PURE_CONTRACT_TARGET_MODULES,
+    pure_contract_forbidden_module_prefixes: Iterable[
+        str
+    ] = DEFAULT_PURE_CONTRACT_FORBIDDEN_MODULE_PREFIXES,
+    read_only_compatibility_leaf_modules: Iterable[
+        str
+    ] = DEFAULT_READ_ONLY_COMPATIBILITY_LEAF_MODULES,
     adapter_target_packages: Iterable[str] = DEFAULT_ADAPTER_TARGET_PACKAGES,
     adapter_forbidden_module_prefixes: Iterable[str] = DEFAULT_ADAPTER_FORBIDDEN_MODULE_PREFIXES,
 ) -> tuple[DependencyBoundaryViolation, ...]:
@@ -1001,6 +1197,9 @@ def find_dependency_boundary_violations(
     common_forbidden = tuple(sorted(set(forbidden_module_prefixes)))
     strict_targets = set(strict_target_packages)
     strict_forbidden = tuple(sorted(set(strict_forbidden_module_prefixes)))
+    pure_contract_packages = set(pure_contract_target_packages)
+    pure_contract_modules = set(pure_contract_target_modules)
+    pure_contract_forbidden = tuple(sorted(set(pure_contract_forbidden_module_prefixes)))
     adapter_targets = set(adapter_target_packages)
     adapter_forbidden = tuple(sorted(set(adapter_forbidden_module_prefixes)))
     sources, graph, unsafe_edges = _load_internal_graph(root_path)
@@ -1009,6 +1208,13 @@ def find_dependency_boundary_violations(
         _violation(edge, root=edge.source, chain=(edge.source, edge.target))
         for edge in unsafe_edges
     ]
+    violations.extend(
+        _find_read_only_compatibility_leaf_violations(
+            sources=sources,
+            graph=graph,
+            leaf_modules=read_only_compatibility_leaf_modules,
+        )
+    )
 
     for package in required:
         root_module = f"aletheia.{package}"
@@ -1041,6 +1247,18 @@ def find_dependency_boundary_violations(
             + (adapter_forbidden if package in adapter_targets else ())
         )
         for root_module in roots:
+            is_pure_contract = (
+                package in pure_contract_packages or root_module in pure_contract_modules
+            )
+            root_forbidden = forbidden + (pure_contract_forbidden if is_pure_contract else ())
+            escape_targets = {
+                _DYNAMIC_ESCAPE,
+                _FILE_LOADER_ESCAPE,
+                _RUNTIME_CODE_ESCAPE,
+                "<symlinked-source>",
+            }
+            if is_pure_contract:
+                escape_targets.add(_FILESYSTEM_API_ESCAPE)
             initial_modules = (*_import_initializers(root_module, module_names), root_module)
             queue: deque[tuple[str, tuple[str, ...]]] = deque(
                 (module, (root_module,) if module == root_module else (root_module, module))
@@ -1054,15 +1272,10 @@ def find_dependency_boundary_violations(
                 visited.add(module)
                 for edge in (*graph.get(module, ()), *unsafe_by_source.get(module, ())):
                     next_chain = (*chain, edge.target)
-                    if edge.target in {
-                        _DYNAMIC_ESCAPE,
-                        _FILE_LOADER_ESCAPE,
-                        _RUNTIME_CODE_ESCAPE,
-                        "<symlinked-source>",
-                    }:
+                    if edge.target in escape_targets:
                         violations.append(_violation(edge, root=root_module, chain=next_chain))
                         continue
-                    if _matches_prefix(edge.target, forbidden) and not _matches_prefix(
+                    if _matches_prefix(edge.target, root_forbidden) and not _matches_prefix(
                         edge.target,
                         DEFAULT_ALLOWED_RUNTIME_LOADER_PREFIXES,
                     ):
