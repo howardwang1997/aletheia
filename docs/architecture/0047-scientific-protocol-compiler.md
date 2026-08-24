@@ -172,12 +172,14 @@ reads a live legacy row or registers a legacy executor.
 
 ## Deferred work
 
-PR-4a now supplies a qualification-only slice of that boundary: signed single-node inventory,
-atomic PostgreSQL budget/resource reservation, quarantine and central artifact rehash, durable
-attempt/receipt persistence, fencing, retained reconciliation, signed same-node adoption, and an
-injected node fault facade. It is not a deployable execution service. PR-4b must compose the
-deployment-pinned quote/source-budget adapters, concrete runtime, allocator, artifact workflow, and
-terminal committer and prove real isolation/recovery. Checkpoint resume and external-action
-reconciliation require later dedicated contracts. PR-3 must not itself be used to launch the local
-machine, the two V100 servers, the 2060 server, a paid external service, or a physical instrument;
-remote and multi-site scheduling follows only after the composed local receipt path is proven.
+PR-4a supplies a qualification-only slice of that boundary: signed single-node inventory, atomic
+PostgreSQL budget/resource reservation, quarantine and central artifact rehash, durable
+attempt/receipt persistence, fencing, retained reconciliation, signed same-node adoption, and the
+original injected node facade. PR-4b now composes deployment-pinned quote/source-budget registries,
+sealed assignment delivery, the PostgreSQL adapter/worker, input staging, a concrete CPU-only OCI
+runtime, loop-backed output quota, an in-container launch gate, deadline watchdog, and runtime-v2
+terminal settlement. Exact target-host Linux/root/systemd/loop/Docker qualification remains a
+deployment gate, so this is not yet a general production service. Checkpoint resume and
+external-action reconciliation require later dedicated contracts. PR-3 must not itself be used to
+launch the local machine, either V100 server, the 2060 server, a paid external service, or a physical
+instrument; remote and multi-site scheduling follow only after the composed local deployment gate.

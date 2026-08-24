@@ -1,7 +1,15 @@
-# PR-4a local execution foundation
+# PR-4a local execution foundation (frozen baseline)
 
 PR-4a turns the PR-3 execution value boundary into a durable, fenced local engineering substrate.
 It is intentionally a qualification harness, not a production scientific-launch API.
+
+This guide records the accepted `20260825_0024` PR-4a boundary. PR-4b now extends that baseline with
+sealed assignment delivery (`0025`) and a concrete CPU-only runtime-v2 composition (`0026`), without
+adding scientific admission. For the current 27-table schema, lifecycle, TCB, and deployment status,
+see the [PR-4b composition guide](PR4B_LOCAL_EXECUTION_COMPOSITION.md) and
+[architecture decision 0049](architecture/0049-qualification-only-local-execution-composition.md).
+Statements below that a
+concrete adapter was absent describe the frozen PR-4a cut, not the current source tree.
 
 ## Safety boundary
 
@@ -40,10 +48,10 @@ Missing, mismatched, expired, or revoked material is a hard failure. There is no
 default key, self-enrolled node, caller-selected archive, or allocator caller-supplied clock. The
 pure grant issuer receives explicit signed validity times; allocator authorization uses PostgreSQL.
 
-The repository does not yet contain a production adapter for the quote/rate-card and source-budget
-authority registries, nor a production composition that connects the allocator, node agent,
-runtime, artifact verifier, and terminal committer. Tests use explicit closed fakes. Consequently
-PR-4a is a qualification foundation and fault-test harness, not a deployable execution service.
+At PR-4a completion, the repository did not contain a concrete quote/rate-card or source-budget
+registry adapter or the allocator/node/runtime/artifact/terminal composition. Tests used explicit
+closed fakes. PR-4b now implements those local CPU-only components, but target-host deployment
+qualification and the PR-5 scientific bridge remain separate gates.
 
 ## Lifecycle
 
@@ -92,12 +100,11 @@ lease, fence, token hash, monotonic/wall-clock order, exit, termination evidence
 Same-node adoption additionally requires fresh running-state inspection and a singleton-lock proof.
 `unknown` runtime state never releases authority.
 
-`QualificationNodeAgent` is presently an injected facade exercised against protocol fakes; it is
-not an adapter for `PostgreSQLExecutionAllocator` and does not provide a concrete OCI/container
-runtime. Its tests do not prove that a real runtime rebinds fences, rejects stale running evidence,
-or enforces the allocated CPU, memory, scratch, and device identities. A future trusted adapter
-must enforce and inspect those exact values fail closed. No end-to-end launch claim follows from
-the unit fault campaign.
+In the PR-4a cut, `QualificationNodeAgent` was an injected facade exercised against protocol fakes;
+it was neither an adapter for `PostgreSQLExecutionAllocator` nor a concrete OCI/container runtime.
+PR-4b now supplies `PostgreSQLNodeAllocatorAdapter`, `QualificationExecutionWorker`, and
+`LocalQualificationOCIRuntime`. The concrete cut is CPU-only and still requires the exact target
+Linux/root/systemd/loop/Docker deployment campaign before a deployability claim.
 
 ## Artifact workflow
 
@@ -172,5 +179,8 @@ PR-4a does not provide:
 - protection from a compromised database owner, node agent key, qualification key,
   terminal-verification key, or host root.
 
-See `architecture/0048-qualification-only-local-execution-foundation.md` for the decision and threat
-model, and `PR3_PROTOCOL_COMPILER.md` for the pure compilation/intent boundary.
+See [architecture decision 0048](architecture/0048-qualification-only-local-execution-foundation.md)
+for this baseline, [architecture decision
+0049](architecture/0049-qualification-only-local-execution-composition.md) and the
+[PR-4b composition guide](PR4B_LOCAL_EXECUTION_COMPOSITION.md) for PR-4b, and the
+[PR-3 compiler guide](PR3_PROTOCOL_COMPILER.md) for the pure compilation/intent boundary.

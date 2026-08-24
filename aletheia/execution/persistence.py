@@ -368,6 +368,9 @@ class _ExecutionAttemptRecord(Base):
         CheckConstraint(
             "attempt_number >= 1 AND adoption_count >= 0 "
             "AND last_runtime_inspection_sequence >= 0 "
+            "AND runtime_launch_authorization_count >= 0 "
+            "AND pre_runtime_absence_count >= 0 "
+            "AND runtime_termination_challenge_count >= 0 "
             "AND state_version >= 1 AND fencing_epoch >= 1",
             name="ck_execution_attempts_versions",
         ),
@@ -390,8 +393,38 @@ class _ExecutionAttemptRecord(Base):
             f"AND (last_runtime_inspection_sha256 IS NULL OR "
             f"last_runtime_inspection_sha256 {_SHA256_SQL}) "
             f"AND (runtime_identity_sha256 IS NULL OR runtime_identity_sha256 {_SHA256_SQL}) "
-            f"AND (terminal_receipt_sha256 IS NULL OR terminal_receipt_sha256 {_SHA256_SQL})",
+            f"AND (terminal_receipt_sha256 IS NULL OR terminal_receipt_sha256 {_SHA256_SQL}) "
+            f"AND (runtime_preparation_sha256 IS NULL OR "
+            f"runtime_preparation_sha256 {_SHA256_SQL}) "
+            f"AND (latest_runtime_launch_authorization_sha256 IS NULL OR "
+            f"latest_runtime_launch_authorization_sha256 {_SHA256_SQL}) "
+            f"AND (latest_pre_runtime_absence_receipt_sha256 IS NULL OR "
+            f"latest_pre_runtime_absence_receipt_sha256 {_SHA256_SQL}) "
+            f"AND (node_runtime_launch_receipt_sha256 IS NULL OR "
+            f"node_runtime_launch_receipt_sha256 {_SHA256_SQL}) "
+            f"AND (runtime_termination_challenge_sha256 IS NULL OR "
+            f"runtime_termination_challenge_sha256 {_SHA256_SQL}) "
+            f"AND (accepted_runtime_termination_sha256 IS NULL OR "
+            f"accepted_runtime_termination_sha256 {_SHA256_SQL}) "
+            f"AND (accepted_terminal_submission_sha256 IS NULL OR "
+            f"accepted_terminal_submission_sha256 {_SHA256_SQL}) "
+            f"AND (terminal_deadline_expiration_sha256 IS NULL OR "
+            f"terminal_deadline_expiration_sha256 {_SHA256_SQL})",
             name="ck_execution_attempts_hashes",
+        ),
+        CheckConstraint(
+            "accepted_terminal_submission_sha256 IS NULL OR "
+            "terminal_deadline_expiration_sha256 IS NULL",
+            name="ck_execution_attempts_v2_terminal_authority",
+        ),
+        CheckConstraint(
+            "(runtime_launch_authorization_count = 0) = "
+            "(latest_runtime_launch_authorization_sha256 IS NULL) AND "
+            "(pre_runtime_absence_count = 0) = "
+            "(latest_pre_runtime_absence_receipt_sha256 IS NULL) AND "
+            "(runtime_termination_challenge_count = 0) = "
+            "(runtime_termination_challenge_sha256 IS NULL)",
+            name="ck_execution_attempts_v2_counts",
         ),
         CheckConstraint(
             "(runtime_identity_sha256 IS NULL) = (runtime_identity_json IS NULL)",
@@ -470,7 +503,577 @@ class _ExecutionAttemptRecord(Base):
     runtime_identity_sha256: Mapped[str | None] = mapped_column(String(64))
     runtime_identity_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     terminal_receipt_sha256: Mapped[str | None] = mapped_column(String(64), unique=True)
+    runtime_preparation_sha256: Mapped[str | None] = mapped_column(String(64), unique=True)
+    runtime_launch_authorization_count: Mapped[int] = mapped_column(Integer, default=0)
+    latest_runtime_launch_authorization_sha256: Mapped[str | None] = mapped_column(
+        String(64), unique=True
+    )
+    pre_runtime_absence_count: Mapped[int] = mapped_column(Integer, default=0)
+    latest_pre_runtime_absence_receipt_sha256: Mapped[str | None] = mapped_column(
+        String(64), unique=True
+    )
+    node_runtime_launch_receipt_sha256: Mapped[str | None] = mapped_column(String(64), unique=True)
+    runtime_termination_challenge_count: Mapped[int] = mapped_column(Integer, default=0)
+    runtime_termination_challenge_sha256: Mapped[str | None] = mapped_column(
+        String(64), unique=True
+    )
+    accepted_runtime_termination_sha256: Mapped[str | None] = mapped_column(String(64), unique=True)
+    accepted_terminal_submission_sha256: Mapped[str | None] = mapped_column(String(64), unique=True)
+    terminal_deadline_expiration_sha256: Mapped[str | None] = mapped_column(String(64), unique=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class _ExecutionAssignmentEnvelopeRecord(Base):
+    """Immutable node-encrypted delivery for one exact admitted infrastructure attempt."""
+
+    __tablename__ = "execution_assignment_envelopes"
+    __table_args__ = (
+        CheckConstraint(
+            "initial_fencing_epoch >= 1 AND issued_at < expires_at",
+            name="ck_execution_assignment_envelopes_fence_time",
+        ),
+        CheckConstraint(
+            f"assignment_envelope_sha256 {_SHA256_SQL} "
+            f"AND assignment_secret_sha256 {_SHA256_SQL} "
+            f"AND admission_sha256 {_SHA256_SQL} AND grant_sha256 {_SHA256_SQL} "
+            f"AND bundle_sha256 {_SHA256_SQL} AND node_manifest_sha256 {_SHA256_SQL} "
+            f"AND resource_lease_sha256 {_SHA256_SQL} AND lease_token_sha256 {_SHA256_SQL} "
+            f"AND transport_pin_sha256 {_SHA256_SQL} AND transport_key_id {_SHA256_SQL} "
+            f"AND payload_sha256 {_SHA256_SQL}",
+            name="ck_execution_assignment_envelopes_hashes",
+        ),
+        ForeignKeyConstraint(
+            ["admission_sha256", "attempt_id"],
+            [
+                "execution_qualification_admissions.admission_sha256",
+                "execution_qualification_admissions.infrastructure_attempt_id",
+            ],
+            name="fk_execution_assignment_envelopes_admission_attempt",
+        ),
+        UniqueConstraint("attempt_id"),
+        UniqueConstraint(
+            "admission_sha256",
+            name="uq_execution_assignment_envelopes_admission",
+        ),
+    )
+
+    assignment_envelope_sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    assignment_secret_sha256: Mapped[str] = mapped_column(String(64), unique=True)
+    attempt_id: Mapped[str] = mapped_column(ForeignKey("execution_attempts.attempt_id"), index=True)
+    admission_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    grant_sha256: Mapped[str] = mapped_column(String(64))
+    bundle_sha256: Mapped[str] = mapped_column(String(64))
+    node_id: Mapped[str] = mapped_column(ForeignKey("execution_nodes.node_id"), index=True)
+    node_manifest_sha256: Mapped[str] = mapped_column(String(64))
+    resource_lease_sha256: Mapped[str] = mapped_column(String(64))
+    initial_fencing_epoch: Mapped[int] = mapped_column(BigInteger)
+    lease_token_sha256: Mapped[str] = mapped_column(String(64))
+    transport_pin_sha256: Mapped[str] = mapped_column(String(64))
+    transport_key_id: Mapped[str] = mapped_column(String(64), index=True)
+    transport_pin_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    payload_sha256: Mapped[str] = mapped_column(String(64))
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+class _ExecutionRuntimePreparationRecord(Base):
+    """One inert, crash-durable runtime preparation for an admitted attempt."""
+
+    __tablename__ = "execution_runtime_preparations"
+    __table_args__ = (
+        CheckConstraint(
+            "fencing_epoch >= 1 AND prepared_monotonic_ns >= 0",
+            name="ck_execution_runtime_preparations_order",
+        ),
+        CheckConstraint(
+            f"preparation_sha256 {_SHA256_SQL} AND intent_sha256 {_SHA256_SQL} "
+            f"AND node_manifest_sha256 {_SHA256_SQL} AND lease_token_sha256 {_SHA256_SQL} "
+            f"AND payload_sha256 {_SHA256_SQL}",
+            name="ck_execution_runtime_preparations_hashes",
+        ),
+        ForeignKeyConstraint(
+            ["attempt_id", "execution_id"],
+            ["execution_attempts.attempt_id", "execution_attempts.execution_id"],
+            name="fk_execution_runtime_preparations_attempt",
+        ),
+        UniqueConstraint("attempt_id", name="uq_execution_runtime_preparations_attempt"),
+    )
+
+    preparation_sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    attempt_id: Mapped[str] = mapped_column(String(36), index=True)
+    execution_id: Mapped[str] = mapped_column(String(36), index=True)
+    intent_sha256: Mapped[str] = mapped_column(String(64))
+    node_id: Mapped[str] = mapped_column(ForeignKey("execution_nodes.node_id"), index=True)
+    node_manifest_sha256: Mapped[str] = mapped_column(String(64))
+    boot_id: Mapped[str] = mapped_column(String(192))
+    fencing_epoch: Mapped[int] = mapped_column(BigInteger)
+    lease_token_sha256: Mapped[str] = mapped_column(String(64))
+    payload_sha256: Mapped[str] = mapped_column(String(64))
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    prepared_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    prepared_monotonic_ns: Mapped[int] = mapped_column(BigInteger)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class _ExecutionRuntimeLaunchAuthorizationRecord(Base):
+    """Append-only request plus the exact runtime-control signed launch ticket."""
+
+    __tablename__ = "execution_runtime_launch_authorizations"
+    __table_args__ = (
+        CheckConstraint(
+            "sequence >= 1 AND pre_runtime_absence_epoch >= 0 AND issued_at < expires_at",
+            name="ck_execution_runtime_launch_authorizations_order",
+        ),
+        CheckConstraint(
+            "(pre_runtime_absence_epoch = 0) = (pre_runtime_absence_receipt_sha256 IS NULL)",
+            name="ck_execution_runtime_launch_authorizations_absence",
+        ),
+        CheckConstraint(
+            f"authorization_sha256 {_SHA256_SQL} AND request_sha256 {_SHA256_SQL} "
+            f"AND preparation_sha256 {_SHA256_SQL} "
+            f"AND (pre_runtime_absence_receipt_sha256 IS NULL OR "
+            f"pre_runtime_absence_receipt_sha256 {_SHA256_SQL}) "
+            f"AND request_payload_sha256 {_SHA256_SQL} "
+            f"AND authorization_payload_sha256 {_SHA256_SQL} "
+            f"AND runtime_control_pin_sha256 {_SHA256_SQL}",
+            name="ck_execution_runtime_launch_authorizations_hashes",
+        ),
+        UniqueConstraint(
+            "attempt_id", "sequence", name="uq_execution_runtime_launch_authorizations_sequence"
+        ),
+        UniqueConstraint("request_sha256"),
+    )
+
+    authorization_sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    attempt_id: Mapped[str] = mapped_column(ForeignKey("execution_attempts.attempt_id"), index=True)
+    preparation_sha256: Mapped[str] = mapped_column(
+        ForeignKey("execution_runtime_preparations.preparation_sha256"), index=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer)
+    request_sha256: Mapped[str] = mapped_column(String(64))
+    pre_runtime_absence_epoch: Mapped[int] = mapped_column(Integer)
+    pre_runtime_absence_receipt_sha256: Mapped[str | None] = mapped_column(String(64))
+    request_payload_sha256: Mapped[str] = mapped_column(String(64))
+    request_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    authorization_payload_sha256: Mapped[str] = mapped_column(String(64))
+    authorization_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    runtime_control_pin_sha256: Mapped[str] = mapped_column(String(64))
+    runtime_control_pin_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class _ExecutionRuntimeLaunchReceiptRecord(Base):
+    """One node-signed real launch plus non-launching historical recovery authority."""
+
+    __tablename__ = "execution_runtime_launch_receipts"
+    __table_args__ = (
+        CheckConstraint(
+            f"launch_receipt_sha256 {_SHA256_SQL} AND preparation_sha256 {_SHA256_SQL} "
+            f"AND authorization_request_sha256 {_SHA256_SQL} "
+            f"AND authorization_sha256 {_SHA256_SQL} AND runtime_identity_sha256 {_SHA256_SQL} "
+            f"AND launch_payload_sha256 {_SHA256_SQL} "
+            f"AND recovery_grant_sha256 {_SHA256_SQL} "
+            f"AND recovery_payload_sha256 {_SHA256_SQL} "
+            f"AND runtime_control_pin_sha256 {_SHA256_SQL}",
+            name="ck_execution_runtime_launch_receipts_hashes",
+        ),
+        UniqueConstraint("attempt_id", name="uq_execution_runtime_launch_receipts_attempt"),
+        UniqueConstraint("runtime_identity_sha256"),
+        UniqueConstraint("recovery_grant_sha256"),
+    )
+
+    launch_receipt_sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    attempt_id: Mapped[str] = mapped_column(ForeignKey("execution_attempts.attempt_id"), index=True)
+    preparation_sha256: Mapped[str] = mapped_column(
+        ForeignKey("execution_runtime_preparations.preparation_sha256")
+    )
+    authorization_request_sha256: Mapped[str] = mapped_column(String(64))
+    authorization_sha256: Mapped[str] = mapped_column(
+        ForeignKey("execution_runtime_launch_authorizations.authorization_sha256")
+    )
+    runtime_identity_sha256: Mapped[str] = mapped_column(String(64))
+    launch_payload_sha256: Mapped[str] = mapped_column(String(64))
+    launch_receipt_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    recovery_grant_sha256: Mapped[str] = mapped_column(String(64))
+    recovery_payload_sha256: Mapped[str] = mapped_column(String(64))
+    recovery_grant_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    recovery_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    runtime_control_pin_sha256: Mapped[str] = mapped_column(String(64))
+    runtime_control_pin_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    signed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class _ExecutionPreRuntimeAbsenceDecisionRecord(Base):
+    """Fresh node absence proof and the allocator's exact release/reauthorize decision."""
+
+    __tablename__ = "execution_pre_runtime_absence_decisions"
+    __table_args__ = (
+        CheckConstraint(
+            "absence_epoch >= 1 AND disposition IN ('released','reauthorized')",
+            name="ck_execution_pre_runtime_absence_decisions_shape",
+        ),
+        CheckConstraint(
+            "(disposition = 'released' AND replacement_request_sha256 IS NULL "
+            "AND replacement_authorization_sha256 IS NULL) OR "
+            "(disposition = 'reauthorized' AND replacement_request_sha256 IS NOT NULL "
+            "AND replacement_authorization_sha256 IS NOT NULL)",
+            name="ck_execution_pre_runtime_absence_decisions_replacement",
+        ),
+        CheckConstraint(
+            "(prior_authorization_request_sha256 IS NULL) = (prior_authorization_sha256 IS NULL)",
+            name="ck_execution_pre_runtime_absence_decisions_prior_pair",
+        ),
+        CheckConstraint(
+            f"decision_sha256 {_SHA256_SQL} AND absence_receipt_sha256 {_SHA256_SQL} "
+            f"AND preparation_sha256 {_SHA256_SQL} "
+            f"AND (prior_authorization_request_sha256 IS NULL OR "
+            f"prior_authorization_request_sha256 {_SHA256_SQL}) "
+            f"AND (prior_authorization_sha256 IS NULL OR "
+            f"prior_authorization_sha256 {_SHA256_SQL}) "
+            f"AND absence_payload_sha256 {_SHA256_SQL} "
+            f"AND (replacement_request_sha256 IS NULL OR "
+            f"replacement_request_sha256 {_SHA256_SQL}) "
+            f"AND (replacement_authorization_sha256 IS NULL OR "
+            f"replacement_authorization_sha256 {_SHA256_SQL}) "
+            f"AND runtime_control_pin_sha256 {_SHA256_SQL}",
+            name="ck_execution_pre_runtime_absence_decisions_hashes",
+        ),
+        UniqueConstraint(
+            "attempt_id", "absence_epoch", name="uq_execution_pre_runtime_absence_epoch"
+        ),
+        UniqueConstraint("absence_receipt_sha256"),
+    )
+
+    decision_sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    attempt_id: Mapped[str] = mapped_column(ForeignKey("execution_attempts.attempt_id"), index=True)
+    absence_epoch: Mapped[int] = mapped_column(Integer)
+    absence_receipt_sha256: Mapped[str] = mapped_column(String(64))
+    preparation_sha256: Mapped[str] = mapped_column(
+        ForeignKey("execution_runtime_preparations.preparation_sha256")
+    )
+    prior_authorization_request_sha256: Mapped[str | None] = mapped_column(String(64))
+    prior_authorization_sha256: Mapped[str | None] = mapped_column(String(64))
+    absence_payload_sha256: Mapped[str] = mapped_column(String(64))
+    absence_receipt_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    disposition: Mapped[str] = mapped_column(String(16), index=True)
+    replacement_request_sha256: Mapped[str | None] = mapped_column(String(64))
+    replacement_authorization_sha256: Mapped[str | None] = mapped_column(String(64))
+    decision_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    runtime_control_pin_sha256: Mapped[str] = mapped_column(String(64))
+    runtime_control_pin_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class _ExecutionRuntimeFenceRebindRecord(Base):
+    """Full request/evidence/node receipt paired one-to-one with an adoption."""
+
+    __tablename__ = "execution_runtime_fence_rebinds"
+    __table_args__ = (
+        CheckConstraint(
+            "sequence >= 1 AND new_fencing_epoch = previous_fencing_epoch + 1",
+            name="ck_execution_runtime_fence_rebinds_sequence",
+        ),
+        CheckConstraint(
+            f"rebind_receipt_sha256 {_SHA256_SQL} AND request_sha256 {_SHA256_SQL} "
+            f"AND evidence_sha256 {_SHA256_SQL} AND adoption_sha256 {_SHA256_SQL} "
+            f"AND preparation_sha256 {_SHA256_SQL} AND runtime_identity_sha256 {_SHA256_SQL} "
+            f"AND previous_lease_token_sha256 {_SHA256_SQL} "
+            f"AND new_lease_token_sha256 {_SHA256_SQL} "
+            f"AND request_payload_sha256 {_SHA256_SQL} "
+            f"AND receipt_payload_sha256 {_SHA256_SQL}",
+            name="ck_execution_runtime_fence_rebinds_hashes",
+        ),
+        UniqueConstraint("attempt_id", "sequence", name="uq_execution_runtime_rebind_sequence"),
+        UniqueConstraint("adoption_sha256"),
+        UniqueConstraint("request_sha256"),
+        UniqueConstraint("evidence_sha256"),
+    )
+
+    rebind_receipt_sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    attempt_id: Mapped[str] = mapped_column(ForeignKey("execution_attempts.attempt_id"), index=True)
+    adoption_sha256: Mapped[str] = mapped_column(
+        ForeignKey("execution_attempt_adoptions.adoption_sha256"), index=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer)
+    request_sha256: Mapped[str] = mapped_column(String(64))
+    evidence_sha256: Mapped[str] = mapped_column(String(64))
+    preparation_sha256: Mapped[str] = mapped_column(
+        ForeignKey("execution_runtime_preparations.preparation_sha256")
+    )
+    runtime_identity_sha256: Mapped[str] = mapped_column(String(64))
+    previous_fencing_epoch: Mapped[int] = mapped_column(BigInteger)
+    new_fencing_epoch: Mapped[int] = mapped_column(BigInteger)
+    previous_lease_token_sha256: Mapped[str] = mapped_column(String(64))
+    new_lease_token_sha256: Mapped[str] = mapped_column(String(64))
+    request_payload_sha256: Mapped[str] = mapped_column(String(64))
+    request_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    receipt_payload_sha256: Mapped[str] = mapped_column(String(64))
+    receipt_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    rebound_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class _ExecutionRuntimeTerminationChallengeRecord(Base):
+    __tablename__ = "execution_runtime_termination_challenges"
+    __table_args__ = (
+        CheckConstraint(
+            "inspection_sequence >= 1 AND challenged_at < expires_at",
+            name="ck_execution_runtime_termination_challenges_order",
+        ),
+        CheckConstraint(
+            f"challenge_sha256 {_SHA256_SQL} AND challenge_id {_SHA256_SQL} "
+            f"AND preparation_sha256 {_SHA256_SQL} AND launch_receipt_sha256 {_SHA256_SQL} "
+            f"AND runtime_identity_sha256 {_SHA256_SQL} "
+            f"AND inspection_evidence_sha256 {_SHA256_SQL} "
+            f"AND challenge_payload_sha256 {_SHA256_SQL} "
+            f"AND runtime_control_pin_sha256 {_SHA256_SQL}",
+            name="ck_execution_runtime_termination_challenges_hashes",
+        ),
+        UniqueConstraint(
+            "attempt_id",
+            "inspection_sequence",
+            name="uq_execution_runtime_termination_challenge_sequence",
+        ),
+        UniqueConstraint("challenge_id"),
+    )
+
+    challenge_sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    challenge_id: Mapped[str] = mapped_column(String(64))
+    attempt_id: Mapped[str] = mapped_column(ForeignKey("execution_attempts.attempt_id"), index=True)
+    preparation_sha256: Mapped[str] = mapped_column(
+        ForeignKey("execution_runtime_preparations.preparation_sha256")
+    )
+    launch_receipt_sha256: Mapped[str] = mapped_column(
+        ForeignKey("execution_runtime_launch_receipts.launch_receipt_sha256")
+    )
+    runtime_identity_sha256: Mapped[str] = mapped_column(String(64))
+    inspection_evidence_sha256: Mapped[str] = mapped_column(String(64))
+    inspection_evidence_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    inspection_sequence: Mapped[int] = mapped_column(BigInteger)
+    challenge_payload_sha256: Mapped[str] = mapped_column(String(64))
+    challenge_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    runtime_control_pin_sha256: Mapped[str] = mapped_column(String(64))
+    runtime_control_pin_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    challenged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class _ExecutionRuntimeTerminationAcceptanceRecord(Base):
+    __tablename__ = "execution_runtime_termination_acceptances"
+    __table_args__ = (
+        CheckConstraint(
+            "inspection_sequence >= 1 AND runtime_ended_at <= accepted_at",
+            name="ck_execution_runtime_termination_acceptances_order",
+        ),
+        CheckConstraint(
+            f"accepted_termination_sha256 {_SHA256_SQL} AND challenge_sha256 {_SHA256_SQL} "
+            f"AND node_termination_receipt_sha256 {_SHA256_SQL} "
+            f"AND preparation_sha256 {_SHA256_SQL} AND launch_receipt_sha256 {_SHA256_SQL} "
+            f"AND runtime_identity_sha256 {_SHA256_SQL} "
+            f"AND termination_evidence_sha256 {_SHA256_SQL} "
+            f"AND node_receipt_payload_sha256 {_SHA256_SQL} "
+            f"AND acceptance_payload_sha256 {_SHA256_SQL} "
+            f"AND recovery_grant_sha256 {_SHA256_SQL} "
+            f"AND recovery_payload_sha256 {_SHA256_SQL} "
+            f"AND conditional_terminal_expiration_sha256 {_SHA256_SQL} "
+            f"AND conditional_terminal_expiration_payload_sha256 {_SHA256_SQL} "
+            f"AND runtime_control_pin_sha256 {_SHA256_SQL}",
+            name="ck_execution_runtime_termination_acceptances_hashes",
+        ),
+        UniqueConstraint("attempt_id", name="uq_execution_runtime_termination_acceptance_attempt"),
+        UniqueConstraint("challenge_sha256"),
+        UniqueConstraint("node_termination_receipt_sha256"),
+        UniqueConstraint("recovery_grant_sha256"),
+        UniqueConstraint("conditional_terminal_expiration_sha256"),
+    )
+
+    accepted_termination_sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    attempt_id: Mapped[str] = mapped_column(ForeignKey("execution_attempts.attempt_id"), index=True)
+    challenge_sha256: Mapped[str] = mapped_column(
+        ForeignKey("execution_runtime_termination_challenges.challenge_sha256")
+    )
+    node_termination_receipt_sha256: Mapped[str] = mapped_column(String(64))
+    preparation_sha256: Mapped[str] = mapped_column(
+        ForeignKey("execution_runtime_preparations.preparation_sha256")
+    )
+    launch_receipt_sha256: Mapped[str] = mapped_column(
+        ForeignKey("execution_runtime_launch_receipts.launch_receipt_sha256")
+    )
+    runtime_identity_sha256: Mapped[str] = mapped_column(String(64))
+    termination_evidence_sha256: Mapped[str] = mapped_column(String(64))
+    inspection_sequence: Mapped[int] = mapped_column(BigInteger)
+    node_receipt_payload_sha256: Mapped[str] = mapped_column(String(64))
+    node_termination_receipt_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    acceptance_payload_sha256: Mapped[str] = mapped_column(String(64))
+    accepted_termination_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    recovery_grant_sha256: Mapped[str] = mapped_column(String(64))
+    recovery_payload_sha256: Mapped[str] = mapped_column(String(64))
+    recovery_grant_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    recovery_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    conditional_terminal_expiration_sha256: Mapped[str] = mapped_column(String(64))
+    conditional_terminal_expiration_payload_sha256: Mapped[str] = mapped_column(String(64))
+    conditional_terminal_expiration_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    conditional_terminal_expiration_authorized_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True)
+    )
+    conditional_terminal_expiration_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    runtime_control_pin_sha256: Mapped[str] = mapped_column(String(64))
+    runtime_control_pin_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    runtime_ended_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class _ExecutionQualificationTerminalDeadlineExpirationRecord(Base):
+    """Activated pre-signed failure after DB time proves artifact grace elapsed."""
+
+    __tablename__ = "execution_qualification_terminal_deadline_expirations"
+    __table_args__ = (
+        CheckConstraint(
+            "authorized_at < expired_at AND expired_at <= activated_at",
+            name="ck_execution_qualification_terminal_deadline_expirations_order",
+        ),
+        CheckConstraint(
+            f"terminal_deadline_expiration_sha256 {_SHA256_SQL} "
+            f"AND accepted_runtime_termination_sha256 {_SHA256_SQL} "
+            f"AND payload_sha256 {_SHA256_SQL} "
+            f"AND runtime_control_pin_sha256 {_SHA256_SQL}",
+            name="ck_execution_qualification_terminal_deadline_expirations_hashes",
+        ),
+        UniqueConstraint(
+            "attempt_id",
+            name="uq_execution_qualification_terminal_deadline_expiration_attempt",
+        ),
+        UniqueConstraint("accepted_runtime_termination_sha256"),
+    )
+
+    terminal_deadline_expiration_sha256: Mapped[str] = mapped_column(
+        ForeignKey(
+            "execution_runtime_termination_acceptances.conditional_terminal_expiration_sha256"
+        ),
+        primary_key=True,
+    )
+    attempt_id: Mapped[str] = mapped_column(ForeignKey("execution_attempts.attempt_id"), index=True)
+    accepted_runtime_termination_sha256: Mapped[str] = mapped_column(
+        ForeignKey("execution_runtime_termination_acceptances.accepted_termination_sha256")
+    )
+    payload_sha256: Mapped[str] = mapped_column(String(64))
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    runtime_control_pin_sha256: Mapped[str] = mapped_column(String(64))
+    runtime_control_pin_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    authorized_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    activated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class _ExecutionQualificationTerminalAcceptanceRecord(Base):
+    __tablename__ = "execution_qualification_terminal_acceptances"
+    __table_args__ = (
+        CheckConstraint(
+            "disposition IN ('process_succeeded','process_failed','invalid_output','timeout')",
+            name="ck_execution_qualification_terminal_acceptances_disposition",
+        ),
+        CheckConstraint(
+            f"accepted_terminal_submission_sha256 {_SHA256_SQL} "
+            f"AND accepted_runtime_termination_sha256 {_SHA256_SQL} "
+            f"AND terminal_submission_sha256 {_SHA256_SQL} "
+            f"AND artifact_manifest_sha256 {_SHA256_SQL} AND output_tree_sha256 {_SHA256_SQL} "
+            f"AND submission_payload_sha256 {_SHA256_SQL} "
+            f"AND manifest_payload_sha256 {_SHA256_SQL} "
+            f"AND acceptance_payload_sha256 {_SHA256_SQL} "
+            f"AND runtime_control_pin_sha256 {_SHA256_SQL}",
+            name="ck_execution_qualification_terminal_acceptances_hashes",
+        ),
+        UniqueConstraint(
+            "attempt_id", name="uq_execution_qualification_terminal_acceptance_attempt"
+        ),
+        UniqueConstraint("accepted_runtime_termination_sha256"),
+        UniqueConstraint("terminal_submission_sha256"),
+    )
+
+    accepted_terminal_submission_sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    attempt_id: Mapped[str] = mapped_column(ForeignKey("execution_attempts.attempt_id"), index=True)
+    accepted_runtime_termination_sha256: Mapped[str] = mapped_column(
+        ForeignKey("execution_runtime_termination_acceptances.accepted_termination_sha256")
+    )
+    terminal_submission_sha256: Mapped[str] = mapped_column(String(64))
+    artifact_manifest_sha256: Mapped[str] = mapped_column(String(64))
+    output_tree_sha256: Mapped[str] = mapped_column(String(64))
+    disposition: Mapped[str] = mapped_column(String(32), index=True)
+    submission_payload_sha256: Mapped[str] = mapped_column(String(64))
+    terminal_submission_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    manifest_payload_sha256: Mapped[str] = mapped_column(String(64))
+    artifact_manifest_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    artifact_verified_receipt_sha256s_json: Mapped[list[str]] = mapped_column(JSONB)
+    artifact_verified_receipts_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
+    acceptance_payload_sha256: Mapped[str] = mapped_column(String(64))
+    accepted_terminal_submission_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    runtime_control_pin_sha256: Mapped[str] = mapped_column(String(64))
+    runtime_control_pin_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class _ExecutionQualificationTerminalOutboxRecord(Base):
+    """Immutable v2 publication intent; it never aliases the v1 receipt outbox."""
+
+    __tablename__ = "execution_qualification_terminal_outbox"
+    __table_args__ = (
+        CheckConstraint(
+            "outbox_id = 'qto_' || terminal_authority_sha256 "
+            f"AND terminal_authority_sha256 {_SHA256_SQL} "
+            f"AND payload_sha256 {_SHA256_SQL} "
+            "AND payload_sha256 = terminal_authority_sha256 "
+            "AND ((terminal_authority_kind = 'accepted_terminal_submission' "
+            "AND accepted_terminal_submission_sha256 IS NOT NULL "
+            "AND accepted_terminal_submission_sha256 = terminal_authority_sha256 "
+            "AND terminal_deadline_expiration_sha256 IS NULL) OR "
+            "(terminal_authority_kind = 'terminal_deadline_expiration' "
+            "AND terminal_deadline_expiration_sha256 IS NOT NULL "
+            "AND terminal_deadline_expiration_sha256 = terminal_authority_sha256 "
+            "AND accepted_terminal_submission_sha256 IS NULL)) "
+            "AND topic = 'execution.qualification_terminal.v2' "
+            "AND delivery_key = "
+            "'execution-v2:' || execution_id || ':' || attempt_id",
+            name="ck_execution_qualification_terminal_outbox_hashes",
+        ),
+        UniqueConstraint("terminal_authority_sha256"),
+        UniqueConstraint("accepted_terminal_submission_sha256"),
+        UniqueConstraint("terminal_deadline_expiration_sha256"),
+        UniqueConstraint("attempt_id"),
+        UniqueConstraint("delivery_key"),
+    )
+
+    outbox_id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    terminal_authority_kind: Mapped[str] = mapped_column(String(48))
+    terminal_authority_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    accepted_terminal_submission_sha256: Mapped[str | None] = mapped_column(
+        ForeignKey(
+            "execution_qualification_terminal_acceptances.accepted_terminal_submission_sha256"
+        ),
+        index=True,
+    )
+    terminal_deadline_expiration_sha256: Mapped[str | None] = mapped_column(
+        ForeignKey(
+            "execution_qualification_terminal_deadline_expirations."
+            "terminal_deadline_expiration_sha256"
+        ),
+        index=True,
+    )
+    execution_id: Mapped[str] = mapped_column(String(36), index=True)
+    attempt_id: Mapped[str] = mapped_column(ForeignKey("execution_attempts.attempt_id"), index=True)
+    topic: Mapped[str] = mapped_column(String(96))
+    delivery_key: Mapped[str] = mapped_column(String(192))
+    payload_sha256: Mapped[str] = mapped_column(String(64))
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
 class _ExecutionAttemptAdoptionRecord(Base):

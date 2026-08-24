@@ -112,8 +112,8 @@ conda run -n aletheia alembic current
 ~~~
 
 The fault-campaign migration is `20260818_0021`; the current repository head is
-`20260825_0024` after the endurance ledger, research-kernel authority store, and local execution
-foundation.
+`20260827_0026` after the endurance ledger, research-kernel authority store, PR-4a local execution
+foundation, sealed assignment delivery, and runtime-v2 lifecycle.
 `fault_injection_campaigns` stores the complete report plus queryable
 hashes, verdict counts, six core totals, Quest scope, and scientific command binding.
 

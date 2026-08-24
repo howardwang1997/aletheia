@@ -29,12 +29,13 @@ conda run -n aletheia alembic upgrade head
 conda run -n aletheia alembic current
 ~~~
 
-Expected repository head: `20260825_0024` (`0013` creates the graph, `0014` freezes allocated DataAsset scope,
+Expected repository head: `20260827_0026` (`0013` creates the graph, `0014` freezes allocated DataAsset scope,
 `0015` guards legacy family/budget writes, `0016`–`0018` add receipt-backed memory, and
 `0019`–`0020` add the shadow portfolio ledger and integrity guards). Revisions `0021`–`0022`
 add fault/endurance evidence; `0023` adds the separate research-kernel authority store and the
 shared Quest identity guard without making this legacy graph authoritative for new Quests. `0024`
-adds the separate qualification-only local-execution store and does not change this legacy scope.
+adds the separate qualification-only local-execution store; `0025`–`0026` add sealed assignment and
+runtime-v2 authority tables. None changes this legacy scope.
 
 Runtime startup continues to fail closed unless the database is exactly at that head. The migration
 adds ten graph/allocation tables, two nullable legacy bindings, portfolio-scoped scientific
@@ -218,7 +219,7 @@ If rebuild fails:
 1. stop automated mutation for the affected Quest;
 2. retain database and keyed-event evidence unchanged;
 3. inspect the named node/command/allocation from the exception;
-4. compare deployed code to Alembic head `20260825_0024`; and
+4. compare deployed code to Alembic head `20260827_0026`; and
 5. restore a verified backup or deploy matching code—do not patch an append-only row in place.
 
 A missing UI card is not evidence that the Quest disappeared. The PostgreSQL ledger and successful

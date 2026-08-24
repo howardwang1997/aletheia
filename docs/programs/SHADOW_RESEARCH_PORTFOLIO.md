@@ -10,13 +10,15 @@ conda run -n aletheia alembic upgrade head
 conda run -n aletheia alembic current
 ~~~
 
-Expected repository head: `20260825_0024`.
+Expected repository head: `20260827_0026`.
 
 - `0019` adds slate, candidate, human-plan, epoch, and score tables;
 - `0020` adds append-only, applying-command, parent binding, and deferred completeness guards.
 - `0021`–`0023` add later fault/endurance evidence and the separate research-kernel authority
   store; this portfolio remains a legacy-scope shadow projection.
 - `0024` adds the separate qualification-only local-execution store and does not change this legacy
+  portfolio authority.
+- `0025`–`0026` add sealed assignment and runtime-v2 authority tables without changing this legacy
   portfolio authority.
 
 API and worker startup fail closed at any other revision. `schema_diffs(connection)` must return an
@@ -267,7 +269,7 @@ When registration/evaluation/replay fails:
 
 1. do not enqueue or manually translate the proposed actions;
 2. preserve PostgreSQL, keyed events, graph, memory archive, and assessment evidence;
-3. confirm deployed code and database are at `20260825_0024`;
+3. confirm deployed code and database are at `20260827_0026`;
 4. identify whether the failure is an invariant violation or normal graph/budget/memory staleness;
 5. for staleness, generate a new context, proposal, assessment, and slate—never rewrite the old one;
 6. for corruption, restore a verified database/archive pair or matching code; and

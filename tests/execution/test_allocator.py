@@ -20,6 +20,14 @@ from sqlalchemy.exc import DBAPIError
 
 import aletheia.execution.allocator as allocator_module
 from aletheia.db import session_factory
+from aletheia.execution.assignment_contracts import (
+    NodeAssignmentTransportPin,
+    QualificationAssignmentSecret,
+    node_transport_key_id,
+    open_qualification_assignment,
+    seal_qualification_assignment,
+    x25519_public_key_hex,
+)
 from aletheia.protocols.capabilities import DataClassification
 from aletheia.execution.allocator import (
     AdmissionConflict,
@@ -31,6 +39,7 @@ from aletheia.execution.allocator import (
     PostgreSQLExecutionReceiptArchive,
 )
 from aletheia.execution.persistence import (
+    _ExecutionAssignmentEnvelopeRecord,
     _ExecutionAttemptRecord,
     _ExecutionBudgetAuthorizationRecord,
     _ExecutionBudgetEventRecord,
@@ -77,6 +86,7 @@ from aletheia.execution.schemas import (
 from aletheia.protocols.compiler import compile_protocol
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from postgres_test_safety import require_isolated_pr4_postgres  # noqa: E402
 from test_runtime_contracts import (  # noqa: E402
     PRIVATE_KEY,
     TERMINAL_PRIVATE_KEY,
@@ -102,6 +112,7 @@ _EXECUTION_TABLES = (
     "execution_device_leases",
     "execution_resource_leases",
     "execution_attempt_adoptions",
+    "execution_assignment_envelopes",
     "execution_attempts",
     "execution_heads",
     "execution_budget_heads",
@@ -113,13 +124,17 @@ _EXECUTION_TABLES = (
     "execution_nodes",
 )
 
+TRANSPORT_PRIVATE_KEY = bytes.fromhex("71" * 32)
+
 
 @pytest.fixture(autouse=True)
 def _clean_execution_authority_tables():
+    require_isolated_pr4_postgres()
     sessions = session_factory()
     with sessions() as session, session.begin():
         session.execute(text(f"TRUNCATE {', '.join(_EXECUTION_TABLES)} RESTART IDENTITY CASCADE"))
     yield
+    require_isolated_pr4_postgres()
     with sessions() as session, session.begin():
         session.execute(text(f"TRUNCATE {', '.join(_EXECUTION_TABLES)} RESTART IDENTITY CASCADE"))
 
@@ -156,7 +171,22 @@ class _Prepared:
     observed_at: object
     artifacts: _TestArtifactResolver
     terminal_pin: TerminalVerificationAuthorityPin
+    transport_pin: NodeAssignmentTransportPin
     case: object
+
+
+def _transport_pin(manifest, *, observed_at) -> NodeAssignmentTransportPin:
+    public_key = x25519_public_key_hex(TRANSPORT_PRIVATE_KEY)
+    return NodeAssignmentTransportPin(
+        node_id=manifest.node_id,
+        node_manifest_sha256=manifest.manifest_sha256,
+        transport_policy_sha256=_digest("allocator-assignment-transport-policy:v1"),
+        transport_principal_id="principal:node_assignment_transport",
+        transport_key_id=node_transport_key_id(public_key),
+        public_key_x25519_hex=public_key,
+        valid_from=observed_at - timedelta(days=1),
+        expires_at=observed_at + timedelta(days=1),
+    )
 
 
 def _accelerator_qualification_case(*, accelerator_count: int, retryable: bool):
@@ -269,6 +299,7 @@ def _prepared(
     accelerator_count: int = 0,
     inventory_accelerator_count: int | None = None,
     retryable: bool = False,
+    artifact_quota_bytes: int | None = None,
 ) -> _Prepared:
     case = (
         _accelerator_qualification_case(
@@ -278,6 +309,71 @@ def _prepared(
         if accelerator_count
         else _qualification_case()
     )
+    if artifact_quota_bytes is not None:
+        original_node = next(
+            item
+            for item in case.bundle.work_order.nodes
+            if item.node_id == case.bundle.intent.work_order_node_id
+        )
+        protocol = case.request.protocol
+        steps = tuple(
+            item.model_copy(
+                update={
+                    "resource_request": item.resource_request.model_copy(
+                        update={"artifact_quota_bytes": artifact_quota_bytes}
+                    )
+                }
+            )
+            if item.step_id == original_node.protocol_step_id
+            else item
+            for item in protocol.steps
+        )
+        maximum_total_artifact_bytes = sum(
+            item.resource_request.artifact_quota_bytes * item.scientific_replicate_count
+            for item in steps
+        )
+        request = case.request.model_copy(
+            update={
+                "protocol": protocol.model_copy(
+                    update={
+                        "steps": steps,
+                        "resource_budget": protocol.resource_budget.model_copy(
+                            update={"maximum_total_artifact_bytes": (maximum_total_artifact_bytes)}
+                        ),
+                    }
+                )
+            }
+        )
+        result = compile_protocol(request)
+        assert result.work_order is not None
+        node = next(
+            item
+            for item in result.work_order.nodes
+            if item.protocol_step_id == original_node.protocol_step_id
+        )
+        resolution = _protocol_input_resolution(
+            request=request,
+            input_port_id=node.input_port_ids[0],
+            resolved_at=case.observed_at,
+        )
+        intent = _intent(
+            work_order=result.work_order,
+            node=node,
+            input_bindings=(
+                InputArtifactBinding(
+                    input_port_id=node.input_port_ids[0],
+                    source_kind="protocol_input",
+                    artifact_verified_receipt_sha256=resolution.verified_receipt_sha256,
+                ),
+            ),
+        )
+        case = _signed_case(
+            request=request,
+            result=result,
+            intent=intent,
+            resolution=resolution,
+            observed_at=case.observed_at,
+        )
     request = case.bundle.intent.resource_request
     static_class = next(
         item
@@ -416,6 +512,7 @@ def _prepared(
         valid_from=case.observed_at - timedelta(days=1),
         expires_at=case.observed_at + timedelta(days=1),
     )
+    transport_pin = _transport_pin(manifest, observed_at=case.observed_at)
     allocator = PostgreSQLExecutionAllocator(
         authority=QualificationAuthorityVerifier(case.pin),
         artifact_resolver=artifacts,
@@ -427,6 +524,7 @@ def _prepared(
             currency_codes=frozenset({quote.currency_code}),
         ),
         node_authorities=(authority,),
+        node_assignment_transport_pins=(transport_pin,),
         terminal_verification_authority=TerminalVerificationAuthorityVerifier(terminal_pin),
         allocator_principal_id="principal:allocator",
         max_inventory_ttl_seconds=30,
@@ -442,6 +540,7 @@ def _prepared(
         observed_at=case.observed_at,
         artifacts=artifacts,
         terminal_pin=terminal_pin,
+        transport_pin=transport_pin,
         case=case,
     )
 
@@ -468,11 +567,30 @@ def test_atomic_admission_is_exactly_idempotent_and_token_is_one_time(monkeypatc
     assert first.created is True and first.lease_token is not None
     assert replay.created is False and replay.lease_token is None
     assert replay.snapshot == first.snapshot
+    delivery = prepared.allocator.pull_sealed_assignment(
+        node_id=prepared.manifest.node_id,
+        node_manifest_sha256=prepared.manifest.manifest_sha256,
+    )
+    assert delivery is not None
+    opened = open_qualification_assignment(
+        envelope=delivery.envelope,
+        transport_pin=prepared.transport_pin,
+        node_transport_private_key=TRANSPORT_PRIVATE_KEY,
+        observed_at=prepared.observed_at + timedelta(seconds=1),
+    )
+    assert opened.lease_token == first.lease_token
+    assert opened.lease_token_sha256 == first.snapshot.lease_token_sha256
     with session_factory()() as session:
         attempt = session.get(_ExecutionAttemptRecord, first.snapshot.attempt_id)
+        envelope_record = session.execute(
+            select(_ExecutionAssignmentEnvelopeRecord).where(
+                _ExecutionAssignmentEnvelopeRecord.attempt_id == first.snapshot.attempt_id
+            )
+        ).scalar_one()
         budget = session.get(_ExecutionBudgetHeadRecord, first.snapshot.budget_authorization_sha256)
         assert attempt is not None
         assert first.lease_token not in str(attempt.__dict__)
+        assert first.lease_token not in str(envelope_record.__dict__)
         assert budget is not None
         assert budget.reserved_microunits == first.snapshot.held_microunits
 
@@ -533,6 +651,9 @@ def test_terminal_verification_pin_must_cover_the_full_lease(monkeypatch) -> Non
             execution_authority_resolver=prepared.allocator._execution_authority_resolver,
             pricing_authority=prepared.allocator._pricing_authority,
             node_authorities=tuple(prepared.allocator._node_authorities.values()),
+            node_assignment_transport_pins=tuple(
+                prepared.allocator._node_assignment_transport_pins.values()
+            ),
             terminal_verification_authority=TerminalVerificationAuthorityVerifier(pin),
             allocator_principal_id="principal:allocator",
         )
@@ -659,6 +780,9 @@ def test_stale_first_inventory_and_failed_placement_rollback(monkeypatch) -> Non
         execution_authority_resolver=bad_resolver,
         pricing_authority=prepared.allocator._pricing_authority,
         node_authorities=tuple(prepared.allocator._node_authorities.values()),
+        node_assignment_transport_pins=tuple(
+            prepared.allocator._node_assignment_transport_pins.values()
+        ),
         terminal_verification_authority=(prepared.allocator._terminal_verification_authority),
         allocator_principal_id="principal:allocator",
     )
@@ -712,6 +836,9 @@ def test_multi_accelerator_and_terminal_key_reuse_fail_closed(monkeypatch) -> No
             execution_authority_resolver=prepared.allocator._execution_authority_resolver,
             pricing_authority=prepared.allocator._pricing_authority,
             node_authorities=tuple(prepared.allocator._node_authorities.values()),
+            node_assignment_transport_pins=tuple(
+                prepared.allocator._node_assignment_transport_pins.values()
+            ),
             terminal_verification_authority=TerminalVerificationAuthorityVerifier(pin),
             allocator_principal_id="principal:allocator",
         )
@@ -731,6 +858,9 @@ def test_multi_accelerator_and_terminal_key_reuse_fail_closed(monkeypatch) -> No
             execution_authority_resolver=prepared.allocator._execution_authority_resolver,
             pricing_authority=prepared.allocator._pricing_authority,
             node_authorities=tuple(prepared.allocator._node_authorities.values()),
+            node_assignment_transport_pins=tuple(
+                prepared.allocator._node_assignment_transport_pins.values()
+            ),
             terminal_verification_authority=(prepared.allocator._terminal_verification_authority),
             allocator_principal_id=qualification_pin.principal_id,
         )
@@ -958,6 +1088,26 @@ def test_raw_genesis_with_missing_selected_cpu_is_rejected(monkeypatch) -> None:
         "details": {},
         "recorded_at": now.isoformat(),
     }
+    raw_token = "raw-missing-cpu-token-" + "x" * 48
+    raw_token_sha256 = hashlib.sha256(raw_token.encode()).hexdigest()
+    assignment_secret = QualificationAssignmentSecret(
+        infrastructure_attempt_id=attempt_id,
+        admission_sha256=admission_sha256,
+        grant_sha256=prepared.grant.grant_sha256,
+        bundle_sha256=prepared.bundle.bundle_sha256,
+        node_id=prepared.manifest.node_id,
+        node_manifest_sha256=prepared.manifest.manifest_sha256,
+        resource_lease_sha256=lease_sha256,
+        fencing_epoch=1,
+        lease_token=raw_token,
+        lease_token_sha256=raw_token_sha256,
+        issued_at=now,
+        expires_at=hard_deadline,
+    )
+    sealed_assignment = seal_qualification_assignment(
+        secret=assignment_secret,
+        transport_pin=prepared.transport_pin,
+    )
 
     with pytest.raises(DBAPIError, match="admitted placement"):
         with session_factory()() as session, session.begin():
@@ -1051,7 +1201,7 @@ def test_raw_genesis_with_missing_selected_cpu_is_rejected(monkeypatch) -> None:
                     status="reserved",
                     state_version=1,
                     fencing_epoch=1,
-                    lease_token_sha256=_digest("raw-missing-cpu-token"),
+                    lease_token_sha256=raw_token_sha256,
                     adoption_count=0,
                     latest_adoption_sha256=None,
                     last_runtime_inspection_sequence=0,
@@ -1090,6 +1240,30 @@ def test_raw_genesis_with_missing_selected_cpu_is_rejected(monkeypatch) -> None:
                     heartbeat_at=now,
                     lease_expires_at=lease_expires_at,
                     released_at=None,
+                )
+            )
+            session.flush()
+            session.add(
+                _ExecutionAssignmentEnvelopeRecord(
+                    assignment_envelope_sha256=sealed_assignment.envelope_sha256,
+                    assignment_secret_sha256=(sealed_assignment.assignment_secret_sha256),
+                    attempt_id=attempt_id,
+                    admission_sha256=admission_sha256,
+                    grant_sha256=prepared.grant.grant_sha256,
+                    bundle_sha256=prepared.bundle.bundle_sha256,
+                    node_id=prepared.manifest.node_id,
+                    node_manifest_sha256=prepared.manifest.manifest_sha256,
+                    resource_lease_sha256=lease_sha256,
+                    initial_fencing_epoch=1,
+                    lease_token_sha256=raw_token_sha256,
+                    transport_pin_sha256=prepared.transport_pin.pin_sha256,
+                    transport_key_id=prepared.transport_pin.transport_key_id,
+                    transport_pin_json=prepared.transport_pin.model_dump(mode="json"),
+                    payload_sha256=sealed_assignment.envelope_sha256,
+                    payload_json=sealed_assignment.model_dump(mode="json"),
+                    issued_at=now,
+                    expires_at=hard_deadline,
+                    created_at=now,
                 )
             )
             session.add(
@@ -1753,6 +1927,9 @@ def test_typed_adoption_terminal_custody_and_actual_budget_settlement(
             currency_codes=frozenset({retry_quote.currency_code}),
         ),
         node_authorities=tuple(prepared.allocator._node_authorities.values()),
+        node_assignment_transport_pins=tuple(
+            prepared.allocator._node_assignment_transport_pins.values()
+        ),
         terminal_verification_authority=(prepared.allocator._terminal_verification_authority),
         allocator_principal_id="principal:allocator",
         max_inventory_ttl_seconds=30,

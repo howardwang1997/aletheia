@@ -49,7 +49,7 @@ conda run -n aletheia alembic upgrade head
 ```
 
 World-model persistence was introduced at `20260815_0004`; deploy the current repository head,
-`20260825_0024`. Application startup fails closed when the deployed schema differs from the current
+`20260827_0026`. Application startup fails closed when the deployed schema differs from the current
 head.
 
 Store and reload only a fully validated snapshot:

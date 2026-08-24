@@ -251,11 +251,12 @@ resource and budget reservation, fenced attempts and same-node adoption, local q
 rehash, signed node and terminal evidence, transactional terminal receipt/outbox settlement, and an
 injected node fault facade.
 
-That foundation is not a deployable execution service. It has no concrete quote/source-budget
-authority adapter, OCI runtime, allocator-to-agent/artifact/terminal composition, checkpoint
-recovery, external-action reconciliation, HTTP launch path, or Research Kernel launch
-authorization. PR-4b must compose and qualify the production local runtime and authority adapters;
-checkpoint/external-action paths still require separate later contracts. PR-5 must add the signed
-scientific action-to-execution bridge. Neither a protocol compilation nor a PR-4a qualification
-value alone is permission to start a process, allocate either V100 server, use the 2060 node, spend
+PR-4b now adds concrete read-only quote/source-budget registries, sealed assignment delivery, the
+PostgreSQL allocator-to-node adapter/worker, exact input staging, a CPU-only OCI runtime, loop-backed
+output quota, a launch gate, watchdog, and runtime-v2 terminal settlement. It still has no HTTP
+launch path or Research Kernel launch authorization, and exact target-host
+Linux/root/systemd/loop/Docker qualification remains a deployment gate. Checkpoint/external-action
+paths still require separate later contracts. PR-5 must add the signed scientific
+action-to-execution bridge. Neither a protocol compilation nor a PR-4 qualification value alone is
+permission to start an unregistered process, allocate either V100 server, use the 2060 node, spend
 money, call an external measurement provider, or operate a physical instrument.

@@ -199,6 +199,7 @@ DEFAULT_EXECUTION_PERSISTENCE_IMPORTERS = (
     "migrations.env",
 )
 DEFAULT_PRIVATE_EXECUTION_RECORD_SYMBOLS = (
+    "_ExecutionAssignmentEnvelopeRecord",
     "_ExecutionAttemptAdoptionRecord",
     "_ExecutionAttemptRecord",
     "_ExecutionBudgetAuthorizationRecord",
@@ -212,8 +213,18 @@ DEFAULT_PRIVATE_EXECUTION_RECORD_SYMBOLS = (
     "_ExecutionInventoryDeviceRecord",
     "_ExecutionNodeRecord",
     "_ExecutionOutboxRecord",
+    "_ExecutionPreRuntimeAbsenceDecisionRecord",
     "_ExecutionQualificationAdmissionRecord",
+    "_ExecutionQualificationTerminalAcceptanceRecord",
+    "_ExecutionQualificationTerminalDeadlineExpirationRecord",
+    "_ExecutionQualificationTerminalOutboxRecord",
     "_ExecutionResourceLeaseRecord",
+    "_ExecutionRuntimeFenceRebindRecord",
+    "_ExecutionRuntimeLaunchAuthorizationRecord",
+    "_ExecutionRuntimeLaunchReceiptRecord",
+    "_ExecutionRuntimePreparationRecord",
+    "_ExecutionRuntimeTerminationAcceptanceRecord",
+    "_ExecutionRuntimeTerminationChallengeRecord",
     "_ExecutionTerminalReceiptRecord",
 )
 # Python entry points shipped outside the importable ``aletheia`` package still participate in

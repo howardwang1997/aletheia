@@ -1,12 +1,13 @@
 # Aletheia — Architecture
 
-> **Status note (2026-08-23):** this file describes the currently implemented/legacy execution
-> architecture. The proposed target direction is
+> **Status note (2026-08-24):** the body of this file describes the legacy execution architecture.
+> The current target and PR-0→PR-4b migration state are maintained in
 > [`END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md`](END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md).
-> PR-0 now freezes the legacy authority boundary, and PR-1 supplies the pure, deterministic
-> `research_kernel` contracts/reducer. The fixed global FSM and regression-shaped `DomainPlugin`
-> remain compatibility paths; there is not yet an authoritative kernel event store, controller,
-> Protocol IR, or execution fabric. New scientific functionality must target those RFC boundaries.
+> PR-0→PR-3 now provide the legacy freeze, authoritative Research Kernel event store, and pure
+> Protocol IR/compiler. PR-4a/PR-4b add a qualification-only local CPU execution substrate, but its
+> exact target-host Linux/root/systemd/loop/Docker deployment gate and the PR-5 scientific bridge
+> remain open. The fixed global FSM and regression-shaped `DomainPlugin` below are compatibility
+> paths; new scientific functionality must target the RFC boundaries rather than extend them.
 
 ## Ultimate goal
 

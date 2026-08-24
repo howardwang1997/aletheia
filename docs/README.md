@@ -30,7 +30,13 @@ Current implementation slice:
   separate deployment-signed engineering qualification, enrolled node authority, fenced leases,
   and artifact custody from Research Kernel launch and observation admission.
 - `PR4_LOCAL_EXECUTION_FOUNDATION.md` — deployment pins, lifecycle, node evidence, artifact workflow,
-  recovery rules, and explicit non-capabilities for the local execution foundation.
+  recovery rules, and explicit non-capabilities for the frozen PR-4a foundation.
+- `architecture/0049-qualification-only-local-execution-composition.md` — the PR-4b decision to
+  compose sealed assignment, a CPU-only OCI runtime, quota/watchdog root services, runtime-v2
+  recovery, and terminal settlement without creating scientific admission.
+- `PR4B_LOCAL_EXECUTION_COMPOSITION.md` — current implementation map, exact 27-table schema,
+  lifecycle/crash semantics, deployment TCB, external-service requirements, and the honest
+  Linux/root/systemd/loop/Docker validation boundary.
 
 Supporting technology research (not the system architecture):
 
@@ -41,7 +47,8 @@ Supporting technology research (not the system architecture):
 
 After the target-architecture RFC above, use this order for the current implementation history:
 
-1. `ARCHITECTURE.md` — current system architecture and invariants.
+1. `ARCHITECTURE.md` — legacy system architecture and invariants, with a status pointer to the
+   current target/migration RFC.
 2. `PROJECT_REVIEW.md` — neutral assessment of strengths, risks, and gaps.
 3. `FRONTIER_SCIENTIST_F7_F12_DETAILED_PLAN_2026_08_13.md` — current executable master plan from
    the completed Real Campaign Gate baseline to a domain-level autonomous frontier scientist.
@@ -332,4 +339,10 @@ After the target-architecture RFC above, use this order for the current implemen
     decision for signed qualification, fenced PostgreSQL resource/budget authority, artifact
     custody, and the explicit non-deployable boundary.
 130. `PR4_LOCAL_EXECUTION_FOUNDATION.md` — operator/developer guide for PR-4a pins, lifecycle,
-    recovery, schema, terminal verification, and deferred production composition.
+    recovery, schema, terminal verification, and its then-deferred production composition.
+131. `architecture/0049-qualification-only-local-execution-composition.md` — accepted PR-4b
+    decision for sealed assignment, a concrete CPU-only OCI cut, runtime-v2 recovery/settlement,
+    root quota/watchdog services, and the deployment threat model.
+132. `PR4B_LOCAL_EXECUTION_COMPOSITION.md` — operator/developer status guide for the exact schema,
+    component boundaries, crash semantics, TCB, external dependencies, and target-host deployment
+    campaign.

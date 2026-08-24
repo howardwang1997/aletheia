@@ -17,7 +17,7 @@ from aletheia.db import (
 
 
 def test_repository_has_one_expected_alembic_head():
-    assert expected_schema_revision() == "20260825_0024"
+    assert expected_schema_revision() == "20260827_0026"
 
 
 def test_local_execution_foundation_is_fenced_and_not_the_legacy_queue():
@@ -32,6 +32,38 @@ def test_local_execution_foundation_is_fenced_and_not_the_legacy_queue():
     assert "DEFERRABLE INITIALLY DEFERRED" in source
     assert "reconciliation must retain every resource and authority hold" in source
     assert "jobs_tasks" not in source
+
+
+def test_qualification_assignments_are_encrypted_and_relationally_complete():
+    source = (
+        Path(__file__).parents[1]
+        / "migrations"
+        / "versions"
+        / "20260826_0025_sealed_execution_assignments.py"
+    ).read_text()
+    assert "execution_assignment_envelopes" in source
+    assert "0025 requires an empty PR-4a attempt store" in source
+    assert "DEFERRABLE INITIALLY DEFERRED" in source
+    assert "initial assignment differs from first adoption lineage" in source
+    assert "lease_token" in source
+    assert "raw_token" not in source
+
+
+def test_runtime_v2_tables_are_excluded_from_legacy_baseline_parity():
+    from aletheia.schema_migrations import POST_BASELINE_TABLES
+
+    assert {
+        "execution_runtime_preparations",
+        "execution_runtime_launch_authorizations",
+        "execution_runtime_launch_receipts",
+        "execution_pre_runtime_absence_decisions",
+        "execution_runtime_fence_rebinds",
+        "execution_runtime_termination_challenges",
+        "execution_runtime_termination_acceptances",
+        "execution_qualification_terminal_deadline_expirations",
+        "execution_qualification_terminal_acceptances",
+        "execution_qualification_terminal_outbox",
+    } <= POST_BASELINE_TABLES
 
 
 def test_research_authority_backfill_is_closed_against_concurrent_legacy_inserts():

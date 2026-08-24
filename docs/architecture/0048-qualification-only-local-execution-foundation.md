@@ -1,6 +1,6 @@
 # Architecture decision 0048: A qualification-only local execution foundation
 
-- Status: Accepted (PR-4a qualification foundation; production composition deferred to PR-4b)
+- Status: Accepted for the frozen PR-4a foundation; operationally extended by decision 0049
 - Date: 2026-08-24
 - Scope: local execution authority, resource/budget leases, node proofs, and artifact custody
 
@@ -23,6 +23,10 @@ This restriction is deliberate. PR-2's current action authorization binds an act
 does not yet bind the exact protocol, compilation, WorkOrder, intent, input custody, quote, and
 budget material. PR-5 must add that research-kernel launch authorization before production Quest
 work can use this substrate.
+
+This decision records the `20260825_0024` baseline. PR-4b subsequently added sealed assignment
+delivery and a concrete local CPU-only runtime-v2 composition; see decision 0049. That extension did
+not change this decision's qualification-only or scientific-non-admission boundary.
 
 ## Independent trust inputs
 
@@ -154,11 +158,12 @@ uses the immutable terminal row's PostgreSQL `committed_at`.
   inferred. These cases retain the hold until a future signed launch-absence or historical/grace
   verification policy exists.
 
-## Deferred work
+## Deferred work at this decision
 
-PR-4b must add deployment-pinned quote/source-budget adapters, a hardened local runtime,
-allocator-to-agent/artifact/terminal composition, signed pre-runtime absence and terminal-proof
-recovery, and real isolation/adoption/fault campaigns. PR-5 adds a signed research-kernel
-action-to-execution admission message, durable controller, and independent observation-admission
-bridge. Checkpoint and external-action paths require their own typed receipt and reconciliation
-state machines before they can be enabled.
+PR-4b was assigned deployment-pinned quote/source-budget adapters, a hardened local runtime,
+allocator-to-agent/artifact/terminal composition, and signed pre-runtime absence and terminal-proof
+recovery. Those source components now exist under decision 0049; exact target-host
+Linux/root/systemd/loop/Docker deployment qualification remains a separate gate. PR-5 still must add
+a signed Research Kernel action-to-execution admission message, durable controller, and independent
+observation-admission bridge. Checkpoint and external-action paths require their own typed receipt
+and reconciliation state machines before they can be enabled.

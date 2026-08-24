@@ -1877,25 +1877,42 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
         "PostgreSQLExecutionAllocator._append_inventory_devices",
         "PostgreSQLExecutionAllocator._reconcile_expired_attempt",
         "PostgreSQLExecutionAllocator._reconcile_locked",
+        "PostgreSQLExecutionAllocator._release_never_started_holds",
+        "PostgreSQLExecutionAllocator._release_terminated_holds",
         "PostgreSQLExecutionAllocator._transition_attempt",
+        "PostgreSQLExecutionAllocator.accept_runtime_launch",
+        "PostgreSQLExecutionAllocator.accept_runtime_termination",
+        "PostgreSQLExecutionAllocator.accept_terminal_artifacts",
+        "PostgreSQLExecutionAllocator.adjudicate_expired_qualification_terminal",
         "PostgreSQLExecutionAllocator.admit_and_reserve",
         "PostgreSQLExecutionAllocator.adopt_attempt",
+        "PostgreSQLExecutionAllocator.adopt_runtime_attempt",
         "PostgreSQLExecutionAllocator.append_inventory",
+        "PostgreSQLExecutionAllocator.authorize_runtime_start",
         "PostgreSQLExecutionAllocator.commit_terminal_receipt",
         "PostgreSQLExecutionAllocator.heartbeat",
+        "PostgreSQLExecutionAllocator.issue_runtime_termination_challenge",
         "PostgreSQLExecutionAllocator.mark_running",
         "PostgreSQLExecutionAllocator.mark_terminated",
         "PostgreSQLExecutionAllocator.mark_verifying",
         "PostgreSQLExecutionAllocator.reconcile_expired",
         "PostgreSQLExecutionAllocator.register_node",
+        "PostgreSQLExecutionAllocator.resolve_runtime_absence",
+        "PostgreSQLExecutionAllocator.retain_runtime_reconciliation",
+        "PostgreSQLExecutionAllocator.settle_qualification_terminal",
         "PostgreSQLExecutionAllocator.start_attempt",
     }
-    expected_internal_callers = {
+    expected_allocator_callers = {
         "PostgreSQLExecutionAllocator._reconcile_expired_attempt",
         "PostgreSQLExecutionAllocator._reconcile_locked",
+        "PostgreSQLExecutionAllocator._release_never_started_holds",
+        "PostgreSQLExecutionAllocator._release_terminated_holds",
         "PostgreSQLExecutionAllocator._transition_attempt",
+        "PostgreSQLExecutionAllocator.accept_runtime_launch",
+        "PostgreSQLExecutionAllocator.accept_runtime_termination",
         "PostgreSQLExecutionAllocator.admit_and_reserve",
         "PostgreSQLExecutionAllocator.adopt_attempt",
+        "PostgreSQLExecutionAllocator.adopt_runtime_attempt",
         "PostgreSQLExecutionAllocator.append_inventory",
         "PostgreSQLExecutionAllocator.commit_terminal_receipt",
         "PostgreSQLExecutionAllocator.heartbeat",
@@ -1903,16 +1920,35 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
         "PostgreSQLExecutionAllocator.mark_terminated",
         "PostgreSQLExecutionAllocator.mark_verifying",
         "PostgreSQLExecutionAllocator.reconcile_expired",
+        "PostgreSQLExecutionAllocator.resolve_runtime_absence",
+        "PostgreSQLExecutionAllocator.retain_runtime_reconciliation",
         "PostgreSQLExecutionAllocator.start_attempt",
     }
-    assert {item["symbol"] for item in authority["call_sites"]} == expected_internal_callers
+    expected_adapter_callers = {
+        "PostgreSQLNodeAllocatorAdapter.accept_runtime_termination",
+        "PostgreSQLNodeAllocatorAdapter.adopt_attempt",
+        "PostgreSQLNodeAllocatorAdapter.challenge_runtime_termination",
+        "PostgreSQLNodeAllocatorAdapter.heartbeat",
+        "PostgreSQLNodeAllocatorAdapter.mark_running",
+        "PostgreSQLNodeAllocatorAdapter.resolve_pre_runtime_absence",
+        "PostgreSQLNodeAllocatorAdapter.retain_reconciliation",
+        "PostgreSQLNodeAllocatorAdapter.start_attempt",
+        "PostgreSQLNodeAllocatorAdapter.submit_terminal_artifacts",
+        "QualificationExecutionWorker._adjudicate_expired_terminal",
+        "QualificationExecutionWorker._settle",
+    }
+    expected_callers = {
+        ("aletheia.execution.allocator", symbol) for symbol in expected_allocator_callers
+    } | {
+        ("aletheia.execution.postgresql_node_adapter", symbol)
+        for symbol in expected_adapter_callers
+    }
     assert {
-        item["symbol"] for item in authority["allowed_legacy_callers"]
-    } == expected_internal_callers
-    assert all(
-        item["module"] == "aletheia.execution.allocator"
-        for item in [*authority["call_sites"], *authority["allowed_legacy_callers"]]
-    )
+        (item["module"], item["symbol"]) for item in authority["call_sites"]
+    } == expected_callers
+    assert {
+        (item["module"], item["symbol"]) for item in authority["allowed_legacy_callers"]
+    } == expected_callers
     assert authority["status"] == outbox["status"] == "authoritative_new_owner"
     assert {
         "execution.qualification_authority",
@@ -1928,6 +1964,16 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
         "postgres.execution_persistence.execution_budget_heads",
         "postgres.execution_persistence.execution_heads",
         "postgres.execution_persistence.execution_attempts",
+        "postgres.execution_persistence.execution_assignment_envelopes",
+        "postgres.execution_persistence.execution_runtime_preparations",
+        "postgres.execution_persistence.execution_runtime_launch_authorizations",
+        "postgres.execution_persistence.execution_runtime_launch_receipts",
+        "postgres.execution_persistence.execution_pre_runtime_absence_decisions",
+        "postgres.execution_persistence.execution_runtime_fence_rebinds",
+        "postgres.execution_persistence.execution_runtime_termination_challenges",
+        "postgres.execution_persistence.execution_runtime_termination_acceptances",
+        "postgres.execution_persistence.execution_qualification_terminal_deadline_expirations",
+        "postgres.execution_persistence.execution_qualification_terminal_acceptances",
         "postgres.execution_persistence.execution_attempt_adoptions",
         "postgres.execution_persistence.execution_resource_leases",
         "postgres.execution_persistence.execution_device_leases",
@@ -1935,10 +1981,36 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
         "postgres.execution_persistence.execution_budget_events",
         "postgres.execution_persistence.execution_terminal_receipts",
     }
-    assert _storage_targets(outbox) == ("postgres.execution_persistence.execution_outbox",)
+    assert set(_storage_targets(outbox)) == {
+        "postgres.execution_persistence.execution_outbox",
+        "postgres.execution_persistence.execution_qualification_terminal_outbox",
+    }
+    assert {
+        reference["symbol"]
+        for reference in [outbox["legacy_entrypoint"], *outbox["additional_writers"]]
+    } == {
+        "PostgreSQLExecutionAllocator.commit_terminal_receipt",
+        "PostgreSQLExecutionAllocator.adjudicate_expired_qualification_terminal",
+        "PostgreSQLExecutionAllocator.settle_qualification_terminal",
+    }
+    expected_outbox_callers = {
+        (
+            "aletheia.execution.postgresql_node_adapter",
+            "QualificationExecutionWorker._adjudicate_expired_terminal",
+        ),
+        (
+            "aletheia.execution.postgresql_node_adapter",
+            "QualificationExecutionWorker._settle",
+        ),
+    }
+    assert {
+        (item["module"], item["symbol"]) for item in outbox["call_sites"]
+    } == expected_outbox_callers
+    assert {
+        (item["module"], item["symbol"]) for item in outbox["allowed_legacy_callers"]
+    } == expected_outbox_callers
     assert "cannot admit a scientific observation" in authority["scientific_semantics"]
-    assert "transports no scientific admission" in outbox["scientific_semantics"]
-    assert not outbox["call_sites"]
+    assert "scientific admission" in outbox["scientific_semantics"]
 
     policy = inventory["policy"]
     assert (
@@ -1948,6 +2020,22 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
     assert (
         policy["direct_file_sink_profile_by_prefix"]["aletheia.execution.node_agent"]
         == "qualification_node_state"
+    )
+    assert (
+        policy["direct_file_sink_profile_by_prefix"]["aletheia.execution.input_materializer"]
+        == "qualification_input_materialization"
+    )
+    assert (
+        policy["direct_file_sink_profile_by_prefix"]["aletheia.execution.oci_deployment"]
+        == "qualification_host_control_state"
+    )
+    assert (
+        policy["direct_file_sink_profile_by_prefix"]["aletheia.execution.oci_runtime"]
+        == "qualification_oci_runtime_state"
+    )
+    assert (
+        policy["direct_file_sink_profile_by_prefix"]["docker.qualification-smoke-workload"]
+        == "qualification_workload_output"
     )
 
 

@@ -733,8 +733,10 @@ parser/validator 从原始 bytes 重算后才可成为 observation。
 
 ### 9.6 三节点上线顺序
 
-1. PR-4a 先在本机实现 `QualificationNodeAgent` injected facade 与同节点接管
-   contracts；PR-4b 再接入经审核的 hardened sandbox，验证真实 runtime receipt 与 fence rebind；
+1. PR-4a 先在本机实现 `QualificationNodeAgent` injected facade 与同节点接管 contracts；PR-4b
+   已接入 concrete CPU-only OCI runtime、PostgreSQL adapter/worker、input materializer、loop-backed
+   output quota、in-container launch gate、runtime fence rebind 与独立 deadline watchdog；exact target
+   Linux/root/systemd/loop/Docker campaign 通过前仍不得称 deployable；
 2. 重新盘点后选择一个无外部占用、磁盘配额充足的节点做 canary；2060 是候选而不是永久假设；
 3. 为 V100 取得 dedicated window/宿主 scheduler 集成与部署授权后，再分别 onboarding；
 4. 验证定向调度、两 V100 并发、资源不匹配 fail closed 和 GPU-hour 实测结算；
@@ -964,7 +966,46 @@ autonomy/human-intervention 达到冻结阈值；至少一个成功 claim 必须
 V100 重跑只能称为 exact reexecution/hardware portability，不能称作 implementation reproduction，
 更不能称作独立科学复现。
 
-### 13.4 endurance gate 的修订
+### 13.4 Discovery episode 投影与独立评估
+
+[Measuring AI Scientists: From Exams to Discovery](https://doi.org/10.26434/chemrxiv.15007582/v1)
+明确把评测单位从孤立问题推进到 discovery episode：同时观察 hypothesis generation、computational/
+experimental execution 和 result interpretation，联合评价 trajectory 与 outcome，保留 failure/null result 与
+provenance，并区分 genuine discovery 和 rediscovery。本文能取得的一手公开证据是 ChemRxiv metadata/摘要；
+下面的 Aletheia 数据结构是基于该评测原则和本架构现有 authority boundary 的设计推导，不冒充论文给出的
+schema 或 rubric。
+
+未来 evaluation slice 应增加三个彼此分离的对象：
+
+1. `DiscoveryEpisodeManifest` 在 episode 开始前冻结 mission、temporal cutoff、允许披露的 assets/tools、
+   resource budget、stopping/missingness policy、rubric version、hidden evaluator boundary 和 independent-
+   confirmation rule；
+2. `DiscoveryEpisodeProjection` 只能从 authoritative research-event chain、execution receipts、observation-
+   admission receipts、transition receipts 和精确的 `StateCapsuleProjection` disclosure receipts 机械派生，
+   包含所有 branches/attempts、失败、null/inconclusive 结果、revision/backtrack/stop、成本与人工介入。它是
+   可重算的只读视图，绝不成为第二套 research state、claim authority 或 execution authority，也不收集
+   unverifiable raw chain-of-thought；
+3. `DiscoveryEpisodeAssessment` 由 evaluator-only principal 独立签名，exact-bind manifest、projection、
+   rubric 和 evaluator policy。assessment 在 episode 结束前不可被 agent 读取，不回写历史 ledger，也不能
+   作为遗漏 attempt 或绕过 independent confirmation 的 promotion authority。
+
+每个 proposal/action 还必须绑定当时实际可见的 disclosure receipt。评价 hypothesis 选择、pivot、stop 或
+backtrack 时只能使用该时点的信息集，不能用后来结果做 hindsight grading。先执行不可补偿的 provenance/
+trace completeness、pre-freeze/cutoff、hidden-boundary、all-attempt、protocol/safety 和 independent-
+confirmation hard gates，再报告分阶段向量：hypothesis 的 grounding/testability/falsifiability/
+discrimination，execution 的 validity/reliability/reproducibility/cost/safety，interpretation 的 evidence fit/
+calibration/null handling/claim scope，以及 trajectory 的 grounded revision、正确 backtrack/stop、信息增益
+和人工介入。outcome 单独报告 correctness、novelty、importance 和 claim-specific confirmation；不得把这些
+压成一个可用高分抵消 hard-gate 失败的总分。
+
+episode 的 terminal classification 至少区分 `genuine_discovery_candidate`、`rediscovery`、`replication`、
+`negative_result`、`inconclusive` 和 `invalid`。前五者描述科学结果，`invalid` 才表示 protocol/provenance/
+safety 等门禁失败；negative 或 inconclusive 不能自动降格为 infrastructure failure。`genuine` 与
+`rediscovery` 的区别必须由预冻结 prior-art cutoff、污染审计和外部专家/独立确认裁决，不能由 agent 自述或
+embedding similarity 决定。该 slice 属于 PR-5 scientific bridge 之后的 evaluation work，不改变 PR-4b
+qualification-only execution 的边界。
+
+### 13.5 endurance gate 的修订
 
 既有 real-time v1 manifest 和 terminal blocked report 是不可变历史，不能修改或重新解释。另行生成一份
 引用其原始 report SHA-256 的 derived operational interpretation；未来运行发布 versioned gate v2，再将
@@ -991,6 +1032,7 @@ durability 与 scientific adaptation 拆开：
 | proposal 多样性、经验选择与 objective 修订 | [AI Co-Scientist, PR](https://doi.org/10.1038/s41586-026-10644-y)；[LDM, PP](https://arxiv.org/abs/2608.15669)；[SAGA, PP](https://arxiv.org/abs/2512.21782) | 多样化 proposal、empirical surrogate/acquisition 和版本化 objective/scorer 可以作为可插拔策略；内部 Elo 或 acquisition 不是科学真值。SAGA 明确保留预定义 design modality，只支持 objective/scorer 演化；`DesignSpaceVersion` 是 Aletheia 对 LDM 式支持集扩展与自身需求的进一步抽象，不是 SAGA 的结论。 |
 | 现实执行与人工 intervention accounting | [Qiushi, PP](https://arxiv.org/abs/2604.27092)；[Robin, PR](https://doi.org/10.1038/s41586-026-10652-y) | 现实平台需要统一 protocol/artifact contract；human translation、candidate selection、protocol 修订和停止判断必须计账。单一平台同团队验证，或有人把实验做完，都不能直接计作系统自治与外部复现。 |
 | 独立评测与开放问题审查 | [ScienceAgentBench, PR](https://proceedings.iclr.cc/paper_files/paper/2025/hash/f12b4df26344f3be803c06b555252efe-Abstract-Conference.html)；[CORE, OP](https://crab.cs.princeton.edu/core-website/)；[AstaBench, PR](https://proceedings.iclr.cc/paper_files/paper/2026/hash/b2ce9568dbb559aefc8c98ca5b5314ce-Abstract-Conference.html)；[CRUX, PP](https://arxiv.org/abs/2607.27191) | frozen benchmark 适合组件/重放回归；publication-frozen shadow 适合研究判断。它们必须和真正 prospective、claim-type-specific independent confirmation 并存，不能合成一个论文质量总分。 |
+| discovery episode、阶段归因与结果分类 | [Measuring AI Scientists: From Exams to Discovery, PP](https://doi.org/10.26434/chemrxiv.15007582/v1)；[Scientific Discovery Evaluation, PP](https://arxiv.org/abs/2512.15567) | 评测对象应覆盖 hypothesis、execution、interpretation 的连续 episode，并联合看 trajectory/outcome、失败/null 和 provenance。Aletheia 将其实现为权威 ledger 的派生 projection 与 evaluator-only signed assessment，而不是新 ledger；genuine discovery、rediscovery、replication、negative、inconclusive 与 invalid 必须分开。 |
 
 CRUX 的两个案例中，agents 在六天内完成了工程，却没有实质推进研究问题，并暴露 publishability
 judgment、research-design 修复、dead-end backtracking、resource awareness 和 instruction adherence
@@ -1168,8 +1210,8 @@ branches，且不调用 legacy driver；自主问题形成留到 A6，此时仍�
 
 按 PR-4a foundation → PR-4b composition → PR-5 scientific bridge 的顺序实现：
 
-- `QualificationNodeAgent` 作为 PR-4a injected facade；PR-4b 才将它的 narrow ports 接入
-  经审核的 hardened sandbox/runtime；
+- `QualificationNodeAgent` 作为 PR-4a injected facade；PR-4b 已将其 narrow ports 接入 concrete
+  CPU-only OCI sandbox/runtime、PostgreSQL adapter/worker、input/quota/watchdog 与 terminal settlement；
 - signed single-node inventory、`PostgreSQLExecutionAllocator` 和原子的 budget/device
   reservation，支持本地动态 placement；
 - 本地 quarantine/CAS、artifact verification receipt、stable same-node adoption 和 typed failures；
@@ -1476,13 +1518,34 @@ CAS writer、model/network/process/GPU 调用，也不检查 live availability�
   budget/device reservation、fencing、adoption 与 terminal settlement；
 - `LocalArtifactStore` / `LocalVerifiedInputArtifactResolver` 完成 quarantine/CAS、central rehash 和
   producer lineage custody；
-- `QualificationNodeAgent` 只是 injected protocol/fault harness，不是 concrete runtime adapter；
-- hardened local sandbox、真实 resource/device enforcement 与 crash-idempotent runtime fence rebind 属于 PR-4b。
+- PR-4b 已落 `ExactExecutionCostQuoteRegistry` / `SourceBudgetProjectionRegistry`、sealed
+  X25519/AEAD assignment、`PostgreSQLNodeAllocatorAdapter` / `QualificationExecutionWorker`、
+  `LocalCASInputMaterializer`、`LocalQualificationOCIRuntime`、in-container launch gate、root/systemd
+  loop-backed output quota 与 deadline watchdog，以及 pre-runtime absence、historical actual-start
+  recovery、runtime fence rebind、termination challenge/acceptance、artifact grace/deadline expiration
+  和 v2 terminal outbox；
+- current Alembic head 为 `20260827_0026`：`0024` 的 16 张 PR-4a execution tables、`0025` 的
+  1 张 sealed-assignment table、`0026` 的 10 张 append-only runtime-v2 tables，共精确 27 张
+  `execution_*` tables；
+- composed cut 是 single local node、CPU-only（可按 exact cgroup 配额使用多个 CPU cores），所有
+  contracts 保持 `qualification_only=true` / `scientific_admission_allowed=false`；GPU/device、remote、
+  checkpoint、external/provider action 与 cross-node adoption 均未开放。
 
-PR-4a 尚无 concrete quote/source-budget authority adapter、OCI runtime、allocator-to-agent/terminal
-composition 或 production launch service。以上 operational composition、pre-runtime absence proof、
-terminal proof refresh/grace 与真实 isolation campaign 属于 PR-4b；在这些闭合前不能把 pure/fake harness
-测试描述为可部署执行。
+代码与 deterministic/fault/PostgreSQL tests 不能替代 deployment gate。exact target host 尚须以 dedicated
+exclusive node UID/GID、restricted allocator DB role、rootful Docker、real systemd units、shared mount
+visibility、loop/ext4、cgroup-v2、seccomp/AppArmor 和 pinned OCI layout 跑 opt-in campaign；若该 campaign
+未跑或未通过，PR-4b 只能称 implemented qualification composition，不能称 deployable/production service。
+Docker 使用 pathname bind 而非 open fd，因此同 UID host peer、host root/remount、compromised root service
+或 Docker daemon 都在防御范围外，属于明确 TCB。
+
+冻结源码/测试 checkpoint 的 security review 为 A=0，但这只关闭已审 source threat model，不构成 host
+认证：仓库尚无 target-host installer 或 frozen deployment manifest，exact campaign 也从未跑过，因此当前
+明确 nondeployable。`OutputQuotaProvisioningReceipt` 是 privileged local root service 的 trusted-local
+evidence，不是独立 remote attestation；watchdog 是 single-threaded inspect loop，
+`maximum_active_jobs` 默认为 4,096 且超过 deployment-pinned 值会拒绝扫描；4,096 jobs 下的 hard-real-time
+kill latency 尚未证实。mount-generation mismatch 的语义逐边界固定为：
+post-create exact rm、post-start exact kill；final pre-start guard 则在 start 前 fail closed，并保留精确
+CREATED/PID0 generation 交由 durable never-started cleanup，不能笼统称为当场终止并删除。
 
 验收：fault injection 下同一 attempt 不并发重复；确认旧 attempt 失败后，每次 infrastructure retry 使用新
 attempt ID；execution terminal receipt/outbox exactly-once。DB terminal state 必须绑定已复核的 artifact
@@ -1567,15 +1630,16 @@ PR-5 的本地 vertical cut 通过后，才依据 fresh inventory 选择远程 c
 ## 21. 下一步执行决定
 
 **PR-0：Legacy freeze 与 migration boundary**、**PR-1：Research kernel pure contracts**、
-**PR-2：Authoritative event store**、**PR-3：Protocol IR pure contracts** 和
-**PR-4a：qualification-only local execution foundation** 均已完成。下一项代码工作是
-**PR-4b：production local execution composition**：实现 deployment-pinned quote/source-budget adapter、
-真实 OCI isolation/runtime、allocator↔agent↔artifact↔terminal composition、pre-runtime absence 与 terminal
-proof recovery，并用真实 fault/concurrency campaign 证明资源限制、fencing 和恢复。checkpoint 与 external
+**PR-2：Authoritative event store**、**PR-3：Protocol IR pure contracts**、
+**PR-4a：qualification-only local execution foundation** 和 **PR-4b：qualification-only local execution
+composition implementation** 均已完成源码切片。PR-4b 的 exact target-host
+Linux/root/systemd/loop/ext4/rootful-Docker campaign 仍是部署前硬门；通过前不把它描述为 production local
+execution service。下一项 scientific-control-plane 代码工作是 **PR-5：signed Research Kernel
+action-to-execution bridge + durable controller + independent observation admission**。checkpoint 与 external
 reconciliation 仍需独立 typed contracts，不能由 generic retry 猜测。
 
-GPU node 的 deployment threat model 和 onboarding checklist 可以继续独立准备，但直到 PR-4b 的
-production execution composition 和 PR-5 的 durable local vertical cut 都通过前，不部署逐任务 remote execution。
+GPU node 的 deployment threat model 和 onboarding checklist 可以继续独立准备，但直到 PR-4b 的 target-host
+deployment campaign 和 PR-5 的 durable local vertical cut 都通过前，不部署逐任务 remote execution。
 
 本文的判断标准很简单：每个新增组件都必须能回答“它改变了哪一个类型化科学状态、依据哪份可验证证据、
 谁有权提交这次改变，以及第三方怎样重放”。如果不能回答，它最多是一个 proposal 工具，不是自主科学家

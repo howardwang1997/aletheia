@@ -1,6 +1,7 @@
 # Aletheia database migrations
 
 The database schema is versioned with Alembic. Application startup never creates or alters tables.
+The current repository head is `20260827_0026`.
 
 For a fresh database:
 
@@ -39,3 +40,19 @@ Revision `20260815_0005` adds immutable F9-S8 world-model transition records. Ea
 committed update receipt to its source, posterior, and optional revision-closed next snapshot.
 Application code writes those objects and the corresponding typed scheduler event in one
 transaction; transition rows reject SQL `UPDATE` and `DELETE`.
+
+Revision `20260825_0024` adds the 16-table PR-4a local execution foundation: enrolled node and
+inventory state, qualification admission, resource/device/budget heads and leases, attempts and
+adoptions, immutable terminal receipts, and the transactional v1 outbox.
+
+Revision `20260826_0025` adds exactly one `execution_assignment_envelopes` table for node-encrypted,
+attempt-bound initial lease-token delivery. It refuses to upgrade a database containing any PR-4a
+attempt: drain/rebuild the qualification attempt store rather than invent assignment custody for an
+older row.
+
+Revision `20260827_0026` adds ten append-only runtime-v2 tables for inert preparation, short-lived
+launch authorization, accepted actual launch, pre-runtime absence, fence rebind, termination
+challenge/acceptance, artifact terminal acceptance or deadline expiration, and the transactional v2
+outbox. The current execution schema therefore contains exactly 27 `execution_*` tables: 16 from
+`0024`, one from `0025`, and ten from `0026`. Runtime-v2 termination is not written back as a legacy
+`ExecutionReceipt`.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from functools import cached_property, partial
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ from aletheia.migration.boundary import (
     DEFAULT_AUDITED_DYNAMIC_LOADER_ESCAPE_COUNTS,
     DEFAULT_AUDITED_DYNAMIC_LOADER_SOURCES,
     DEFAULT_OPERATIONAL_PYTHON_ROOTS,
+    DEFAULT_PRIVATE_EXECUTION_RECORD_SYMBOLS,
     find_dependency_boundary_violations,
     find_execution_persistence_import_violations,
     find_legacy_driver_import_violations,
@@ -110,6 +112,22 @@ def test_repository_has_one_authoritative_research_store_writer() -> None:
 
 def test_repository_has_one_authoritative_execution_writer() -> None:
     assert find_execution_persistence_import_violations(REPOSITORY_ROOT) == ()
+
+
+def test_execution_private_record_allowlist_matches_the_registered_schema() -> None:
+    persistence_path = REPOSITORY_ROOT / "aletheia" / "execution" / "persistence.py"
+    tree = ast.parse(persistence_path.read_text(encoding="utf-8"))
+    record_symbols = {
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name.startswith("_Execution")
+        and node.name.endswith("Record")
+    }
+
+    assert record_symbols
+    assert set(DEFAULT_PRIVATE_EXECUTION_RECORD_SYMBOLS) == record_symbols
+    assert len(DEFAULT_PRIVATE_EXECUTION_RECORD_SYMBOLS) == len(record_symbols)
 
 
 def test_new_module_cannot_import_execution_authority_records(tmp_path: Path) -> None:

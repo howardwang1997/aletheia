@@ -102,31 +102,39 @@ reliable autonomous frontier scientist.
    reproducibility package/PR; a qualifying scientific-exit gate and F12 remain.
 
 The new-Quest control-plane migration has completed PR-0 through PR-3 and now includes the PR-4a
-qualification-only local-execution foundation. A deployment-pinned,
+foundation plus the PR-4b qualification-only local-execution composition. A deployment-pinned,
 root-certified Ed25519 policy now gates full signed commands into an append-only event/CAS store;
 deterministic replay, full audit, crash-safe idempotency, a Quest-wide emergency halt, and an
 immutable cross-store namespace prevent the legacy Program graph and research kernel from owning
 the same Quest. The authoritative API is under `/research-kernel/...`; compatibility mutations are
 explicitly deprecated under `/legacy/research-graph/...` and never dual-write. This is a durable
 scientific authority substrate plus a pure, domain-independent scientific Protocol IR/compiler and
-a fenced engineering-qualification substrate—not yet an autonomous experiment controller or a
-deployable execution service. PR-3 can reject or canonically compile frozen
-protocols against atomic capability manifests and static resource classes. Work-order nodes now
+a fenced engineering-qualification substrate—not yet an autonomous experiment controller,
+scientific launch path, or target-host-qualified production service. PR-3 can reject or canonically
+compile frozen protocols against atomic capability manifests and static resource classes. Work-order nodes now
 freeze logical command, input/output, artifact, and replicate kind/count/seed/site identities;
 PR-4a reruns the pure compilation/intent verifier before reservation and the confirmed-failure retry
 verifier before another infrastructure attempt. It adds deployment-signed engineering grants,
 enrolled node/inventory contracts, PostgreSQL resource/budget fencing, quarantine/CAS rehash, typed
-terminal receipts, and a non-composed node fault harness. Exact reexecution requires at least two
-preregistered slots on every scientific-executor branch; it does not prove independent
+terminal receipts, and the original node fault harness. PR-4b adds signed read-only quote/source-
+budget registries, sealed X25519/AEAD assignment delivery, a PostgreSQL allocator-to-node
+adapter/worker, exact input materialization, a local CPU-only OCI runtime and launch gate,
+loop-backed output quota, an independent systemd deadline watchdog, and runtime-v2 termination/
+artifact settlement. Exact reexecution requires at least two preregistered slots on every
+scientific-executor branch; it does not prove independent
 implementation or site. PR-3 still cannot inspect live capacity, validate input receipt bytes or
-custody, reserve hardware or budget, authorize or run work, or admit evidence by itself. PR-4a does
-not include a concrete quote/source-budget authority adapter, OCI runtime, allocator-to-agent
-composition, HTTP launch path, or Research Kernel launch authorization. PR-4b must compose and
-qualify those operational pieces before PR-5 can add the scientific action-to-execution bridge; the
-PR-2 store also still has one immutable policy epoch and `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
+custody, reserve hardware or budget, authorize or run work, or admit evidence by itself. PR-4b is
+still permanently `qualification_only=true` / `scientific_admission_allowed=false`, rejects device/
+GPU launch, and has no HTTP or Research Kernel launch authorization. Its exact
+Linux/rootful-Docker/systemd/loop/ext4/cgroup-v2/shared-mount deployment campaign must pass before
+any host is called deployable. The repository currently has no target-host installer or frozen
+deployment manifest, that exact campaign has not run, and PR-4b is therefore nondeployable. PR-5
+must add the scientific action-to-execution bridge; the PR-2
+store also still has one immutable policy epoch and `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
 the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-3 compiler guide](docs/PR3_PROTOCOL_COMPILER.md), plus the
-[PR-4a foundation guide](docs/PR4_LOCAL_EXECUTION_FOUNDATION.md).
+[PR-4a foundation guide](docs/PR4_LOCAL_EXECUTION_FOUNDATION.md) and
+[PR-4b composition guide](docs/PR4B_LOCAL_EXECUTION_COMPOSITION.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,
