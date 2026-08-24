@@ -125,10 +125,13 @@ scientific-executor branch; it does not prove independent
 implementation or site. PR-3 still cannot inspect live capacity, validate input receipt bytes or
 custody, reserve hardware or budget, authorize or run work, or admit evidence by itself. PR-4b is
 still permanently `qualification_only=true` / `scientific_admission_allowed=false`, rejects device/
-GPU launch, and has no HTTP or Research Kernel launch authorization. Its exact
-Linux/rootful-Docker/systemd/loop/ext4/cgroup-v2/shared-mount deployment campaign must pass before
-any host is called deployable. The repository currently has no target-host installer or frozen
-deployment manifest, that exact campaign has not run, and PR-4b is therefore nondeployable. PR-5
+GPU launch, and has no HTTP or Research Kernel launch authorization. Its deployment-evidence
+closure now provides a portable closed desired-state contract, deterministic systemd/PostgreSQL
+rendering, externally pinned signed Linux observations, a derived installed-manifest schema, and
+read-only revalidation. It deliberately does not install or repair a host, implement the concrete
+observer, or run the campaign. The exact Linux/rootful-Docker/systemd/loop/ext4/cgroup-v2/shared-
+mount campaign must pass before any host is called deployable. No target-host manifest instance has
+been frozen, that exact campaign has not run, and PR-4b is therefore nondeployable. PR-5
 must add the scientific action-to-execution bridge; the PR-2
 store also still has one immutable policy epoch and `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
 the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the

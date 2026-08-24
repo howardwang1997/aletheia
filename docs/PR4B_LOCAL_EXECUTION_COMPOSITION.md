@@ -1,8 +1,8 @@
 # PR-4b qualification-only local execution composition
 
-- Status: source/test composition complete and security review A=0; target-host deployment is
-  unqualified and nondeployable
-- Evidence date: 2026-08-24
+- Status: source/test composition and deployment-evidence contracts complete; target-host
+  installation/campaign is unqualified and nondeployable
+- Evidence date: 2026-08-25
 - Alembic head: `20260827_0026`
 
 PR-4b composes the PR-4a authority foundation into one local, CPU-only engineering-qualification
@@ -11,11 +11,14 @@ path. The implementation remains permanently marked `qualification_only=true` an
 claim admission path, a remote/GPU scheduler, or an autonomous experiment controller.
 
 Repository implementation and deterministic/fault-test coverage are not deployment evidence. The
-repository does not yet contain a target-host installer or frozen deployment manifest, and the
-target-host campaign has not run. A host is deployable only after its exact Linux, rootful Docker,
-systemd, loop/ext4, mount-namespace, cgroup-v2 and Docker systemd-cgroup-driver layout, seccomp,
-AppArmor, image-layout, UID/GID, filesystem, PostgreSQL-role, and clock configuration has passed the
-opt-in production campaign described under **Deployment status**.
+repository now contains a portable desired-state contract, deterministic systemd/PostgreSQL
+rendering, and a derived manifest/preflight contract over an externally pinned observer signature.
+It still contains no target-host installer, concrete Linux observer, frozen manifest instance, or
+campaign runner, and the target-host campaign has not run. A host is deployable only after its exact
+Linux, rootful Docker, systemd, loop/ext4, mount-namespace, cgroup-v2 and Docker
+systemd-cgroup-driver layout, seccomp, AppArmor, image-layout, UID/GID, filesystem,
+PostgreSQL-role, and clock configuration has passed the opt-in production campaign described under
+**Deployment status**.
 
 ## Implemented composition
 
@@ -29,10 +32,12 @@ opt-in production campaign described under **Deployment status**.
 | Runtime and launch gate | `LocalQualificationOCIRuntime`, `ImmutableOCIImageLaunchGateVerifier`, and `aletheia.execution.qualification_launch_gate` | Digest-pinned Docker image/layout, direct exec, exact workload digest/argv, read-only root, network none, dropped capabilities, no-new-privileges, pinned seccomp/AppArmor, private cgroup namespace, exact CPU/memory/pids limits, read-only inputs, and the quota mount as the only writable workload mount. This PR-4b cut rejects every accelerator/device launch before engine mutation. |
 | Deadline enforcement | `DurableDeadlineWatchdogService` and `SystemdDeadlineWatchdogController` | Independently supervised root/systemd watchdog, exact durable job scope, pinned service/unit/module/binary, `cgroup.kill`, and empty-cgroup evidence. There is no in-process timer fallback. Its due-job recovery is a single-threaded inspect loop; `maximum_active_jobs` defaults to 4,096 and rejects a scan above the deployment-pinned value. Hard-real-time kill latency at 4,096 jobs has not been established. |
 | Artifact and terminal path | `LocalArtifactStore`, `QualificationNodeAgent`, `PostgreSQLExecutionAllocator`, and `QualificationExecutionWorker` | Quarantine/CAS rehash, termination challenge/receipt, independently accepted runtime termination, bounded artifact grace, terminal acceptance or pre-signed deadline expiration, and one transactional v2 outbox row. Outbox dispatch remains external. |
+| Deployment evidence | `QualificationDeploymentSpecV1`, `render_systemd_units`, `render_postgresql_acl`, `SignedQualificationLinuxDeploymentObservation`, `QualificationInstalledDeploymentManifestV1`, and `verify_installed_manifest` | Portable desired state closes reviewed code/Python/native-dependency trees, service identities, exact PostgreSQL objects/ACL closure, host/runtime pins, and an external observer key. Only a real Linux observation may be frozen; revalidation returns eligibility for a later opt-in campaign, never a deployment or scientific verdict. Installation, observer implementation, and campaign execution remain external. |
 
 There is no production composition root or target-host installer that installs the systemd units,
 provisions identities and registry files, creates PostgreSQL roles, configures mount propagation,
-or starts/supervises the worker. Nor is there a frozen deployment manifest.
+or starts/supervises the worker. There is a closed schema for deriving a manifest from signed live
+evidence, but no target-host manifest instance has been frozen.
 `QualificationExecutionWorker` closes the database/node/terminal application path and
 `LocalQualificationOCIRuntime` accepts the concrete gate/quota/watchdog controllers, but the whole
 real root-service + Docker + PostgreSQL path is not established merely by constructing those
@@ -183,17 +188,28 @@ are required TCB assumptions, not properties proved by a Pydantic contract or un
 The repository has deterministic unit/fault coverage for authority binding, raw-DML guards,
 assignment/token custody, input materialization, allocator/runtime lifecycle, mount-generation
 rechecks, quota/watchdog crash journals, adapter translation, terminal settlement, and concurrent
-PostgreSQL deadline adjudication. The final independent source/test checkpoint reported security
-review A=0. Its combined non-PostgreSQL slice passed 228 tests with five deselected; the
+PostgreSQL deadline adjudication. The 2026-08-24 independent source/test checkpoint reported
+security review A=0. Its combined non-PostgreSQL slice passed 228 tests with five deselected; the
 deployment/runtime slice passed 133/133; the race slice passed 10/10; and the full
 `tests/execution` suite passed 352 tests with 68 skipped. These overlapping counts are separate
 views of the same frozen code, not numbers to add together. They validate contracts and failure
 handling, not the host's production configuration.
 
-After final formatting and metadata-test isolation, the repository-wide suite passed 2,267 tests
-with eight skipped. Two Docker tests that initially encountered a stale Colima client/container
-closeout were rerun independently before the clean repository-wide pass; no timeout result is
-counted as acceptance evidence.
+The 2026-08-25 deployment-evidence closure added 149 focused tests for closed desired state,
+deterministic unit/ACL rendering, exhaustive reviewed code and native dependency identity, signed
+node/custody-root identity, effective node poll configuration, loaded/enforcing AppArmor policy,
+PostgreSQL role/object/grant/routine-owner closure, signed observer provenance and time bounds,
+reboot-safe versus same-boot drift, fail-closed freeze, and Darwin refusal. With `PYTHONPATH=.` the
+complete `tests/execution` suite passed 501 tests with 68 skipped, and the
+migration/dependency/schema slice passed 191 tests. These are source-contract results only; they do
+not increase deployment status.
+
+At the earlier 2026-08-24 pre-closure checkpoint, after final formatting and metadata-test
+isolation, the repository-wide suite passed 2,267 tests with eight skipped. Two Docker tests that
+initially encountered a stale Colima client/container closeout were rerun independently before that
+clean pass; no timeout result is counted as acceptance evidence. This historical count does not
+include the 149 deployment-evidence tests above; a new repository-wide count is not claimed by this
+focused closure checkpoint.
 
 Migration/SQL validation used the dedicated database `aletheia_pr4b_root_dev_8241`: head
 `0026 -> 0025 -> 0026` round-tripped successfully, `alembic check` reported no new operations, and
@@ -211,8 +227,9 @@ foreign-node rejection, two concurrent workers producing one exact outbox row, a
 post-hard-deadline prelaunch cleanup with zero workload launch. They do not exercise a real root
 quota/watchdog service or target-host Docker mount namespace.
 
-No target-host installer or frozen deployment manifest exists at this checkpoint. Until an opt-in
-campaign runs as root on the exact target Linux host with its real systemd units,
+No target-host installer, concrete observer, frozen manifest instance, or campaign runner exists at
+this checkpoint. `QualificationInstalledDeploymentManifestV1` is a derived schema, not evidence
+that any installation was observed. Until an opt-in campaign runs as root on the exact target Linux host with its real systemd units,
 rootful Docker daemon, shared mount visibility, loop/ext4 tools, cgroup-v2 hierarchy, pinned OCI
 layout/image, Docker's pinned systemd cgroup layout, seccomp/AppArmor profiles, dedicated UID/GID,
 and restricted PostgreSQL role, PR-4b

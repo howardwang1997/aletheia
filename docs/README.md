@@ -35,8 +35,8 @@ Current implementation slice:
   compose sealed assignment, a CPU-only OCI runtime, quota/watchdog root services, runtime-v2
   recovery, and terminal settlement without creating scientific admission.
 - `PR4B_LOCAL_EXECUTION_COMPOSITION.md` — current implementation map, exact 27-table schema,
-  lifecycle/crash semantics, deployment TCB, external-service requirements, and the honest
-  Linux/root/systemd/loop/Docker validation boundary.
+  lifecycle/crash semantics, portable deployment-evidence/preflight contracts, deployment TCB,
+  external-service requirements, and the honest Linux/root/systemd/loop/Docker validation boundary.
 
 Supporting technology research (not the system architecture):
 

@@ -93,8 +93,8 @@ procedure, and database/host clock monitoring.
 - A target host is not deployable merely because unit, simulated-kernel, PostgreSQL, or ordinary
   Docker tests pass. The exact opt-in Linux/root/systemd/loop/ext4/rootful-Docker campaign must pass
   on that deployment, including the pinned systemd cgroup-v2 layout and shared mount visibility.
-  This repository currently has neither a target-host installer nor a frozen deployment manifest,
-  and that exact campaign has not run; PR-4b is nondeployable at this checkpoint.
+  This repository currently has neither a target-host installer nor a frozen deployment-manifest
+  instance, and that exact campaign has not run; PR-4b is nondeployable at this checkpoint.
 - Discovery-episode projection/assessment remains pure derived, evaluator-only work after the PR-5
   scientific bridge and cannot become a second authority ledger.
 

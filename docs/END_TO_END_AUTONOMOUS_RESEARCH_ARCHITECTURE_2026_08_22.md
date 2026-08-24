@@ -1530,6 +1530,9 @@ CAS writer、model/network/process/GPU 调用，也不检查 live availability�
 - composed cut 是 single local node、CPU-only（可按 exact cgroup 配额使用多个 CPU cores），所有
   contracts 保持 `qualification_only=true` / `scientific_admission_allowed=false`；GPU/device、remote、
   checkpoint、external/provider action 与 cross-node adoption 均未开放。
+- deployment-evidence closure 已落 portable `QualificationDeploymentSpecV1`、deterministic
+  systemd/PostgreSQL rendering、externally pinned signed Linux observation、derived installed
+  manifest 和 read-only preflight；它不安装/修复主机、不提供 concrete observer，也不执行 campaign。
 
 代码与 deterministic/fault/PostgreSQL tests 不能替代 deployment gate。exact target host 尚须以 dedicated
 exclusive node UID/GID、restricted allocator DB role、rootful Docker、real systemd units、shared mount
@@ -1539,8 +1542,9 @@ Docker 使用 pathname bind 而非 open fd，因此同 UID host peer、host root
 或 Docker daemon 都在防御范围外，属于明确 TCB。
 
 冻结源码/测试 checkpoint 的 security review 为 A=0，但这只关闭已审 source threat model，不构成 host
-认证：仓库尚无 target-host installer 或 frozen deployment manifest，exact campaign 也从未跑过，因此当前
-明确 nondeployable。`OutputQuotaProvisioningReceipt` 是 privileged local root service 的 trusted-local
+认证：仓库尚无 target-host installer、concrete observer、frozen manifest instance 或 campaign runner，
+exact campaign 也从未跑过，因此当前明确 nondeployable。代码中的 installed-manifest 类型只是从签名 live
+observation 派生 evidence 的 schema，不是已部署事实。`OutputQuotaProvisioningReceipt` 是 privileged local root service 的 trusted-local
 evidence，不是独立 remote attestation；watchdog 是 single-threaded inspect loop，
 `maximum_active_jobs` 默认为 4,096 且超过 deployment-pinned 值会拒绝扫描；4,096 jobs 下的 hard-real-time
 kill latency 尚未证实。mount-generation mismatch 的语义逐边界固定为：
@@ -1632,7 +1636,7 @@ PR-5 的本地 vertical cut 通过后，才依据 fresh inventory 选择远程 c
 **PR-0：Legacy freeze 与 migration boundary**、**PR-1：Research kernel pure contracts**、
 **PR-2：Authoritative event store**、**PR-3：Protocol IR pure contracts**、
 **PR-4a：qualification-only local execution foundation** 和 **PR-4b：qualification-only local execution
-composition implementation** 均已完成源码切片。PR-4b 的 exact target-host
+composition implementation（含 deployment-evidence contracts）** 均已完成源码切片。PR-4b 的 exact target-host
 Linux/root/systemd/loop/ext4/rootful-Docker campaign 仍是部署前硬门；通过前不把它描述为 production local
 execution service。下一项 scientific-control-plane 代码工作是 **PR-5：signed Research Kernel
 action-to-execution bridge + durable controller + independent observation admission**。checkpoint 与 external
