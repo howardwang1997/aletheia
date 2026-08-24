@@ -32,6 +32,7 @@ from aletheia.jobs import (
     TaskExecutionResult,
     TaskConcurrencyConflict,
     TaskLease,
+    TaskNotFound,
     TaskSpec,
     TaskStatus,
     TerminalCategory,
@@ -136,8 +137,35 @@ def test_enqueue_is_content_bound_and_event_is_atomic(queue, monkeypatch):
     monkeypatch.setattr("aletheia.jobs.queue.persist_event", reject_event)
     with pytest.raises(RuntimeError, match="event sink unavailable"):
         queue.enqueue(rollback_spec, now=T0)
-    with pytest.raises(Exception, match="not found"):
+    with pytest.raises(TaskNotFound, match="not found"):
         queue.get(rollback_spec.task_id)
+
+
+def test_enqueue_in_caller_session_commits_and_rolls_back_atomically(queue):
+    committed = _spec("caller-session-commit")
+    with session_scope() as session:
+        receipt = queue.enqueue_in_session(session, committed, now=T0)
+        assert receipt.created is True
+        assert receipt.task.task_id == committed.task_id
+    assert queue.get(committed.task_id).task_id == committed.task_id
+
+    rolled_back = _spec("caller-session-rollback")
+    with pytest.raises(RuntimeError, match="force caller rollback"):
+        with session_scope() as session:
+            receipt = queue.enqueue_in_session(session, rolled_back, now=T0)
+            assert receipt.created is True
+            raise RuntimeError("force caller rollback")
+    with pytest.raises(TaskNotFound, match="durable task not found"):
+        queue.get(rolled_back.task_id)
+
+
+def test_get_in_caller_session_can_lock_exact_task(queue):
+    spec = _spec("caller-session-get")
+    created = queue.enqueue(spec, now=T0).task
+    with session_scope() as session:
+        assert queue.get_in_session(session, spec.task_id, lock_for_update=True) == created
+    with pytest.raises(TypeError, match="SQLAlchemy Session"):
+        queue.get_in_session(object(), spec.task_id)
 
 
 def test_lease_token_is_hashed_heartbeat_extends_and_completion_replays(queue):

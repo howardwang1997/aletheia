@@ -12,6 +12,7 @@ import aletheia.knowledge.persistence  # noqa: F401  (register F8 immutable tabl
 import aletheia.epistemics.persistence  # noqa: F401  (register F9 world-model tables)
 import aletheia.execution.persistence  # noqa: F401  (register local execution authority)
 import aletheia.jobs.persistence  # noqa: F401  (register F11 durable queue tables)
+import aletheia.observations.persistence  # noqa: F401  (register PR-5 bridge tables)
 import aletheia.programs.persistence  # noqa: F401  (register F11 scientific graph tables)
 import aletheia.research_store.persistence  # noqa: F401  (register kernel-store tables)
 from aletheia.config import get_settings

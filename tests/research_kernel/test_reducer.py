@@ -43,6 +43,7 @@ from aletheia.research_kernel.schemas import (
     Opportunity,
     OpportunityKind,
     OpportunityRecordedPayload,
+    ObservationIncorporatedPayload,
     PauseCommittedPayload,
     PauseDirective,
     ProblemAdmittedPayload,
@@ -286,6 +287,25 @@ def _decision(
 
 def _branch(case: Scenario, branch_id: str):
     return next(branch for branch in case.state.branches if branch.branch_id == branch_id)
+
+
+def _observation(
+    *,
+    action: ResearchActionProposal,
+    branch_id: str,
+    label: str,
+    outcome: str = "negative",
+    scientific_slot_id: str | None = None,
+) -> ObservationIncorporatedPayload:
+    return ObservationIncorporatedPayload(
+        branch_id=branch_id,
+        action_id=action.action_id,
+        scientific_slot_id=scientific_slot_id or _id("sos", f"slot:{label}"),
+        committed_admission_sha256=_sha(f"admission:{label}"),
+        scientific_observation_sha256=_sha(f"observation:{label}"),
+        outcome=outcome,
+        source_world_model_sha256=_sha(f"world-model:{label}"),
+    )
 
 
 def test_catalog_admission_charter_revision_and_lineage_heads_are_exact() -> None:
@@ -669,6 +689,279 @@ def test_stop_event_rejects_a_non_stop_directive() -> None:
             authorization_receipt_sha256=_sha("wrong-stop-auth"),
             committed_at=NOW + timedelta(hours=1),
         )
+
+
+@pytest.mark.parametrize(
+    ("outcome", "evidence_kind"),
+    [
+        ("positive", EvidenceKind.POSITIVE),
+        ("negative", EvidenceKind.NEGATIVE),
+        ("inconclusive", EvidenceKind.INCONCLUSIVE),
+    ],
+)
+def test_observation_incorporation_applies_only_an_authorized_action(
+    outcome: str,
+    evidence_kind: EvidenceKind,
+) -> None:
+    case = _started()
+    _, _, question = _admit_problem_and_question(case)
+    action = _propose(
+        case,
+        question,
+        case.root_branch_id,
+        ActionKind.DISCRIMINATE,
+        f"observation-{outcome}",
+    )
+    case.commit(
+        EventType.ACTION_AUTHORIZED,
+        ActionAuthorizedPayload(action_id=action.action_id, branch_id=case.root_branch_id),
+    )
+    payload = _observation(
+        action=action,
+        branch_id=case.root_branch_id,
+        label=outcome,
+        outcome=outcome,
+    )
+    event = case.commit(EventType.OBSERVATION_INCORPORATED, payload)
+
+    applied = next(item for item in case.state.actions if item.action_ref == action.object_ref)
+    assert applied.lifecycle is ActionLifecycle.APPLIED
+    assert applied.decided_event_sha256 == event.event_sha256
+    assert applied.observation_evidence_ref == payload.evidence_ref
+    assert payload.evidence_ref.kind is evidence_kind
+    assert payload.evidence_ref in case.state.evidence_refs
+    assert _branch(case, case.root_branch_id).head_event_sha256 == event.event_sha256
+    assert replay(case.events, case.objects) == case.state
+
+
+def test_observation_incorporation_rejects_non_authorized_action_and_reused_slot() -> None:
+    case = _started()
+    _, _, question = _admit_problem_and_question(case)
+    first = _propose(
+        case,
+        question,
+        case.root_branch_id,
+        ActionKind.DISCRIMINATE,
+        "first-observation",
+    )
+    premature_payload = _observation(
+        action=first,
+        branch_id=case.root_branch_id,
+        label="premature",
+    )
+    premature = ResearchEvent(
+        quest_id=case.quest_id,
+        sequence=len(case.events) + 1,
+        parent_event_sha256=case.events[-1].event_sha256,
+        event_type=EventType.OBSERVATION_INCORPORATED,
+        payload=premature_payload,
+        command_sha256=_sha("premature-observation-command"),
+        principal_id="test:kernel",
+        authorization_receipt_sha256=_sha("premature-observation-auth"),
+        committed_at=NOW + timedelta(hours=1),
+    )
+    with pytest.raises(InvalidTransitionError, match="must be authorized"):
+        reduce_event(case.state, premature, case.objects)
+
+    case.commit(
+        EventType.ACTION_AUTHORIZED,
+        ActionAuthorizedPayload(action_id=first.action_id, branch_id=case.root_branch_id),
+    )
+    shared_slot = _id("sos", "shared-observation-slot")
+    case.commit(
+        EventType.OBSERVATION_INCORPORATED,
+        _observation(
+            action=first,
+            branch_id=case.root_branch_id,
+            label="first-admission",
+            scientific_slot_id=shared_slot,
+        ),
+    )
+
+    second = _propose(
+        case,
+        question,
+        case.root_branch_id,
+        ActionKind.DISCRIMINATE,
+        "second-observation",
+    )
+    case.commit(
+        EventType.ACTION_AUTHORIZED,
+        ActionAuthorizedPayload(action_id=second.action_id, branch_id=case.root_branch_id),
+    )
+    duplicate = ResearchEvent(
+        quest_id=case.quest_id,
+        sequence=len(case.events) + 1,
+        parent_event_sha256=case.events[-1].event_sha256,
+        event_type=EventType.OBSERVATION_INCORPORATED,
+        payload=_observation(
+            action=second,
+            branch_id=case.root_branch_id,
+            label="variant-admission",
+            outcome="inconclusive",
+            scientific_slot_id=shared_slot,
+        ),
+        command_sha256=_sha("duplicate-observation-command"),
+        principal_id="test:kernel",
+        authorization_receipt_sha256=_sha("duplicate-observation-auth"),
+        committed_at=NOW + timedelta(hours=2),
+    )
+    with pytest.raises(InvalidTransitionError, match="already has"):
+        reduce_event(case.state, duplicate, case.objects)
+
+
+def test_observation_incorporation_rejects_unknown_action_and_wrong_branch() -> None:
+    case = _started()
+    _, _, question = _admit_problem_and_question(case)
+    action = _propose(
+        case,
+        question,
+        case.root_branch_id,
+        ActionKind.DISCRIMINATE,
+        "exact-observation-scope",
+    )
+    case.commit(
+        EventType.ACTION_AUTHORIZED,
+        ActionAuthorizedPayload(action_id=action.action_id, branch_id=case.root_branch_id),
+    )
+
+    unknown_action_payload = _observation(
+        action=action,
+        branch_id=case.root_branch_id,
+        label="unknown-action",
+    ).model_copy(update={"action_id": _id("action", "unknown")})
+    unknown_action = ResearchEvent(
+        quest_id=case.quest_id,
+        sequence=len(case.events) + 1,
+        parent_event_sha256=case.events[-1].event_sha256,
+        event_type=EventType.OBSERVATION_INCORPORATED,
+        payload=unknown_action_payload,
+        command_sha256=_sha("unknown-observation-command"),
+        principal_id="test:kernel",
+        authorization_receipt_sha256=_sha("unknown-observation-auth"),
+        committed_at=NOW + timedelta(hours=1),
+    )
+    with pytest.raises(InvalidTransitionError, match="unknown action"):
+        reduce_event(case.state, unknown_action, case.objects)
+
+    fork_action = _propose(
+        case,
+        question,
+        case.root_branch_id,
+        ActionKind.FORK,
+        "observation-scope-fork",
+    )
+    children = tuple(sorted((_id("rbr", "observation-child-a"), _id("rbr", "observation-child-b"))))
+    case.commit(
+        EventType.FORK_COMMITTED,
+        ForkCommittedPayload(
+            decision=_decision(
+                case,
+                fork_action,
+                ForkDirective(
+                    source_branch_id=case.root_branch_id,
+                    child_branch_ids=children,
+                ),
+                "observation-scope-fork",
+            )
+        ),
+    )
+    wrong_branch = ResearchEvent(
+        quest_id=case.quest_id,
+        sequence=len(case.events) + 1,
+        parent_event_sha256=case.events[-1].event_sha256,
+        event_type=EventType.OBSERVATION_INCORPORATED,
+        payload=_observation(
+            action=action,
+            branch_id=children[0],
+            label="wrong-branch",
+        ),
+        command_sha256=_sha("wrong-branch-observation-command"),
+        principal_id="test:kernel",
+        authorization_receipt_sha256=_sha("wrong-branch-observation-auth"),
+        committed_at=NOW + timedelta(hours=2),
+    )
+    with pytest.raises(InvalidTransitionError, match="belongs to another branch"):
+        reduce_event(case.state, wrong_branch, case.objects)
+
+
+def test_observation_incorporation_rejects_late_result_on_superseded_branch() -> None:
+    case = _started()
+    _, _, question = _admit_problem_and_question(case)
+    stale = _propose(
+        case,
+        question,
+        case.root_branch_id,
+        ActionKind.DISCRIMINATE,
+        "late-observation-before-refine",
+    )
+    case.commit(
+        EventType.ACTION_AUTHORIZED,
+        ActionAuthorizedPayload(action_id=stale.action_id, branch_id=case.root_branch_id),
+    )
+    refine = _propose(
+        case,
+        question,
+        case.root_branch_id,
+        ActionKind.REFINE,
+        "supersede-before-late-observation",
+    )
+    child = _id("rbr", "late-observation-refined-child")
+    case.commit(
+        EventType.REFINE_COMMITTED,
+        RefineCommittedPayload(
+            decision=_decision(
+                case,
+                refine,
+                RefineDirective(
+                    source_branch_id=case.root_branch_id,
+                    child_branch_id=child,
+                ),
+                "supersede-before-late-observation",
+            )
+        ),
+    )
+    late = ResearchEvent(
+        quest_id=case.quest_id,
+        sequence=len(case.events) + 1,
+        parent_event_sha256=case.events[-1].event_sha256,
+        event_type=EventType.OBSERVATION_INCORPORATED,
+        payload=_observation(
+            action=stale,
+            branch_id=case.root_branch_id,
+            label="late-on-superseded-branch",
+        ),
+        command_sha256=_sha("late-observation-command"),
+        principal_id="test:kernel",
+        authorization_receipt_sha256=_sha("late-observation-auth"),
+        committed_at=NOW + timedelta(hours=2),
+    )
+
+    with pytest.raises(InvalidTransitionError, match="terminal: superseded"):
+        reduce_event(case.state, late, case.objects)
+
+
+def test_observation_extension_preserves_legacy_authorized_snapshot_hash() -> None:
+    case = _started()
+    _, _, question = _admit_problem_and_question(case)
+    action = _propose(
+        case,
+        question,
+        case.root_branch_id,
+        ActionKind.DISCRIMINATE,
+        "legacy-authorized",
+    )
+    case.commit(
+        EventType.ACTION_AUTHORIZED,
+        ActionAuthorizedPayload(action_id=action.action_id, branch_id=case.root_branch_id),
+    )
+
+    snapshot_bytes = canonical_state_bytes(case.state)
+    assert b"observation_evidence_ref" not in snapshot_bytes
+    assert canonical_state_sha256(case.state) == (
+        "cb1ced136ac3b444e4620e969c8fd0477f16bf5c72d288d9bf2179771bb5f814"
+    )
+    assert replay(case.events, case.objects) == case.state
 
 
 def test_transition_rejects_authorized_action_stale_graph_and_empty_stop_basis() -> None:

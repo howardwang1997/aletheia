@@ -20,11 +20,13 @@ DRIVER_PATH = REPOSITORY_ROOT / "aletheia" / "scheduler" / "driver.py"
 
 LEGACY_SOURCE_AST_EXCLUDED_ROOTS = {
     "aletheia/api/research_kernel.py": "new_authority_adapter",
+    "aletheia/durable_tasks": "authority_neutral_contracts",
     "aletheia/execution": "new_authority",
     "aletheia/migration": "migration_tooling",
     "aletheia/observations": "new_authority",
     "aletheia/planning": "new_authority",
     "aletheia/protocols": "new_authority",
+    "aletheia/research_controller": "new_authority",
     "aletheia/research_kernel": "new_authority",
     "aletheia/research_store": "new_authority_adapter",
 }
@@ -1518,7 +1520,7 @@ def test_inventory_schema_is_complete_and_has_no_dual_writes() -> None:
     assert inventory["inventory_id"] == "aletheia.legacy_write_owners.v1"
     assert inventory["policy"]["dual_write_policy"] == "none"
     writes = inventory["writes"]
-    assert len(writes) == 73
+    assert len(writes) == 83
     ids = [write["write_id"] for write in writes]
     assert len(ids) == len(set(ids)), "write_id values must be unique"
 
@@ -1590,6 +1592,14 @@ def test_legacy_and_migration_python_source_ast_graphs_are_frozen() -> None:
     }
     assert legacy_paths.isdisjoint(excluded_paths)
     assert legacy_paths | excluded_paths == set(_production_python_paths())
+    assert REPOSITORY_ROOT / "aletheia" / "research_controller_runtime.py" in legacy_paths
+    durable_contract_paths = {
+        path
+        for path in _production_python_paths()
+        if _path_is_under(path, "aletheia/durable_tasks")
+    }
+    assert durable_contract_paths
+    assert durable_contract_paths <= excluded_paths
 
     assert policy["migration_source_ast_scheme"] == scheme
     assert policy["migration_source_ast_roots"] == list(MIGRATION_SOURCE_AST_ROOTS)
@@ -1824,7 +1834,9 @@ def test_research_store_tables_have_one_authoritative_writer_and_split_semantics
         for reference in [namespace["legacy_entrypoint"], *namespace["additional_writers"]]
     } == {
         "aletheia.programs.graph.ProgramGraphStore.create_quest",
+        "aletheia.research_store.store.ResearchKernelStore._commit",
         "aletheia.research_store.store.ResearchKernelStore.commit",
+        "aletheia.research_store.store.ResearchKernelStore.commit_in_session",
     }
     assert set(_storage_targets(scientific)) == {
         "postgres.research_store_persistence.research_quest_streams",
@@ -1841,7 +1853,24 @@ def test_research_store_tables_have_one_authoritative_writer_and_split_semantics
     assert {
         reference["module"] + "." + reference["symbol"]
         for reference in scientific.get("additional_writers", [])
-    } == {"aletheia.research_store.store._register_object"}
+    } == {
+        "aletheia.research_store.store.ResearchKernelStore._commit",
+        "aletheia.research_store.store.ResearchKernelStore.commit_in_session",
+        "aletheia.research_store.store._register_object",
+    }
+    assert {
+        reference["module"] + "." + reference["symbol"]
+        for reference in outbox.get("additional_writers", [])
+    } == {
+        "aletheia.research_store.store.ResearchKernelStore._commit",
+        "aletheia.research_store.store.ResearchKernelStore.commit_in_session",
+        "aletheia.research_store.store.ResearchKernelStore.mark_outbox_published",
+        "aletheia.research_store.store.ResearchKernelStore.mark_outbox_published_in_session",
+    }
+    assert (
+        "research_store.transactional_outbox"
+        in policy["writer_surface_static_resolution_exceptions"]
+    )
 
     cas_profile = policy["direct_file_sink_profiles"]["research_kernel_cas"]
     assert cas_profile == {
@@ -2036,6 +2065,152 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
     assert (
         policy["direct_file_sink_profile_by_prefix"]["docker.qualification-smoke-workload"]
         == "qualification_workload_output"
+    )
+
+
+def test_pr5_controller_and_observation_tables_have_explicit_split_authority() -> None:
+    inventory = _inventory()
+    writes = {write["write_id"]: write for write in inventory["writes"]}
+    expected = {
+        "observations.controller_registration": (
+            "research_controller_registrations",
+            "register_controller",
+            "operational_state",
+            "ResearchControllerRegistrationRecord",
+        ),
+        "observations.controller_delivery": (
+            "research_controller_deliveries",
+            "record_controller_delivery",
+            "operational_state",
+            "ResearchControllerDeliveryRecord",
+        ),
+        "observations.controller_delivery_attempt": (
+            "research_controller_delivery_attempts",
+            "record_controller_delivery_attempt",
+            "operational_state",
+            "ResearchControllerDeliveryAttemptRecord",
+        ),
+        "observations.controller_delivery_resolution": (
+            "research_controller_delivery_resolutions",
+            "record_controller_delivery_resolution",
+            "operational_state",
+            "ResearchControllerDeliveryResolutionRecord",
+        ),
+        "observations.protocol_compilation": (
+            "research_protocol_compilations",
+            "register_protocol_compilation",
+            "operational_state",
+            "ResearchProtocolCompilationRecord",
+        ),
+        "observations.scientific_execution_authorization": (
+            "research_scientific_execution_authorizations",
+            "register_scientific_execution_authorization",
+            "scientific_state",
+            "ResearchScientificExecutionAuthorizationRecord",
+        ),
+        "observations.issuance_challenge": (
+            "research_observation_issuance_challenges",
+            "record_observation_issuance_challenge",
+            "operational_state",
+            "ResearchObservationIssuanceChallengeRecord",
+        ),
+        "observations.validation_receipt": (
+            "research_observation_validation_receipts",
+            "record_observation_validation_receipt",
+            "scientific_state",
+            "ResearchObservationValidationReceiptRecord",
+        ),
+        "observations.admission": (
+            "research_observation_admissions",
+            "record_observation_admission",
+            "scientific_state",
+            "ResearchObservationAdmissionRecord",
+        ),
+        "observations.continuation_receipt": (
+            "research_continuation_receipts",
+            "record_continuation_receipt",
+            "operational_state",
+            "ResearchContinuationReceiptRecord",
+        ),
+    }
+    assert expected.keys() <= writes.keys()
+    for write_id, (table, symbol, authority_class, record_type) in expected.items():
+        write = writes[write_id]
+        assert _storage_targets(write) == (f"postgres.observations_persistence.{table}",)
+        assert write["legacy_entrypoint"] == {
+            "module": "aletheia.observations.store",
+            "symbol": symbol,
+        }
+        assert write["authority_class"] == authority_class
+        assert write["status"] == "authoritative_new_owner"
+        assert write["cutover_pr"] == "PR-5"
+        assert write["dual_write_policy"] == "none"
+        entrypoint = _definition_node(write["legacy_entrypoint"])
+        dispatched_record_types = {
+            keyword.value.id
+            for call in ast.walk(entrypoint)
+            if isinstance(call, ast.Call)
+            if (isinstance(call.func, ast.Name) and call.func.id == "_append_exact")
+            for keyword in call.keywords
+            if keyword.arg == "record_type"
+            if isinstance(keyword.value, ast.Name)
+        }
+        assert dispatched_record_types == {record_type}, write_id
+
+    shared_sink = inventory["policy"]["shared_generic_writer_implementations"][
+        "aletheia.observations.store._append_exact"
+    ]
+    assert set(shared_sink["write_ids"]) == set(expected)
+    assert shared_sink["caller_owns_transaction"] is True
+    assert "literal SQLAlchemy record type" in shared_sink["dispatch_rule"]
+    sink_node = _definition_node(
+        {"module": "aletheia.observations.store", "symbol": "_append_exact"}
+    )
+    sink_calls = {
+        node.func.attr
+        for node in ast.walk(sink_node)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    assert {"execute", "flush"} <= sink_calls
+
+    controller_ids = {
+        "observations.controller_registration",
+        "observations.controller_delivery",
+        "observations.controller_delivery_attempt",
+        "observations.controller_delivery_resolution",
+    }
+    assert all(
+        writes[write_id]["authority_class"] == "operational_state" for write_id in controller_ids
+    )
+    assert all(
+        "cannot" in writes[write_id]["scientific_semantics"]
+        or "never scientific truth" in writes[write_id]["scientific_semantics"]
+        for write_id in controller_ids
+    )
+
+    admission = writes["observations.admission"]
+    assert admission["current_owner"] == (
+        "aletheia.observations.coordinator.PostgreSQLAtomicObservationAdmissionCoordinator"
+    )
+    assert "same PostgreSQL transaction" in admission["current_commit_boundary"]
+    assert "sole Kernel scientific authority" in admission["scientific_semantics"]
+
+    uncomposed = {
+        "observations.protocol_compilation",
+        "observations.continuation_receipt",
+    }
+    exceptions = inventory["policy"]["writer_surface_static_resolution_exceptions"]
+    assert uncomposed <= exceptions.keys()
+    for write_id in uncomposed:
+        assert writes[write_id]["call_sites"] == []
+        assert writes[write_id]["allowed_legacy_callers"] == []
+        assert "production ControllerStepExecutionPort" in writes[write_id]["blocker"]
+
+    assert (
+        inventory["policy"]["direct_file_sink_profile_by_prefix"][
+            "aletheia.migration.f9_v1_observation_compatibility"
+        ]
+        == "scientific_observation"
     )
 
 

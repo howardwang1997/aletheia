@@ -1,7 +1,7 @@
 # Aletheia database migrations
 
 The database schema is versioned with Alembic. Application startup never creates or alters tables.
-The current repository head is `20260827_0026`.
+The current repository head is `20260828_0027`.
 
 For a fresh database:
 
@@ -56,3 +56,18 @@ challenge/acceptance, artifact terminal acceptance or deadline expiration, and t
 outbox. The current execution schema therefore contains exactly 27 `execution_*` tables: 16 from
 `0024`, one from `0025`, and ten from `0026`. Runtime-v2 termination is not written back as a legacy
 `ExecutionReceipt`.
+
+Revision `20260828_0027` adds the append-only PR-5 durable-controller and scientific-observation
+bridge. Controller registrations and three-way source deliveries remain operational projections;
+delivery attempts form a bounded append-only generation chain, while typed delivery resolutions
+freeze awaiting, blocked, authoritative, cancelled, invalid-result, and exhausted outcomes so a
+settled old delivery cannot starve later reconciliation work;
+protocol compilation and continuation receipts make crash recovery deterministic. Separately
+signed scientific execution authorization, issuance challenge, validation, and Phase-1 admission
+rows form an exact relational chain. SEA execution and attempt identities are preregistered before
+PR-4 creates the attempt row, so the SEA table deliberately has no premature attempt foreign key;
+the concrete custody adapter later requires the exact immutable PR-4 lineage. An admitted row must be committed with its exact
+`observation_incorporated` Research Kernel event, and each scientific slot can be admitted at most
+once. Issuance challenges are immutable: a live purpose/row-scope window is serialized by locking
+its stable authorization, while an expired challenge can be followed by a new row with a fresh
+nonce instead of mutating or permanently reserving that row scope.

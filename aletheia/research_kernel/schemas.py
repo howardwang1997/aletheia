@@ -655,6 +655,7 @@ class EventType(str, Enum):
     ACTION_AUTHORIZED = "action_authorized"
     ACTION_REJECTED = "action_rejected"
     ACTION_SUPERSEDED = "action_superseded"
+    OBSERVATION_INCORPORATED = "observation_incorporated"
     CONTINUE_COMMITTED = "continue_committed"
     ACTIVATE_COMMITTED = "activate_committed"
     REFINE_COMMITTED = "refine_committed"
@@ -729,6 +730,29 @@ class ActionSupersededPayload(KernelModel):
         return self
 
 
+class ObservationIncorporatedPayload(KernelModel):
+    """Bind one admitted scientific observation to its exact authorized action."""
+
+    kind: Literal["observation_incorporated"] = "observation_incorporated"
+    branch_id: str = Field(pattern=_BRANCH_ID_PATTERN)
+    action_id: str = Field(pattern=_OBJECT_ID_PATTERN)
+    scientific_slot_id: str = Field(pattern=r"^sos_[0-9a-f]{32}$")
+    committed_admission_sha256: str = Field(pattern=_SHA256_PATTERN)
+    scientific_observation_sha256: str = Field(pattern=_SHA256_PATTERN)
+    outcome: Literal["positive", "negative", "inconclusive"]
+    source_world_model_sha256: str = Field(pattern=_SHA256_PATTERN)
+
+    @property
+    def evidence_ref(self) -> EvidenceRef:
+        """Return the non-droppable evidence identity projected into graph state."""
+
+        return EvidenceRef(
+            kind=EvidenceKind(self.outcome),
+            object_sha256=self.committed_admission_sha256,
+            object_id=self.scientific_slot_id,
+        )
+
+
 class ContinueCommittedPayload(KernelModel):
     kind: Literal["continue_committed"] = "continue_committed"
     decision: TransitionDecision
@@ -774,6 +798,7 @@ EventPayload: TypeAlias = Annotated[
     | ActionAuthorizedPayload
     | ActionRejectedPayload
     | ActionSupersededPayload
+    | ObservationIncorporatedPayload
     | ContinueCommittedPayload
     | ActivateCommittedPayload
     | RefineCommittedPayload

@@ -19,6 +19,22 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from aletheia.api.deps import require_access
 from aletheia.config import get_settings
+from aletheia.durable_tasks.ports import DurableQueueError, QueueInvariantError
+from aletheia.jobs.queue import DurableTaskQueue
+from aletheia.observations.store import (
+    ObservationPersistenceError,
+    ObservationPersistenceInvariantError,
+)
+from aletheia.research_controller.contracts import (
+    ResearchControllerLaunchReceipt,
+    ResearchControllerLaunchRequest,
+    ResearchControllerManifest,
+)
+from aletheia.research_controller.launch import (
+    ControllerLaunchConflict,
+    ResearchControllerLauncher,
+)
+from aletheia.research_controller.persistence import PostgreSQLControllerLaunchAdapter
 from aletheia.research_kernel.commands import AuthorizedResearchCommand
 from aletheia.research_kernel.policy import (
     ResearchAuthorizationError,
@@ -168,6 +184,39 @@ def get_research_kernel_store(quest_id: str) -> ResearchKernelStore:
         ) from exc
 
 
+def get_research_controller_launcher(quest_id: str) -> ResearchControllerLauncher:
+    """Compose launch only from the deployment-pinned controller manifest and Kernel custody."""
+
+    settings = get_settings()
+    try:
+        manifest = ResearchControllerManifest.model_validate_json(
+            _read_pinned_file(
+                settings.research_controller_manifest_path,
+                settings.research_controller_manifest_file_sha256,
+                label="research-controller manifest",
+            )
+        )
+    except _KernelCustodyUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="research-controller custody is unavailable",
+        ) from exc
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="research-controller custody validation failed",
+        ) from exc
+    kernel_store = get_research_kernel_store(quest_id)
+    return ResearchControllerLauncher(
+        kernel_store=kernel_store,
+        manifest=manifest,
+        persistence=PostgreSQLControllerLaunchAdapter(
+            kernel_store=kernel_store,
+            queue=DurableTaskQueue(principal="research-controller:launcher"),
+        ),
+    )
+
+
 async def _invoke(call: Callable[[], _T]) -> _T:
     try:
         return await asyncio.to_thread(call)
@@ -179,6 +228,33 @@ async def _invoke(call: Callable[[], _T]) -> _T:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ResearchStoreInvariantError as exc:
         raise HTTPException(status_code=500, detail="research-kernel audit failed") from exc
+    except ResearchStoreError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ResearchArchiveError as exc:
+        raise HTTPException(
+            status_code=503, detail="research-kernel archive is unavailable"
+        ) from exc
+
+
+async def _invoke_launch(call: Callable[[], _T]) -> _T:
+    try:
+        return await asyncio.to_thread(call)
+    except ResearchQuestNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ResearchAuthorizationError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ControllerLaunchConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ObservationPersistenceInvariantError as exc:
+        raise HTTPException(status_code=500, detail="controller persistence audit failed") from exc
+    except QueueInvariantError as exc:
+        raise HTTPException(status_code=500, detail="controller queue audit failed") from exc
+    except (ObservationPersistenceError, DurableQueueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ResearchStoreInvariantError as exc:
+        raise HTTPException(status_code=500, detail="research-kernel audit failed") from exc
+    except ResearchVersionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ResearchStoreError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ResearchArchiveError as exc:
@@ -206,6 +282,17 @@ def _assert_audit_scope(*, program_id: str, quest_id: str, audit: ResearchReplay
         raise HTTPException(status_code=409, detail="Quest stream belongs to another Program")
 
 
+class _ResearchControllerLaunchBody(BaseModel):
+    """Caller-controlled launch fields; all controller policies remain server-pinned."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    idempotency_key: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}$")
+    expected_stream_version: int = Field(ge=1)
+    expected_tail_event_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_snapshot_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 @router.post(
     "/programs/{program_id}/quests/{quest_id}/commands",
     response_model=ResearchCommandReceipt,
@@ -221,6 +308,33 @@ async def commit_authorized_command(
 
     _assert_command_scope(program_id=program_id, quest_id=quest_id, command=command)
     return await _invoke(lambda: store.commit(command))
+
+
+@router.post(
+    "/programs/{program_id}/quests/{quest_id}/launch",
+    response_model=ResearchControllerLaunchReceipt,
+)
+async def launch_research_controller(
+    program_id: Annotated[str, ApiPath(pattern=_PROGRAM_ID_PATTERN)],
+    quest_id: Annotated[str, ApiPath(pattern=_QUEST_ID_PATTERN)],
+    body: _ResearchControllerLaunchBody,
+    user: dict = Depends(require_access),
+    launcher: ResearchControllerLauncher = Depends(get_research_controller_launcher),
+) -> ResearchControllerLaunchReceipt:
+    """Subscribe one exact audited Quest head; never accept caller-selected controller policy."""
+
+    request = ResearchControllerLaunchRequest(
+        program_id=program_id,
+        quest_id=quest_id,
+        idempotency_key=body.idempotency_key,
+        expected_stream_version=body.expected_stream_version,
+        expected_tail_event_sha256=body.expected_tail_event_sha256,
+        expected_snapshot_sha256=body.expected_snapshot_sha256,
+    )
+    principal = f"http-user:{user['id']}"
+    return await _invoke_launch(
+        lambda: launcher.launch(request, registered_by_principal_id=principal)
+    )
 
 
 @router.get(
@@ -255,4 +369,8 @@ async def replay_quest_stream(
     return audit.state
 
 
-__all__ = ["get_research_kernel_store", "router"]
+__all__ = [
+    "get_research_controller_launcher",
+    "get_research_kernel_store",
+    "router",
+]

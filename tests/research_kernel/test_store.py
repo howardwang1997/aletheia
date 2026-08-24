@@ -376,6 +376,25 @@ def test_proposal_cannot_write_and_commit_is_atomic_idempotent_and_auditable(
     assert replayed == audit.state
     assert audit.events[0].event_sha256 == first.result_event_sha256
     assert audit.state.snapshot_sha256 == first.result_snapshot_sha256
+    loaded = store.load_command_receipt_for_event(
+        quest_id=scope.quest_id,
+        result_event_sha256=first.result_event_sha256,
+    )
+    assert loaded is not None
+    assert loaded.model_copy(update={"created": True}) == first
+    with session_scope() as session:
+        participating_audit = store.audit_in_session(
+            session,
+            scope.quest_id,
+            expected_scope_binding=scope,
+        )
+        in_session = store.load_command_receipt_for_event_in_session(
+            session,
+            quest_id=scope.quest_id,
+            result_event_sha256=first.result_event_sha256,
+        )
+        assert participating_audit == audit
+        assert in_session == loaded
 
     with session_scope() as session:
         object_row = session.get(ResearchKernelObjectRecord, charter.object_sha256)

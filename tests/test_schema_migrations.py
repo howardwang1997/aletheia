@@ -17,7 +17,7 @@ from aletheia.db import (
 
 
 def test_repository_has_one_expected_alembic_head():
-    assert expected_schema_revision() == "20260827_0026"
+    assert expected_schema_revision() == "20260828_0027"
 
 
 def test_local_execution_foundation_is_fenced_and_not_the_legacy_queue():
@@ -64,6 +64,46 @@ def test_runtime_v2_tables_are_excluded_from_legacy_baseline_parity():
         "execution_qualification_terminal_acceptances",
         "execution_qualification_terminal_outbox",
     } <= POST_BASELINE_TABLES
+
+
+def test_pr5_exact_source_constraints_match_migration_and_orm_metadata():
+    from aletheia.execution.persistence import (
+        _ExecutionQualificationTerminalOutboxRecord,
+    )
+    from aletheia.research_store.persistence import (
+        ResearchKernelEventRecord,
+        ResearchKernelOutboxRecord,
+    )
+    from aletheia.schema_migrations import POST_BASELINE_CONSTRAINTS
+
+    expected = {
+        "uq_rke_scoped_typed_event",
+        "uq_rko_exact_controller_source",
+        "uq_exec_qto_exact_controller_source",
+    }
+    metadata_names = {
+        constraint.name
+        for record_type in (
+            ResearchKernelEventRecord,
+            ResearchKernelOutboxRecord,
+            _ExecutionQualificationTerminalOutboxRecord,
+        )
+        for constraint in record_type.__table__.constraints
+    }
+    migration = (
+        Path(__file__).parents[1]
+        / "migrations"
+        / "versions"
+        / "20260828_0027_scientific_controller_persistence.py"
+    ).read_text()
+    assert expected <= metadata_names
+    assert expected <= POST_BASELINE_CONSTRAINTS
+    assert all(name in migration for name in expected)
+
+
+def test_alembic_environment_registers_pr5_orm_metadata():
+    source = (Path(__file__).parents[1] / "migrations" / "env.py").read_text()
+    assert "import aletheia.observations.persistence" in source
 
 
 def test_research_authority_backfill_is_closed_against_concurrent_legacy_inserts():

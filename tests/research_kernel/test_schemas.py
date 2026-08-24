@@ -29,6 +29,7 @@ from aletheia.research_kernel.schemas import (
     Opportunity,
     OpportunityKind,
     OpportunityRecordedPayload,
+    ObservationIncorporatedPayload,
     PauseDirective,
     ProblemAdmittedPayload,
     QuestionAdmittedPayload,
@@ -801,3 +802,39 @@ def test_action_lifecycle_payloads_are_closed_and_typed() -> None:
             branch_id=ROOT_BRANCH_ID,
             receipt_sha256=_sha("1"),
         )
+
+
+def test_observation_incorporation_payload_is_closed_typed_and_evidence_bound() -> None:
+    payload = ObservationIncorporatedPayload(
+        branch_id=ROOT_BRANCH_ID,
+        action_id="action:main",
+        scientific_slot_id="sos_" + "a" * 32,
+        committed_admission_sha256=_sha("1"),
+        scientific_observation_sha256=_sha("2"),
+        outcome="negative",
+        source_world_model_sha256=_sha("3"),
+    )
+    event = make_genesis_event(
+        sequence=2,
+        parent_event_sha256=_sha("f"),
+        event_type=EventType.OBSERVATION_INCORPORATED,
+        payload=payload,
+    )
+    parsed = ResearchEvent.model_validate_json(event.model_dump_json())
+
+    assert isinstance(parsed.payload, ObservationIncorporatedPayload)
+    assert parsed.payload == payload
+    assert payload.evidence_ref == EvidenceRef(
+        kind=EvidenceKind.NEGATIVE,
+        object_sha256=payload.committed_admission_sha256,
+        object_id=payload.scientific_slot_id,
+    )
+
+    invalid = payload.model_dump(mode="python")
+    invalid["outcome"] = "blocked_execution"
+    with pytest.raises(ValidationError):
+        ObservationIncorporatedPayload.model_validate(invalid)
+    invalid = payload.model_dump(mode="python")
+    invalid["scientific_slot_id"] = "slot:caller-selected"
+    with pytest.raises(ValidationError):
+        ObservationIncorporatedPayload.model_validate(invalid)

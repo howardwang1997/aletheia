@@ -22,6 +22,7 @@ DEFAULT_TARGET_PACKAGES = (
     "execution",
     "planning",
     "observations",
+    "research_controller",
 )
 
 # At least the kernel sentinel must exist in PR-0.  This prevents a missing-directory typo from
@@ -40,6 +41,7 @@ DEFAULT_FORBIDDEN_MODULE_PREFIXES = (
     "aletheia.events",
     "aletheia.memory.ledger",
     "aletheia.memory.service",
+    "aletheia.migration.f9_v1_observation_compatibility",
     "aletheia.orchestrator.tools",
     "aletheia.scheduler.driver",
     "aletheia.scheduler.statemachine",

@@ -249,15 +249,17 @@ PR-4b is therefore explicitly **nondeployable** at this checkpoint.
 PR-4b does not provide an HTTP launch endpoint, a Research Kernel action-to-execution grant,
 scientific observation/claim admission, a durable scientific controller, distributed scheduling,
 GPU/device execution, checkpoint resume, ambiguous provider-action reconciliation, network-enabled
-authored work, or protection from the TCB principals above. PR-5 must add a signed Research Kernel
-action bound to the exact qualification/execution bundle and an independent observation-admission
-bridge before this fabric can participate in a scientific Quest.
+authored work, or protection from the TCB principals above. The subsequent PR-5 slice had to add a
+signed Research Kernel action bound to the exact qualification/execution bundle and an independent
+observation-admission bridge before this fabric could participate in a scientific Quest. That local
+source/test bridge is now present, but it does not upgrade PR-4b's deployment status; target-host
+qualification and production controller/validator composition remain separate gates.
 
 The proposed discovery-episode objects in the target architecture remain later evaluation work:
 `DiscoveryEpisodeProjection` must be a pure, recomputable, read-only view over authoritative events
 and receipts, and `DiscoveryEpisodeAssessment` must remain evaluator-only. Neither object changes
-PR-4b authority or becomes a second research ledger; that slice starts only after the PR-5
-scientific bridge exists.
+PR-4b authority or becomes a second research ledger. With the PR-5 local bridge present, that slice
+is now eligible as later evaluation work, not part of PR-4b or PR-5 authority.
 
 See [architecture decision 0049](architecture/0049-qualification-only-local-execution-composition.md)
 for the decision and threat model and the

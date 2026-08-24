@@ -6,6 +6,8 @@ owns object and snapshot bytes; this adapter only verifies and indexes their con
 
 from __future__ import annotations
 
+import re
+from contextlib import nullcontext
 from datetime import datetime
 from typing import Literal, Protocol
 
@@ -41,6 +43,7 @@ from aletheia.research_kernel.schemas import (
     KernelObject,
     KernelObjectKind,
     KernelObjectRef,
+    ObservationIncorporatedPayload,
     ResearchActionProposal,
     ResearchCharterVersion,
     ResearchEvent,
@@ -162,6 +165,10 @@ class ResearchVersionConflict(ResearchStoreError):
     """A command expected a different Quest stream version."""
 
 
+class ResearchOutboxConflict(ResearchStoreError):
+    """An outbox publish request expected another immutable delivery identity or state."""
+
+
 class ResearchQuestNotFound(ResearchStoreError):
     """No authoritative stream exists for the requested Quest."""
 
@@ -194,6 +201,64 @@ class ResearchCommandReceipt(KernelModel):
     created: bool
 
 
+class ResearchKernelOutboxIdentity(KernelModel):
+    """Immutable routing identity exposed to operational dispatchers."""
+
+    outbox_id: str
+    quest_id: str = Field(pattern=_QUEST_ID_PATTERN)
+    sequence: int = Field(ge=1)
+    event_sha256: str = Field(pattern=_SHA256_PATTERN)
+    topic: Literal["research_kernel.event.v1"] = "research_kernel.event.v1"
+    delivery_key: str
+    payload_sha256: str = Field(pattern=_SHA256_PATTERN)
+
+    @model_validator(mode="after")
+    def _identity_is_exact(self) -> "ResearchKernelOutboxIdentity":
+        if self.outbox_id != f"rko_{self.event_sha256[:32]}":
+            raise ValueError("research outbox id differs from its event identity")
+        if self.delivery_key != f"{self.quest_id}:{self.sequence}":
+            raise ValueError("research outbox delivery key differs from its Quest sequence")
+        if self.payload_sha256 != self.event_sha256:
+            raise ValueError("research outbox payload identity differs from its event")
+        return self
+
+
+class ResearchKernelOutboxItem(ResearchKernelOutboxIdentity):
+    """Closed dispatcher view of one Kernel outbox row, never an ORM record."""
+
+    delivery_status: Literal["pending", "delivering", "published"]
+    delivery_attempts: int = Field(ge=0)
+    available_at: AwareDatetime
+    last_attempt_at: AwareDatetime | None = None
+    published_at: AwareDatetime | None = None
+    created_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def _delivery_state_is_consistent(self) -> "ResearchKernelOutboxItem":
+        if (self.delivery_status == "published") != (self.published_at is not None):
+            raise ValueError("research outbox published state differs from its timestamp")
+        return self
+
+    @property
+    def identity(self) -> ResearchKernelOutboxIdentity:
+        """Return the immutable compare-and-set identity used when publishing."""
+
+        return ResearchKernelOutboxIdentity.model_validate(
+            self.model_dump(
+                mode="python",
+                include={
+                    "outbox_id",
+                    "quest_id",
+                    "sequence",
+                    "event_sha256",
+                    "topic",
+                    "delivery_key",
+                    "payload_sha256",
+                },
+            )
+        )
+
+
 class ResearchReplayAudit(KernelModel):
     """A replayed graph plus the exact event/snapshot custody that was verified."""
 
@@ -219,6 +284,39 @@ def _transaction_time(session: Session) -> datetime:
 
 def _json(model: KernelModel) -> dict[str, object]:
     return model.model_dump(mode="json", exclude_none=True)
+
+
+def _registered_quest_ids(values: tuple[str, ...]) -> tuple[str, ...]:
+    if not values:
+        raise ValueError("pending outbox reads require at least one registered Quest")
+    if len(values) > 5_000:
+        raise ValueError("pending outbox reads accept at most 5000 registered Quests")
+    if values != tuple(sorted(set(values))):
+        raise ValueError("registered Quest ids must be unique and canonically ordered")
+    if any(re.fullmatch(_QUEST_ID_PATTERN, value) is None for value in values):
+        raise ValueError("registered Quest id is invalid")
+    return values
+
+
+def _outbox_item(row: _ResearchKernelOutboxRecord) -> ResearchKernelOutboxItem:
+    try:
+        return ResearchKernelOutboxItem(
+            outbox_id=row.outbox_id,
+            quest_id=row.quest_id,
+            sequence=row.sequence,
+            event_sha256=row.event_sha256,
+            topic=row.topic,
+            delivery_key=row.delivery_key,
+            payload_sha256=row.payload_sha256,
+            delivery_status=row.delivery_status,
+            delivery_attempts=row.delivery_attempts,
+            available_at=row.available_at,
+            last_attempt_at=row.last_attempt_at,
+            published_at=row.published_at,
+            created_at=row.created_at,
+        )
+    except ValueError as exc:
+        raise ResearchStoreInvariantError("persisted research outbox row is invalid") from exc
 
 
 def _scope_from_head(head: _ResearchQuestStreamRecord) -> ResearchScopeBinding:
@@ -293,7 +391,7 @@ def _resolved_action(
     ):
         return None
     expected_ref: KernelObjectRef | None = None
-    if isinstance(payload, ActionAuthorizedPayload):
+    if isinstance(payload, (ActionAuthorizedPayload, ObservationIncorporatedPayload)):
         matches = tuple(
             action for action in state.actions if action.action_ref.object_id == payload.action_id
         )
@@ -858,6 +956,80 @@ class ResearchKernelStore:
         object, never a database event whose referenced bytes are absent.
         """
 
+        return self._commit(command, caller_session=None)
+
+    def commit_in_session(
+        self,
+        session: Session,
+        command: AuthorizedResearchCommand | ResearchCommandProposal,
+    ) -> ResearchCommandReceipt:
+        """Stage one Kernel commit inside a caller-owned transaction.
+
+        This is the atomic composition seam for an independently admitted observation and its
+        ``observation_incorporated`` event.  The caller owns commit or rollback.  The returned
+        receipt is authoritative only after that outer transaction commits; this method never
+        invokes the post-commit fault seam.
+        """
+
+        if not isinstance(session, Session):
+            raise TypeError("commit_in_session requires a SQLAlchemy Session")
+        return self._commit(command, caller_session=session)
+
+    def load_command_receipt_for_event(
+        self,
+        *,
+        quest_id: str,
+        result_event_sha256: str,
+    ) -> ResearchCommandReceipt | None:
+        """Load and fully audit the command receipt that produced one exact event."""
+
+        with session_scope() as session:
+            return self.load_command_receipt_for_event_in_session(
+                session,
+                quest_id=quest_id,
+                result_event_sha256=result_event_sha256,
+            )
+
+    def load_command_receipt_for_event_in_session(
+        self,
+        session: Session,
+        *,
+        quest_id: str,
+        result_event_sha256: str,
+    ) -> ResearchCommandReceipt | None:
+        """Load an event's receipt inside a caller-owned, audited transaction.
+
+        Observation admission uses this seam to return the original Kernel receipt after a
+        crash-after-commit exact retry.  No private ORM row escapes the store boundary.
+        """
+
+        if not isinstance(session, Session):
+            raise TypeError(
+                "load_command_receipt_for_event_in_session requires a SQLAlchemy Session"
+            )
+        if re.fullmatch(_QUEST_ID_PATTERN, quest_id) is None:
+            raise ValueError("receipt lookup Quest id is invalid")
+        if re.fullmatch(_SHA256_PATTERN, result_event_sha256) is None:
+            raise ValueError("receipt lookup event identity is not SHA-256")
+        row = session.scalar(
+            select(_ResearchKernelCommandReceiptRecord).where(
+                _ResearchKernelCommandReceiptRecord.quest_id == quest_id,
+                _ResearchKernelCommandReceiptRecord.result_event_sha256 == result_event_sha256,
+            )
+        )
+        if row is None:
+            return None
+        self.audit_in_session(session, quest_id)
+        return _receipt(session, row, created=False)
+
+    def _commit(
+        self,
+        command: AuthorizedResearchCommand | ResearchCommandProposal,
+        *,
+        caller_session: Session | None,
+    ) -> ResearchCommandReceipt:
+        """Run the common authoritative commit path in an owned or participating transaction."""
+
         if isinstance(command, ResearchCommandProposal):
             raise UncommittedProposalError(
                 "a ResearchCommandProposal cannot mutate authoritative research state"
@@ -868,7 +1040,8 @@ class ResearchKernelStore:
 
         receipt: ResearchCommandReceipt
         created = False
-        with session_scope() as session:
+        transaction = session_scope() if caller_session is None else nullcontext(caller_session)
+        with transaction as session:
             # Exact retry wins before any current-time or head-version decision.  This is the
             # crash-after-commit path and must depend only on the original request identity.
             existing = self._existing_receipt(session, command)
@@ -1114,11 +1287,125 @@ class ResearchKernelStore:
                     receipt = _receipt(session, command_row, created=True)
                     created = True
 
-        if created:
+        if created and caller_session is None:
             # Raising here models a process/client crash after PostgreSQL committed but before the
             # caller durably observed its receipt.  Exact retry returns created=False.
             self._inject_fault("after_commit")
         return receipt
+
+    def list_pending_outbox(
+        self,
+        *,
+        registered_quest_ids: tuple[str, ...],
+        limit: int = 100,
+    ) -> tuple[ResearchKernelOutboxItem, ...]:
+        """Read ready Kernel delivery intents for an exact registered-Quest allowlist."""
+
+        with session_scope() as session:
+            return self.list_pending_outbox_in_session(
+                session,
+                registered_quest_ids=registered_quest_ids,
+                limit=limit,
+                lock_for_publish=False,
+            )
+
+    def list_pending_outbox_in_session(
+        self,
+        session: Session,
+        *,
+        registered_quest_ids: tuple[str, ...],
+        limit: int = 100,
+        lock_for_publish: bool = True,
+    ) -> tuple[ResearchKernelOutboxItem, ...]:
+        """Read ready intents in a caller-owned transaction, optionally locking for publish.
+
+        A dispatcher can lock rows, enqueue its deterministic task and delivery receipt using the
+        same ``session``, then call :meth:`mark_outbox_published_in_session`.  The caller owns the
+        final commit or rollback and must not expose a delivery until that transaction commits.
+        """
+
+        if not isinstance(session, Session):
+            raise TypeError("list_pending_outbox_in_session requires a SQLAlchemy Session")
+        quest_ids = _registered_quest_ids(registered_quest_ids)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1_000:
+            raise ValueError("pending outbox limit must be between 1 and 1000")
+        if not isinstance(lock_for_publish, bool):
+            raise TypeError("lock_for_publish must be a boolean")
+        observed_at = _transaction_time(session)
+        statement = (
+            select(_ResearchKernelOutboxRecord)
+            .where(
+                _ResearchKernelOutboxRecord.quest_id.in_(quest_ids),
+                _ResearchKernelOutboxRecord.delivery_status == "pending",
+                _ResearchKernelOutboxRecord.available_at <= observed_at,
+            )
+            .order_by(
+                _ResearchKernelOutboxRecord.available_at,
+                _ResearchKernelOutboxRecord.created_at,
+                _ResearchKernelOutboxRecord.quest_id,
+                _ResearchKernelOutboxRecord.sequence,
+            )
+            .limit(limit)
+        )
+        if lock_for_publish:
+            statement = statement.with_for_update(skip_locked=True)
+        return tuple(_outbox_item(row) for row in session.scalars(statement).all())
+
+    def mark_outbox_published(
+        self,
+        expected: ResearchKernelOutboxIdentity | ResearchKernelOutboxItem,
+    ) -> ResearchKernelOutboxItem:
+        """Atomically publish one intent only if its immutable identity is still exact."""
+
+        with session_scope() as session:
+            return self.mark_outbox_published_in_session(session, expected)
+
+    def mark_outbox_published_in_session(
+        self,
+        session: Session,
+        expected: ResearchKernelOutboxIdentity | ResearchKernelOutboxItem,
+    ) -> ResearchKernelOutboxItem:
+        """Mark an exact outbox intent published inside a caller-owned transaction.
+
+        The operation is compare-and-set on the full immutable routing identity.  An exact retry
+        of an already-published item returns the current projection without increasing attempts.
+        """
+
+        if not isinstance(session, Session):
+            raise TypeError("mark_outbox_published_in_session requires a SQLAlchemy Session")
+        if isinstance(expected, ResearchKernelOutboxItem):
+            identity = expected.identity
+        elif isinstance(expected, ResearchKernelOutboxIdentity):
+            identity = ResearchKernelOutboxIdentity.model_validate(
+                expected.model_dump(mode="python")
+            )
+        else:
+            raise TypeError("mark_outbox_published requires a research outbox identity")
+        row = session.scalar(
+            select(_ResearchKernelOutboxRecord)
+            .where(_ResearchKernelOutboxRecord.outbox_id == identity.outbox_id)
+            .with_for_update()
+        )
+        if row is None:
+            raise ResearchOutboxConflict("research outbox item does not exist")
+        current = _outbox_item(row)
+        if current.identity != identity:
+            raise ResearchOutboxConflict(
+                "research outbox item differs from the expected immutable identity"
+            )
+        if current.delivery_status == "published":
+            return current
+        if current.delivery_status != "pending":
+            raise ResearchOutboxConflict("research outbox item is not pending or already published")
+        observed_at = _transaction_time(session)
+        if current.available_at > observed_at:
+            raise ResearchOutboxConflict("research outbox item is not yet available")
+        row.delivery_status = "published"
+        row.delivery_attempts += 1
+        row.last_attempt_at = observed_at
+        row.published_at = observed_at
+        session.flush()
+        return _outbox_item(row)
 
     def audit(
         self,
@@ -1129,25 +1416,39 @@ class ResearchKernelStore:
         """Recompute and verify an entire Quest chain, CAS catalog, snapshots, and receipts."""
 
         with session_scope() as session:
-            head = session.scalar(
-                select(_ResearchQuestStreamRecord)
-                .where(_ResearchQuestStreamRecord.quest_id == quest_id)
-                .with_for_update()
-            )
-            if head is None:
-                raise ResearchQuestNotFound(f"unknown Quest stream: {quest_id}")
-            if (
-                expected_scope_binding is not None
-                and _scope_from_head(head) != expected_scope_binding
-            ):
-                raise ResearchStoreError("requested scope does not match the frozen Quest binding")
-            return _audit_stream(
+            return self.audit_in_session(
                 session,
-                head=head,
-                archive=self._archive,
-                trust_root=self._trust_root,
-                expected_policy=self._expected_policy(quest_id),
+                quest_id,
+                expected_scope_binding=expected_scope_binding,
             )
+
+    def audit_in_session(
+        self,
+        session: Session,
+        quest_id: str,
+        *,
+        expected_scope_binding: ResearchScopeBinding | None = None,
+    ) -> ResearchReplayAudit:
+        """Fully audit and lock one Quest inside a caller-owned transaction."""
+
+        if not isinstance(session, Session):
+            raise TypeError("audit_in_session requires a SQLAlchemy Session")
+        head = session.scalar(
+            select(_ResearchQuestStreamRecord)
+            .where(_ResearchQuestStreamRecord.quest_id == quest_id)
+            .with_for_update()
+        )
+        if head is None:
+            raise ResearchQuestNotFound(f"unknown Quest stream: {quest_id}")
+        if expected_scope_binding is not None and _scope_from_head(head) != expected_scope_binding:
+            raise ResearchStoreError("requested scope does not match the frozen Quest binding")
+        return _audit_stream(
+            session,
+            head=head,
+            archive=self._archive,
+            trust_root=self._trust_root,
+            expected_policy=self._expected_policy(quest_id),
+        )
 
     def replay(
         self,
@@ -1170,8 +1471,11 @@ __all__ = [
     "ResearchAuthorizationError",
     "ResearchCommandReceipt",
     "ResearchIdempotencyConflict",
+    "ResearchKernelOutboxIdentity",
+    "ResearchKernelOutboxItem",
     "ResearchKernelStore",
     "ResearchObjectArchive",
+    "ResearchOutboxConflict",
     "ResearchQuestNotFound",
     "ResearchReplayAudit",
     "ResearchStoreError",

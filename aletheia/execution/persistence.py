@@ -1049,6 +1049,13 @@ class _ExecutionQualificationTerminalOutboxRecord(Base):
         UniqueConstraint("terminal_deadline_expiration_sha256"),
         UniqueConstraint("attempt_id"),
         UniqueConstraint("delivery_key"),
+        UniqueConstraint(
+            "outbox_id",
+            "execution_id",
+            "attempt_id",
+            "terminal_authority_sha256",
+            name="uq_exec_qto_exact_controller_source",
+        ),
     )
 
     outbox_id: Mapped[str] = mapped_column(String(96), primary_key=True)

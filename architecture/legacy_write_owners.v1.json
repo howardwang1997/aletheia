@@ -13,21 +13,23 @@
     "legacy_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "legacy_source_ast_excluded_roots": {
       "aletheia/api/research_kernel.py": "new_authority_adapter",
+      "aletheia/durable_tasks": "authority_neutral_contracts",
       "aletheia/execution": "new_authority",
       "aletheia/migration": "migration_tooling",
       "aletheia/observations": "new_authority",
       "aletheia/planning": "new_authority",
       "aletheia/protocols": "new_authority",
+      "aletheia/research_controller": "new_authority",
       "aletheia/research_kernel": "new_authority",
       "aletheia/research_store": "new_authority_adapter"
     },
-    "legacy_source_ast_file_count": 283,
-    "legacy_source_ast_graph_sha256": "4ea8d4aa6524796e5ee608823a5626271fb9cf5024261579b143e3a086eb8401",
+    "legacy_source_ast_file_count": 284,
+    "legacy_source_ast_graph_sha256": "f356ae5f32e01228e906be40b1bd549dedba100f2027a4147ac62cd840f46f78",
     "legacy_source_ast_review_limit": "This normalized-AST backstop freezes every parseable Python file in the declared legacy production roots after explicitly removing new-authority and migration-tooling roots. It catches added, removed or semantically changed legacy Python source even when a specialized sink scanner does not recognize the syntax; comments, formatting, generated runtime code, non-Python launchers and the explicitly excluded roots are outside this digest.",
     "migration_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "migration_source_ast_roots": ["aletheia/migration", "migrations"],
-    "migration_source_ast_file_count": 32,
-    "migration_source_ast_graph_sha256": "dcd9ac6716ec81b2dbc2a568b88260bd9962c8a9d3d39bd0581d39c54391746d",
+    "migration_source_ast_file_count": 34,
+    "migration_source_ast_graph_sha256": "2c0e2a209ec100d87178bc8bf0a96b0f31dde6908d15ddfc21275f4df1832e02",
     "migration_source_ast_review_limit": "Migration tooling and immutable Alembic revision history have a separate normalized-AST freeze. Historical schema DML/backfills remain deployment authority reviewed through the migration chain rather than runtime scientific write owners.",
     "non_python_invocation_source_scheme": "git_index_regular_mode_path_byte_sha256_v1",
     "non_python_invocation_source_roots": [
@@ -74,9 +76,27 @@
     "service_mutator_call_graph_sha256": "13e491fdfcf7637e3ee2652a465eb9e119126e1360f379985cf628bf38138f5f",
     "service_boundary_limit": "This mechanically freezes statically declared aletheia.memory.service imports and imported-name uses across aletheia and operational scripts in module and nested lexical scopes. It does not claim to discover arbitrary dynamic imports or direct ORM, SQL, filesystem or external-system mutations; those are handled by separate reviewed surface baselines.",
     "writer_surface_usage_scheme": "ast_all_scope_import_alias_instance_scope_v2",
-    "writer_surface_usage_count": 343,
-    "writer_surface_call_graph_sha256": "1e26408fa1add7ae68b602184ecca12a59d5114719948c95a957ea0fa03dfb8c",
+    "writer_surface_usage_count": 370,
+    "writer_surface_call_graph_sha256": "92e1bb32257b898ae362d0fe9b1ba328c9dde45b688fa2324f06f0f8fbfbac29",
     "allowed_legacy_caller_scope": "Every current aletheia-package caller must be covered by allowed_legacy_callers. Operational scripts are fully frozen in call_sites and may be omitted from the post-cutover application allowlist.",
+    "shared_generic_writer_implementations": {
+      "aletheia.observations.store._append_exact": {
+        "dispatch_rule": "Each listed public writer must pass one literal SQLAlchemy record type through the record_type keyword; the shared helper cannot select a table independently.",
+        "caller_owns_transaction": true,
+        "write_ids": [
+          "observations.controller_registration",
+          "observations.controller_delivery",
+          "observations.controller_delivery_attempt",
+          "observations.controller_delivery_resolution",
+          "observations.protocol_compilation",
+          "observations.scientific_execution_authorization",
+          "observations.issuance_challenge",
+          "observations.validation_receipt",
+          "observations.admission",
+          "observations.continuation_receipt"
+        ]
+      }
+    },
     "writer_surface_static_resolution_exceptions": {
       "compute_workspace.local": "ExperimentDriver dispatches submit through the ComputeBackend protocol; the declared caller body is checked lexically.",
       "compute_workspace.docker": "ExperimentDriver dispatches submit through the ComputeBackend protocol; the declared caller body is checked lexically.",
@@ -86,13 +106,17 @@
       "github.put_file": "The GitHub client is created behind an integration factory; the declared caller body is checked lexically.",
       "github.open_pr": "The GitHub client is created behind an integration factory; the declared caller body is checked lexically.",
       "decision.transition": "Two fault-harness transaction callbacks directly append transition decisions; their exact ORM mutation scopes are frozen by the direct-ORM audit.",
+      "jobs.durable_queue": "PR-5 controller adapters receive the authority-neutral DurableTaskQueuePort, so their caller-owned enqueue_in_session uses cannot resolve to the legacy concrete queue class statically; the exact controller callers and concrete _enqueue ORM scopes remain frozen separately.",
       "execution.qualification_authority": "PR-4b composes the runtime-v2 allocator entrypoints through one node adapter, while deployment enrollment and compatibility-only entrypoints remain uncalled surfaces; all composed callers, private ORM bindings and direct ORM mutation scopes are frozen separately.",
-      "execution.transactional_outbox": "PR-4b composes the immutable runtime-v2 terminal intent writers but retains the uncalled v1 compatibility writer and has no dispatcher; exact callers and direct ORM mutation scopes are frozen separately."
+      "execution.transactional_outbox": "PR-4b composes the immutable runtime-v2 terminal intent writers but retains the uncalled v1 compatibility writer and has no dispatcher; exact callers and direct ORM mutation scopes are frozen separately.",
+      "observations.protocol_compilation": "PR-5 defines the exact append-only compilation store, but production ControllerStepExecutionPort composition is deliberately still absent; the local vertical-cut fixture exercises this surface directly.",
+      "observations.continuation_receipt": "PR-5 defines the exact append-only continuation store, but production ControllerStepExecutionPort composition is deliberately still absent; the local vertical-cut fixture exercises this surface directly.",
+      "research_store.transactional_outbox": "The caller-owned mark_outbox_published_in_session surface is composed by the PR-5 dispatcher; its transaction-owning mark_outbox_published wrapper remains an explicit uncalled compatibility surface."
     },
     "direct_file_sink_scheme": "ast_reviewed_direct_file_sink_v1",
-    "direct_file_sink_scope_count": 175,
-    "direct_file_sink_call_count": 197,
-    "direct_file_sink_graph_sha256": "c9385de13a47c1222e5af5d1b39fac20cf5a04acd202647f9e4c7e4f40530488",
+    "direct_file_sink_scope_count": 176,
+    "direct_file_sink_call_count": 198,
+    "direct_file_sink_graph_sha256": "4f70d82cd204af0de3385a8177f45c024ce48c90585c77c2f98072939e109100",
     "direct_file_sink_review_limit": "The baseline covers direct Path/open/os.write, archive-open modes, atomic replace, serializer, dataframe and plotting file sinks across the declared aletheia, deployed docker-worker and recursive operational-script roots. Indirect library-internal writes, arbitrary dynamic dispatch and external systems remain separate reviewed boundaries.",
     "direct_file_sink_profiles": {
       "scientific_artifact": {
@@ -241,6 +265,7 @@
       "aletheia.execution.oci_runtime": "qualification_oci_runtime_state",
       "aletheia.knowledge.": "knowledge_archive",
       "aletheia.memory.transcript": "operational_workspace",
+      "aletheia.migration.f9_v1_observation_compatibility": "scientific_observation",
       "aletheia.migration.": "migration_evidence",
       "aletheia.orchestrator.": "operational_workspace",
       "aletheia.programs.": "scientific_program",
@@ -313,9 +338,9 @@
       "aletheia.notify.feishu|provider.http_post": ["feishu.notify"]
     },
     "direct_orm_mutation_scheme": "ast_import_bound_orm_mutation_v2",
-    "direct_orm_mutation_scope_count": 271,
-    "direct_orm_mutation_call_count": 430,
-    "direct_orm_mutation_graph_sha256": "899adbe7566f0795c7cf6aa2704b95f088f2e12181285c50d8f5926065bf3264",
+    "direct_orm_mutation_scope_count": 273,
+    "direct_orm_mutation_call_count": 435,
+    "direct_orm_mutation_graph_sha256": "856a0c5c10ac0cd01baff24e4fc7f9a8f1379a34e30659d5cb769a7b8b5553bc",
     "direct_orm_authority_source": "Every resolved table is classified by the postgres storage_target/storage_targets records in this inventory; non-constructor mutation scopes must match a declared legacy_entrypoint or additional_writers symbol.",
     "direct_orm_review_limit": "This static AST baseline resolves explicit imports/re-exports and aliases for every declared SQLAlchemy model; ORM class self/cls bindings; model construction; query/get/select/scalar result flows; attribute, setattr and relationship mutation; explicit aliases of recognized setattr/session/query/table/SQLAlchemy mutation callables; session add/delete/merge/bulk APIs; SQLAlchemy/table/query insert/update/delete; literal mutating SQL; and fail-closed f-string/binary SQL edges. It does not claim to resolve dynamic imports, reflection-generated models, runtime monkeypatching, helper-returned model instances, dynamically selected mutator callables, or dynamic SQL hidden behind an untyped variable; any semantic change in legacy Python remains guarded by the separate normalized-AST source freeze.",
     "protected_orm_reference_scheme": "ast_explicit_import_and_reference_scope_v1",
@@ -2362,6 +2387,8 @@
       "write_id": "jobs.durable_queue",
       "legacy_entrypoint": {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue.enqueue"},
       "additional_writers": [
+        {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue._enqueue"},
+        {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue.enqueue_in_session"},
         {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue.claim"},
         {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue.heartbeat"},
         {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue.complete"},
@@ -2382,6 +2409,8 @@
         {"module": "aletheia.jobs.worker", "symbol": "DurableWorker._execute_with_heartbeat.heartbeat_loop"},
         {"module": "aletheia.jobs.worker", "symbol": "DurableWorker.run_forever"},
         {"module": "aletheia.jobs.worker", "symbol": "DurableWorker.run_once"},
+        {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue.enqueue"},
+        {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue.enqueue_in_session"},
         {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue._expire_task"},
         {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue._recover_expired"},
         {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue._resolve_blocked"},
@@ -2390,6 +2419,10 @@
         {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue.fail"},
         {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue.heartbeat"},
         {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue.recover_expired"},
+        {"module": "aletheia.research_controller.dispatcher", "symbol": "ExecutionTerminalOutboxDispatcher.dispatch_once"},
+        {"module": "aletheia.research_controller.dispatcher", "symbol": "ResearchKernelOutboxDispatcher.dispatch_once"},
+        {"module": "aletheia.research_controller.persistence", "symbol": "PostgreSQLControllerLaunchAdapter.register_launch"},
+        {"module": "aletheia.research_controller.redrive", "symbol": "ControllerDeliveryReconciler._append_successor"},
         {"module": "aletheia.scheduler.durable", "symbol": "enqueue_driver_task"},
         {"module": "scripts.durable_tasks", "symbol": "main"}
       ],
@@ -2419,6 +2452,8 @@
         {"module": "aletheia.jobs.worker", "symbol": "DurableWorker._execute_with_heartbeat.heartbeat_loop"},
         {"module": "aletheia.jobs.worker", "symbol": "DurableWorker.run_forever"},
         {"module": "aletheia.jobs.worker", "symbol": "DurableWorker.run_once"},
+        {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue.enqueue"},
+        {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue.enqueue_in_session"},
         {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue._expire_task"},
         {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue._recover_expired"},
         {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue._resolve_blocked"},
@@ -2427,6 +2462,10 @@
         {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue.fail"},
         {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue.heartbeat"},
         {"module": "aletheia.jobs.queue", "symbol": "DurableTaskQueue.recover_expired"},
+        {"module": "aletheia.research_controller.dispatcher", "symbol": "ExecutionTerminalOutboxDispatcher.dispatch_once"},
+        {"module": "aletheia.research_controller.dispatcher", "symbol": "ResearchKernelOutboxDispatcher.dispatch_once"},
+        {"module": "aletheia.research_controller.persistence", "symbol": "PostgreSQLControllerLaunchAdapter.register_launch"},
+        {"module": "aletheia.research_controller.redrive", "symbol": "ControllerDeliveryReconciler._append_successor"},
         {"module": "aletheia.scheduler.durable", "symbol": "enqueue_driver_task"}
       ],
       "dual_write_policy": "none",
@@ -2434,7 +2473,7 @@
       "golden_fixture": null,
       "status": "inventoried",
       "post_cutover_legacy_mode": "compatibility_leaf_only",
-      "blocker": "Resource routing and execution adoption are not implemented in the target queue yet.",
+      "blocker": "PR-5 adds a caller-owned enqueue seam, but production controller dispatcher, worker, reconciler, and process supervision remain uncomposed and unqualified.",
       "exception_expiry": null
     },
     {
@@ -2573,6 +2612,14 @@
         {
           "module": "aletheia.research_store.store",
           "symbol": "ResearchKernelStore.commit"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.commit_in_session"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore._commit"
         }
       ],
       "call_sites": [
@@ -2585,8 +2632,20 @@
           "symbol": "commit_authorized_command"
         },
         {
+          "module": "aletheia.observations.coordinator",
+          "symbol": "PostgreSQLAtomicObservationAdmissionCoordinator.commit_and_incorporate"
+        },
+        {
           "module": "aletheia.domains.materials.phonon_commissioning",
           "symbol": "apply_phonon_quest_commissioning"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.commit"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.commit_in_session"
         }
       ],
       "storage_target": "postgres.research_store_persistence.research_quest_authorities",
@@ -2608,8 +2667,20 @@
           "symbol": "commit_authorized_command"
         },
         {
+          "module": "aletheia.observations.coordinator",
+          "symbol": "PostgreSQLAtomicObservationAdmissionCoordinator.commit_and_incorporate"
+        },
+        {
           "module": "aletheia.domains.materials.phonon_commissioning",
           "symbol": "apply_phonon_quest_commissioning"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.commit"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.commit_in_session"
         }
       ],
       "dual_write_policy": "none",
@@ -2629,6 +2700,14 @@
       "additional_writers": [
         {
           "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.commit_in_session"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore._commit"
+        },
+        {
+          "module": "aletheia.research_store.store",
           "symbol": "_register_object"
         }
       ],
@@ -2638,8 +2717,20 @@
           "symbol": "commit_authorized_command"
         },
         {
+          "module": "aletheia.observations.coordinator",
+          "symbol": "PostgreSQLAtomicObservationAdmissionCoordinator.commit_and_incorporate"
+        },
+        {
           "module": "aletheia.research_store.store",
           "symbol": "ResearchKernelStore.commit"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.commit_in_session"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore._commit"
         }
       ],
       "storage_target": "postgres.research_store_persistence.research_quest_streams",
@@ -2664,8 +2755,20 @@
           "symbol": "commit_authorized_command"
         },
         {
+          "module": "aletheia.observations.coordinator",
+          "symbol": "PostgreSQLAtomicObservationAdmissionCoordinator.commit_and_incorporate"
+        },
+        {
           "module": "aletheia.research_store.store",
           "symbol": "ResearchKernelStore.commit"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.commit_in_session"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore._commit"
         }
       ],
       "dual_write_policy": "none",
@@ -2682,10 +2785,48 @@
         "module": "aletheia.research_store.store",
         "symbol": "ResearchKernelStore.commit"
       },
+      "additional_writers": [
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.commit_in_session"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore._commit"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.mark_outbox_published"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.mark_outbox_published_in_session"
+        }
+      ],
       "call_sites": [
         {
           "module": "aletheia.api.research_kernel",
           "symbol": "commit_authorized_command"
+        },
+        {
+          "module": "aletheia.observations.coordinator",
+          "symbol": "PostgreSQLAtomicObservationAdmissionCoordinator.commit_and_incorporate"
+        },
+        {
+          "module": "aletheia.research_controller.dispatcher",
+          "symbol": "ResearchKernelOutboxDispatcher.dispatch_once"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.commit"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.commit_in_session"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.mark_outbox_published"
         }
       ],
       "storage_target": "postgres.research_store_persistence.research_kernel_outbox",
@@ -2701,6 +2842,26 @@
         {
           "module": "aletheia.api.research_kernel",
           "symbol": "commit_authorized_command"
+        },
+        {
+          "module": "aletheia.observations.coordinator",
+          "symbol": "PostgreSQLAtomicObservationAdmissionCoordinator.commit_and_incorporate"
+        },
+        {
+          "module": "aletheia.research_controller.dispatcher",
+          "symbol": "ResearchKernelOutboxDispatcher.dispatch_once"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.commit"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.commit_in_session"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.mark_outbox_published"
         }
       ],
       "dual_write_policy": "none",
@@ -3176,6 +3337,384 @@
       "golden_fixture": null,
       "status": "authoritative_new_owner",
       "blocker": "No production outbox dispatcher or scientific observation bridge is part of PR-4b.",
+      "exception_expiry": null
+    },
+    {
+      "write_id": "observations.controller_registration",
+      "legacy_entrypoint": {
+        "module": "aletheia.observations.store",
+        "symbol": "register_controller"
+      },
+      "call_sites": [
+        {
+          "module": "aletheia.research_controller.persistence",
+          "symbol": "PostgreSQLControllerLaunchAdapter.register_launch"
+        }
+      ],
+      "storage_target": "postgres.observations_persistence.research_controller_registrations",
+      "mutation_kind": "append_only_controller_registration_projection",
+      "scientific_semantics": "Binds one deployment-pinned controller identity and launch request to one existing Quest. It is operational subscription state and cannot authorize a Research Kernel command or admit scientific evidence.",
+      "authority_class": "operational_state",
+      "current_owner": "aletheia.observations.store.register_controller",
+      "current_commit_boundary": "the caller-owned PostgreSQL launch transaction containing registration, deterministic task, delivery, and generation-zero attempt",
+      "target_owner": "aletheia.observations.store.register_controller",
+      "target_command_or_object": "ControllerRegistrationWrite",
+      "migration_mode": "retain_append_only_controller_projection",
+      "allowed_legacy_callers": [
+        {
+          "module": "aletheia.research_controller.persistence",
+          "symbol": "PostgreSQLControllerLaunchAdapter.register_launch"
+        }
+      ],
+      "dual_write_policy": "none",
+      "cutover_pr": "PR-5",
+      "golden_fixture": null,
+      "status": "authoritative_new_owner",
+      "post_cutover_legacy_mode": "not_applicable_new_authority",
+      "blocker": "The API launch adapter is composed, but deployment manifest/key configuration plus worker and process supervision remain unqualified.",
+      "exception_expiry": null
+    },
+    {
+      "write_id": "observations.controller_delivery",
+      "legacy_entrypoint": {
+        "module": "aletheia.observations.store",
+        "symbol": "record_controller_delivery"
+      },
+      "call_sites": [
+        {
+          "module": "aletheia.research_controller.dispatcher",
+          "symbol": "ExecutionTerminalOutboxDispatcher.dispatch_once"
+        },
+        {
+          "module": "aletheia.research_controller.dispatcher",
+          "symbol": "ResearchKernelOutboxDispatcher.dispatch_once"
+        },
+        {
+          "module": "aletheia.research_controller.persistence",
+          "symbol": "PostgreSQLControllerLaunchAdapter.register_launch"
+        }
+      ],
+      "storage_target": "postgres.observations_persistence.research_controller_deliveries",
+      "mutation_kind": "append_only_controller_source_delivery_projection",
+      "scientific_semantics": "Records the exact launch, Kernel-outbox, or engineering-terminal source mapped to one deterministic controller task. It is at-least-once operational transport state, never scientific truth.",
+      "authority_class": "operational_state",
+      "current_owner": "aletheia.observations.store.record_controller_delivery",
+      "current_commit_boundary": "the caller-owned PostgreSQL transaction containing deterministic task enqueue and generation-zero delivery attempt",
+      "target_owner": "aletheia.observations.store.record_controller_delivery",
+      "target_command_or_object": "ControllerDeliveryWrite",
+      "migration_mode": "retain_append_only_controller_projection",
+      "allowed_legacy_callers": [
+        {
+          "module": "aletheia.research_controller.dispatcher",
+          "symbol": "ExecutionTerminalOutboxDispatcher.dispatch_once"
+        },
+        {
+          "module": "aletheia.research_controller.dispatcher",
+          "symbol": "ResearchKernelOutboxDispatcher.dispatch_once"
+        },
+        {
+          "module": "aletheia.research_controller.persistence",
+          "symbol": "PostgreSQLControllerLaunchAdapter.register_launch"
+        }
+      ],
+      "dual_write_policy": "none",
+      "cutover_pr": "PR-5",
+      "golden_fixture": null,
+      "status": "authoritative_new_owner",
+      "post_cutover_legacy_mode": "not_applicable_new_authority",
+      "blocker": "Production dispatcher and reconciler daemons remain uncomposed and unqualified.",
+      "exception_expiry": null
+    },
+    {
+      "write_id": "observations.controller_delivery_attempt",
+      "legacy_entrypoint": {
+        "module": "aletheia.observations.store",
+        "symbol": "record_controller_delivery_attempt"
+      },
+      "call_sites": [
+        {
+          "module": "aletheia.research_controller.dispatcher",
+          "symbol": "ExecutionTerminalOutboxDispatcher.dispatch_once"
+        },
+        {
+          "module": "aletheia.research_controller.dispatcher",
+          "symbol": "ResearchKernelOutboxDispatcher.dispatch_once"
+        },
+        {
+          "module": "aletheia.research_controller.persistence",
+          "symbol": "PostgreSQLControllerLaunchAdapter.register_launch"
+        },
+        {
+          "module": "aletheia.research_controller.redrive",
+          "symbol": "ControllerDeliveryReconciler._append_successor"
+        }
+      ],
+      "storage_target": "postgres.observations_persistence.research_controller_delivery_attempts",
+      "mutation_kind": "append_only_bounded_controller_delivery_generation",
+      "scientific_semantics": "Records every immutable controller task generation and predecessor terminal identity. Retry lineage is operational recovery evidence and cannot create scientific authority.",
+      "authority_class": "operational_state",
+      "current_owner": "aletheia.observations.store.record_controller_delivery_attempt",
+      "current_commit_boundary": "the caller-owned task enqueue or reconciliation transaction after locking the exact delivery",
+      "target_owner": "aletheia.observations.store.record_controller_delivery_attempt",
+      "target_command_or_object": "ControllerDeliveryAttemptWrite",
+      "migration_mode": "retain_append_only_bounded_redrive_lineage",
+      "allowed_legacy_callers": [
+        {
+          "module": "aletheia.research_controller.dispatcher",
+          "symbol": "ExecutionTerminalOutboxDispatcher.dispatch_once"
+        },
+        {
+          "module": "aletheia.research_controller.dispatcher",
+          "symbol": "ResearchKernelOutboxDispatcher.dispatch_once"
+        },
+        {
+          "module": "aletheia.research_controller.persistence",
+          "symbol": "PostgreSQLControllerLaunchAdapter.register_launch"
+        },
+        {
+          "module": "aletheia.research_controller.redrive",
+          "symbol": "ControllerDeliveryReconciler._append_successor"
+        }
+      ],
+      "dual_write_policy": "none",
+      "cutover_pr": "PR-5",
+      "golden_fixture": null,
+      "status": "authoritative_new_owner",
+      "post_cutover_legacy_mode": "not_applicable_new_authority",
+      "blocker": "Production delivery reconciliation scheduling and monitoring remain uncomposed and unqualified.",
+      "exception_expiry": null
+    },
+    {
+      "write_id": "observations.controller_delivery_resolution",
+      "legacy_entrypoint": {
+        "module": "aletheia.observations.store",
+        "symbol": "record_controller_delivery_resolution"
+      },
+      "call_sites": [
+        {
+          "module": "aletheia.research_controller.redrive",
+          "symbol": "ControllerDeliveryReconciler._record_resolution"
+        }
+      ],
+      "storage_target": "postgres.observations_persistence.research_controller_delivery_resolutions",
+      "mutation_kind": "append_only_controller_delivery_terminal_resolution",
+      "scientific_semantics": "Permanently classifies the latest exact delivery generation as settled or dead-lettered. It is operational recovery state and cannot substitute for a signed Kernel command or independent admission.",
+      "authority_class": "operational_state",
+      "current_owner": "aletheia.observations.store.record_controller_delivery_resolution",
+      "current_commit_boundary": "the caller-owned reconciliation transaction after locking and re-auditing the exact latest delivery generation",
+      "target_owner": "aletheia.observations.store.record_controller_delivery_resolution",
+      "target_command_or_object": "ControllerDeliveryResolutionWrite",
+      "migration_mode": "retain_append_only_terminal_resolution",
+      "allowed_legacy_callers": [
+        {
+          "module": "aletheia.research_controller.redrive",
+          "symbol": "ControllerDeliveryReconciler._record_resolution"
+        }
+      ],
+      "dual_write_policy": "none",
+      "cutover_pr": "PR-5",
+      "golden_fixture": null,
+      "status": "authoritative_new_owner",
+      "post_cutover_legacy_mode": "not_applicable_new_authority",
+      "blocker": "Production delivery reconciliation scheduling and monitoring remain uncomposed and unqualified.",
+      "exception_expiry": null
+    },
+    {
+      "write_id": "observations.protocol_compilation",
+      "legacy_entrypoint": {
+        "module": "aletheia.observations.store",
+        "symbol": "register_protocol_compilation"
+      },
+      "call_sites": [],
+      "storage_target": "postgres.observations_persistence.research_protocol_compilations",
+      "mutation_kind": "append_only_graph_scoped_protocol_compilation_receipt",
+      "scientific_semantics": "Retains the exact compiler request, result, receipt, graph scope, and protocol revision lineage as a recoverable projection. A compilation cannot authorize its action or mutate Research Kernel scientific state.",
+      "authority_class": "operational_state",
+      "current_owner": "aletheia.observations.store.register_protocol_compilation",
+      "current_commit_boundary": "one caller-owned PostgreSQL append transaction after exact compilation-contract verification",
+      "target_owner": "aletheia.observations.store.register_protocol_compilation",
+      "target_command_or_object": "ProtocolCompilationWrite",
+      "migration_mode": "retain_append_only_recovery_projection",
+      "allowed_legacy_callers": [],
+      "dual_write_policy": "none",
+      "cutover_pr": "PR-5",
+      "golden_fixture": null,
+      "status": "authoritative_new_owner",
+      "post_cutover_legacy_mode": "not_applicable_new_authority",
+      "blocker": "The production ControllerStepExecutionPort compilation adapter is intentionally not composed; only the local vertical fixture invokes this store.",
+      "exception_expiry": null
+    },
+    {
+      "write_id": "observations.scientific_execution_authorization",
+      "legacy_entrypoint": {
+        "module": "aletheia.observations.store",
+        "symbol": "register_scientific_execution_authorization"
+      },
+      "call_sites": [
+        {
+          "module": "aletheia.observations.service",
+          "symbol": "PostgreSQLScientificBridgeService.register_execution_authorization"
+        }
+      ],
+      "storage_target": "postgres.observations_persistence.research_scientific_execution_authorizations",
+      "mutation_kind": "append_only_signed_scientific_execution_authorization",
+      "scientific_semantics": "Pre-registers one independently signed action, protocol, qualification, execution, artifact, and scientific-slot binding before PR-4 admission or process start. It establishes execution eligibility but cannot admit an observation or mutate the Kernel.",
+      "authority_class": "scientific_state",
+      "current_owner": "aletheia.observations.store.register_scientific_execution_authorization",
+      "current_commit_boundary": "one PostgreSQLScientificBridgeService registration transaction after historical and live authority verification",
+      "target_owner": "aletheia.observations.store.register_scientific_execution_authorization",
+      "target_command_or_object": "ScientificExecutionAuthorizationWrite",
+      "migration_mode": "retain_signed_pre_execution_authority",
+      "allowed_legacy_callers": [
+        {
+          "module": "aletheia.observations.service",
+          "symbol": "PostgreSQLScientificBridgeService.register_execution_authorization"
+        }
+      ],
+      "dual_write_policy": "none",
+      "cutover_pr": "PR-5",
+      "golden_fixture": "tests/observations/test_service.py",
+      "status": "authoritative_new_owner",
+      "post_cutover_legacy_mode": "not_applicable_new_authority",
+      "blocker": "Production execution-authority signing custody and controller step composition remain unimplemented.",
+      "exception_expiry": null
+    },
+    {
+      "write_id": "observations.issuance_challenge",
+      "legacy_entrypoint": {
+        "module": "aletheia.observations.store",
+        "symbol": "record_observation_issuance_challenge"
+      },
+      "call_sites": [
+        {
+          "module": "aletheia.observations.service",
+          "symbol": "PostgreSQLScientificBridgeService.issue_admission_challenge"
+        },
+        {
+          "module": "aletheia.observations.service",
+          "symbol": "PostgreSQLScientificBridgeService.issue_validation_challenge"
+        }
+      ],
+      "storage_target": "postgres.observations_persistence.research_observation_issuance_challenges",
+      "mutation_kind": "append_only_database_time_anti_replay_challenge",
+      "scientific_semantics": "Records short-lived database-issued validation or admission nonces. Challenges gate independent signatures but are operational anti-replay state, not observations or claims.",
+      "authority_class": "operational_state",
+      "current_owner": "aletheia.observations.store.record_observation_issuance_challenge",
+      "current_commit_boundary": "one bridge-service transaction serialized on the exact scientific execution authorization",
+      "target_owner": "aletheia.observations.store.record_observation_issuance_challenge",
+      "target_command_or_object": "ObservationIssuanceChallengeWrite",
+      "migration_mode": "retain_append_only_anti_replay_authority",
+      "allowed_legacy_callers": [
+        {
+          "module": "aletheia.observations.service",
+          "symbol": "PostgreSQLScientificBridgeService.issue_admission_challenge"
+        },
+        {
+          "module": "aletheia.observations.service",
+          "symbol": "PostgreSQLScientificBridgeService.issue_validation_challenge"
+        }
+      ],
+      "dual_write_policy": "none",
+      "cutover_pr": "PR-5",
+      "golden_fixture": null,
+      "status": "authoritative_new_owner",
+      "post_cutover_legacy_mode": "not_applicable_new_authority",
+      "blocker": "Production database signing-key custody and independently operated validator/admission services remain unqualified.",
+      "exception_expiry": null
+    },
+    {
+      "write_id": "observations.validation_receipt",
+      "legacy_entrypoint": {
+        "module": "aletheia.observations.store",
+        "symbol": "record_observation_validation_receipt"
+      },
+      "call_sites": [
+        {
+          "module": "aletheia.observations.service",
+          "symbol": "PostgreSQLScientificBridgeService.commit_validation"
+        }
+      ],
+      "storage_target": "postgres.observations_persistence.research_observation_validation_receipts",
+      "mutation_kind": "append_only_independently_signed_observation_validation",
+      "scientific_semantics": "Commits one independently signed validation result bound to the exact raw run, immutable campaign, challenge, authority pins, and scientific slot. It is scientific evidence custody but cannot fill the slot or mutate the Kernel.",
+      "authority_class": "scientific_state",
+      "current_owner": "aletheia.observations.store.record_observation_validation_receipt",
+      "current_commit_boundary": "one PostgreSQLScientificBridgeService transaction after fresh custody and independent signature verification",
+      "target_owner": "aletheia.observations.store.record_observation_validation_receipt",
+      "target_command_or_object": "ObservationValidationReceiptWrite",
+      "migration_mode": "retain_independent_validation_authority",
+      "allowed_legacy_callers": [
+        {
+          "module": "aletheia.observations.service",
+          "symbol": "PostgreSQLScientificBridgeService.commit_validation"
+        }
+      ],
+      "dual_write_policy": "none",
+      "cutover_pr": "PR-5",
+      "golden_fixture": "tests/observations/test_service.py",
+      "status": "authoritative_new_owner",
+      "post_cutover_legacy_mode": "not_applicable_new_authority",
+      "blocker": "Production independent validator service, signing custody, and F9-v2 campaign archive remain uncomposed and unqualified.",
+      "exception_expiry": null
+    },
+    {
+      "write_id": "observations.admission",
+      "legacy_entrypoint": {
+        "module": "aletheia.observations.store",
+        "symbol": "record_observation_admission"
+      },
+      "call_sites": [
+        {
+          "module": "aletheia.observations.coordinator",
+          "symbol": "PostgreSQLAtomicObservationAdmissionCoordinator.commit_and_incorporate"
+        }
+      ],
+      "storage_target": "postgres.observations_persistence.research_observation_admissions",
+      "mutation_kind": "atomic_append_only_observation_admission_and_kernel_binding",
+      "scientific_semantics": "Binds one independently admitted decision to one empty scientific slot and its exact observation_incorporated Kernel event. Deferred bidirectional constraints make the admission row and sole Kernel scientific authority commit or roll back together.",
+      "authority_class": "scientific_state",
+      "current_owner": "aletheia.observations.coordinator.PostgreSQLAtomicObservationAdmissionCoordinator",
+      "current_commit_boundary": "the same PostgreSQL transaction as the signed Kernel event, canonical snapshot, stream head, command receipt, and outbox intent",
+      "target_owner": "aletheia.observations.coordinator.PostgreSQLAtomicObservationAdmissionCoordinator",
+      "target_command_or_object": "AtomicObservationAdmissionReceipt",
+      "migration_mode": "retain_atomic_admission_kernel_coupling",
+      "allowed_legacy_callers": [
+        {
+          "module": "aletheia.observations.coordinator",
+          "symbol": "PostgreSQLAtomicObservationAdmissionCoordinator.commit_and_incorporate"
+        }
+      ],
+      "dual_write_policy": "none",
+      "cutover_pr": "PR-5",
+      "golden_fixture": "tests/observations/test_atomic_admission.py",
+      "status": "authoritative_new_owner",
+      "post_cutover_legacy_mode": "not_applicable_new_authority",
+      "blocker": "Production admission-authority signing custody, service composition, and PostgreSQL process-kill campaign remain unqualified.",
+      "exception_expiry": null
+    },
+    {
+      "write_id": "observations.continuation_receipt",
+      "legacy_entrypoint": {
+        "module": "aletheia.observations.store",
+        "symbol": "record_continuation_receipt"
+      },
+      "call_sites": [],
+      "storage_target": "postgres.observations_persistence.research_continuation_receipts",
+      "mutation_kind": "append_only_graph_scoped_continuation_projection",
+      "scientific_semantics": "Retains the exact graph-scoped follow-up, refinement, fork, activation, or terminal projection derived from one admitted observation. It is recoverable controller state; only a separately authorized Kernel command may enact it.",
+      "authority_class": "operational_state",
+      "current_owner": "aletheia.observations.store.record_continuation_receipt",
+      "current_commit_boundary": "one caller-owned PostgreSQL append transaction after exact continuation-contract verification",
+      "target_owner": "aletheia.observations.store.record_continuation_receipt",
+      "target_command_or_object": "ContinuationReceiptWrite",
+      "migration_mode": "retain_append_only_recovery_projection",
+      "allowed_legacy_callers": [],
+      "dual_write_policy": "none",
+      "cutover_pr": "PR-5",
+      "golden_fixture": null,
+      "status": "authoritative_new_owner",
+      "post_cutover_legacy_mode": "not_applicable_new_authority",
+      "blocker": "The production ControllerStepExecutionPort continuation adapter is intentionally not composed; only the local vertical fixture invokes this store.",
       "exception_expiry": null
     }
   ]

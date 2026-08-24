@@ -95,6 +95,12 @@ class Settings(BaseSettings):
     research_kernel_genesis_policy_registry_file_sha256: str | None = None
     research_kernel_cas_root: Path | None = None
 
+    # --- durable Research Kernel controller custody ---
+    # Launch callers select only an existing Quest/head.  Controller code, capability catalog,
+    # bridge policy, retry policy, and worker identity come from this exact deployment-owned file.
+    research_controller_manifest_path: Path | None = None
+    research_controller_manifest_file_sha256: str | None = None
+
     # --- reproducibility identity ---
     # Formal scientific runs freeze an immutable manifest before the first scientific action.
     # Development/dry runs may use the same mechanism, but only a clean git tree qualifies for a

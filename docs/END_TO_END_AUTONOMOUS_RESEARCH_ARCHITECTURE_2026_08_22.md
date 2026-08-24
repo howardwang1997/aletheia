@@ -1503,8 +1503,10 @@ branch，因此只有 protocol 中每个
 `SCIENTIFIC_EXECUTOR` step/branch 都预注册至少两个 slot 时才机械证明 exact reexecution；
 `INDEPENDENT_IMPLEMENTATION` / `EXTERNAL_INDEPENDENT` 因缺少显式
 implementation/principal/site assignment contract 一律 fail closed，不能用 slot 或 DAG node 数量冒充独立复现。
-F9 v1 只能作为保留 run scope 的 opaque whole-object read-only binding；F10 v1 只能作为不可拆分 opaque
-bundle binding；二者都不产生 v2 identity、执行权或 admission。PR-3 没有新增 DB、Alembic、API、controller、
+F9 v1 只能由显式 migration compatibility adapter 读取为保留 run scope 的 opaque whole object，
+并追加一份 write-once graph/raw-run binding CAS；该 binding writer 不进入 observations/controller
+authority graph，也不产生 v2 identity、验证权、执行权或 admission。F10 v1 只能作为不可拆分 opaque
+bundle binding。PR-3 没有新增 DB、Alembic、API、controller、
 CAS writer、model/network/process/GPU 调用，也不检查 live availability。详见
 `architecture/0047-scientific-protocol-compiler.md` 与 `PR3_PROTOCOL_COMPILER.md`。
 
@@ -1524,9 +1526,9 @@ CAS writer、model/network/process/GPU 调用，也不检查 live availability�
   loop-backed output quota 与 deadline watchdog，以及 pre-runtime absence、historical actual-start
   recovery、runtime fence rebind、termination challenge/acceptance、artifact grace/deadline expiration
   和 v2 terminal outbox；
-- current Alembic head 为 `20260827_0026`：`0024` 的 16 张 PR-4a execution tables、`0025` 的
-  1 张 sealed-assignment table、`0026` 的 10 张 append-only runtime-v2 tables，共精确 27 张
-  `execution_*` tables；
+- PR-4 execution schema 仍精确为 27 张 `execution_*` tables：`0024` 的 16 张 PR-4a tables、
+  `0025` 的 1 张 sealed-assignment table、`0026` 的 10 张 append-only runtime-v2 tables；仓库 current
+  Alembic head 已由 PR-5 推进为 `20260828_0027`，但不改写这 27 张 execution tables 的语义；
 - composed cut 是 single local node、CPU-only（可按 exact cgroup 配额使用多个 CPU cores），所有
   contracts 保持 `qualification_only=true` / `scientific_admission_allowed=false`；GPU/device、remote、
   checkpoint、external/provider action 与 cross-node adoption 均未开放。
@@ -1557,14 +1559,31 @@ receipt；本 PR 尚不声称 observation admission exactly-once。
 
 ### PR-5：F8/F9/F10 bridge + durable controller vertical cut
 
-- graph-scoped F9 v2、world model/prediction 与 `CapabilityManifestV2` 进入 compiler；
-- `research.controller.v1`、outbox wakeup、lease/resume/reconciliation 和 `/quests/{id}/launch`；
-- continuation disposition 转成 typed action proposal；
-- raw run 经独立 observation admission 更新新 state。
+- source/test slice 已完成：graph-scoped F9 v2、world model/prediction 与
+  `CapabilityManifestV2` 通过 PR-3 compiler，并由 durable compilation receipt 支撑 crash recovery；
+- 已落 `research.controller.v1`、Kernel/PR-4 terminal outbox wakeup、per-Quest durable lease/retry、
+  ledger/receipt restart reconciliation 和 deployment-pinned `/quests/{id}/launch`；
+- 已落 signed action→SEA preregistration→PR-4 lineage/CAS custody→独立 validation/admission bridge；
+  SEA 必须早于 qualification admission、reservation 和 actual process start；
+- `observation_incorporated` 只把 exact AUTHORIZED action 变为 APPLIED，并把 positive/negative/
+  inconclusive evidence 保留在 Kernel state；scientific-slot DB unique 与 reducer 双重拒绝第二份 observation；
+- admission row、signed Kernel event、snapshot、outbox 和 stream head 在同一 PostgreSQL transaction
+  提交；continuation disposition 经独立 authority 转成 typed refinement/fork/follow-up action；
+- Alembic `20260828_0027` 新增 10 张 append-only controller/delivery-attempt/delivery-resolution/
+  compilation/SEA/challenge/validation/admission/continuation tables；controller projections 不成为第二条
+  scientific ledger；FAILED 或仅完成内部步骤的 task 由有界 generation successor 恢复，settled/dead-letter
+  resolution 则永久排除旧 delivery，避免 restart 后卡死或饥饿。
 
-验收：完成 measurement blocker → redesign → compile → valid negative/inconclusive → fork → follow-up 的本地
-vertical cut，不运行 legacy optimize，controller 重启后可从账本继续；同一 scientific slot 最多 admission
-一份 observation。
+本地 deterministic vertical 已覆盖 measurement blocker → typed refinement/redesign → recompile → valid
+negative/inconclusive → signed fork → selected-child activation → graph-scoped discriminating follow-up；follow-up
+在第二个独立 scientific slot 中完成 compile、execute、validation、admission 与 incorporation；不运行 legacy
+optimize/`ExperimentDriver`，新 controller instance 从 Kernel ledger 与 append-only receipts 重建，且同一
+scientific slot 至多 admission 一份 observation。该 fixture 是 control-path engineering evidence，不是 scientific
+discovery、production process-kill campaign 或 target-host deployment evidence。生产 worker handler composition、
+dispatcher/worker/reconciler 常驻进程、signing-key custody、独立 validator service 与远程 canary 仍受下述
+deployment gate 约束。详见
+`PR5_DURABLE_SCIENTIFIC_CONTROLLER.md` 与
+`architecture/0050-durable-scientific-controller-and-observation-admission.md`。
 
 ### PR-6：Legacy evaluation compatibility leaf
 
@@ -1577,8 +1596,9 @@ vertical cut，不运行 legacy optimize，controller 重启后可从账本继�
 
 验收：golden results 不回归；新 kernel 不包含 materials、MAE、MatBench 或 RAG special case。
 
-PR-5 的本地 vertical cut 通过后，才依据 fresh inventory 选择远程 canary；PR-6 可以在 contracts 稳定后
-并行进行。这样远程基础设施不会反过来固化一个错误的 `SSH + design dict` 接口。
+PR-5 的本地 vertical cut 已完成；现在仍须完成 PR-4 target-host campaign 与 PR-5 production
+controller/validator/dispatcher/worker composition，之后才依据 fresh inventory 选择远程 canary。PR-6 可以在
+这些部署工作并行时推进。这样远程基础设施不会反过来固化一个错误的 `SSH + design dict` 接口。
 
 ## 18. 风险与反制
 
@@ -1636,14 +1656,17 @@ PR-5 的本地 vertical cut 通过后，才依据 fresh inventory 选择远程 c
 **PR-0：Legacy freeze 与 migration boundary**、**PR-1：Research kernel pure contracts**、
 **PR-2：Authoritative event store**、**PR-3：Protocol IR pure contracts**、
 **PR-4a：qualification-only local execution foundation** 和 **PR-4b：qualification-only local execution
-composition implementation（含 deployment-evidence contracts）** 均已完成源码切片。PR-4b 的 exact target-host
+composition implementation（含 deployment-evidence contracts）**，以及 **PR-5：signed scientific bridge +
+durable controller local vertical** 均已完成源码切片。PR-4b 的 exact target-host
 Linux/root/systemd/loop/ext4/rootful-Docker campaign 仍是部署前硬门；通过前不把它描述为 production local
-execution service。下一项 scientific-control-plane 代码工作是 **PR-5：signed Research Kernel
-action-to-execution bridge + durable controller + independent observation admission**。checkpoint 与 external
-reconciliation 仍需独立 typed contracts，不能由 generic retry 猜测。
+execution service。下一项隔离的兼容代码工作是 **PR-6：Legacy evaluation compatibility leaf**；同时要补的是
+PR-5 deployment-owned step-handler/signing/validator/dispatcher/worker composition 与 process-kill PostgreSQL
+campaign，而不是扩张 controller authority。checkpoint 与 external reconciliation 仍需独立 typed contracts，
+不能由 generic retry 猜测。
 
 GPU node 的 deployment threat model 和 onboarding checklist 可以继续独立准备，但直到 PR-4b 的 target-host
-deployment campaign 和 PR-5 的 durable local vertical cut 都通过前，不部署逐任务 remote execution。
+deployment campaign 和 PR-5 的 production composition/deployment campaign 都通过前，不部署逐任务 remote
+execution。
 
 本文的判断标准很简单：每个新增组件都必须能回答“它改变了哪一个类型化科学状态、依据哪份可验证证据、
 谁有权提交这次改变，以及第三方怎样重放”。如果不能回答，它最多是一个 proposal 工具，不是自主科学家

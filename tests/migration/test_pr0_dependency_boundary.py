@@ -62,6 +62,7 @@ def _minimal_repository(tmp_path: Path) -> Path:
 
 def test_repository_dependency_boundary_is_non_vacuous_and_clean() -> None:
     assert (REPOSITORY_ROOT / "aletheia/research_kernel/__init__.py").is_file()
+    assert (REPOSITORY_ROOT / "aletheia/research_controller/__init__.py").is_file()
     assert find_dependency_boundary_violations(REPOSITORY_ROOT) == ()
 
 
@@ -763,6 +764,25 @@ def test_direct_legacy_import_is_rejected(tmp_path: Path) -> None:
     violations = find_dependency_boundary_violations(root)
 
     assert any(item.imported_module == "aletheia.memory.service" for item in violations)
+
+
+def test_controller_cannot_import_f9_v1_migration_compatibility(tmp_path: Path) -> None:
+    root = _minimal_repository(tmp_path)
+    _source(root, "aletheia/research_controller/__init__.py")
+    _source(
+        root,
+        "aletheia/research_controller/adapter.py",
+        "import aletheia.migration.f9_v1_observation_compatibility\n",
+    )
+    _source(root, "aletheia/migration/f9_v1_observation_compatibility.py")
+
+    violations = find_dependency_boundary_violations(root)
+
+    assert any(
+        item.root_module == "aletheia.research_controller.adapter"
+        and item.imported_module == "aletheia.migration.f9_v1_observation_compatibility"
+        for item in violations
+    )
 
 
 def test_transitive_legacy_import_reports_dependency_chain(tmp_path: Path) -> None:

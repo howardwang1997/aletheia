@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import secrets
 import uuid
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
@@ -14,6 +15,17 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.orm import Session, aliased
 
 from aletheia.db import session_scope
+from aletheia.durable_tasks.ports import (
+    DurableQueueError as DurableQueueError,
+    IdempotencyConflict,
+    InvalidTaskTransition,
+    LeaseExpired,
+    LeaseMismatch,
+    QueueInvariantError,
+    TaskConcurrencyConflict,
+    TaskDependencyError,
+    TaskNotFound,
+)
 from aletheia.events.bus import make_event
 from aletheia.events.store import persist_event
 from aletheia.jobs.contracts import (
@@ -36,44 +48,6 @@ from aletheia.jobs.persistence import (
     DurableTaskRecord,
 )
 from aletheia.reproducibility.manifest import content_sha256
-
-
-class DurableQueueError(RuntimeError):
-    """Base class for durable queue contract violations."""
-
-
-class TaskNotFound(DurableQueueError):
-    pass
-
-
-class TaskDependencyError(DurableQueueError):
-    pass
-
-
-class IdempotencyConflict(DurableQueueError):
-    pass
-
-
-class TaskConcurrencyConflict(IdempotencyConflict):
-    def __init__(self, message: str, *, existing_task_id: str) -> None:
-        super().__init__(message)
-        self.existing_task_id = existing_task_id
-
-
-class InvalidTaskTransition(DurableQueueError):
-    pass
-
-
-class LeaseMismatch(DurableQueueError):
-    pass
-
-
-class LeaseExpired(DurableQueueError):
-    pass
-
-
-class QueueInvariantError(DurableQueueError):
-    pass
 
 
 _TERMINAL_STATUSES = {
@@ -271,8 +245,15 @@ class DurableTaskQueue:
             ).all()
         )
 
-    def enqueue(self, spec: TaskSpec, *, now: datetime | None = None) -> EnqueueReceipt:
-        with session_scope() as session:
+    def _enqueue(
+        self,
+        spec: TaskSpec,
+        *,
+        now: datetime | None,
+        caller_session: Session | None,
+    ) -> EnqueueReceipt:
+        transaction = session_scope() if caller_session is None else nullcontext(caller_session)
+        with transaction as session:
             observed_at = _transaction_time(session, now)
             dependencies = []
             if spec.dependency_ids:
@@ -409,12 +390,50 @@ class DurableTaskQueue:
             )
             return EnqueueReceipt(task=self._task_snapshot(session, row), created=True)
 
+    def enqueue(self, spec: TaskSpec, *, now: datetime | None = None) -> EnqueueReceipt:
+        """Enqueue and commit one task in a queue-owned transaction."""
+
+        return self._enqueue(spec, now=now, caller_session=None)
+
+    def enqueue_in_session(
+        self,
+        session: Session,
+        spec: TaskSpec,
+        *,
+        now: datetime | None = None,
+    ) -> EnqueueReceipt:
+        """Enqueue inside a caller-owned transaction without committing it.
+
+        This is the atomic composition seam for durable control-plane delivery records.  The
+        caller owns commit or rollback; queue events and dependency rows use the same session.
+        """
+
+        if not isinstance(session, Session):
+            raise TypeError("enqueue_in_session requires a SQLAlchemy Session")
+        return self._enqueue(spec, now=now, caller_session=session)
+
     def get(self, task_id: str) -> TaskSnapshot:
         with session_scope() as session:
-            row = session.get(DurableTaskRecord, task_id)
-            if row is None:
-                raise TaskNotFound(f"durable task not found: {task_id}")
-            return self._task_snapshot(session, row)
+            return self.get_in_session(session, task_id)
+
+    def get_in_session(
+        self,
+        session: Session,
+        task_id: str,
+        *,
+        lock_for_update: bool = False,
+    ) -> TaskSnapshot:
+        """Read one task in a caller-owned transaction, optionally locking its state row."""
+
+        if not isinstance(session, Session):
+            raise TypeError("get_in_session requires a SQLAlchemy Session")
+        statement = select(DurableTaskRecord).where(DurableTaskRecord.task_id == task_id)
+        if lock_for_update:
+            statement = statement.with_for_update()
+        row = session.scalar(statement)
+        if row is None:
+            raise TaskNotFound(f"durable task not found: {task_id}")
+        return self._task_snapshot(session, row)
 
     def list(
         self,

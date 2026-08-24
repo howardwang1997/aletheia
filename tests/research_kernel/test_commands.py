@@ -10,6 +10,7 @@ from aletheia.research_kernel.commands import (
     ResearchCommandProposal,
     ResearchScopeBinding,
     authorize_research_proposal,
+    directly_referenced_object,
     verify_research_command_authorization,
 )
 from aletheia.research_kernel.policy import (
@@ -35,6 +36,7 @@ from aletheia.research_kernel.schemas import (
     EventType,
     KernelObjectKind,
     KernelObjectRef,
+    ObservationIncorporatedPayload,
     ResearchCharterVersion,
     ResearchActionProposal,
     ResearchProblemVersion,
@@ -667,6 +669,83 @@ def test_signed_ordinary_command_cannot_admit_charter_forbidden_action_class() -
             active_charter=charter,
             admitted_object=action,
         )
+
+
+def test_observation_command_requires_the_exact_previously_admitted_action() -> None:
+    charter = _charter()
+    action = ResearchActionProposal(
+        action_id="action:observation-command",
+        quest_id=_QUEST_ID,
+        charter_ref=charter.object_ref,
+        question_ref=KernelObjectRef(
+            object_kind=KernelObjectKind.QUESTION,
+            object_id="question:fixture",
+            object_sha256="1" * 64,
+            quest_id=_QUEST_ID,
+        ),
+        basis_tail_event_sha256="2" * 64,
+        kind=ActionKind.CHARACTERIZE,
+        epistemic_purpose="Incorporate one independently admitted observation.",
+        candidate_outcomes=("negative", "positive"),
+        cost_receipt_sha256="3" * 64,
+        risk_receipt_sha256="4" * 64,
+        requested_authority_class="characterize",
+        proposed_by_principal_id="model:planner",
+        proposed_at=_AT,
+    )
+    payload = ObservationIncorporatedPayload(
+        branch_id=_ROOT_BRANCH,
+        action_id=action.action_id,
+        scientific_slot_id="sos_" + "5" * 32,
+        committed_admission_sha256="6" * 64,
+        scientific_observation_sha256="7" * 64,
+        outcome="negative",
+        source_world_model_sha256="8" * 64,
+    )
+    trust_root, policy = _authority()
+    ordinary = _role_key(policy, ResearchAuthorizationRole.ORDINARY)
+    proposal = ResearchCommandProposal(
+        quest_id=_QUEST_ID,
+        scope_binding=ResearchScopeBinding(quest_id=_QUEST_ID),
+        expected_stream_version=4,
+        expected_tail_event_sha256="9" * 64,
+        event_type=EventType.OBSERVATION_INCORPORATED,
+        payload=payload,
+        proposed_by_principal_id="controller:observation",
+        proposed_at=_AT + timedelta(seconds=1),
+    )
+    command = authorize_research_proposal(
+        proposal,
+        idempotency_key="fixture:observation-incorporated",
+        authorization_policy=policy,
+        trust_root=trust_root,
+        authorization_key_id=ordinary.key_id,
+        private_key=_PRIVATE_KEYS[ResearchAuthorizationRole.ORDINARY],
+        authorized_at=_AT + timedelta(seconds=2),
+    )
+
+    assert directly_referenced_object(payload) is None
+    with pytest.raises(ResearchAuthorizationError, match="exact previously admitted action"):
+        verify_research_command_authorization(
+            command,
+            authorization_policy=policy,
+            trust_root=trust_root,
+            committed_at=_AT + timedelta(seconds=3),
+            active_charter=charter,
+            admitted_object=None,
+        )
+    assert (
+        verify_research_command_authorization(
+            command,
+            authorization_policy=policy,
+            trust_root=trust_root,
+            committed_at=_AT + timedelta(seconds=3),
+            active_charter=charter,
+            admitted_object=None,
+            resolved_action=action,
+        )
+        is ResearchAuthorizationRole.ORDINARY
+    )
 
 
 def test_charter_revision_can_revoke_authority_from_a_previously_proposed_action() -> None:

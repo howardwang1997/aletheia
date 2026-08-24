@@ -6,6 +6,7 @@ import io
 import json
 import os
 import stat
+import sys
 import tarfile
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -41,7 +42,9 @@ from aletheia.execution.runtime_v2_contracts import (
     OutputQuotaProvisioningReceipt,
 )
 from aletheia.execution.schemas import canonical_json_bytes
-from tests.execution.test_oci_runtime import (
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from test_oci_runtime import (  # noqa: E402
     _capability,
     _control_pin,
     _created_engine_inspection,

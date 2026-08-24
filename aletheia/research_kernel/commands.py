@@ -33,6 +33,7 @@ from aletheia.research_kernel.schemas import (
     KernelModel,
     KernelObject,
     KernelObjectRef,
+    ObservationIncorporatedPayload,
     ResearchActionProposal,
     ResearchCharterVersion,
     ResearchEvent,
@@ -625,7 +626,10 @@ def verify_research_command_authorization(
         action = admitted_object
     expected_action_ref: KernelObjectRef | None = None
     expected_action_id: str | None = None
-    if isinstance(command.payload, ActionAuthorizedPayload):
+    if isinstance(
+        command.payload,
+        (ActionAuthorizedPayload, ObservationIncorporatedPayload),
+    ):
         expected_action_id = command.payload.action_id
     decision = getattr(command.payload, "decision", None)
     if decision is not None:

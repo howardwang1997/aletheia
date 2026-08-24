@@ -15,6 +15,7 @@ import aletheia.knowledge.persistence  # noqa: F401  (register F8 immutable tabl
 import aletheia.epistemics.persistence  # noqa: F401  (register F9 world-model tables)
 import aletheia.execution.persistence  # noqa: F401  (register local execution tables)
 import aletheia.jobs.persistence  # noqa: F401  (register F11 durable queue tables)
+import aletheia.observations.persistence  # noqa: F401  (register PR-5 bridge tables)
 import aletheia.programs.persistence  # noqa: F401  (register F11 scientific graph tables)
 import aletheia.research_store.persistence  # noqa: F401  (register kernel-store tables)
 from aletheia.db import Base, SchemaCompatibilityError, alembic_config, engine
@@ -112,6 +113,16 @@ POST_BASELINE_TABLES = frozenset(
         "research_kernel_events",
         "research_kernel_snapshots",
         "research_kernel_outbox",
+        "research_controller_registrations",
+        "research_controller_deliveries",
+        "research_controller_delivery_attempts",
+        "research_controller_delivery_resolutions",
+        "research_protocol_compilations",
+        "research_scientific_execution_authorizations",
+        "research_observation_issuance_challenges",
+        "research_observation_validation_receipts",
+        "research_observation_admissions",
+        "research_continuation_receipts",
     }
 )
 POST_BASELINE_COLUMNS = frozenset(
@@ -138,6 +149,9 @@ POST_BASELINE_CONSTRAINTS = frozenset(
         "uq_decisions_scientific_command_id",
         "uq_campaign_split_ledgers_final_action_id",
         "uq_external_validation_ledgers_action_id",
+        "uq_rke_scoped_typed_event",
+        "uq_rko_exact_controller_source",
+        "uq_exec_qto_exact_controller_source",
     }
 )
 

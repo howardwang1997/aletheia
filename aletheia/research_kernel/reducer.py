@@ -8,6 +8,7 @@ content hash have been recomputed from that catalog.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from enum import Enum
 from typing import Any, Literal
@@ -16,11 +17,13 @@ from pydantic import Field, ValidationError
 
 from aletheia.research_kernel.schemas import (
     ActionKind,
+    EvidenceKind,
     EvidenceRef,
     KernelModel,
     KernelObject,
     KernelObjectKind,
     KernelObjectRef,
+    ObservationIncorporatedPayload,
     ResearchEvent,
     StopDirective,
     StopReason,
@@ -91,6 +94,7 @@ class ActionSnapshot(KernelModel):
     lifecycle: ActionLifecycle
     proposed_event_sha256: str
     decided_event_sha256: str | None = None
+    observation_evidence_ref: EvidenceRef | None = None
 
 
 class ResearchStateGraph(KernelModel):
@@ -717,6 +721,52 @@ def _reduce_action_decision(
     return _finalize(state, event, branches=branches, actions=actions.values())
 
 
+def _reduce_observation_incorporated(
+    state: ResearchStateGraph,
+    event: ResearchEvent,
+) -> ResearchStateGraph:
+    payload = event.payload
+    if not isinstance(payload, ObservationIncorporatedPayload):  # pragma: no cover - discriminated
+        raise InvalidTransitionError("observation event has the wrong typed payload")
+    branches = _branches(state)
+    # An in-flight action may finish while its branch is paused, but evidence must never revive a
+    # superseded, backtracked, or stopped scientific branch.  In particular, a late PR-4 terminal
+    # receipt from before REFINE cannot attach an observation to the abandoned graph scope.
+    branch = _assert_nonterminal(branches, payload.branch_id)
+    actions = _actions(state)
+    action = actions.get(payload.action_id)
+    if action is None:
+        raise InvalidTransitionError(f"unknown action: {payload.action_id}")
+    if action.branch_id != payload.branch_id:
+        raise InvalidTransitionError(f"action {payload.action_id} belongs to another branch")
+    if action.lifecycle is not ActionLifecycle.AUTHORIZED:
+        raise InvalidTransitionError(
+            f"observation action must be authorized, got {action.lifecycle.value}"
+        )
+    if any(evidence.object_id == payload.scientific_slot_id for evidence in state.evidence_refs):
+        raise InvalidTransitionError(
+            f"scientific slot already has an incorporated observation: {payload.scientific_slot_id}"
+        )
+
+    event_sha256 = _event_hash(event)
+    evidence_ref = payload.evidence_ref
+    actions[payload.action_id] = action.model_copy(
+        update={
+            "lifecycle": ActionLifecycle.APPLIED,
+            "decided_event_sha256": event_sha256,
+            "observation_evidence_ref": evidence_ref,
+        }
+    )
+    branches = _replace_branch(branches, _with_branch_head(branch, event_sha256))
+    return _finalize(
+        state,
+        event,
+        branches=branches,
+        actions=actions.values(),
+        evidence_refs=_merge_evidence(state.evidence_refs, (evidence_ref,)),
+    )
+
+
 def _directive_branch_id(decision: TransitionDecision) -> str:
     directive = decision.directive
     return getattr(directive, "branch_id", getattr(directive, "source_branch_id", ""))
@@ -1090,6 +1140,8 @@ def reduce_event(
         return _reduce_action_decision(state, event, lifecycle=ActionLifecycle.REJECTED)
     if event_type == "action_superseded":
         return _reduce_action_decision(state, event, lifecycle=ActionLifecycle.SUPERSEDED)
+    if event_type == "observation_incorporated":
+        return _reduce_observation_incorporated(state, event)
     if event_type == "continue_committed":
         return _reduce_continue(state, event)
     if event_type == "activate_committed":
@@ -1245,6 +1297,37 @@ def assert_graph_invariants(state: ResearchStateGraph) -> None:
             and action.decided_event_sha256 not in state.event_sha256s
         ):
             raise InvalidTransitionError("action decision references an unknown event")
+        observation_ref = action.observation_evidence_ref
+        if observation_ref is not None:
+            if action.lifecycle is not ActionLifecycle.APPLIED:
+                raise InvalidTransitionError(
+                    "only an applied action may retain observation evidence"
+                )
+            if (
+                observation_ref.object_id is None
+                or re.fullmatch(r"sos_[0-9a-f]{32}", observation_ref.object_id) is None
+                or observation_ref.kind
+                not in {
+                    EvidenceKind.POSITIVE,
+                    EvidenceKind.NEGATIVE,
+                    EvidenceKind.INCONCLUSIVE,
+                }
+            ):
+                raise InvalidTransitionError(
+                    "action observation evidence is not a scientific slot outcome"
+                )
+            if observation_ref not in state.evidence_refs:
+                raise InvalidTransitionError(
+                    "action observation evidence is absent from graph evidence"
+                )
+    observation_refs = tuple(
+        action.observation_evidence_ref
+        for action in state.actions
+        if action.observation_evidence_ref is not None
+    )
+    observation_slot_ids = tuple(ref.object_id for ref in observation_refs)
+    if len(observation_slot_ids) != len(set(observation_slot_ids)):
+        raise InvalidTransitionError("snapshot contains duplicate scientific observation slots")
     admission_refs = {
         _ref_key(item.object_ref)
         for item in (*state.opportunities, *state.problems, *state.questions)
@@ -1317,11 +1400,22 @@ def assert_graph_invariants(state: ResearchStateGraph) -> None:
             if candidate is None or candidate.action_ref != alternative.action_ref:
                 raise InvalidTransitionError("transition rejected an unknown alternative")
     for action in state.actions:
-        if (
-            action.lifecycle is ActionLifecycle.APPLIED
-            and _ref_key(action.action_ref) not in applied_action_refs
-        ):
-            raise InvalidTransitionError("applied action has no retained transition decision")
+        if action.lifecycle is not ActionLifecycle.APPLIED:
+            continue
+        applied_by_transition = _ref_key(action.action_ref) in applied_action_refs
+        applied_by_observation = action.observation_evidence_ref is not None
+        if applied_by_transition == applied_by_observation:
+            raise InvalidTransitionError(
+                "applied action must retain exactly one transition or observation authority"
+            )
+    incorporated_slot_ids = tuple(
+        ref.object_id
+        for ref in state.evidence_refs
+        if ref.object_id is not None
+        and re.fullmatch(r"sos_[0-9a-f]{32}", ref.object_id) is not None
+    )
+    if len(incorporated_slot_ids) != len(set(incorporated_slot_ids)):
+        raise InvalidTransitionError("snapshot evidence repeats a scientific observation slot")
     if state.evidence_refs != _merge_evidence((), state.evidence_refs):
         raise InvalidTransitionError("snapshot evidence references are not canonical and unique")
 

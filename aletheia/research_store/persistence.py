@@ -440,7 +440,8 @@ class ResearchKernelEventRecord(Base):
         CheckConstraint(
             "event_type IN ('charter_activated','charter_revised','opportunity_recorded',"
             "'problem_admitted','question_admitted','action_proposed','action_authorized',"
-            "'action_rejected','action_superseded','continue_committed','activate_committed',"
+            "'action_rejected','action_superseded','observation_incorporated',"
+            "'continue_committed','activate_committed',"
             "'refine_committed','fork_committed','backtrack_committed','pause_committed',"
             "'stop_committed')",
             name="ck_research_kernel_events_type",
@@ -535,6 +536,13 @@ class ResearchKernelEventRecord(Base):
             "sequence",
             "event_sha256",
             name="uq_research_kernel_events_scoped_sequence_sha256",
+        ),
+        UniqueConstraint(
+            "quest_id",
+            "sequence",
+            "event_sha256",
+            "event_type",
+            name="uq_rke_scoped_typed_event",
         ),
         UniqueConstraint(
             "quest_id",
@@ -753,6 +761,13 @@ class ResearchKernelOutboxRecord(Base):
             "quest_id",
             "sequence",
             name="uq_research_kernel_outbox_quest_sequence",
+        ),
+        UniqueConstraint(
+            "outbox_id",
+            "quest_id",
+            "sequence",
+            "event_sha256",
+            name="uq_rko_exact_controller_source",
         ),
         UniqueConstraint(
             "topic",

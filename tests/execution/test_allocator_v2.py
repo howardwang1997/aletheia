@@ -306,6 +306,23 @@ def test_runtime_v2_terminal_acceptance_recovery_and_outbox_are_atomic(
         terminal_acceptance = AcceptedQualificationTerminalSubmission.model_validate(
             terminal_row.accepted_terminal_submission_json
         )
+        lineage = allocator.load_verified_qualification_run_lineage(
+            execution_id=claim.snapshot.execution_id,
+            attempt_id=claim.snapshot.attempt_id,
+            observed_at=terminal_acceptance.accepted_at,
+        )
+        assert lineage is not None
+        assert lineage.qualification_admission_sha256 == claim.snapshot.admission_sha256
+        assert lineage.resource_reservation_sha256 == claim.snapshot.resource_lease_sha256
+        assert lineage.runtime_launch_sha256 == (
+            result.accepted_runtime_termination.node_runtime_launch_receipt_sha256
+        )
+        assert lineage.accepted_runtime_termination_sha256 == (
+            result.accepted_runtime_termination.accepted_termination_sha256
+        )
+        assert lineage.terminal_acceptance_sha256 == (
+            terminal_acceptance.accepted_terminal_submission_sha256
+        )
         assert (
             session.scalar(select(func.count()).select_from(_ExecutionTerminalReceiptRecord)) == 0
         )
@@ -336,6 +353,13 @@ def test_runtime_v2_terminal_acceptance_recovery_and_outbox_are_atomic(
     assert settled.outbox_id == (f"qto_{terminal_acceptance.accepted_terminal_submission_sha256}")
     replay = allocator.settle_qualification_terminal(terminal_acceptance=terminal_acceptance)
     assert replay.replayed is True and replay.outbox_id == settled.outbox_id
+    projection = allocator.load_qualification_terminal_outbox(
+        execution_id=claim.snapshot.execution_id,
+        attempt_id=claim.snapshot.attempt_id,
+    )
+    assert projection is not None
+    assert projection.outbox_id == settled.outbox_id
+    assert projection.payload == terminal_acceptance
     with sessions() as session:
         assert (
             session.scalar(
@@ -343,6 +367,10 @@ def test_runtime_v2_terminal_acceptance_recovery_and_outbox_are_atomic(
             )
             == 1
         )
+        assert allocator.list_qualification_terminal_outbox_in_session(
+            session,
+            attempt_id_allowlist=(claim.snapshot.attempt_id,),
+        ) == (projection,)
 
 
 def test_terminal_deadline_expiration_is_presigned_and_atomically_activated(
@@ -458,6 +486,14 @@ def test_terminal_deadline_expiration_is_presigned_and_atomically_activated(
             )
             == 1
         )
+        projection = allocator.load_qualification_terminal_outbox_in_session(
+            session,
+            execution_id=claim.snapshot.execution_id,
+            attempt_id=claim.snapshot.attempt_id,
+        )
+        assert projection is not None
+        assert projection.outbox_id == first.outbox_id
+        assert projection.payload == first.terminal_expiration
 
 
 def test_runtime_start_exact_commit_replays_after_lease_and_ticket_expiry(

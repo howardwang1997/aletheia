@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -20,6 +21,7 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Literal
 
+from pydantic import AwareDatetime, Field, model_validator
 from sqlalchemy import func, null, select
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.orm import Session, sessionmaker
@@ -130,6 +132,7 @@ from aletheia.execution.schemas import (
     ArtifactVerifiedReceipt,
     DataLocality,
     ExecutionIntent,
+    ExecutionModel,
     ExecutionReceipt,
     ExecutionTerminalState,
     NetworkPolicy,
@@ -139,6 +142,9 @@ from aletheia.execution.schemas import (
 )
 
 MAX_BIGINT = 9_223_372_036_854_775_807
+_SHA256_PATTERN = r"^[0-9a-f]{64}$"
+_EXECUTION_ID_PATTERN = r"^exe_[0-9a-f]{32}$"
+_ATTEMPT_ID_PATTERN = r"^iat_[0-9a-f]{32}$"
 ACTIVE_ATTEMPT_STATES = frozenset(
     {"reserved", "starting", "running", "reconciliation_required", "terminated", "verifying"}
 )
@@ -372,6 +378,152 @@ class QualificationTerminalDeadlineExpirationCommit:
     )
 
 
+class QualificationTerminalOutboxItem(ExecutionModel):
+    """Frozen public projection of one immutable qualification-terminal publication intent."""
+
+    outbox_id: str = Field(pattern=r"^qto_[0-9a-f]{64}$")
+    terminal_authority_kind: Literal["accepted_terminal_submission", "terminal_deadline_expiration"]
+    terminal_authority_sha256: str = Field(pattern=_SHA256_PATTERN)
+    execution_id: str = Field(pattern=_EXECUTION_ID_PATTERN)
+    attempt_id: str = Field(pattern=_ATTEMPT_ID_PATTERN)
+    payload: AcceptedQualificationTerminalSubmission | QualificationTerminalDeadlineExpiration
+    payload_sha256: str = Field(pattern=_SHA256_PATTERN)
+    created_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def _outbox_identity_is_exact(self) -> "QualificationTerminalOutboxItem":
+        if (
+            self.outbox_id != f"qto_{self.terminal_authority_sha256}"
+            or self.payload_sha256 != self.terminal_authority_sha256
+            or canonical_sha256(self.payload) != self.payload_sha256
+            or self.payload.attempt_id != self.attempt_id
+        ):
+            raise ValueError("qualification terminal outbox identity differs from its payload")
+        if self.terminal_authority_kind == "accepted_terminal_submission":
+            if (
+                not isinstance(self.payload, AcceptedQualificationTerminalSubmission)
+                or self.payload.accepted_terminal_submission_sha256
+                != self.terminal_authority_sha256
+                or self.payload.accepted_at > self.created_at
+            ):
+                raise ValueError("accepted terminal outbox authority is inconsistent")
+        elif (
+            not isinstance(self.payload, QualificationTerminalDeadlineExpiration)
+            or self.payload.terminal_deadline_expiration_sha256 != self.terminal_authority_sha256
+            or self.payload.execution_id != self.execution_id
+            or self.payload.expired_at > self.created_at
+        ):
+            raise ValueError("terminal deadline outbox authority is inconsistent")
+        return self
+
+
+class VerifiedQualificationRunLineage(ExecutionModel):
+    """Frozen public proof of one fully verified runtime-v2 terminal lineage.
+
+    The PostgreSQL facade constructs this projection only after reloading every private row and
+    rerunning the qualification, enrolled-node, runtime-control, launch, termination, and terminal
+    signature verifiers.  Consumers therefore never need access to the private ORM records.
+    """
+
+    schema_name: Literal["aletheia.verified_qualification_run_lineage"] = (
+        "aletheia.verified_qualification_run_lineage"
+    )
+    schema_version: Literal[2] = 2
+    execution_id: str = Field(pattern=_EXECUTION_ID_PATTERN)
+    attempt_id: str = Field(pattern=_ATTEMPT_ID_PATTERN)
+    intent_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_bundle_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_grant_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_admission_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_admitted_at: AwareDatetime
+    resource_reservation_sha256: str = Field(pattern=_SHA256_PATTERN)
+    resource_reserved_at: AwareDatetime
+    runtime_launch_sha256: str = Field(pattern=_SHA256_PATTERN)
+    runtime_launched_at: AwareDatetime
+    accepted_runtime_termination_sha256: str = Field(pattern=_SHA256_PATTERN)
+    terminal_submission_sha256: str = Field(pattern=_SHA256_PATTERN)
+    terminal_acceptance_sha256: str = Field(pattern=_SHA256_PATTERN)
+    terminal_accepted_at: AwareDatetime
+    cost_quote_sha256: str = Field(pattern=_SHA256_PATTERN)
+    node_inventory_sha256: str = Field(pattern=_SHA256_PATTERN)
+    quoted_worker_node_manifest: WorkerNodeManifest
+    terminal_worker_node_manifest: WorkerNodeManifest
+    worker_node_enrollment: WorkerNodeEnrollment
+    allocator_principal_id: str
+    allocator_policy_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_principal_id: str
+    qualification_key_id: str = Field(pattern=_SHA256_PATTERN)
+    qualification_policy_sha256: str = Field(pattern=_SHA256_PATTERN)
+    node_enrollment_principal_id: str
+    node_enrollment_key_id: str = Field(pattern=_SHA256_PATTERN)
+    node_enrollment_policy_sha256: str = Field(pattern=_SHA256_PATTERN)
+    node_execution_principal_id: str
+    node_execution_key_id: str = Field(pattern=_SHA256_PATTERN)
+    node_execution_policy_sha256: str = Field(pattern=_SHA256_PATTERN)
+    runtime_control_principal_id: str
+    runtime_control_key_id: str = Field(pattern=_SHA256_PATTERN)
+    runtime_control_policy_sha256: str = Field(pattern=_SHA256_PATTERN)
+    terminal_submission_principal_id: str
+    terminal_submission_key_id: str = Field(pattern=_SHA256_PATTERN)
+    terminal_submission_policy_sha256: str = Field(pattern=_SHA256_PATTERN)
+    terminal_acceptance_principal_id: str
+    terminal_acceptance_key_id: str = Field(pattern=_SHA256_PATTERN)
+    terminal_acceptance_policy_sha256: str = Field(pattern=_SHA256_PATTERN)
+    artifact_manifest_sha256: str = Field(pattern=_SHA256_PATTERN)
+    output_tree_sha256: str = Field(pattern=_SHA256_PATTERN)
+    artifact_verified_receipt_sha256s: tuple[str, ...]
+    artifact_manifest: ArtifactManifest
+    artifact_verified_receipts: tuple[ArtifactVerifiedReceipt, ...]
+    verified_at: AwareDatetime
+    custody_reverified: Literal[True] = True
+    qualification_only: Literal[True] = True
+    scientific_admission_allowed: Literal[False] = False
+
+    @model_validator(mode="after")
+    def _lineage_is_exact_and_ordered(self) -> "VerifiedQualificationRunLineage":
+        enrollment = self.worker_node_enrollment.message
+        receipt_hashes = tuple(
+            sorted(item.verified_receipt_sha256 for item in self.artifact_verified_receipts)
+        )
+        if (
+            self.quoted_worker_node_manifest != self.terminal_worker_node_manifest
+            or enrollment.node_manifest_sha256 != self.terminal_worker_node_manifest.manifest_sha256
+            or enrollment.node_id != self.terminal_worker_node_manifest.node_id
+            or self.artifact_manifest_sha256 != self.artifact_manifest.manifest_sha256
+            or self.artifact_verified_receipt_sha256s != receipt_hashes
+            or tuple(item.artifact for item in self.artifact_verified_receipts)
+            != self.artifact_manifest.entries
+        ):
+            raise ValueError("verified qualification run projection is rebound")
+        if not (
+            self.qualification_admitted_at
+            <= self.resource_reserved_at
+            <= self.runtime_launched_at
+            < self.terminal_accepted_at
+            <= self.verified_at
+        ):
+            raise ValueError("verified qualification run projection is not historically ordered")
+        if (
+            self.node_execution_principal_id != self.terminal_worker_node_manifest.principal_id
+            or self.node_execution_key_id != self.terminal_worker_node_manifest.node_signing_key_id
+            or self.terminal_submission_principal_id != self.node_execution_principal_id
+            or self.terminal_submission_key_id != self.node_execution_key_id
+            or self.terminal_submission_policy_sha256 != self.node_execution_policy_sha256
+            or self.node_enrollment_principal_id != enrollment.enrolled_by_principal_id
+            or self.node_enrollment_key_id != enrollment.enrollment_authority_key_id
+            or self.node_enrollment_policy_sha256 != enrollment.node_enrollment_policy_sha256
+            or self.runtime_control_principal_id != self.terminal_acceptance_principal_id
+            or self.runtime_control_key_id != self.terminal_acceptance_key_id
+            or self.runtime_control_policy_sha256 != self.terminal_acceptance_policy_sha256
+        ):
+            raise ValueError("verified qualification run authority projection is rebound")
+        return self
+
+    @property
+    def lineage_sha256(self) -> str:
+        return canonical_sha256(self)
+
+
 @dataclass(frozen=True)
 class AttemptTransitionReceipt:
     snapshot: ReservationSnapshot
@@ -566,6 +718,68 @@ def _database_time(session: Session) -> datetime:
 def _model_json(model: object) -> dict[str, object]:
     dump = getattr(model, "model_dump")
     return dump(mode="json")
+
+
+def _canonical_identity_allowlist(
+    values: tuple[str, ...],
+    *,
+    pattern: str,
+    label: str,
+) -> tuple[str, ...]:
+    if not isinstance(values, tuple):
+        raise TypeError(f"{label} allowlist must be a tuple")
+    if len(values) > 5_000:
+        raise ValueError(f"{label} allowlist accepts at most 5000 identities")
+    if values != tuple(sorted(set(values))):
+        raise ValueError(f"{label} allowlist must be unique and canonically ordered")
+    if any(re.fullmatch(pattern, value) is None for value in values):
+        raise ValueError(f"{label} allowlist contains an invalid identity")
+    return values
+
+
+def _qualification_terminal_outbox_item(
+    record: _ExecutionQualificationTerminalOutboxRecord,
+    attempt: _ExecutionAttemptRecord,
+) -> QualificationTerminalOutboxItem:
+    try:
+        if record.terminal_authority_kind == "accepted_terminal_submission":
+            payload: (
+                AcceptedQualificationTerminalSubmission | QualificationTerminalDeadlineExpiration
+            ) = AcceptedQualificationTerminalSubmission.model_validate(record.payload_json)
+            variants_are_exact = (
+                record.accepted_terminal_submission_sha256 == record.terminal_authority_sha256
+                and record.terminal_deadline_expiration_sha256 is None
+            )
+        elif record.terminal_authority_kind == "terminal_deadline_expiration":
+            payload = QualificationTerminalDeadlineExpiration.model_validate(record.payload_json)
+            variants_are_exact = (
+                record.terminal_deadline_expiration_sha256 == record.terminal_authority_sha256
+                and record.accepted_terminal_submission_sha256 is None
+            )
+        else:
+            raise ValueError("unknown qualification terminal authority kind")
+        item = QualificationTerminalOutboxItem(
+            outbox_id=record.outbox_id,
+            terminal_authority_kind=record.terminal_authority_kind,
+            terminal_authority_sha256=record.terminal_authority_sha256,
+            execution_id=record.execution_id,
+            attempt_id=record.attempt_id,
+            payload=payload,
+            payload_sha256=record.payload_sha256,
+            created_at=record.created_at,
+        )
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise AdmissionConflict("qualification terminal outbox payload is invalid") from exc
+    if (
+        not variants_are_exact
+        or attempt.attempt_id != record.attempt_id
+        or attempt.execution_id != record.execution_id
+        or record.topic != "execution.qualification_terminal.v2"
+        or record.delivery_key != f"execution-v2:{record.execution_id}:{record.attempt_id}"
+        or record.payload_json != _model_json(payload)
+    ):
+        raise AdmissionConflict("qualification terminal outbox row is rebound")
+    return item
 
 
 def _token_sha256(token: str) -> str:
@@ -2089,6 +2303,369 @@ class PostgreSQLExecutionAllocator:
         with self._sessions() as session:
             attempt = session.get(_ExecutionAttemptRecord, attempt_id)
             return None if attempt is None else self._snapshot(session, attempt)
+
+    def load_verified_qualification_run_lineage(
+        self,
+        *,
+        execution_id: str,
+        attempt_id: str,
+        observed_at: datetime,
+    ) -> VerifiedQualificationRunLineage | None:
+        """Reload and historically verify one complete runtime-v2 terminal lineage.
+
+        This is the public read seam for scientific custody.  It intentionally returns only a
+        frozen projection after all private PostgreSQL rows, persisted canonical JSON, deployment
+        pins, signatures, resource reservation, and terminal hashes have been checked.
+        """
+
+        _canonical_identity_allowlist(
+            (execution_id,), pattern=_EXECUTION_ID_PATTERN, label="execution id"
+        )
+        _canonical_identity_allowlist(
+            (attempt_id,), pattern=_ATTEMPT_ID_PATTERN, label="attempt id"
+        )
+        if observed_at.tzinfo is None or observed_at.utcoffset() != timedelta(0):
+            raise ValueError("qualification run lineage observation time must be UTC")
+        with self._sessions() as session:
+            attempt = session.get(_ExecutionAttemptRecord, attempt_id)
+            if attempt is None:
+                return None
+            if attempt.execution_id != execution_id:
+                raise AdmissionConflict("qualification run attempt belongs to another execution")
+            admission = session.get(
+                _ExecutionQualificationAdmissionRecord,
+                attempt.admission_sha256,
+            )
+            terminal_record = session.execute(
+                select(_ExecutionQualificationTerminalAcceptanceRecord).where(
+                    _ExecutionQualificationTerminalAcceptanceRecord.attempt_id == attempt_id
+                )
+            ).scalar_one_or_none()
+            node = session.get(_ExecutionNodeRecord, attempt.node_id)
+            if admission is None or terminal_record is None or node is None:
+                raise AdmissionConflict("qualification run durable lineage is incomplete")
+            try:
+                bundle = EngineeringQualificationBundle.model_validate(admission.bundle_json)
+                grant = EngineeringQualificationGrant.model_validate(admission.grant_json)
+                verified = VerifiedEngineeringQualification.model_validate(
+                    admission.verified_receipt_json
+                )
+                preliminary_terminal = AcceptedQualificationTerminalSubmission.model_validate(
+                    terminal_record.accepted_terminal_submission_json
+                )
+            except (TypeError, ValueError) as exc:
+                raise AdmissionConflict("qualification run durable contracts are invalid") from exc
+            self._validate_idempotent_attempt(
+                session,
+                attempt,
+                bundle,
+                expected_grant_sha256=grant.grant_sha256,
+            )
+            node_authority = self._locked_node_authority(
+                node,
+                observed_at=preliminary_terminal.accepted_at,
+                error_type=AdmissionConflict,
+            )
+            terminal_acceptance = self._validated_qualification_terminal_acceptance_record(
+                session,
+                attempt=attempt,
+                record=terminal_record,
+                node_authority=node_authority,
+            )
+            (
+                _preparation,
+                _launch_request,
+                _launch_authorization,
+                launch_receipt,
+                _termination_challenge,
+                _node_termination_receipt,
+                accepted_termination,
+                _termination_record,
+            ) = self._load_accepted_runtime_termination_lineage(
+                session,
+                attempt,
+                node_authority=node_authority,
+            )
+            try:
+                submission = QualificationTerminalSubmission.model_validate(
+                    terminal_record.terminal_submission_json
+                )
+                manifest = ArtifactManifest.model_validate(terminal_record.artifact_manifest_json)
+                receipts = tuple(
+                    ArtifactVerifiedReceipt.model_validate(item)
+                    for item in terminal_record.artifact_verified_receipts_json
+                )
+            except (TypeError, ValueError) as exc:
+                raise AdmissionConflict("qualification run terminal artifacts are invalid") from exc
+            resource = session.execute(
+                select(_ExecutionResourceLeaseRecord).where(
+                    _ExecutionResourceLeaseRecord.attempt_id == attempt_id
+                )
+            ).scalar_one()
+            reservation = session.execute(
+                select(_ExecutionBudgetReservationRecord).where(
+                    _ExecutionBudgetReservationRecord.attempt_id == attempt_id
+                )
+            ).scalar_one()
+            launch_record = session.get(
+                _ExecutionRuntimeLaunchReceiptRecord,
+                launch_receipt.launch_receipt_sha256,
+            )
+            quote = bundle.cost_quote
+            expected_lease_json = {
+                "schema_name": "aletheia.local_resource_lease",
+                "schema_version": 1,
+                "execution_id": execution_id,
+                "attempt_id": attempt_id,
+                "intent_sha256": bundle.intent.intent_sha256,
+                "node_id": node.node_id,
+                "node_manifest_sha256": node.node_manifest_sha256,
+                "inventory_sha256": attempt.node_inventory_sha256,
+                "selected_resource_ids": list(quote.selected_resource_ids),
+                "fencing_epoch_at_acquisition": resource.fencing_epoch,
+                "cpu_cores": resource.cpu_cores,
+                "memory_bytes": resource.memory_bytes,
+                "scratch_bytes": resource.scratch_bytes,
+                "accelerator_count": resource.accelerator_count,
+                "exclusive": resource.exclusive,
+                "acquired_at": resource.acquired_at.isoformat(),
+                "hard_deadline": attempt.hard_deadline.isoformat(),
+            }
+            qualification_pin = self._authority.pin
+            enrollment = node_authority.enrollment.message
+            issuer = self._require_runtime_control_issuer()
+            runtime_pin = issuer.authority_pin
+            runtime_launched_at = launch_receipt.launch_evidence.runtime_identity.started_at
+            if (
+                admission.execution_id != execution_id
+                or admission.infrastructure_attempt_id != attempt_id
+                or admission.admission_sha256 != attempt.admission_sha256
+                or admission.admission_sha256 != _stable_admission_sha256(verified)
+                or admission.grant_sha256 != grant.grant_sha256
+                or admission.bundle_sha256 != bundle.bundle_sha256
+                or admission.intent_sha256 != bundle.intent.intent_sha256
+                or admission.authority_policy_sha256 != qualification_pin.policy_sha256
+                or admission.authority_key_id != qualification_pin.key_id
+                or admission.budget_authorization_sha256
+                != bundle.budget_authorization.authorization_sha256
+                or admission.cost_quote_sha256 != quote.quote_sha256
+                or admission.verified_at != verified.verified_at
+                or admission.admitted_at != verified.verified_at
+                or admission.admitted_at != attempt.reserved_at
+                or resource.attempt_id != attempt_id
+                or resource.node_id != node.node_id
+                or resource.inventory_sha256 != attempt.node_inventory_sha256
+                or resource.lease_sha256 != canonical_sha256(resource.lease_json)
+                or resource.lease_json != expected_lease_json
+                or resource.acquired_at != attempt.reserved_at
+                or reservation.attempt_id != attempt_id
+                or reservation.execution_id != execution_id
+                or reservation.cost_quote_sha256 != quote.quote_sha256
+                or reservation.reserved_at != attempt.reserved_at
+                or launch_record is None
+                or launch_record.attempt_id != attempt_id
+                or launch_record.signed_at != launch_receipt.signed_at
+                or launch_record.accepted_at < launch_receipt.signed_at
+                or launch_record.accepted_at > accepted_termination.accepted_at
+                or runtime_launched_at < resource.acquired_at
+                or terminal_acceptance != preliminary_terminal
+                or terminal_acceptance.accepted_at > observed_at
+            ):
+                raise AdmissionConflict("qualification run durable lineage is rebound")
+            return VerifiedQualificationRunLineage(
+                execution_id=execution_id,
+                attempt_id=attempt_id,
+                intent_sha256=bundle.intent.intent_sha256,
+                qualification_bundle_sha256=bundle.bundle_sha256,
+                qualification_grant_sha256=grant.grant_sha256,
+                qualification_admission_sha256=admission.admission_sha256,
+                qualification_admitted_at=admission.admitted_at,
+                resource_reservation_sha256=resource.lease_sha256,
+                resource_reserved_at=resource.acquired_at,
+                runtime_launch_sha256=launch_receipt.launch_receipt_sha256,
+                runtime_launched_at=runtime_launched_at,
+                accepted_runtime_termination_sha256=(
+                    accepted_termination.accepted_termination_sha256
+                ),
+                terminal_submission_sha256=submission.terminal_submission_sha256,
+                terminal_acceptance_sha256=(
+                    terminal_acceptance.accepted_terminal_submission_sha256
+                ),
+                terminal_accepted_at=terminal_acceptance.accepted_at,
+                cost_quote_sha256=quote.quote_sha256,
+                node_inventory_sha256=attempt.node_inventory_sha256,
+                quoted_worker_node_manifest=node_authority.manifest,
+                terminal_worker_node_manifest=node_authority.manifest,
+                worker_node_enrollment=node_authority.enrollment,
+                allocator_principal_id=quote.quoted_by_principal_id,
+                allocator_policy_sha256=quote.pricing_policy_sha256,
+                qualification_principal_id=grant.message.authorized_by_principal_id,
+                qualification_key_id=grant.message.authorization_key_id,
+                qualification_policy_sha256=(grant.message.qualification_authority_policy_sha256),
+                node_enrollment_principal_id=enrollment.enrolled_by_principal_id,
+                node_enrollment_key_id=enrollment.enrollment_authority_key_id,
+                node_enrollment_policy_sha256=enrollment.node_enrollment_policy_sha256,
+                node_execution_principal_id=node_authority.manifest.principal_id,
+                node_execution_key_id=node_authority.manifest.node_signing_key_id,
+                node_execution_policy_sha256=node_authority.manifest.sandbox_policy_sha256,
+                runtime_control_principal_id=runtime_pin.principal_id,
+                runtime_control_key_id=runtime_pin.key_id,
+                runtime_control_policy_sha256=runtime_pin.policy_sha256,
+                terminal_submission_principal_id=node_authority.manifest.principal_id,
+                terminal_submission_key_id=node_authority.manifest.node_signing_key_id,
+                terminal_submission_policy_sha256=node_authority.manifest.sandbox_policy_sha256,
+                terminal_acceptance_principal_id=terminal_acceptance.accepted_by_principal_id,
+                terminal_acceptance_key_id=terminal_acceptance.acceptance_key_id,
+                terminal_acceptance_policy_sha256=(
+                    terminal_acceptance.runtime_control_policy_sha256
+                ),
+                artifact_manifest_sha256=manifest.manifest_sha256,
+                output_tree_sha256=terminal_acceptance.output_tree_sha256,
+                artifact_verified_receipt_sha256s=(
+                    terminal_acceptance.artifact_verified_receipt_sha256s
+                ),
+                artifact_manifest=manifest,
+                artifact_verified_receipts=receipts,
+                verified_at=observed_at,
+            )
+
+    def load_qualification_terminal_outbox(
+        self,
+        *,
+        execution_id: str,
+        attempt_id: str,
+    ) -> QualificationTerminalOutboxItem | None:
+        """Read one exact immutable v2 terminal outbox item without exposing its ORM row."""
+
+        with self._sessions() as session:
+            return self.load_qualification_terminal_outbox_in_session(
+                session,
+                execution_id=execution_id,
+                attempt_id=attempt_id,
+            )
+
+    def load_qualification_terminal_outbox_in_session(
+        self,
+        session: Session,
+        *,
+        execution_id: str,
+        attempt_id: str,
+    ) -> QualificationTerminalOutboxItem | None:
+        """Read one exact terminal intent inside a caller-owned transaction."""
+
+        if not isinstance(session, Session):
+            raise TypeError(
+                "load_qualification_terminal_outbox_in_session requires a SQLAlchemy Session"
+            )
+        _canonical_identity_allowlist(
+            (execution_id,),
+            pattern=_EXECUTION_ID_PATTERN,
+            label="execution id",
+        )
+        _canonical_identity_allowlist(
+            (attempt_id,),
+            pattern=_ATTEMPT_ID_PATTERN,
+            label="attempt id",
+        )
+        result = session.execute(
+            select(
+                _ExecutionQualificationTerminalOutboxRecord,
+                _ExecutionAttemptRecord,
+            )
+            .join(
+                _ExecutionAttemptRecord,
+                _ExecutionAttemptRecord.attempt_id
+                == _ExecutionQualificationTerminalOutboxRecord.attempt_id,
+            )
+            .where(_ExecutionAttemptRecord.attempt_id == attempt_id)
+        ).one_or_none()
+        if result is None:
+            return None
+        record, attempt = result
+        item = _qualification_terminal_outbox_item(record, attempt)
+        if item.execution_id != execution_id:
+            raise AdmissionConflict(
+                "qualification terminal outbox differs from the expected execution-attempt pair"
+            )
+        return item
+
+    def list_qualification_terminal_outbox(
+        self,
+        *,
+        execution_id_allowlist: tuple[str, ...] = (),
+        attempt_id_allowlist: tuple[str, ...] = (),
+    ) -> tuple[QualificationTerminalOutboxItem, ...]:
+        """List immutable terminal intents within an explicit execution or attempt allowlist."""
+
+        with self._sessions() as session:
+            return self.list_qualification_terminal_outbox_in_session(
+                session,
+                execution_id_allowlist=execution_id_allowlist,
+                attempt_id_allowlist=attempt_id_allowlist,
+            )
+
+    def list_qualification_terminal_outbox_in_session(
+        self,
+        session: Session,
+        *,
+        execution_id_allowlist: tuple[str, ...] = (),
+        attempt_id_allowlist: tuple[str, ...] = (),
+    ) -> tuple[QualificationTerminalOutboxItem, ...]:
+        """List terminal intents in a caller-owned transaction for atomic delivery writes.
+
+        When both allowlists are supplied, a row must belong to both.  Results are canonically
+        ordered by authoritative execution, attempt and outbox identities.  The source outbox is
+        immutable; a controller-owned delivery record provides dispatch idempotency.
+        """
+
+        if not isinstance(session, Session):
+            raise TypeError(
+                "list_qualification_terminal_outbox_in_session requires a SQLAlchemy Session"
+            )
+        execution_ids = _canonical_identity_allowlist(
+            execution_id_allowlist,
+            pattern=_EXECUTION_ID_PATTERN,
+            label="execution id",
+        )
+        attempt_ids = _canonical_identity_allowlist(
+            attempt_id_allowlist,
+            pattern=_ATTEMPT_ID_PATTERN,
+            label="attempt id",
+        )
+        if not execution_ids and not attempt_ids:
+            raise ValueError("terminal outbox reads require an execution or attempt allowlist")
+        statement = select(
+            _ExecutionQualificationTerminalOutboxRecord,
+            _ExecutionAttemptRecord,
+        ).join(
+            _ExecutionAttemptRecord,
+            _ExecutionAttemptRecord.attempt_id
+            == _ExecutionQualificationTerminalOutboxRecord.attempt_id,
+        )
+        if execution_ids:
+            statement = statement.where(_ExecutionAttemptRecord.execution_id.in_(execution_ids))
+        if attempt_ids:
+            statement = statement.where(_ExecutionAttemptRecord.attempt_id.in_(attempt_ids))
+        records = session.execute(
+            statement.order_by(
+                _ExecutionAttemptRecord.execution_id,
+                _ExecutionAttemptRecord.attempt_id,
+                _ExecutionQualificationTerminalOutboxRecord.outbox_id,
+            )
+        ).all()
+        items = tuple(
+            sorted(
+                (
+                    _qualification_terminal_outbox_item(record, attempt)
+                    for record, attempt in records
+                ),
+                key=lambda item: (item.execution_id, item.attempt_id, item.outbox_id),
+            )
+        )
+        identities = tuple((item.execution_id, item.attempt_id, item.outbox_id) for item in items)
+        if len(set(identities)) != len(identities):
+            raise AdmissionConflict("qualification terminal outbox query returned duplicate rows")
+        return items
 
     def pull_sealed_assignment(
         self,

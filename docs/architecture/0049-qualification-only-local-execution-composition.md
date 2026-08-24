@@ -95,8 +95,9 @@ procedure, and database/host clock monitoring.
   on that deployment, including the pinned systemd cgroup-v2 layout and shared mount visibility.
   This repository currently has neither a target-host installer nor a frozen deployment-manifest
   instance, and that exact campaign has not run; PR-4b is nondeployable at this checkpoint.
-- Discovery-episode projection/assessment remains pure derived, evaluator-only work after the PR-5
-  scientific bridge and cannot become a second authority ledger.
+- The PR-5 local bridge does not change this deployment verdict. Discovery-episode
+  projection/assessment remains pure derived, evaluator-only work and cannot become a second
+  authority ledger.
 
 See the [PR-4b composition guide](../PR4B_LOCAL_EXECUTION_COMPOSITION.md) for the implementation map,
 exact schema inventory, lifecycle, operating requirements, and deployment evidence boundary.

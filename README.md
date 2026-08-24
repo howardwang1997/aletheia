@@ -19,6 +19,8 @@ Not AutoML on a benchmark: the north star is a system that *poses novel, literat
 questions*, designs and runs experiments with frontier methods, reasons about what it learned,
 and writes up cited results — autonomously, within guardrails. Every change is weighed by whether
 it moves Aletheia toward that. See the roadmap in the approved plan and `docs/ARCHITECTURE.md`.
+The latter is retained as a legacy architecture record; the dated end-to-end plan linked above is
+the authoritative migration roadmap.
 
 ## Keystone roadmap
 
@@ -101,16 +103,16 @@ reliable autonomous frontier scientist.
    split metadata, code, artifacts, metrics, claims, audits, reproduction, limitations, paper, and
    reproducibility package/PR; a qualifying scientific-exit gate and F12 remain.
 
-The new-Quest control-plane migration has completed PR-0 through PR-3 and now includes the PR-4a
-foundation plus the PR-4b qualification-only local-execution composition. A deployment-pinned,
+The new-Quest control-plane migration has completed the local source/test slices for PR-0 through
+PR-5, including the PR-4a foundation and PR-4b qualification-only local-execution composition. A deployment-pinned,
 root-certified Ed25519 policy now gates full signed commands into an append-only event/CAS store;
 deterministic replay, full audit, crash-safe idempotency, a Quest-wide emergency halt, and an
 immutable cross-store namespace prevent the legacy Program graph and research kernel from owning
 the same Quest. The authoritative API is under `/research-kernel/...`; compatibility mutations are
 explicitly deprecated under `/legacy/research-graph/...` and never dual-write. This is a durable
 scientific authority substrate plus a pure, domain-independent scientific Protocol IR/compiler and
-a fenced engineering-qualification substrate—not yet an autonomous experiment controller,
-scientific launch path, or target-host-qualified production service. PR-3 can reject or canonically
+a fenced engineering-qualification substrate plus a restart-safe scientific-controller
+vertical—not a target-host-qualified production service or a reliable autonomous scientist. PR-3 can reject or canonically
 compile frozen protocols against atomic capability manifests and static resource classes. Work-order nodes now
 freeze logical command, input/output, artifact, and replicate kind/count/seed/site identities;
 PR-4a reruns the pure compilation/intent verifier before reservation and the confirmed-failure retry
@@ -131,13 +133,21 @@ rendering, externally pinned signed Linux observations, a derived installed-mani
 read-only revalidation. It deliberately does not install or repair a host, implement the concrete
 observer, or run the campaign. The exact Linux/rootful-Docker/systemd/loop/ext4/cgroup-v2/shared-
 mount campaign must pass before any host is called deployable. No target-host manifest instance has
-been frozen, that exact campaign has not run, and PR-4b is therefore nondeployable. PR-5
-must add the scientific action-to-execution bridge; the PR-2
-store also still has one immutable policy epoch and `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
+been frozen, that exact campaign has not run, and PR-4b is therefore nondeployable. PR-5 now adds
+the signed action-to-execution bridge, DB-time independent validation/admission, atomic
+`observation_incorporated` Kernel transition, `research.controller.v1` durable wakeups and
+lease/restart recovery, a pinned `/quests/{id}/launch` path, and graph-scoped typed continuation.
+Its local synthetic vertical covers a measurement blocker, typed refinement and recompilation,
+valid negative/inconclusive evidence, a signed hypothesis fork, selected-child activation, and a
+discriminating follow-up that is compiled, executed, admitted into a second distinct scientific
+slot, and incorporated without the legacy `ExperimentDriver`. It is engineering evidence, not a
+scientific claim or deployment proof. The PR-2 store also still has one immutable policy epoch and
+`O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
 the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-3 compiler guide](docs/PR3_PROTOCOL_COMPILER.md), plus the
 [PR-4a foundation guide](docs/PR4_LOCAL_EXECUTION_FOUNDATION.md) and
-[PR-4b composition guide](docs/PR4B_LOCAL_EXECUTION_COMPOSITION.md).
+[PR-4b composition guide](docs/PR4B_LOCAL_EXECUTION_COMPOSITION.md), and
+[PR-5 controller guide](docs/PR5_DURABLE_SCIENTIFIC_CONTROLLER.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,
