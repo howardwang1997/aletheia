@@ -101,25 +101,32 @@ reliable autonomous frontier scientist.
    split metadata, code, artifacts, metrics, claims, audits, reproduction, limitations, paper, and
    reproducibility package/PR; a qualifying scientific-exit gate and F12 remain.
 
-The new-Quest control-plane migration has completed PR-0 through PR-3. A deployment-pinned,
+The new-Quest control-plane migration has completed PR-0 through PR-3 and now includes the PR-4a
+qualification-only local-execution foundation. A deployment-pinned,
 root-certified Ed25519 policy now gates full signed commands into an append-only event/CAS store;
 deterministic replay, full audit, crash-safe idempotency, a Quest-wide emergency halt, and an
 immutable cross-store namespace prevent the legacy Program graph and research kernel from owning
 the same Quest. The authoritative API is under `/research-kernel/...`; compatibility mutations are
 explicitly deprecated under `/legacy/research-graph/...` and never dual-write. This is a durable
-scientific authority substrate plus a pure, domain-independent scientific Protocol IR/compiler,
-not yet an autonomous experiment controller. PR-3 can reject or canonically compile frozen
+scientific authority substrate plus a pure, domain-independent scientific Protocol IR/compiler and
+a fenced engineering-qualification substrate—not yet an autonomous experiment controller or a
+deployable execution service. PR-3 can reject or canonically compile frozen
 protocols against atomic capability manifests and static resource classes. Work-order nodes now
 freeze logical command, input/output, artifact, and replicate kind/count/seed/site identities;
-PR-4 must run the pure intent-binding verifier before launch and the confirmed-failure retry
-verifier before another infrastructure attempt. Exact reexecution requires at least two
+PR-4a reruns the pure compilation/intent verifier before reservation and the confirmed-failure retry
+verifier before another infrastructure attempt. It adds deployment-signed engineering grants,
+enrolled node/inventory contracts, PostgreSQL resource/budget fencing, quarantine/CAS rehash, typed
+terminal receipts, and a non-composed node fault harness. Exact reexecution requires at least two
 preregistered slots on every scientific-executor branch; it does not prove independent
 implementation or site. PR-3 still cannot inspect live capacity, validate input receipt bytes or
-custody, reserve hardware or budget, authorize or run work, or admit evidence. PR-4 next implements
-the local node and artifact-receipt boundary; the PR-2 store also still has one immutable policy
-epoch and `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
+custody, reserve hardware or budget, authorize or run work, or admit evidence by itself. PR-4a does
+not include a concrete quote/source-budget authority adapter, OCI runtime, allocator-to-agent
+composition, HTTP launch path, or Research Kernel launch authorization. PR-4b must compose and
+qualify those operational pieces before PR-5 can add the scientific action-to-execution bridge; the
+PR-2 store also still has one immutable policy epoch and `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
 the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
-[PR-3 compiler guide](docs/PR3_PROTOCOL_COMPILER.md).
+[PR-3 compiler guide](docs/PR3_PROTOCOL_COMPILER.md), plus the
+[PR-4a foundation guide](docs/PR4_LOCAL_EXECUTION_FOUNDATION.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,

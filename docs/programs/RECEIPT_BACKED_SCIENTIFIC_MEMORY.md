@@ -10,7 +10,7 @@ conda run -n aletheia alembic upgrade head
 conda run -n aletheia alembic current
 ~~~
 
-Expected repository head: `20260824_0023`.
+Expected repository head: `20260825_0024`.
 
 - `0016` adds facts, task bindings, compactions, members, and context receipts;
 - `0017` adds append-only, command-binding, disposition, completeness, and context guards; and
@@ -18,6 +18,8 @@ Expected repository head: `20260824_0023`.
 - `0019`–`0020` add the F11-S5 shadow portfolio ledger and its integrity guards.
 - `0021`–`0023` add later fault/endurance evidence and the separate research-kernel authority
   store; they do not change this legacy memory's authority scope.
+- `0024` adds the separate qualification-only local-execution store and does not change this legacy
+  memory authority.
 
 API and worker startup fail closed at any other revision.
 
@@ -177,7 +179,7 @@ When rebuild, artifact recovery, or context loading fails:
 
 1. stop delivery for the affected scope/task;
 2. preserve PostgreSQL, keyed events, and archive bytes;
-3. confirm deployed code and database are at `20260824_0023`;
+3. confirm deployed code and database are at `20260825_0024`;
 4. inspect the named fact, command, compaction, member, or context receipt;
 5. restore a verified database/archive pair or deploy matching code; and
 6. never repair an append-only row in place.

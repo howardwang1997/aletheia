@@ -13,6 +13,7 @@ from sqlalchemy.engine import Connection
 import aletheia.memory.ledger  # noqa: F401  (register every ORM table)
 import aletheia.knowledge.persistence  # noqa: F401  (register F8 immutable tables)
 import aletheia.epistemics.persistence  # noqa: F401  (register F9 world-model tables)
+import aletheia.execution.persistence  # noqa: F401  (register local execution tables)
 import aletheia.jobs.persistence  # noqa: F401  (register F11 durable queue tables)
 import aletheia.programs.persistence  # noqa: F401  (register F11 scientific graph tables)
 import aletheia.research_store.persistence  # noqa: F401  (register kernel-store tables)
@@ -46,6 +47,22 @@ POST_BASELINE_TABLES = frozenset(
         "epistemic_belief_state_members",
         "epistemic_world_model_snapshots",
         "epistemic_world_model_transitions",
+        "execution_nodes",
+        "execution_inventory_attestations",
+        "execution_inventory_devices",
+        "execution_device_heads",
+        "execution_qualification_admissions",
+        "execution_budget_authorizations",
+        "execution_budget_heads",
+        "execution_heads",
+        "execution_attempts",
+        "execution_attempt_adoptions",
+        "execution_resource_leases",
+        "execution_device_leases",
+        "execution_budget_reservations",
+        "execution_budget_events",
+        "execution_terminal_receipts",
+        "execution_outbox",
         "durable_tasks",
         "durable_task_dependencies",
         "durable_task_attempts",

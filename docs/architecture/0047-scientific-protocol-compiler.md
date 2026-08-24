@@ -98,11 +98,12 @@ PR-3 also freezes the minimum execution-side value boundary. A scientific replic
 preregistered scientific identity; an infrastructure attempt is a recoverable engineering lineage
 under that slot. Static resource classes describe shape, never current capacity. Execution
 success, a raw artifact manifest, or an executor-reported positive/negative/inconclusive value is
-not an admitted scientific observation. Artifact verification and execution-receipt interfaces are
-ports only; their durable implementations belong to PR-4.
+not an admitted scientific observation. In PR-3, artifact verification and execution-receipt
+interfaces are ports only. PR-4a later supplied qualification-only durable implementations without
+turning them into scientific admission or a deployable runtime.
 
 The PR-3 `WorkOrderDAG` to `ExecutionIntent` bridge is an explicit pure verification boundary.
-Before any PR-4 placement or launch, `verify_execution_intent_binding` must prove exact node,
+Before any PR-4a reservation or later launch, `verify_execution_intent_binding` must prove exact node,
 command, capability, resource, environment, expected-artifact, effect, and replicate bindings and
 exactly one typed input-artifact receipt binding for every input port. Intermediate inputs also
 bind their producer node and producer replicate slot. In v1 every intermediate edge has equal
@@ -115,8 +116,10 @@ alone is not launch authority.
 Similarly, `verify_execution_retry_binding` is mandatory before deriving a direct idempotent new
 infrastructure attempt. The preceding receipt must contain the exact prior intent and a retryable engineering
 failure after confirmed termination; the new attempt must bind that receipt, attempt, and failure
-category, while every other intent field stays byte-identical. Reconciliation and checkpoint-resume
-modes require specialized PR-4 custody/state transitions and are rejected by this generic helper.
+category, while every other intent field stays byte-identical. PR-4a later added retained
+reconciliation and signed same-node adoption outside this helper. Checkpoint resume and external-
+action reconciliation still require later specialized custody/state transitions and remain rejected
+by the generic helper.
 `READ_ONLY_EXTERNAL` uses an
 external runtime, explicit action kind, and matching static external resource but is replay-safe
 and declares no mutation provider receipt. Mutating idempotent external work needs provider
@@ -156,19 +159,25 @@ reads a live legacy row or registers a legacy executor.
 - Busy nodes, current provider availability, leases, quotas, and budget balances are intentionally
   absent. A static match means “this shape is known,” not “this run can start.”
 - No PR-3 object is persisted by the compiler. Authoritative protocol admission remains a later
-  signed research-kernel command, and durable execution/artifact receipts remain PR-4 work.
+  signed research-kernel command. PR-4a subsequently added qualification-only execution/artifact
+  persistence, not Research Kernel launch authority or observation admission.
 - An engineering-success receipt proves only that an executor produced and verified expected raw
   artifacts. Independent observation admission and claim gates remain mandatory.
 - Repeated slots are not independent replication. PR-3 can compile exact reexecution only when
   every scientific-executor branch has at least two preregistered slots; stronger replication tiers
   remain blocked pending implementation/principal/site assignment contracts.
-- The intent and retry verifiers are prerequisites for PR-4 launch/retry, but neither authorizes or
-  performs an action or verifies input-receipt bytes and custody.
+- The intent and retry verifiers are prerequisites for PR-4a qualification reservation and any
+  future launch/retry path, but neither authorizes or performs an action or verifies input-receipt
+  bytes and custody by itself.
 
 ## Deferred work
 
-PR-4 supplies local inventory, atomic budget/resource reservation, a node agent, quarantine and
-central artifact rehash, durable attempt/receipt persistence, fencing, adoption, checkpointing, and
-reconciliation. Until those controls exist, PR-3 must not be used to launch the local machine, the
-two V100 servers, the 2060 server, a paid external service, or a physical instrument. Remote and
-multi-site scheduling follows only after the local receipt path is proven under fault injection.
+PR-4a now supplies a qualification-only slice of that boundary: signed single-node inventory,
+atomic PostgreSQL budget/resource reservation, quarantine and central artifact rehash, durable
+attempt/receipt persistence, fencing, retained reconciliation, signed same-node adoption, and an
+injected node fault facade. It is not a deployable execution service. PR-4b must compose the
+deployment-pinned quote/source-budget adapters, concrete runtime, allocator, artifact workflow, and
+terminal committer and prove real isolation/recovery. Checkpoint resume and external-action
+reconciliation require later dedicated contracts. PR-3 must not itself be used to launch the local
+machine, the two V100 servers, the 2060 server, a paid external service, or a physical instrument;
+remote and multi-site scheduling follows only after the composed local receipt path is proven.

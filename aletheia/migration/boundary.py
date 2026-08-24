@@ -97,6 +97,7 @@ DEFAULT_PURE_CONTRACT_TARGET_PACKAGES = ("protocols",)
 DEFAULT_PURE_CONTRACT_TARGET_MODULES = (
     "aletheia.execution",
     "aletheia.execution.ports",
+    "aletheia.execution.runtime_contracts",
     "aletheia.execution.schemas",
 )
 DEFAULT_PURE_CONTRACT_FORBIDDEN_MODULE_PREFIXES = (
@@ -191,6 +192,29 @@ DEFAULT_PRIVATE_RESEARCH_STORE_RECORD_SYMBOLS = (
     "ResearchKernelSnapshotRecord",
     "ResearchQuestAuthorityRecord",
     "ResearchQuestStreamRecord",
+)
+DEFAULT_EXECUTION_PERSISTENCE_IMPORTERS = (
+    "aletheia.execution.allocator",
+    "aletheia.schema_migrations",
+    "migrations.env",
+)
+DEFAULT_PRIVATE_EXECUTION_RECORD_SYMBOLS = (
+    "_ExecutionAttemptAdoptionRecord",
+    "_ExecutionAttemptRecord",
+    "_ExecutionBudgetAuthorizationRecord",
+    "_ExecutionBudgetEventRecord",
+    "_ExecutionBudgetHeadRecord",
+    "_ExecutionBudgetReservationRecord",
+    "_ExecutionDeviceHeadRecord",
+    "_ExecutionDeviceLeaseRecord",
+    "_ExecutionHeadRecord",
+    "_ExecutionInventoryAttestationRecord",
+    "_ExecutionInventoryDeviceRecord",
+    "_ExecutionNodeRecord",
+    "_ExecutionOutboxRecord",
+    "_ExecutionQualificationAdmissionRecord",
+    "_ExecutionResourceLeaseRecord",
+    "_ExecutionTerminalReceiptRecord",
 )
 # Python entry points shipped outside the importable ``aletheia`` package still participate in
 # the production driver boundary. Keep this finite registry explicit: CLIs, container workers, and
@@ -1652,6 +1676,320 @@ def find_research_store_persistence_import_violations(
                 ),
                 line=1,
                 imported_module="<missing-authoritative-store-importer>",
+                import_kind="policy",
+                root_module=missing,
+                dependency_chain=(missing, persistence),
+            )
+        )
+    return tuple(sorted(set(violations)))
+
+
+def find_execution_persistence_import_violations(
+    repository_root: Path,
+    *,
+    allowed_importers: Iterable[str] = DEFAULT_EXECUTION_PERSISTENCE_IMPORTERS,
+) -> tuple[DependencyBoundaryViolation, ...]:
+    """Keep execution authority ORM records behind the allocator transaction facade.
+
+    Schema registration is the only read-only exception.  The allocator may bind ORM records only
+    under their declared private names, and no other production module may recover those bindings
+    through a direct import, module attribute, alias chain, or ``getattr`` escape.
+    """
+
+    root_path = repository_root.resolve(strict=True)
+    sources, graph, _unsafe_edges = _load_internal_graph(root_path)
+    operational_sources, operational_graph, _operational_unsafe = _load_operational_graph(root_path)
+    allowed = set(allowed_importers)
+    persistence = "aletheia.execution.persistence"
+    allocator_module = "aletheia.execution.allocator"
+    private_symbols = set(DEFAULT_PRIVATE_EXECUTION_RECORD_SYMBOLS)
+    violations: list[DependencyBoundaryViolation] = []
+    actual_importers: set[str] = set()
+
+    for module, edges in (*graph.items(), *operational_graph.items()):
+        for edge in edges:
+            if not _matches_prefix(edge.target, (persistence,)) or module == persistence:
+                continue
+            actual_importers.add(module)
+            if module not in allowed:
+                violations.append(_violation(edge, root=module, chain=(module, edge.target)))
+
+    all_sources = {**sources, **operational_sources}
+
+    def dotted_name(node: ast.AST) -> str | None:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            prefix = dotted_name(node.value)
+            return f"{prefix}.{node.attr}" if prefix is not None else None
+        return None
+
+    def private_symbol_violation(
+        *,
+        source: _ModuleSource,
+        module: str,
+        node: ast.AST,
+        symbol: str,
+        kind: str = "private-execution-authority-symbol",
+    ) -> DependencyBoundaryViolation:
+        return DependencyBoundaryViolation(
+            path=source.relative_path,
+            line=getattr(node, "lineno", 1),
+            imported_module=f"{allocator_module}:{symbol}",
+            import_kind=kind,
+            root_module=module,
+            dependency_chain=(module, allocator_module, symbol),
+        )
+
+    def registration_access_violation(
+        *,
+        source: _ModuleSource,
+        module: str,
+        node: ast.AST,
+        symbol: str,
+    ) -> DependencyBoundaryViolation:
+        return DependencyBoundaryViolation(
+            path=source.relative_path,
+            line=getattr(node, "lineno", 1),
+            imported_module=f"{persistence}:{symbol}",
+            import_kind="schema-registration-execution-authority-access",
+            root_module=module,
+            dependency_chain=(module, persistence, symbol),
+        )
+
+    allocator_source = all_sources.get(allocator_module)
+    if allocator_source is not None:
+        allocator_tree = ast.parse(
+            allocator_source.path.read_text(encoding="utf-8"),
+            filename=str(allocator_source.path),
+        )
+        private_local_bindings: set[str] = set()
+        for node in ast.walk(allocator_tree):
+            if isinstance(node, ast.ImportFrom) and node.module == persistence:
+                for alias in node.names:
+                    local_name = alias.asname or alias.name
+                    if alias.name == "*" or alias.name not in private_symbols:
+                        violations.append(
+                            private_symbol_violation(
+                                source=allocator_source,
+                                module=allocator_module,
+                                node=node,
+                                symbol=alias.name,
+                                kind="unreviewed-execution-authority-symbol",
+                            )
+                        )
+                        continue
+                    private_local_bindings.add(local_name)
+                    if not local_name.startswith("_"):
+                        violations.append(
+                            private_symbol_violation(
+                                source=allocator_source,
+                                module=allocator_module,
+                                node=node,
+                                symbol=local_name,
+                                kind="public-execution-authority-symbol",
+                            )
+                        )
+
+        for node in ast.walk(allocator_tree):
+            if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+                continue
+            value_name = dotted_name(node.value)
+            if value_name not in private_local_bindings:
+                continue
+            targets = tuple(node.targets) if isinstance(node, ast.Assign) else (node.target,)
+            for target in targets:
+                if isinstance(target, ast.Name) and not target.id.startswith("_"):
+                    violations.append(
+                        private_symbol_violation(
+                            source=allocator_source,
+                            module=allocator_module,
+                            node=node,
+                            symbol=target.id,
+                            kind="public-execution-authority-symbol",
+                        )
+                    )
+
+    # Schema helpers need the module import so SQLAlchemy sees the tables, but that exception is
+    # registration-only.  Do not let an allowed importer turn the side-effect import into another
+    # ORM-record handle through a direct symbol import, module attribute, alias chain, or getattr.
+    # An unused ``import ...persistence [as name]`` remains valid registration.
+    for module in sorted(allowed - {allocator_module}):
+        source = all_sources.get(module)
+        if source is None:
+            continue
+        tree = ast.parse(source.path.read_text(encoding="utf-8"), filename=str(source.path))
+        persistence_names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == persistence and alias.asname is not None:
+                        persistence_names.add(alias.asname)
+            elif isinstance(node, ast.ImportFrom):
+                if node.module == "aletheia.execution":
+                    for alias in node.names:
+                        if alias.name == "persistence":
+                            persistence_names.add(alias.asname or alias.name)
+                elif node.module == persistence:
+                    for alias in node.names:
+                        violations.append(
+                            registration_access_violation(
+                                source=source,
+                                module=module,
+                                node=node,
+                                symbol=alias.name,
+                            )
+                        )
+
+        # Propagate conventional local aliases.  Loading the source binding below is already an
+        # access violation; retaining the derived binding also catches subsequent attribute and
+        # dynamic-getattr recovery precisely.
+        changed = True
+        while changed:
+            changed = False
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+                    continue
+                value_name = dotted_name(node.value)
+                if value_name not in persistence_names and value_name != persistence:
+                    continue
+                targets = tuple(node.targets) if isinstance(node, ast.Assign) else (node.target,)
+                for target in targets:
+                    if isinstance(target, ast.Name) and target.id not in persistence_names:
+                        persistence_names.add(target.id)
+                        changed = True
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                if node.id in persistence_names:
+                    violations.append(
+                        registration_access_violation(
+                            source=source,
+                            module=module,
+                            node=node,
+                            symbol=node.id,
+                        )
+                    )
+                continue
+            if isinstance(node, ast.Attribute):
+                resolved = dotted_name(node)
+                if resolved == persistence or (
+                    resolved is not None and resolved.startswith(f"{persistence}.")
+                ):
+                    violations.append(
+                        registration_access_violation(
+                            source=source,
+                            module=module,
+                            node=node,
+                            symbol=resolved.removeprefix(f"{persistence}.") or "<module>",
+                        )
+                    )
+                continue
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "getattr"
+                and node.args
+                and (
+                    dotted_name(node.args[0]) in persistence_names
+                    or dotted_name(node.args[0]) == persistence
+                )
+            ):
+                symbol = _static_string(node.args[1]) if len(node.args) >= 2 else None
+                violations.append(
+                    registration_access_violation(
+                        source=source,
+                        module=module,
+                        node=node,
+                        symbol=symbol or "<dynamic-attribute>",
+                    )
+                )
+
+    for module, source in sorted(all_sources.items()):
+        if module == allocator_module:
+            continue
+        tree = ast.parse(source.path.read_text(encoding="utf-8"), filename=str(source.path))
+        allocator_names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == allocator_module:
+                        allocator_names.add(alias.asname or allocator_module)
+            elif isinstance(node, ast.ImportFrom) and node.module == "aletheia.execution":
+                for alias in node.names:
+                    if alias.name == "allocator":
+                        allocator_names.add(alias.asname or alias.name)
+
+        changed = True
+        while changed:
+            changed = False
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+                    continue
+                if dotted_name(node.value) not in allocator_names:
+                    continue
+                targets = tuple(node.targets) if isinstance(node, ast.Assign) else (node.target,)
+                for target in targets:
+                    if isinstance(target, ast.Name) and target.id not in allocator_names:
+                        allocator_names.add(target.id)
+                        changed = True
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == allocator_module:
+                for alias in node.names:
+                    if alias.name in private_symbols or alias.name == "*":
+                        violations.append(
+                            private_symbol_violation(
+                                source=source,
+                                module=module,
+                                node=node,
+                                symbol=alias.name,
+                            )
+                        )
+                continue
+            if (
+                isinstance(node, ast.Attribute)
+                and dotted_name(node.value) in allocator_names
+                and node.attr in private_symbols
+            ):
+                violations.append(
+                    private_symbol_violation(
+                        source=source,
+                        module=module,
+                        node=node,
+                        symbol=node.attr,
+                    )
+                )
+                continue
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "getattr"
+                and node.args
+                and dotted_name(node.args[0]) in allocator_names
+            ):
+                symbol = _static_string(node.args[1]) if len(node.args) >= 2 else None
+                if symbol is None or symbol in private_symbols:
+                    violations.append(
+                        private_symbol_violation(
+                            source=source,
+                            module=module,
+                            node=node,
+                            symbol=symbol or "<dynamic-attribute>",
+                        )
+                    )
+
+    for missing in sorted(allowed - actual_importers):
+        source = all_sources.get(missing)
+        violations.append(
+            DependencyBoundaryViolation(
+                path=(
+                    source.relative_path
+                    if source is not None
+                    else missing.replace(".", "/") + ".py"
+                ),
+                line=1,
+                imported_module="<missing-execution-authority-importer>",
                 import_kind="policy",
                 root_module=missing,
                 dependency_chain=(missing, persistence),

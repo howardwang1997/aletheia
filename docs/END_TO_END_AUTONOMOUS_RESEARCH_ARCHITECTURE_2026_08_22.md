@@ -733,7 +733,8 @@ parser/validator 从原始 bytes 重算后才可成为 observation。
 
 ### 9.6 三节点上线顺序
 
-1. 在本机实现 `LocalNodeAgent`，先复用现有 hardened sandbox，证明 receipt 和同节点接管语义；
+1. PR-4a 先在本机实现 `QualificationNodeAgent` injected facade 与同节点接管
+   contracts；PR-4b 再接入经审核的 hardened sandbox，验证真实 runtime receipt 与 fence rebind；
 2. 重新盘点后选择一个无外部占用、磁盘配额充足的节点做 canary；2060 是候选而不是永久假设；
 3. 为 V100 取得 dedicated window/宿主 scheduler 集成与部署授权后，再分别 onboarding；
 4. 验证定向调度、两 V100 并发、资源不匹配 fail closed 和 GPU-hour 实测结算；
@@ -1165,10 +1166,12 @@ branches，且不调用 legacy driver；自主问题形成留到 A6，此时仍�
 
 ### Slice A3：本地 execution foundation 与单一控制面 vertical cut（4–6 周）
 
-先实现：
+按 PR-4a foundation → PR-4b composition → PR-5 scientific bridge 的顺序实现：
 
-- `LocalNodeAgent` 包装现有 hardened sandbox；
-- `SingleNodeInventory`、`LocalAllocator` 和原子的 budget/device reservation，支持本地动态 placement；
+- `QualificationNodeAgent` 作为 PR-4a injected facade；PR-4b 才将它的 narrow ports 接入
+  经审核的 hardened sandbox/runtime；
+- signed single-node inventory、`PostgreSQLExecutionAllocator` 和原子的 budget/device
+  reservation，支持本地动态 placement；
 - 本地 quarantine/CAS、artifact verification receipt、stable same-node adoption 和 typed failures；
 - 独立 execution durable task，不再把完整 driver 当作黑盒；
 - `research.controller.v1` durable task、`/quests/{id}/launch` 与 wakeup command、outbox/event wakeup、
@@ -1204,7 +1207,7 @@ disposition 生成并执行下一项 typed action。
 
 ### Slice A4：Remote/GPU Execution Fabric（3–5 周）
 
-在 A2/A3 的 contracts、本地 CAS/receipt 与 LocalNodeAgent 上扩展：
+在 A2/A3 的 contracts、本地 CAS/receipt 与 PR-4b 组合后的 local runtime/agent 上扩展：
 
 - 依据 fresh signed inventory 选择无外部占用且磁盘配额充足的 canary；2060 只是当前候选；
 - Tailscale/mTLS pull agent、稳定 node/principal identity + 可轮换短期证书、GPU UUID/fencing lease；
@@ -1435,11 +1438,12 @@ safety、license/egress typed audit binding；calibrated manifest 还必须有 c
 的领域裁决。三类异构 fixtures 覆盖 grouped regression、structural intervention/simulation 和 external
 measurement；共享 compiler 不知道 materials、MatBench、phonon、MAE 或 `X/y/groups`。
 
-`aletheia.execution` 目前只冻结 static resource、intent、scientific replicate slot、infrastructure attempt、
-artifact/verification/receipt contract 和 ports。工程成功、raw artifact 或 executor 报告的 positive/negative/
+PR-3 在 `aletheia.execution` 冻结了 static resource、intent、scientific replicate slot、infrastructure
+attempt、artifact/verification/receipt contract 和 pure ports；PR-4a 在独立 operational modules 中新增了
+qualification-only persistence、allocator、custody resolver 与 node fault harness。工程成功、raw artifact 或 executor 报告的 positive/negative/
 inconclusive 都不是 admitted observation。`WorkOrderNode` 投影 deterministic node identity/hash、logical
 `command_sha256`、capability/resource envelope、expected artifacts、contract/observable/caller bindings，以及
-replicate kind/count/preregistered seeds/site requirement。PR-4 在 placement/launch 前必须调用纯函数
+replicate kind/count/preregistered seeds/site requirement。PR-4a allocator 在 placement 前调用纯函数
 `verify_execution_intent_binding`，逐字段核对 WorkOrder node，并要求每个 input port 都有 typed artifact-
 receipt binding；中间产物还必须绑定 exact producer node 和 replicate slot。v1 中间边只允许 producer/
 consumer replicate count 相等并按预注册 ordinal `i -> i` 配对；`1 -> N`、`N -> 1`、聚合或运行时择优
@@ -1448,8 +1452,9 @@ slot 在没有显式 assignment contract 时一律 fail closed。该函数只核
 
 direct idempotent infrastructure retry 前还必须调用 `verify_execution_retry_binding`：previous receipt 必须包含 exact prior intent
 和 confirmed-terminated retryable engineering failure；next attempt 必须精确绑定 prior receipt/attempt/failure，
-其余 intent 字段 byte-identical。reconciliation 与 checkpoint-resume 需要 PR-4 专用 custody/state transition，
-不能通过该 generic helper。`READ_ONLY_EXTERNAL` 虽为 replay-safe，仍必须走 external runtime、explicit
+其余 intent 字段 byte-identical。PR-4a 的 retained reconciliation 与 signed same-node adoption 在该
+generic helper 之外实现；checkpoint-resume 和 external-action reconciliation 仍需后续专用 custody/state
+transition，不能通过该 helper 猜测。`READ_ONLY_EXTERNAL` 虽为 replay-safe，仍必须走 external runtime、explicit
 action kind 和匹配的 static external resource，但不声明 mutation provider-receipt artifact；one-time
 external effect 只允许一次 infrastructure attempt，不可 retry。v1 没有 claim-to-step assignment 可排除某个
 branch，因此只有 protocol 中每个
@@ -1463,10 +1468,21 @@ CAS writer、model/network/process/GPU 调用，也不检查 live availability�
 
 ### PR-4：Local node agent + artifact receipts
 
-- execution persistence 与 `LocalNodeAgent`；
-- 单节点 inventory、`LocalAllocator` 和 atomic budget/device reservation；
-- hardened local sandbox 作为第一个 node adapter；Docker 仅在现有 runner 已满足隔离策略时作为兼容 adapter；
-- quarantine/CAS、artifact rehash、stable same-node adoption、fencing epoch 和 typed failures。
+- PR-4a 已落 qualification-only foundation：deployment-signed engineering grant、enrolled node/
+  inventory contracts、PostgreSQL resource/budget lease 与 fencing、quarantine/CAS central rehash、
+  typed terminal receipt、deployment-pinned `TerminalVerificationAttestation`/outbox，以及 injected
+  node fault harness；它不产生 scientific admission；
+- `PostgreSQLExecutionAllocator` + private execution persistence 完成单节点 inventory、atomic
+  budget/device reservation、fencing、adoption 与 terminal settlement；
+- `LocalArtifactStore` / `LocalVerifiedInputArtifactResolver` 完成 quarantine/CAS、central rehash 和
+  producer lineage custody；
+- `QualificationNodeAgent` 只是 injected protocol/fault harness，不是 concrete runtime adapter；
+- hardened local sandbox、真实 resource/device enforcement 与 crash-idempotent runtime fence rebind 属于 PR-4b。
+
+PR-4a 尚无 concrete quote/source-budget authority adapter、OCI runtime、allocator-to-agent/terminal
+composition 或 production launch service。以上 operational composition、pre-runtime absence proof、
+terminal proof refresh/grace 与真实 isolation campaign 属于 PR-4b；在这些闭合前不能把 pure/fake harness
+测试描述为可部署执行。
 
 验收：fault injection 下同一 attempt 不并发重复；确认旧 attempt 失败后，每次 infrastructure retry 使用新
 attempt ID；execution terminal receipt/outbox exactly-once。DB terminal state 必须绑定已复核的 artifact
@@ -1551,13 +1567,15 @@ PR-5 的本地 vertical cut 通过后，才依据 fresh inventory 选择远程 c
 ## 21. 下一步执行决定
 
 **PR-0：Legacy freeze 与 migration boundary**、**PR-1：Research kernel pure contracts**、
-**PR-2：Authoritative event store** 和 **PR-3：Protocol IR pure contracts** 均已完成。下一项代码工作是
-**PR-4：Local node agent + artifact receipts**：实现 local inventory、原子 resource/budget reservation、
-node agent、quarantine/CAS、central rehash、artifact verification、durable attempt receipt、fencing/adoption、
-checkpoint 与 reconciliation，并在 fault injection 下证明一个 infrastructure attempt 不会并发重复。
+**PR-2：Authoritative event store**、**PR-3：Protocol IR pure contracts** 和
+**PR-4a：qualification-only local execution foundation** 均已完成。下一项代码工作是
+**PR-4b：production local execution composition**：实现 deployment-pinned quote/source-budget adapter、
+真实 OCI isolation/runtime、allocator↔agent↔artifact↔terminal composition、pre-runtime absence 与 terminal
+proof recovery，并用真实 fault/concurrency campaign 证明资源限制、fencing 和恢复。checkpoint 与 external
+reconciliation 仍需独立 typed contracts，不能由 generic retry 猜测。
 
-GPU node 的 deployment threat model 和 onboarding checklist 可以继续独立准备，但直到 PR-4 的
-execution/receipt contract 和 PR-5 的 durable local vertical cut 都通过前，不部署逐任务 remote execution。
+GPU node 的 deployment threat model 和 onboarding checklist 可以继续独立准备，但直到 PR-4b 的
+production execution composition 和 PR-5 的 durable local vertical cut 都通过前，不部署逐任务 remote execution。
 
 本文的判断标准很简单：每个新增组件都必须能回答“它改变了哪一个类型化科学状态、依据哪份可验证证据、
 谁有权提交这次改变，以及第三方怎样重放”。如果不能回答，它最多是一个 proposal 工具，不是自主科学家

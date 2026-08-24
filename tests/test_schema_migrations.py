@@ -17,7 +17,21 @@ from aletheia.db import (
 
 
 def test_repository_has_one_expected_alembic_head():
-    assert expected_schema_revision() == "20260824_0023"
+    assert expected_schema_revision() == "20260825_0024"
+
+
+def test_local_execution_foundation_is_fenced_and_not_the_legacy_queue():
+    source = (
+        Path(__file__).parents[1]
+        / "migrations"
+        / "versions"
+        / "20260825_0024_local_execution_foundation.py"
+    ).read_text()
+    assert "execution_qualification_admissions" in source
+    assert "execution_device_heads" in source
+    assert "DEFERRABLE INITIALLY DEFERRED" in source
+    assert "reconciliation must retain every resource and authority hold" in source
+    assert "jobs_tasks" not in source
 
 
 def test_research_authority_backfill_is_closed_against_concurrent_legacy_inserts():

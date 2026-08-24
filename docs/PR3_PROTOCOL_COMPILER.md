@@ -146,7 +146,7 @@ parameter bindings, operation batch size, and the preregistered replicate kind, 
 hashes, and site requirement. The DAG separately binds the static resource-catalog identity. This
 command hash describes the logical adapter command; it is not shell code or launch authority.
 
-Before PR-4 may place or launch an `ExecutionIntent`, it must call
+Before PR-4a may reserve an `ExecutionIntent`, or any later component may launch one, it must call
 `verify_execution_intent_binding(work_order, intent)`. This pure fail-closed check requires every
 frozen node/command/resource/artifact/replicate field to be exact and requires one typed
 `InputArtifactBinding` per input port. A protocol input declares a verification-receipt hash; an
@@ -166,8 +166,10 @@ current_intent, previous_receipt)` requires a receipt containing the exact prior
 engineering failure explicitly marked retryable after confirmed termination, and exact next-
 attempt lineage. All fields other than `infrastructure_attempt` remain byte-identical. Retry and
 reconciliation behavior is also bounded by the selected capability manifest and requested resource
-envelope. The generic helper rejects reconciliation and checkpoint-resume modes; PR-4 must add
-their specialized custody and state-transition proofs.
+envelope. The generic helper rejects reconciliation and checkpoint-resume modes. PR-4a now adds a
+qualification-only retained-reconciliation state plus signed same-node adoption and terminal
+recovery outside that helper; checkpoint resume remains disabled until a later dedicated custody
+and state-transition contract exists.
 
 External and physical effects are conservative. `READ_ONLY_EXTERNAL` still requires an external
 runtime, an explicit action kind, and a matching static external resource, while its effect class is
@@ -241,11 +243,19 @@ conda run -n aletheia ruff check \
 The authoritative acceptance counts belong in the commit/PR evidence after a clean run. This guide
 does not convert an in-progress or partial count into a release claim.
 
-## What PR-4 must add
+## What follows the PR-3 pure boundary
 
-PR-4 implements the first real execution boundary: local inventory, atomic resource and budget
-reservation, a node agent, hardened execution, quarantine/CAS transfer, central rehash and artifact
-verification, durable attempt receipts, fencing/adoption, checkpoint recovery, and fault-tested
-reconciliation. Until that slice is complete, no protocol compilation may be interpreted as
-permission to start a process, allocate either V100 server, use the 2060 node, spend money, call an
-external measurement provider, or operate a physical instrument.
+PR-4a now implements a qualification-only foundation: deployment-signed engineering grants,
+enrolled single-node inventory, constructor-supplied authority/custody resolvers, atomic PostgreSQL
+resource and budget reservation, fenced attempts and same-node adoption, local quarantine/CAS
+rehash, signed node and terminal evidence, transactional terminal receipt/outbox settlement, and an
+injected node fault facade.
+
+That foundation is not a deployable execution service. It has no concrete quote/source-budget
+authority adapter, OCI runtime, allocator-to-agent/artifact/terminal composition, checkpoint
+recovery, external-action reconciliation, HTTP launch path, or Research Kernel launch
+authorization. PR-4b must compose and qualify the production local runtime and authority adapters;
+checkpoint/external-action paths still require separate later contracts. PR-5 must add the signed
+scientific action-to-execution bridge. Neither a protocol compilation nor a PR-4a qualification
+value alone is permission to start a process, allocate either V100 server, use the 2060 node, spend
+money, call an external measurement provider, or operate a physical instrument.

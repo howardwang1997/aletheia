@@ -26,6 +26,11 @@ Current implementation slice:
 - `PR3_PROTOCOL_COMPILER.md` — PR-3 contract map, hard gates, canonical compilation workflow,
   typed input-receipt and retry bindings, heterogeneous fixtures, frozen v1 bindings, verification
   commands, and PR-4 boundary.
+- `architecture/0048-qualification-only-local-execution-foundation.md` — the PR-4a decision to
+  separate deployment-signed engineering qualification, enrolled node authority, fenced leases,
+  and artifact custody from Research Kernel launch and observation admission.
+- `PR4_LOCAL_EXECUTION_FOUNDATION.md` — deployment pins, lifecycle, node evidence, artifact workflow,
+  recovery rules, and explicit non-capabilities for the local execution foundation.
 
 Supporting technology research (not the system architecture):
 
@@ -323,3 +328,8 @@ After the target-architecture RFC above, use this order for the current implemen
 128. `PR3_PROTOCOL_COMPILER.md` — developer guide for constructing, checking, compiling, and
     independently verifying PR-3 work orders, input-receipt identities, and retry lineage without
     live execution or launch authority.
+129. `architecture/0048-qualification-only-local-execution-foundation.md` — accepted PR-4a
+    decision for signed qualification, fenced PostgreSQL resource/budget authority, artifact
+    custody, and the explicit non-deployable boundary.
+130. `PR4_LOCAL_EXECUTION_FOUNDATION.md` — operator/developer guide for PR-4a pins, lifecycle,
+    recovery, schema, terminal verification, and deferred production composition.

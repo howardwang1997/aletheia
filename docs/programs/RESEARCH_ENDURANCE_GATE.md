@@ -35,7 +35,7 @@ passing accelerated report always has `real_72h_passed=false`.
 ## Durable lifecycle
 
 The endurance ledger was introduced at `20260818_0022`; deploy the current repository head
-`20260824_0023`:
+`20260825_0024`:
 
 ~~~bash
 conda run -n aletheia alembic upgrade head

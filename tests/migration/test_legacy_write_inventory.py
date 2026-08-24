@@ -1518,7 +1518,7 @@ def test_inventory_schema_is_complete_and_has_no_dual_writes() -> None:
     assert inventory["inventory_id"] == "aletheia.legacy_write_owners.v1"
     assert inventory["policy"]["dual_write_policy"] == "none"
     writes = inventory["writes"]
-    assert len(writes) == 71
+    assert len(writes) == 73
     ids = [write["write_id"] for write in writes]
     assert len(ids) == len(set(ids)), "write_id values must be unique"
 
@@ -1855,6 +1855,99 @@ def test_research_store_tables_have_one_authoritative_writer_and_split_semantics
     assert (
         policy["direct_file_sink_profile_by_prefix"]["aletheia.research_store.cas"]
         == "research_kernel_cas"
+    )
+
+
+def test_execution_foundation_tables_have_one_qualification_only_writer() -> None:
+    inventory = _inventory()
+    writes = {write["write_id"]: write for write in inventory["writes"]}
+    authority = writes["execution.qualification_authority"]
+    outbox = writes["execution.transactional_outbox"]
+
+    assert authority["authority_class"] == outbox["authority_class"] == "operational_state"
+    assert authority["legacy_entrypoint"] == {
+        "module": "aletheia.execution.allocator",
+        "symbol": "PostgreSQLExecutionAllocator.admit_and_reserve",
+    }
+    assert {
+        reference["symbol"]
+        for reference in [authority["legacy_entrypoint"], *authority["additional_writers"]]
+    } == {
+        "PostgreSQLExecutionAllocator._append_budget_event",
+        "PostgreSQLExecutionAllocator._append_inventory_devices",
+        "PostgreSQLExecutionAllocator._reconcile_expired_attempt",
+        "PostgreSQLExecutionAllocator._reconcile_locked",
+        "PostgreSQLExecutionAllocator._transition_attempt",
+        "PostgreSQLExecutionAllocator.admit_and_reserve",
+        "PostgreSQLExecutionAllocator.adopt_attempt",
+        "PostgreSQLExecutionAllocator.append_inventory",
+        "PostgreSQLExecutionAllocator.commit_terminal_receipt",
+        "PostgreSQLExecutionAllocator.heartbeat",
+        "PostgreSQLExecutionAllocator.mark_running",
+        "PostgreSQLExecutionAllocator.mark_terminated",
+        "PostgreSQLExecutionAllocator.mark_verifying",
+        "PostgreSQLExecutionAllocator.reconcile_expired",
+        "PostgreSQLExecutionAllocator.register_node",
+        "PostgreSQLExecutionAllocator.start_attempt",
+    }
+    expected_internal_callers = {
+        "PostgreSQLExecutionAllocator._reconcile_expired_attempt",
+        "PostgreSQLExecutionAllocator._reconcile_locked",
+        "PostgreSQLExecutionAllocator._transition_attempt",
+        "PostgreSQLExecutionAllocator.admit_and_reserve",
+        "PostgreSQLExecutionAllocator.adopt_attempt",
+        "PostgreSQLExecutionAllocator.append_inventory",
+        "PostgreSQLExecutionAllocator.commit_terminal_receipt",
+        "PostgreSQLExecutionAllocator.heartbeat",
+        "PostgreSQLExecutionAllocator.mark_running",
+        "PostgreSQLExecutionAllocator.mark_terminated",
+        "PostgreSQLExecutionAllocator.mark_verifying",
+        "PostgreSQLExecutionAllocator.reconcile_expired",
+        "PostgreSQLExecutionAllocator.start_attempt",
+    }
+    assert {item["symbol"] for item in authority["call_sites"]} == expected_internal_callers
+    assert {
+        item["symbol"] for item in authority["allowed_legacy_callers"]
+    } == expected_internal_callers
+    assert all(
+        item["module"] == "aletheia.execution.allocator"
+        for item in [*authority["call_sites"], *authority["allowed_legacy_callers"]]
+    )
+    assert authority["status"] == outbox["status"] == "authoritative_new_owner"
+    assert {
+        "execution.qualification_authority",
+        "execution.transactional_outbox",
+    } <= inventory["policy"]["writer_surface_static_resolution_exceptions"].keys()
+    assert set(_storage_targets(authority)) == {
+        "postgres.execution_persistence.execution_nodes",
+        "postgres.execution_persistence.execution_inventory_attestations",
+        "postgres.execution_persistence.execution_inventory_devices",
+        "postgres.execution_persistence.execution_device_heads",
+        "postgres.execution_persistence.execution_qualification_admissions",
+        "postgres.execution_persistence.execution_budget_authorizations",
+        "postgres.execution_persistence.execution_budget_heads",
+        "postgres.execution_persistence.execution_heads",
+        "postgres.execution_persistence.execution_attempts",
+        "postgres.execution_persistence.execution_attempt_adoptions",
+        "postgres.execution_persistence.execution_resource_leases",
+        "postgres.execution_persistence.execution_device_leases",
+        "postgres.execution_persistence.execution_budget_reservations",
+        "postgres.execution_persistence.execution_budget_events",
+        "postgres.execution_persistence.execution_terminal_receipts",
+    }
+    assert _storage_targets(outbox) == ("postgres.execution_persistence.execution_outbox",)
+    assert "cannot admit a scientific observation" in authority["scientific_semantics"]
+    assert "transports no scientific admission" in outbox["scientific_semantics"]
+    assert not outbox["call_sites"]
+
+    policy = inventory["policy"]
+    assert (
+        policy["direct_file_sink_profile_by_prefix"]["aletheia.execution.artifact_store"]
+        == "qualification_artifact_custody"
+    )
+    assert (
+        policy["direct_file_sink_profile_by_prefix"]["aletheia.execution.node_agent"]
+        == "qualification_node_state"
     )
 
 

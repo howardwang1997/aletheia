@@ -220,15 +220,17 @@ classes and outcome coverage, then update the new fixture and its content hashes
 PR-0 assumes trusted, local, single-writer source and snapshot-store directories.  Static symlink
 components are rejected, but v1 does not use a directory-fd/openat protocol against a concurrent
 attacker renaming intermediate directories.  Do not place either root in an adversarial shared
-filesystem.  A later hardened artifact store must provide its own custody/fencing boundary.
+filesystem. PR-4a's separate qualification-only artifact store has its own custody boundary; it does
+not retrofit this adapter or make these roots safe on an adversarial shared filesystem.
 
 CAS objects and manifests are written before the source-version binding.  A failed conflicting freeze
 can therefore leave unreferenced immutable objects or a manifest, but cannot rebind the accepted
 version.  Do not delete a binding to hide a conflict.  Quarantine the store, verify every accepted
 binding, and only garbage-collect objects unreachable from verified bindings under a separately
 reviewed maintenance procedure.  V1 reads each requested object into memory, so requests must contain
-reviewed compact exports; bulk datasets remain external content-addressed custody pointers until the
-streaming PR-4 artifact store exists.
+reviewed compact exports. PR-4a now supplies a separate streaming, qualification-only artifact
+store, but it does not retrofit this PR-0 snapshot reader or compose production bulk-dataset custody;
+keep bulk datasets as external content-addressed custody pointers until that integration is audited.
 
 ## Endurance evidence policy
 

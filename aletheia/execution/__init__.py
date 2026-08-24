@@ -1,6 +1,6 @@
-"""Pure execution contracts.
+"""Pure execution package surface.
 
-Operational allocators, node agents, queues, and artifact stores deliberately live outside this
-package surface until the execution-foundation slice.  Import concrete contracts from
-``aletheia.execution.schemas`` or ports from ``aletheia.execution.ports``.
+Import frozen contracts from ``aletheia.execution.schemas`` and protocols from
+``aletheia.execution.ports``.  Operational PR-4a modules live under this package but are
+deliberately not imported or re-exported here, preserving the pure package-initializer boundary.
 """

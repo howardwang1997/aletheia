@@ -27,6 +27,7 @@ def _minimal_pr3_repository(tmp_path: Path, *, legacy_driver: bool = False) -> P
     _source(tmp_path, "aletheia/execution/__init__.py")
     _source(tmp_path, "aletheia/execution/schemas.py")
     _source(tmp_path, "aletheia/execution/ports.py")
+    _source(tmp_path, "aletheia/execution/runtime_contracts.py")
     if legacy_driver:
         _source(tmp_path, "aletheia/migration/__init__.py")
         _source(
@@ -51,6 +52,7 @@ def test_repository_pr3_boundaries_are_non_vacuous_and_clean() -> None:
         "aletheia/execution/__init__.py",
         "aletheia/execution/schemas.py",
         "aletheia/execution/ports.py",
+        "aletheia/execution/runtime_contracts.py",
         "aletheia/migration/protocol_v1_compatibility.py",
     )
     assert all((REPOSITORY_ROOT / relative).is_file() for relative in required_sources)
@@ -62,6 +64,7 @@ def test_execution_pure_contract_allowlist_is_exact() -> None:
     assert DEFAULT_PURE_CONTRACT_TARGET_MODULES == (
         "aletheia.execution",
         "aletheia.execution.ports",
+        "aletheia.execution.runtime_contracts",
         "aletheia.execution.schemas",
     )
 
@@ -87,7 +90,11 @@ def test_execution_pure_contract_allowlist_is_exact() -> None:
 )
 @pytest.mark.parametrize(
     "protected_source",
-    ["aletheia/protocols/schemas.py", "aletheia/execution/schemas.py"],
+    [
+        "aletheia/protocols/schemas.py",
+        "aletheia/execution/runtime_contracts.py",
+        "aletheia/execution/schemas.py",
+    ],
 )
 def test_pr3_pure_contracts_reject_forbidden_dependencies(
     tmp_path: Path,

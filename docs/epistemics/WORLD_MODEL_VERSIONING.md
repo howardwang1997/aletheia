@@ -48,8 +48,9 @@ Upgrade a reviewed database with:
 conda run -n aletheia alembic upgrade head
 ```
 
-The expected revision is `20260815_0004`. Application startup fails closed on older or newer
-schemas.
+World-model persistence was introduced at `20260815_0004`; deploy the current repository head,
+`20260825_0024`. Application startup fails closed when the deployed schema differs from the current
+head.
 
 Store and reload only a fully validated snapshot:
 

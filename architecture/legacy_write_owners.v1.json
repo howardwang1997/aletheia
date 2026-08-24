@@ -22,12 +22,12 @@
       "aletheia/research_store": "new_authority_adapter"
     },
     "legacy_source_ast_file_count": 282,
-    "legacy_source_ast_graph_sha256": "d7ae255a71a5166c77b6a525f920646085285deb72953420352906f628cac21b",
+    "legacy_source_ast_graph_sha256": "7a761b7b8ca93a528f58081d3faf6a75cc3e97dc28107662a91242e78ec54745",
     "legacy_source_ast_review_limit": "This normalized-AST backstop freezes every parseable Python file in the declared legacy production roots after explicitly removing new-authority and migration-tooling roots. It catches added, removed or semantically changed legacy Python source even when a specialized sink scanner does not recognize the syntax; comments, formatting, generated runtime code, non-Python launchers and the explicitly excluded roots are outside this digest.",
     "migration_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "migration_source_ast_roots": ["aletheia/migration", "migrations"],
-    "migration_source_ast_file_count": 29,
-    "migration_source_ast_graph_sha256": "5f8f3a12afe0d47a4de501d686ea68230f7059712bf17330e10a2ff504e5b35c",
+    "migration_source_ast_file_count": 30,
+    "migration_source_ast_graph_sha256": "ba6e507b7630a5673500cf9031aec867c31e69f9d023fabde052276c2e13d739",
     "migration_source_ast_review_limit": "Migration tooling and immutable Alembic revision history have a separate normalized-AST freeze. Historical schema DML/backfills remain deployment authority reviewed through the migration chain rather than runtime scientific write owners.",
     "non_python_invocation_source_scheme": "git_index_regular_mode_path_byte_sha256_v1",
     "non_python_invocation_source_roots": [
@@ -74,8 +74,8 @@
     "service_mutator_call_graph_sha256": "13e491fdfcf7637e3ee2652a465eb9e119126e1360f379985cf628bf38138f5f",
     "service_boundary_limit": "This mechanically freezes statically declared aletheia.memory.service imports and imported-name uses across aletheia and operational scripts in module and nested lexical scopes. It does not claim to discover arbitrary dynamic imports or direct ORM, SQL, filesystem or external-system mutations; those are handled by separate reviewed surface baselines.",
     "writer_surface_usage_scheme": "ast_all_scope_import_alias_instance_scope_v2",
-    "writer_surface_usage_count": 310,
-    "writer_surface_call_graph_sha256": "20096fdce6b4b679ed7bab22a0a18851759d6636d47fa7b9f2b583f739464d8c",
+    "writer_surface_usage_count": 323,
+    "writer_surface_call_graph_sha256": "fa05bd4eb4d4bbdcb03aaba80d7c9e7eb881e23a847e7159746ae92551a5a034",
     "allowed_legacy_caller_scope": "Every current aletheia-package caller must be covered by allowed_legacy_callers. Operational scripts are fully frozen in call_sites and may be omitted from the post-cutover application allowlist.",
     "writer_surface_static_resolution_exceptions": {
       "compute_workspace.local": "ExperimentDriver dispatches submit through the ComputeBackend protocol; the declared caller body is checked lexically.",
@@ -85,12 +85,14 @@
       "github.ensure_branch": "The GitHub client is created behind an integration factory; the declared caller body is checked lexically.",
       "github.put_file": "The GitHub client is created behind an integration factory; the declared caller body is checked lexically.",
       "github.open_pr": "The GitHub client is created behind an integration factory; the declared caller body is checked lexically.",
-      "decision.transition": "Two fault-harness transaction callbacks directly append transition decisions; their exact ORM mutation scopes are frozen by the direct-ORM audit."
+      "decision.transition": "Two fault-harness transaction callbacks directly append transition decisions; their exact ORM mutation scopes are frozen by the direct-ORM audit.",
+      "execution.qualification_authority": "PR-4a deliberately leaves the public allocator mutation entrypoints uncomposed; all internal caller scopes and direct ORM mutation scopes are frozen separately.",
+      "execution.transactional_outbox": "PR-4a has no production terminal caller or outbox dispatcher; the atomic terminal writer and its direct ORM mutation scope are frozen separately."
     },
     "direct_file_sink_scheme": "ast_reviewed_direct_file_sink_v1",
-    "direct_file_sink_scope_count": 166,
-    "direct_file_sink_call_count": 188,
-    "direct_file_sink_graph_sha256": "304d251e154c3fb32792fecefc8bcbefe907f919e89cb5a27273028d3d59b74a",
+    "direct_file_sink_scope_count": 169,
+    "direct_file_sink_call_count": 191,
+    "direct_file_sink_graph_sha256": "ebc86bda3eb94a8110317ffef825024b8f5dc097f3834a2f4f71c86f507501d6",
     "direct_file_sink_review_limit": "The baseline covers direct Path/open/os.write, archive-open modes, atomic replace, serializer, dataframe and plotting file sinks across the declared aletheia, deployed docker-worker and recursive operational-script roots. Indirect library-internal writes, arbitrary dynamic dispatch and external systems remain separate reviewed boundaries.",
     "direct_file_sink_profiles": {
       "scientific_artifact": {
@@ -141,6 +143,22 @@
         "cutover_pr": "PR-4",
         "dual_write_policy": "none"
       },
+      "qualification_artifact_custody": {
+        "authority_class": "operational_state",
+        "current_owner_rule": "sink_module",
+        "target_owner": "aletheia.execution.artifact_store.LocalArtifactStore",
+        "migration_mode": "immutable_qualification_artifact_custody",
+        "cutover_pr": "PR-4",
+        "dual_write_policy": "none"
+      },
+      "qualification_node_state": {
+        "authority_class": "operational_state",
+        "current_owner_rule": "sink_module",
+        "target_owner": "aletheia.execution.node_agent.NodeLocalStateStore",
+        "migration_mode": "fenced_local_node_state",
+        "cutover_pr": "PR-4",
+        "dual_write_policy": "none"
+      },
       "platform_evaluation": {
         "authority_class": "platform_state",
         "current_owner_rule": "sink_module",
@@ -184,6 +202,8 @@
       "aletheia.domains.": "scientific_artifact",
       "aletheia.epistemics.": "scientific_observation",
       "aletheia.evals.": "platform_evaluation",
+      "aletheia.execution.artifact_store": "qualification_artifact_custody",
+      "aletheia.execution.node_agent": "qualification_node_state",
       "aletheia.knowledge.": "knowledge_archive",
       "aletheia.memory.transcript": "operational_workspace",
       "aletheia.migration.": "migration_evidence",
@@ -257,9 +277,9 @@
       "aletheia.notify.feishu|provider.http_post": ["feishu.notify"]
     },
     "direct_orm_mutation_scheme": "ast_import_bound_orm_mutation_v2",
-    "direct_orm_mutation_scope_count": 184,
-    "direct_orm_mutation_call_count": 285,
-    "direct_orm_mutation_graph_sha256": "b3d2609e979c03cc8dd60e7a8014788b53405c2be1967723310bb4bfebc8039a",
+    "direct_orm_mutation_scope_count": 237,
+    "direct_orm_mutation_call_count": 373,
+    "direct_orm_mutation_graph_sha256": "efba10c194f2e384c2ef8ddd84c55166ff7f64207c8ca4e126c68423cf0ceafb",
     "direct_orm_authority_source": "Every resolved table is classified by the postgres storage_target/storage_targets records in this inventory; non-constructor mutation scopes must match a declared legacy_entrypoint or additional_writers symbol.",
     "direct_orm_review_limit": "This static AST baseline resolves explicit imports/re-exports and aliases for every declared SQLAlchemy model; ORM class self/cls bindings; model construction; query/get/select/scalar result flows; attribute, setattr and relationship mutation; explicit aliases of recognized setattr/session/query/table/SQLAlchemy mutation callables; session add/delete/merge/bulk APIs; SQLAlchemy/table/query insert/update/delete; literal mutating SQL; and fail-closed f-string/binary SQL edges. It does not claim to resolve dynamic imports, reflection-generated models, runtime monkeypatching, helper-returned model instances, dynamically selected mutator callables, or dynamic SQL hidden behind an untyped variable; any semantic change in legacy Python remains guarded by the separate normalized-AST source freeze.",
     "protected_orm_reference_scheme": "ast_explicit_import_and_reference_scope_v1",
@@ -2653,6 +2673,239 @@
       "status": "authoritative_new_owner",
       "post_cutover_legacy_mode": "not_applicable_new_authority",
       "blocker": null,
+      "exception_expiry": null
+    },
+    {
+      "write_id": "execution.qualification_authority",
+      "legacy_entrypoint": {
+        "module": "aletheia.execution.allocator",
+        "symbol": "PostgreSQLExecutionAllocator.admit_and_reserve"
+      },
+      "additional_writers": [
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.register_node"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.append_inventory"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._append_inventory_devices"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.start_attempt"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.mark_running"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.mark_terminated"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.mark_verifying"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._transition_attempt"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.heartbeat"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.adopt_attempt"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.commit_terminal_receipt"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.reconcile_expired"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._reconcile_expired_attempt"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._reconcile_locked"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._append_budget_event"
+        }
+      ],
+      "call_sites": [
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._reconcile_expired_attempt"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._reconcile_locked"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._transition_attempt"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.admit_and_reserve"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.adopt_attempt"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.append_inventory"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.commit_terminal_receipt"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.heartbeat"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.mark_running"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.mark_terminated"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.mark_verifying"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.reconcile_expired"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.start_attempt"
+        }
+      ],
+      "storage_target": "postgres.execution_persistence.execution_nodes",
+      "storage_targets": [
+        "postgres.execution_persistence.execution_nodes",
+        "postgres.execution_persistence.execution_inventory_attestations",
+        "postgres.execution_persistence.execution_inventory_devices",
+        "postgres.execution_persistence.execution_device_heads",
+        "postgres.execution_persistence.execution_qualification_admissions",
+        "postgres.execution_persistence.execution_budget_authorizations",
+        "postgres.execution_persistence.execution_budget_heads",
+        "postgres.execution_persistence.execution_heads",
+        "postgres.execution_persistence.execution_attempts",
+        "postgres.execution_persistence.execution_attempt_adoptions",
+        "postgres.execution_persistence.execution_resource_leases",
+        "postgres.execution_persistence.execution_device_leases",
+        "postgres.execution_persistence.execution_budget_reservations",
+        "postgres.execution_persistence.execution_budget_events",
+        "postgres.execution_persistence.execution_terminal_receipts"
+      ],
+      "mutation_kind": "qualification_only_fenced_execution_transaction",
+      "scientific_semantics": "Persists deployment-qualified engineering admission, signed inventory, resource and budget holds, fenced infrastructure attempts, typed adoption evidence, and terminal engineering receipts. These rows are operational authority and engineering evidence only; they cannot admit a scientific observation or claim.",
+      "authority_class": "operational_state",
+      "current_owner": "aletheia.execution.allocator.PostgreSQLExecutionAllocator",
+      "current_commit_boundary": "one PostgreSQLExecutionAllocator transaction with database-clock authorization, exact row locks, fencing, and deferred bundle checks",
+      "target_owner": "aletheia.execution.allocator.PostgreSQLExecutionAllocator",
+      "target_command_or_object": "QualificationOnlyExecutionAuthorityBundle",
+      "migration_mode": "qualification_foundation_no_scientific_launch",
+      "allowed_legacy_callers": [
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._reconcile_expired_attempt"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._reconcile_locked"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._transition_attempt"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.admit_and_reserve"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.adopt_attempt"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.append_inventory"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.commit_terminal_receipt"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.heartbeat"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.mark_running"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.mark_terminated"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.mark_verifying"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.reconcile_expired"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.start_attempt"
+        }
+      ],
+      "dual_write_policy": "none",
+      "cutover_pr": "PR-4",
+      "golden_fixture": null,
+      "status": "authoritative_new_owner",
+      "blocker": "No concrete production quote/source-budget authority resolver, allocator-to-node adapter, or runtime composition exists in PR-4a.",
+      "exception_expiry": null
+    },
+    {
+      "write_id": "execution.transactional_outbox",
+      "legacy_entrypoint": {
+        "module": "aletheia.execution.allocator",
+        "symbol": "PostgreSQLExecutionAllocator.commit_terminal_receipt"
+      },
+      "call_sites": [],
+      "storage_target": "postgres.execution_persistence.execution_outbox",
+      "mutation_kind": "transactional_engineering_terminal_delivery_intent",
+      "scientific_semantics": "Stores an immutable delivery intent for a terminal engineering receipt plus operational delivery bookkeeping. It transports no scientific admission and cannot update Research Kernel state.",
+      "authority_class": "operational_state",
+      "current_owner": "aletheia.execution.allocator.PostgreSQLExecutionAllocator.commit_terminal_receipt",
+      "current_commit_boundary": "the same allocator transaction as terminal attempt settlement and immutable ExecutionReceipt insertion",
+      "target_owner": "aletheia.execution.allocator.PostgreSQLExecutionAllocator.commit_terminal_receipt",
+      "target_command_or_object": "TransactionalExecutionTerminalOutboxIntent",
+      "migration_mode": "qualification_terminal_transport_only",
+      "allowed_legacy_callers": [],
+      "dual_write_policy": "none",
+      "cutover_pr": "PR-4",
+      "golden_fixture": null,
+      "status": "authoritative_new_owner",
+      "blocker": "No production outbox dispatcher or scientific observation bridge is part of PR-4a.",
       "exception_expiry": null
     }
   ]

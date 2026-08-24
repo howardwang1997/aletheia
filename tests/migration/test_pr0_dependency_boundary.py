@@ -11,6 +11,7 @@ from aletheia.migration.boundary import (
     DEFAULT_AUDITED_DYNAMIC_LOADER_SOURCES,
     DEFAULT_OPERATIONAL_PYTHON_ROOTS,
     find_dependency_boundary_violations,
+    find_execution_persistence_import_violations,
     find_legacy_driver_import_violations,
     find_research_store_persistence_import_violations,
 )
@@ -105,6 +106,158 @@ def test_repository_freezes_legacy_driver_to_durable_worker() -> None:
 
 def test_repository_has_one_authoritative_research_store_writer() -> None:
     assert find_research_store_persistence_import_violations(REPOSITORY_ROOT) == ()
+
+
+def test_repository_has_one_authoritative_execution_writer() -> None:
+    assert find_execution_persistence_import_violations(REPOSITORY_ROOT) == ()
+
+
+def test_new_module_cannot_import_execution_authority_records(tmp_path: Path) -> None:
+    root = _minimal_repository(tmp_path)
+    _source(root, "aletheia/execution/__init__.py")
+    _source(root, "aletheia/execution/persistence.py")
+    _source(
+        root,
+        "aletheia/rogue_execution_writer.py",
+        "from aletheia.execution.persistence import _ExecutionAttemptRecord\n",
+    )
+
+    violations = find_execution_persistence_import_violations(root, allowed_importers=())
+
+    assert any(
+        violation.root_module == "aletheia.rogue_execution_writer"
+        and violation.imported_module == "aletheia.execution.persistence"
+        for violation in violations
+    )
+
+
+def test_execution_allocator_cannot_publicly_alias_private_record(tmp_path: Path) -> None:
+    root = _minimal_repository(tmp_path)
+    _source(root, "aletheia/execution/__init__.py")
+    _source(root, "aletheia/execution/persistence.py")
+    _source(
+        root,
+        "aletheia/execution/allocator.py",
+        "from aletheia.execution.persistence import "
+        "_ExecutionAttemptRecord as ExecutionAttemptRecord\n",
+    )
+
+    violations = find_execution_persistence_import_violations(
+        root,
+        allowed_importers=("aletheia.execution.allocator",),
+    )
+
+    assert any(
+        violation.root_module == "aletheia.execution.allocator"
+        and violation.import_kind == "public-execution-authority-symbol"
+        for violation in violations
+    )
+
+
+@pytest.mark.parametrize(
+    "rogue_source",
+    [
+        (
+            "import aletheia.execution.allocator as adapter\n"
+            "record = adapter._ExecutionAttemptRecord\n"
+        ),
+        (
+            "from aletheia.execution import allocator as imported_allocator\n"
+            "adapter = imported_allocator\n"
+            "record = getattr(adapter, '_ExecutionAttemptRecord')\n"
+        ),
+        "from aletheia.execution.allocator import _ExecutionAttemptRecord\n",
+        "from aletheia.execution.allocator import *\n",
+    ],
+)
+def test_execution_allocator_private_record_cannot_be_recovered(
+    tmp_path: Path,
+    rogue_source: str,
+) -> None:
+    root = _minimal_repository(tmp_path)
+    _source(root, "aletheia/execution/__init__.py")
+    _source(root, "aletheia/execution/persistence.py")
+    _source(
+        root,
+        "aletheia/execution/allocator.py",
+        "from aletheia.execution.persistence import _ExecutionAttemptRecord\n",
+    )
+    _source(root, "aletheia/rogue_execution_writer.py", rogue_source)
+
+    violations = find_execution_persistence_import_violations(
+        root,
+        allowed_importers=("aletheia.execution.allocator",),
+    )
+
+    assert any(
+        violation.root_module == "aletheia.rogue_execution_writer"
+        and violation.import_kind == "private-execution-authority-symbol"
+        for violation in violations
+    )
+
+
+def test_execution_schema_registration_import_is_side_effect_only(tmp_path: Path) -> None:
+    root = _minimal_repository(tmp_path)
+    _source(root, "aletheia/execution/__init__.py")
+    _source(root, "aletheia/execution/persistence.py")
+    _source(
+        root,
+        "aletheia/schema_migrations.py",
+        "import aletheia.execution.persistence  # register metadata only\n",
+    )
+
+    assert (
+        find_execution_persistence_import_violations(
+            root,
+            allowed_importers=("aletheia.schema_migrations",),
+        )
+        == ()
+    )
+
+
+@pytest.mark.parametrize(
+    "schema_source",
+    [
+        "from aletheia.execution.persistence import _ExecutionAttemptRecord\n",
+        (
+            "import aletheia.execution.persistence as records\n"
+            "record = records._ExecutionAttemptRecord\n"
+        ),
+        (
+            "import aletheia.execution.persistence\n"
+            "record = aletheia.execution.persistence._ExecutionAttemptRecord\n"
+        ),
+        (
+            "from aletheia.execution import persistence as records\n"
+            "record = getattr(records, '_ExecutionAttemptRecord')\n"
+        ),
+        (
+            "import aletheia.execution.persistence as records\n"
+            "alias = records\n"
+            "record = getattr(alias, dynamic_name)\n"
+        ),
+    ],
+)
+def test_execution_schema_registration_cannot_recover_private_records(
+    tmp_path: Path,
+    schema_source: str,
+) -> None:
+    root = _minimal_repository(tmp_path)
+    _source(root, "aletheia/execution/__init__.py")
+    _source(root, "aletheia/execution/persistence.py")
+    _source(root, "aletheia/schema_migrations.py", schema_source)
+
+    violations = find_execution_persistence_import_violations(
+        root,
+        allowed_importers=("aletheia.schema_migrations",),
+    )
+
+    assert any(
+        violation.root_module == "aletheia.schema_migrations"
+        and violation.import_kind == "schema-registration-execution-authority-access"
+        and violation.imported_module.startswith("aletheia.execution.persistence:")
+        for violation in violations
+    )
 
 
 def test_new_module_cannot_import_authoritative_store_records(tmp_path: Path) -> None:

@@ -58,7 +58,8 @@ an interrupted write cannot leave a partial final digest object.
 The archive is pinned when `ResearchKernelStore` is constructed; commit/audit/replay callers cannot
 substitute a different per-call custodian. The current receipt binds content identity and canonical
 storage key, not a remotely attested backend identity. Production service composition must keep the
-pinned archive instance private; a cross-node custodian identity/attestation is deferred to PR-4.
+pinned archive instance private. PR-4a adds a separate local qualification-only artifact store, not
+a cross-node custodian identity/attestation; that remote custody contract remains deferred.
 
 `program_id` and `campaign_id` are immutable compatibility/routing fields in the Quest scope
 binding. They do not create a second Program/Campaign scientific authority. Existing
