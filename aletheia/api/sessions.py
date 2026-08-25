@@ -12,6 +12,11 @@ import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from aletheia.api.execution_surfaces import (
+    LEGACY_PROTOCOL_EXECUTOR,
+    LegacyExecutionSurface,
+    mark_legacy_protocol_executor,
+)
 from aletheia.memory.service import create_run, get_run
 from aletheia.orchestrator.session import auto_dry_run, get_session_manager
 
@@ -27,6 +32,7 @@ class CreateSessionRequest(BaseModel):
 class CreateSessionResponse(BaseModel):
     run_id: str
     mode: str
+    execution_surface: LegacyExecutionSurface = LEGACY_PROTOCOL_EXECUTOR
 
 
 class MessageRequest(BaseModel):
@@ -67,4 +73,4 @@ async def get_session(run_id: str) -> dict:
     run = await asyncio.to_thread(get_run, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
-    return run
+    return mark_legacy_protocol_executor(run)

@@ -104,7 +104,7 @@ reliable autonomous frontier scientist.
    reproducibility package/PR; a qualifying scientific-exit gate and F12 remain.
 
 The new-Quest control-plane migration has completed the local source/test slices for PR-0 through
-PR-5, including the PR-4a foundation and PR-4b qualification-only local-execution composition. A deployment-pinned,
+PR-6, including the PR-4a foundation and PR-4b qualification-only local-execution composition. A deployment-pinned,
 root-certified Ed25519 policy now gates full signed commands into an append-only event/CAS store;
 deterministic replay, full audit, crash-safe idempotency, a Quest-wide emergency halt, and an
 immutable cross-store namespace prevent the legacy Program graph and research kernel from owning
@@ -141,13 +141,20 @@ Its local synthetic vertical covers a measurement blocker, typed refinement and 
 valid negative/inconclusive evidence, a signed hypothesis fork, selected-child activation, and a
 discriminating follow-up that is compiled, executed, admitted into a second distinct scientific
 slot, and incorporated without the legacy `ExperimentDriver`. It is engineering evidence, not a
-scientific claim or deployment proof. The PR-2 store also still has one immutable policy epoch and
+scientific claim or deployment proof. PR-6 now isolates the source-pinned materials
+`featurize`/`train_evaluate` harness as a standard atomic capability, emits raw eval/model/index
+artifacts, and sends them through a domain-free signed structural validator. The standard compiler
+and controller need no materials/MAE/MatBench/RAG special case; RAG and the full
+`ExperimentDriver` remain legacy, and old API/dashboard responses are explicitly marked
+`legacy_protocol_executor`. This too is local engineering evidence, not a qualified production
+handler or host. The PR-2 store also still has one immutable policy epoch and
 `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
 the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-3 compiler guide](docs/PR3_PROTOCOL_COMPILER.md), plus the
 [PR-4a foundation guide](docs/PR4_LOCAL_EXECUTION_FOUNDATION.md) and
 [PR-4b composition guide](docs/PR4B_LOCAL_EXECUTION_COMPOSITION.md), and
-[PR-5 controller guide](docs/PR5_DURABLE_SCIENTIFIC_CONTROLLER.md).
+[PR-5 controller guide](docs/PR5_DURABLE_SCIENTIFIC_CONTROLLER.md), plus the
+[PR-6 compatibility guide](docs/PR6_LEGACY_EVALUATION_COMPATIBILITY.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,

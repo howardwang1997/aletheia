@@ -35,6 +35,7 @@ function Lab() {
             setDryRun={s.setDryRun}
             onNew={s.newSession}
             mode={s.mode}
+            executionSurface={s.executionSurface}
             canControl={canControl}
           />
           <DataPanel

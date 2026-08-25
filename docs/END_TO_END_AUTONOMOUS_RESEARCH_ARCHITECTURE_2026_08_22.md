@@ -1587,7 +1587,8 @@ deployment gate 约束。详见
 
 ### PR-6：Legacy evaluation compatibility leaf
 
-- 只抽取 `DomainPlugin` 中可隔离的 evaluation harness 为 `LegacyEvaluationCapability`；
+- 本地 source/test slice 已完成：只抽取 `DomainPlugin` 中可隔离的 evaluation harness 为
+  `LegacyEvaluationCapability`；
 - 完整 `ExperimentDriver` 继续留在 legacy `/runs` workflow，不注册成 capability；
 - legacy outputs 只作为 raw artifacts 进入新 validator；
 - 新 controller 通过该 evaluation leaf 完成一次兼容 run；RAG 等自带控制流的完整路径保持 legacy，直到其
@@ -1595,6 +1596,17 @@ deployment gate 约束。详见
 - 保留旧 API，但 dashboard 清楚标记 `legacy_protocol_executor`。
 
 验收：golden results 不回归；新 kernel 不包含 materials、MAE、MatBench 或 RAG special case。
+
+当前实现冻结 materials evaluation 的完整 reviewed source closure，通过标准
+`CapabilityManifestV2`/PR-3 compiler 降低为普通 WorkOrder 节点，并仅产出 `eval.json`、opaque
+`model.bin` 与 closed `raw-result.json`。独立 validator 不 import domain、不反序列化 model，fresh-rehash
+全部文件并机械投影 grouped-evaluation metrics；其签名 receipt 只表示 raw artifact 可进入后续独立科学
+validation，不产生 outcome、observation admission 或 claim authority。真实材料 fixture 的 canonical metric
+tuple 已冻结；新 controller instance 可在执行后从 retained projection 继续 validation，且
+`ExperimentDriver._optimize` 调用数为 0。RAG override 被机械拒绝。旧 `/runs`/`/sessions` API 与 dashboard
+现在显式返回/显示 `legacy_protocol_executor`。这仍是本地 engineering evidence，不是已 qualification 的
+production handler/image/host。详见 `PR6_LEGACY_EVALUATION_COMPATIBILITY.md` 与
+`architecture/0051-legacy-evaluation-compatibility-leaf.md`。
 
 PR-5 的本地 vertical cut 已完成；现在仍须完成 PR-4 target-host campaign 与 PR-5 production
 controller/validator/dispatcher/worker composition，之后才依据 fresh inventory 选择远程 canary。PR-6 可以在
@@ -1656,12 +1668,12 @@ controller/validator/dispatcher/worker composition，之后才依据 fresh inven
 **PR-0：Legacy freeze 与 migration boundary**、**PR-1：Research kernel pure contracts**、
 **PR-2：Authoritative event store**、**PR-3：Protocol IR pure contracts**、
 **PR-4a：qualification-only local execution foundation** 和 **PR-4b：qualification-only local execution
-composition implementation（含 deployment-evidence contracts）**，以及 **PR-5：signed scientific bridge +
-durable controller local vertical** 均已完成源码切片。PR-4b 的 exact target-host
+composition implementation（含 deployment-evidence contracts）**、**PR-5：signed scientific bridge +
+durable controller local vertical**，以及 **PR-6：legacy evaluation compatibility leaf** 均已完成源码切片。PR-4b 的 exact target-host
 Linux/root/systemd/loop/ext4/rootful-Docker campaign 仍是部署前硬门；通过前不把它描述为 production local
-execution service。下一项隔离的兼容代码工作是 **PR-6：Legacy evaluation compatibility leaf**；同时要补的是
-PR-5 deployment-owned step-handler/signing/validator/dispatcher/worker composition 与 process-kill PostgreSQL
-campaign，而不是扩张 controller authority。checkpoint 与 external reconciliation 仍需独立 typed contracts，
+execution service。下一项 load-bearing 工作是 PR-6 production step handler/image qualification、PR-5
+deployment-owned signing/validator/dispatcher/worker/reconciler composition 与 process-kill PostgreSQL campaign，
+而不是扩张 controller authority。checkpoint 与 external reconciliation 仍需独立 typed contracts，
 不能由 generic retry 猜测。
 
 GPU node 的 deployment threat model 和 onboarding checklist 可以继续独立准备，但直到 PR-4b 的 target-host

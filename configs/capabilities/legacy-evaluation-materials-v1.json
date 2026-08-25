@@ -1,0 +1,126 @@
+{
+  "schema_name": "aletheia.legacy_evaluation_harness_manifest",
+  "schema_version": 1,
+  "capability_id": "capability.legacy-evaluation.materials.v1",
+  "semantic_version": "1.0.0",
+  "plugin_name": "materials",
+  "plugin_class_ref": "aletheia.domains.materials.matbench_task:MaterialsBandGapPlugin",
+  "adapter_ref": "aletheia.legacy_evaluation.capability:execute_legacy_evaluation",
+  "source_bindings": [
+    {
+      "relative_path": "aletheia/domains/base.py",
+      "content_sha256": "73fa26823d51b41c484fc83a5efbc579f043352f7a9704fa27316912cfae4da0"
+    },
+    {
+      "relative_path": "aletheia/domains/materials/datasets.py",
+      "content_sha256": "74f23fcebe82c171e75c8192fda853f228ba389e837f16bc0373c8e05e116b3f"
+    },
+    {
+      "relative_path": "aletheia/domains/materials/featurizers.py",
+      "content_sha256": "f9de1febc9525144f2dae4eb4757ea5f0b1c95d71cac25f8990f89d34248fd47"
+    },
+    {
+      "relative_path": "aletheia/domains/materials/matbench_task.py",
+      "content_sha256": "7124f213ace5ea2babd8552571070089a83d9c9a53494319241436e2550d3142"
+    },
+    {
+      "relative_path": "aletheia/domains/protocol.py",
+      "content_sha256": "4941aba77af919409a9cbc05f2b68d74588fde2f371e89bdb155ee6a82acda29"
+    },
+    {
+      "relative_path": "aletheia/legacy_evaluation/capability.py",
+      "content_sha256": "21f572785368a397a0905423f489d8ecdf766fae96c236987a9d73d8b2cfe068"
+    },
+    {
+      "relative_path": "aletheia/legacy_evaluation/contracts.py",
+      "content_sha256": "2e15a63e59be1784e6449782d8cdaee62ed45ccbe5d1b8b98f0e9adb83b0933f"
+    }
+  ],
+  "allowed_design_keys": [
+    "composition_column",
+    "model",
+    "model_params",
+    "random_state",
+    "target_column",
+    "test_size"
+  ],
+  "required_design_keys": [
+    "composition_column",
+    "model",
+    "model_params",
+    "random_state",
+    "target_column",
+    "test_size"
+  ],
+  "allowed_model_names": [
+    "gradient_boosting",
+    "random_forest"
+  ],
+  "frozen_random_seed": 0,
+  "input_table_schema_sha256": "0fc28208bebc0a6c74b9a9a41b75d7bcfd52c1aaafc0dfbd10225b1bcf966f41",
+  "metric_projections": [
+    {
+      "metric_name": "mae",
+      "eval_json_path": ["splits", "grouped_cv", "mae"]
+    },
+    {
+      "metric_name": "mae_cv_mean",
+      "eval_json_path": ["splits", "repeated_kfold_5x5", "mae_mean"]
+    },
+    {
+      "metric_name": "mae_cv_std",
+      "eval_json_path": ["splits", "repeated_kfold_5x5", "mae_std"]
+    },
+    {
+      "metric_name": "mae_holdout",
+      "eval_json_path": ["splits", "random_holdout", "mae"]
+    },
+    {
+      "metric_name": "mae_lcso",
+      "eval_json_path": ["splits", "grouped_cv", "mae"]
+    },
+    {
+      "metric_name": "r2",
+      "eval_json_path": ["splits", "grouped_cv", "r2"]
+    },
+    {
+      "metric_name": "r2_cv_mean",
+      "eval_json_path": ["splits", "repeated_kfold_5x5", "r2_mean"]
+    },
+    {
+      "metric_name": "r2_holdout",
+      "eval_json_path": ["splits", "random_holdout", "r2"]
+    },
+    {
+      "metric_name": "r2_lcso",
+      "eval_json_path": ["splits", "grouped_cv", "r2"]
+    },
+    {
+      "metric_name": "rmse",
+      "eval_json_path": ["splits", "grouped_cv", "rmse"]
+    },
+    {
+      "metric_name": "rmse_holdout",
+      "eval_json_path": ["splits", "random_holdout", "rmse"]
+    },
+    {
+      "metric_name": "rmse_lcso",
+      "eval_json_path": ["splits", "grouped_cv", "rmse"]
+    }
+  ],
+  "required_legacy_artifact_kinds": ["eval", "model"],
+  "maximum_input_bytes": 1048576,
+  "maximum_rows": 10000,
+  "maximum_artifact_bytes": 16777216,
+  "executor_principal_id": "principal.legacy-evaluation-executor",
+  "frozen_by_principal_id": "principal.capability-reviewer",
+  "frozen_at": "2026-08-25T12:00:00Z",
+  "experiment_driver_allowed": false,
+  "plugin_run_experiment_allowed": false,
+  "plugin_data_loader_allowed": false,
+  "dynamic_plugin_loading_allowed": false,
+  "network_access_allowed": false,
+  "raw_artifact_only": true,
+  "scientific_admission_allowed": false,
+  "claim_authority": false
+}

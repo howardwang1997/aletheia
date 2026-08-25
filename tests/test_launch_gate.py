@@ -47,6 +47,7 @@ def test_launch_blocked_until_data_ready():
         )
         assert r2.status_code == 200
         assert r2.json()["status"] == "queued"
+        assert r2.json()["execution_surface"] == "legacy_protocol_executor"
         assert r2.json()["task_id"].startswith(f"driver-{run_id}-")
         replay = client.post(
             f"/runs/{run_id}/launch",

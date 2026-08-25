@@ -785,6 +785,25 @@ def test_controller_cannot_import_f9_v1_migration_compatibility(tmp_path: Path) 
     )
 
 
+def test_new_authority_cannot_import_legacy_evaluation_capability(tmp_path: Path) -> None:
+    root = _minimal_repository(tmp_path)
+    _source(root, "aletheia/legacy_evaluation/__init__.py")
+    _source(root, "aletheia/legacy_evaluation/capability.py")
+    _source(
+        root,
+        "aletheia/research_controller/compatibility.py",
+        "from aletheia.legacy_evaluation.capability import LegacyEvaluationCapability\n",
+    )
+
+    violations = find_dependency_boundary_violations(root)
+
+    assert any(
+        item.root_module == "aletheia.research_controller.compatibility"
+        and item.imported_module == "aletheia.legacy_evaluation.capability"
+        for item in violations
+    )
+
+
 def test_transitive_legacy_import_reports_dependency_chain(tmp_path: Path) -> None:
     root = _minimal_repository(tmp_path)
     _source(root, "aletheia/memory/__init__.py")

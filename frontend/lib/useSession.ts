@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DatasetAsset,
+  ExecutionSurface,
   LabEvent,
   createSession,
   launchRun,
@@ -75,6 +76,7 @@ export function useSession() {
   const [events, setEvents] = useState<LabEvent[]>([]);
   const [runId, setRunId] = useState<string | null>(null);
   const [mode, setMode] = useState<string>("");
+  const [executionSurface, setExecutionSurface] = useState<ExecutionSurface | "">("");
   const [connected, setConnected] = useState(false);
   const [dryRun, setDryRun] = useState(true);
   const [nonce, setNonce] = useState(0);
@@ -99,16 +101,18 @@ export function useSession() {
     setEvents([]);
     setConnected(false);
     setRunId(null);
+    setExecutionSurface("");
     setDatasets([]);
     esRef.current?.close();
 
     (async () => {
       try {
-        const { run_id, mode } = await createSession(undefined, dryRun);
+        const { run_id, mode, execution_surface } = await createSession(undefined, dryRun);
         if (cancelled) return;
         setRunId(run_id);
         runIdRef.current = run_id;
         setMode(mode);
+        setExecutionSurface(execution_surface);
         const es = subscribeEvents((e) => {
           setEvents((prev) => [...prev.slice(-999), e]);
           // data + finalize events change readiness -> refresh the dataset list
@@ -275,6 +279,7 @@ export function useSession() {
   return {
     runId,
     mode,
+    executionSurface,
     connected,
     chat,
     activity,

@@ -12,6 +12,7 @@ export function Conversation({
   setDryRun,
   onNew,
   mode,
+  executionSurface,
   canControl = true,
 }: {
   chat: ChatMsg[];
@@ -21,6 +22,7 @@ export function Conversation({
   setDryRun: (v: boolean) => void;
   onNew: () => void;
   mode: string;
+  executionSurface: string;
   canControl?: boolean;
 }) {
   const [text, setText] = useState("");
@@ -36,7 +38,12 @@ export function Conversation({
     <section className="conv">
       <div className="conv-head">
         <strong>Conversation</strong>
-        {mode && <span className="mode">{mode}</span>}
+        {executionSurface && (
+          <span className="mode">
+            {executionSurface}
+            {mode && ` · ${mode}`}
+          </span>
+        )}
         <span className="dot">{connected ? "● live" : "○ connecting"}</span>
         <span className="spacer" />
         <label className="dry">
