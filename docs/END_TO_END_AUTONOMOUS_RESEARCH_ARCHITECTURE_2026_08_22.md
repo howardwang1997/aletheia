@@ -1580,7 +1580,7 @@ negative/inconclusive → signed fork → selected-child activation → graph-sc
 optimize/`ExperimentDriver`，新 controller instance 从 Kernel ledger 与 append-only receipts 重建，且同一
 scientific slot 至多 admission 一份 observation。该 fixture 是 control-path engineering evidence，不是 scientific
 discovery、production process-kill campaign 或 target-host deployment evidence。生产 worker handler composition、
-dispatcher/worker/reconciler 常驻进程、signing-key custody、独立 validator service 与远程 canary 仍受下述
+terminal dispatcher/worker 常驻进程、signing-key custody、独立 validator service 与远程 canary 仍受下述
 deployment gate 约束。详见
 `PR5_DURABLE_SCIENTIFIC_CONTROLLER.md` 与
 `architecture/0050-durable-scientific-controller-and-observation-admission.md`。
@@ -1608,8 +1608,24 @@ tuple 已冻结；新 controller instance 可在执行后从 retained projection
 production handler/image/host。详见 `PR6_LEGACY_EVALUATION_COMPATIBILITY.md` 与
 `architecture/0051-legacy-evaluation-compatibility-leaf.md`。
 
+### PR-7a：Controller production runtime process boundary
+
+- 每个进程只能选择 Kernel dispatcher、terminal dispatcher、worker 或 delivery reconciler 一个角色；
+- runtime deployment 精确 pin controller manifest、composition config 与已 review factory source bytes；
+- guarded loader 执行已经 fresh-read/hash 的同一份 bytes，并继续拒绝 raw/re-exported legacy driver；
+- checked-in PostgreSQL factory 已实际 compose Kernel dispatcher 与 delivery reconciler，queue principal、
+  database URL hash 和 Alembic revision 均须匹配；
+- Kernel dispatcher 改用无 trust-root/policy/CAS/commit/audit 权限的 operational outbox port；
+- worker 启动先恢复 expired lease，每轮输出 `scientific_authority=false` 的 typed/hash-bound monitoring receipt。
+
+该切片关闭 Kernel-dispatch/reconciler 的 invocation-liveness 源码缺口，不等于完整 production composition。
+terminal dispatcher 仍须绑定 exact PR-4 authority；worker 仍须逐个绑定 proposal/signing/compiler/execution/
+validation/admission/continuation adapter；target-host supervision 与 live process-kill campaign 均未运行。详见
+`PR7_CONTROLLER_PRODUCTION_RUNTIME.md` 与
+`architecture/0052-controller-production-runtime-process-boundary.md`。
+
 PR-5 的本地 vertical cut 已完成；现在仍须完成 PR-4 target-host campaign 与 PR-5 production
-controller/validator/dispatcher/worker composition，之后才依据 fresh inventory 选择远程 canary。PR-6 可以在
+controller/validator/terminal-dispatcher/worker composition，之后才依据 fresh inventory 选择远程 canary。PR-6 可以在
 这些部署工作并行时推进。这样远程基础设施不会反过来固化一个错误的 `SSH + design dict` 接口。
 
 ## 18. 风险与反制
@@ -1669,10 +1685,12 @@ controller/validator/dispatcher/worker composition，之后才依据 fresh inven
 **PR-2：Authoritative event store**、**PR-3：Protocol IR pure contracts**、
 **PR-4a：qualification-only local execution foundation** 和 **PR-4b：qualification-only local execution
 composition implementation（含 deployment-evidence contracts）**、**PR-5：signed scientific bridge +
-durable controller local vertical**，以及 **PR-6：legacy evaluation compatibility leaf** 均已完成源码切片。PR-4b 的 exact target-host
+durable controller local vertical**，以及 **PR-6：legacy evaluation compatibility leaf** 均已完成源码切片；
+**PR-7a** 已增加 byte-pinned、one-role-per-process runtime，以及不持有 Kernel signing/CAS/policy 权限的
+PostgreSQL Kernel-outbox dispatcher 与 delivery reconciler composition。PR-4b 的 exact target-host
 Linux/root/systemd/loop/ext4/rootful-Docker campaign 仍是部署前硬门；通过前不把它描述为 production local
 execution service。下一项 load-bearing 工作是 PR-6 production step handler/image qualification、PR-5
-deployment-owned signing/validator/dispatcher/worker/reconciler composition 与 process-kill PostgreSQL campaign，
+deployment-owned terminal dispatcher/worker signing/validator composition 与 process-kill PostgreSQL campaign，
 而不是扩张 controller authority。checkpoint 与 external reconciliation 仍需独立 typed contracts，
 不能由 generic retry 猜测。
 

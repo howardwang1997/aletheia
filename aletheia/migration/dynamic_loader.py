@@ -252,12 +252,47 @@ def load_guarded_source_module(module_name: str, source_path: str | Path) -> Mod
     resolved_path = Path(source_path).expanduser().resolve(strict=True)
     _assert_not_legacy_driver_path(resolved_path)
     spec = importlib.util.spec_from_file_location(module_name, resolved_path)
-    if spec is None or spec.loader is None:
+    if spec is None:
         raise RuntimeError(f"could not construct a source loader for {resolved_path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        source_bytes = resolved_path.read_bytes()
+    except OSError as exc:
+        raise RuntimeError(f"could not read guarded source: {resolved_path}") from exc
+    exec(compile(source_bytes, str(resolved_path), "exec"), vars(module))
     _assert_module_exports_no_legacy_driver(module)
     return module
 
 
-__all__ = ["load_guarded_source_module", "resolve_guarded_dynamic_attribute"]
+def load_guarded_source_bytes(
+    module_name: str,
+    source_path: str | Path,
+    source_bytes: bytes,
+) -> ModuleType:
+    """Execute the caller's exact pinned bytes, then audit every exported origin.
+
+    This variant lets a deployment fresh-read and hash one regular file before execution without a
+    second loader read introducing a time-of-check/time-of-use gap.  ``source_path`` remains the
+    diagnostic/compiler identity and is still checked against the frozen legacy-driver path.
+    """
+
+    if _is_legacy_driver_module(module_name):
+        raise ValueError("raw legacy driver module identities are forbidden")
+    if not isinstance(source_bytes, bytes) or not source_bytes:
+        raise ValueError("guarded source bytes must be nonempty bytes")
+    resolved_path = Path(source_path).expanduser().resolve(strict=True)
+    _assert_not_legacy_driver_path(resolved_path)
+    spec = importlib.util.spec_from_file_location(module_name, resolved_path)
+    if spec is None:
+        raise RuntimeError(f"could not construct a source loader for {resolved_path}")
+    module = importlib.util.module_from_spec(spec)
+    exec(compile(source_bytes, str(resolved_path), "exec"), vars(module))
+    _assert_module_exports_no_legacy_driver(module)
+    return module
+
+
+__all__ = [
+    "load_guarded_source_bytes",
+    "load_guarded_source_module",
+    "resolve_guarded_dynamic_attribute",
+]

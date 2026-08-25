@@ -247,12 +247,13 @@ _FILESYSTEM_API_ESCAPE = "<filesystem-api>"
 DEFAULT_AUDITED_DYNAMIC_LOADER_SOURCES = (
     (
         "aletheia.migration.dynamic_loader",
-        "7c2227c3db42c5d9a3851bf4090865c544ce535c7c5a8b53358cea8ea0204a0e",
+        "3e6e22f2e7f1e6f4adc4e2c083de1e836c870a16e68775f0eeee512d4ef551bc",
     ),
 )
 DEFAULT_AUDITED_DYNAMIC_LOADER_ESCAPE_COUNTS = (
     ("aletheia.migration.dynamic_loader", _DYNAMIC_ESCAPE, 1),
-    ("aletheia.migration.dynamic_loader", _FILE_LOADER_ESCAPE, 3),
+    ("aletheia.migration.dynamic_loader", _FILE_LOADER_ESCAPE, 4),
+    ("aletheia.migration.dynamic_loader", _RUNTIME_CODE_ESCAPE, 4),
 )
 
 
@@ -1368,7 +1369,7 @@ def find_legacy_driver_import_violations(
                 _RUNTIME_CODE_ESCAPE,
             }:
                 if (
-                    edge.target in {_DYNAMIC_ESCAPE, _FILE_LOADER_ESCAPE}
+                    edge.target in {_DYNAMIC_ESCAPE, _FILE_LOADER_ESCAPE, _RUNTIME_CODE_ESCAPE}
                     and is_pinned_dynamic_loader
                 ):
                     key = (module, edge.target)

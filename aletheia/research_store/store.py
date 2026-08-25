@@ -275,11 +275,25 @@ def _aware(value: datetime, *, label: str) -> datetime:
     return value
 
 
-def _transaction_time(session: Session) -> datetime:
+def _database_time(session: Session) -> datetime:
     observed = session.scalar(select(func.clock_timestamp()))
     if observed is None:  # pragma: no cover - PostgreSQL always returns clock_timestamp()
         raise ResearchStoreInvariantError("PostgreSQL did not provide a trusted authorization time")
     return _aware(observed, label="database authorization linearization timestamp")
+
+
+def _transaction_time(
+    session: Session,
+    *,
+    not_before: datetime | None = None,
+) -> datetime:
+    """Return DB time without allowing a locked stream's logical clock to regress."""
+
+    observed = _database_time(session)
+    if not_before is None:
+        return observed
+    floor = _aware(not_before, label="stream authorization linearization timestamp floor")
+    return max(observed, floor)
 
 
 def _json(model: KernelModel) -> dict[str, object]:
@@ -1089,7 +1103,7 @@ class ResearchKernelStore:
                     # The authority time is sampled only after the serializing head lock and the
                     # lock-wait idempotency recheck.  A wait crossing key/charter expiry therefore
                     # cannot commit using a stale pre-lock timestamp.
-                    observed_at = _transaction_time(session)
+                    observed_at = _transaction_time(session, not_before=head.updated_at)
                     authorization_policy = _policy_from_head(
                         head,
                         trust_root=self._trust_root,
@@ -1324,32 +1338,12 @@ class ResearchKernelStore:
         final commit or rollback and must not expose a delivery until that transaction commits.
         """
 
-        if not isinstance(session, Session):
-            raise TypeError("list_pending_outbox_in_session requires a SQLAlchemy Session")
-        quest_ids = _registered_quest_ids(registered_quest_ids)
-        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1_000:
-            raise ValueError("pending outbox limit must be between 1 and 1000")
-        if not isinstance(lock_for_publish, bool):
-            raise TypeError("lock_for_publish must be a boolean")
-        observed_at = _transaction_time(session)
-        statement = (
-            select(_ResearchKernelOutboxRecord)
-            .where(
-                _ResearchKernelOutboxRecord.quest_id.in_(quest_ids),
-                _ResearchKernelOutboxRecord.delivery_status == "pending",
-                _ResearchKernelOutboxRecord.available_at <= observed_at,
-            )
-            .order_by(
-                _ResearchKernelOutboxRecord.available_at,
-                _ResearchKernelOutboxRecord.created_at,
-                _ResearchKernelOutboxRecord.quest_id,
-                _ResearchKernelOutboxRecord.sequence,
-            )
-            .limit(limit)
+        return _list_pending_outbox_in_session(
+            session,
+            registered_quest_ids=registered_quest_ids,
+            limit=limit,
+            lock_for_publish=lock_for_publish,
         )
-        if lock_for_publish:
-            statement = statement.with_for_update(skip_locked=True)
-        return tuple(_outbox_item(row) for row in session.scalars(statement).all())
 
     def mark_outbox_published(
         self,
@@ -1371,41 +1365,7 @@ class ResearchKernelStore:
         of an already-published item returns the current projection without increasing attempts.
         """
 
-        if not isinstance(session, Session):
-            raise TypeError("mark_outbox_published_in_session requires a SQLAlchemy Session")
-        if isinstance(expected, ResearchKernelOutboxItem):
-            identity = expected.identity
-        elif isinstance(expected, ResearchKernelOutboxIdentity):
-            identity = ResearchKernelOutboxIdentity.model_validate(
-                expected.model_dump(mode="python")
-            )
-        else:
-            raise TypeError("mark_outbox_published requires a research outbox identity")
-        row = session.scalar(
-            select(_ResearchKernelOutboxRecord)
-            .where(_ResearchKernelOutboxRecord.outbox_id == identity.outbox_id)
-            .with_for_update()
-        )
-        if row is None:
-            raise ResearchOutboxConflict("research outbox item does not exist")
-        current = _outbox_item(row)
-        if current.identity != identity:
-            raise ResearchOutboxConflict(
-                "research outbox item differs from the expected immutable identity"
-            )
-        if current.delivery_status == "published":
-            return current
-        if current.delivery_status != "pending":
-            raise ResearchOutboxConflict("research outbox item is not pending or already published")
-        observed_at = _transaction_time(session)
-        if current.available_at > observed_at:
-            raise ResearchOutboxConflict("research outbox item is not yet available")
-        row.delivery_status = "published"
-        row.delivery_attempts += 1
-        row.last_attempt_at = observed_at
-        row.published_at = observed_at
-        session.flush()
-        return _outbox_item(row)
+        return _mark_outbox_published_in_session(session, expected)
 
     def audit(
         self,
@@ -1464,10 +1424,111 @@ class ResearchKernelStore:
         ).state
 
 
+def _list_pending_outbox_in_session(
+    session: Session,
+    *,
+    registered_quest_ids: tuple[str, ...],
+    limit: int,
+    lock_for_publish: bool,
+) -> tuple[ResearchKernelOutboxItem, ...]:
+    if not isinstance(session, Session):
+        raise TypeError("list_pending_outbox_in_session requires a SQLAlchemy Session")
+    quest_ids = _registered_quest_ids(registered_quest_ids)
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1_000:
+        raise ValueError("pending outbox limit must be between 1 and 1000")
+    if not isinstance(lock_for_publish, bool):
+        raise TypeError("lock_for_publish must be a boolean")
+    observed_at = _transaction_time(session)
+    statement = (
+        select(_ResearchKernelOutboxRecord)
+        .where(
+            _ResearchKernelOutboxRecord.quest_id.in_(quest_ids),
+            _ResearchKernelOutboxRecord.delivery_status == "pending",
+            _ResearchKernelOutboxRecord.available_at <= observed_at,
+        )
+        .order_by(
+            _ResearchKernelOutboxRecord.available_at,
+            _ResearchKernelOutboxRecord.created_at,
+            _ResearchKernelOutboxRecord.quest_id,
+            _ResearchKernelOutboxRecord.sequence,
+        )
+        .limit(limit)
+    )
+    if lock_for_publish:
+        statement = statement.with_for_update(skip_locked=True)
+    return tuple(_outbox_item(row) for row in session.scalars(statement).all())
+
+
+def _mark_outbox_published_in_session(
+    session: Session,
+    expected: ResearchKernelOutboxIdentity | ResearchKernelOutboxItem,
+) -> ResearchKernelOutboxItem:
+    if not isinstance(session, Session):
+        raise TypeError("mark_outbox_published_in_session requires a SQLAlchemy Session")
+    if isinstance(expected, ResearchKernelOutboxItem):
+        identity = expected.identity
+    elif isinstance(expected, ResearchKernelOutboxIdentity):
+        identity = ResearchKernelOutboxIdentity.model_validate(expected.model_dump(mode="python"))
+    else:
+        raise TypeError("mark_outbox_published requires a research outbox identity")
+    row = session.scalar(
+        select(_ResearchKernelOutboxRecord)
+        .where(_ResearchKernelOutboxRecord.outbox_id == identity.outbox_id)
+        .with_for_update()
+    )
+    if row is None:
+        raise ResearchOutboxConflict("research outbox item does not exist")
+    current = _outbox_item(row)
+    if current.identity != identity:
+        raise ResearchOutboxConflict(
+            "research outbox item differs from the expected immutable identity"
+        )
+    if current.delivery_status == "published":
+        return current
+    if current.delivery_status != "pending":
+        raise ResearchOutboxConflict("research outbox item is not pending or already published")
+    observed_at = _transaction_time(session)
+    if current.available_at > observed_at:
+        raise ResearchOutboxConflict("research outbox item is not yet available")
+    row.delivery_status = "published"
+    row.delivery_attempts += 1
+    row.last_attempt_at = observed_at
+    row.published_at = observed_at
+    session.flush()
+    return _outbox_item(row)
+
+
+class PostgreSQLResearchKernelOutbox:
+    """Operational outbox port with no scientific signing policy or CAS authority."""
+
+    def list_pending_outbox_in_session(
+        self,
+        session: Session,
+        *,
+        registered_quest_ids: tuple[str, ...],
+        limit: int = 100,
+        lock_for_publish: bool = True,
+    ) -> tuple[ResearchKernelOutboxItem, ...]:
+        return _list_pending_outbox_in_session(
+            session,
+            registered_quest_ids=registered_quest_ids,
+            limit=limit,
+            lock_for_publish=lock_for_publish,
+        )
+
+    def mark_outbox_published_in_session(
+        self,
+        session: Session,
+        expected: ResearchKernelOutboxIdentity | ResearchKernelOutboxItem,
+    ) -> ResearchKernelOutboxItem:
+        return _mark_outbox_published_in_session(session, expected)
+
+
 __all__ = [
     "ArchivedKernelObject",
     "ArchivedObjectMetadata",
     "ArchivedSnapshotMetadata",
+    "PostgreSQLResearchKernelOutbox",
     "ResearchAuthorizationError",
     "ResearchCommandReceipt",
     "ResearchIdempotencyConflict",

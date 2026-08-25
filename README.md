@@ -147,14 +147,19 @@ artifacts, and sends them through a domain-free signed structural validator. The
 and controller need no materials/MAE/MatBench/RAG special case; RAG and the full
 `ExperimentDriver` remain legacy, and old API/dashboard responses are explicitly marked
 `legacy_protocol_executor`. This too is local engineering evidence, not a qualified production
-handler or host. The PR-2 store also still has one immutable policy epoch and
+handler or host. PR-7a now adds the byte-pinned, one-role-per-process runtime boundary and concrete
+authority-minimal PostgreSQL composition for Kernel dispatch and delivery reconciliation. It
+executes already-hashed factory bytes, binds the queue principal, recovers worker leases at startup,
+and emits non-scientific operational receipts; terminal dispatch and scientific step execution
+remain uncommissioned. The PR-2 store also still has one immutable policy epoch and
 `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
 the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-3 compiler guide](docs/PR3_PROTOCOL_COMPILER.md), plus the
 [PR-4a foundation guide](docs/PR4_LOCAL_EXECUTION_FOUNDATION.md) and
 [PR-4b composition guide](docs/PR4B_LOCAL_EXECUTION_COMPOSITION.md), and
 [PR-5 controller guide](docs/PR5_DURABLE_SCIENTIFIC_CONTROLLER.md), plus the
-[PR-6 compatibility guide](docs/PR6_LEGACY_EVALUATION_COMPATIBILITY.md).
+[PR-6 compatibility guide](docs/PR6_LEGACY_EVALUATION_COMPATIBILITY.md), and the
+[PR-7 runtime guide](docs/PR7_CONTROLLER_PRODUCTION_RUNTIME.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,

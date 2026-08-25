@@ -23,13 +23,13 @@
       "aletheia/research_kernel": "new_authority",
       "aletheia/research_store": "new_authority_adapter"
     },
-    "legacy_source_ast_file_count": 289,
-    "legacy_source_ast_graph_sha256": "11aa1e396c61195088711d8cd8cec616e7dc7b41dc08cc6f5a778eb21bd9b306",
+    "legacy_source_ast_file_count": 291,
+    "legacy_source_ast_graph_sha256": "d59117bd46f56b338a3160cc7b6605a0a637952f4afe1d4a781eac698049aab2",
     "legacy_source_ast_review_limit": "This normalized-AST backstop freezes every parseable Python file in the declared legacy production roots after explicitly removing new-authority and migration-tooling roots. It catches added, removed or semantically changed legacy Python source even when a specialized sink scanner does not recognize the syntax; comments, formatting, generated runtime code, non-Python launchers and the explicitly excluded roots are outside this digest.",
     "migration_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "migration_source_ast_roots": ["aletheia/migration", "migrations"],
     "migration_source_ast_file_count": 34,
-    "migration_source_ast_graph_sha256": "a636635cbc582135d892aee6e3eb4fcadc53b47f955ceef4d0314f14f81110cd",
+    "migration_source_ast_graph_sha256": "2a795aa6f68fd998ae4f0af407a6032a77dfd0498ce5c15c5284f2d8f0513716",
     "migration_source_ast_review_limit": "Migration tooling and immutable Alembic revision history have a separate normalized-AST freeze. Historical schema DML/backfills remain deployment authority reviewed through the migration chain rather than runtime scientific write owners.",
     "non_python_invocation_source_scheme": "git_index_regular_mode_path_byte_sha256_v1",
     "non_python_invocation_source_roots": [
@@ -76,8 +76,8 @@
     "service_mutator_call_graph_sha256": "13e491fdfcf7637e3ee2652a465eb9e119126e1360f379985cf628bf38138f5f",
     "service_boundary_limit": "This mechanically freezes statically declared aletheia.memory.service imports and imported-name uses across aletheia and operational scripts in module and nested lexical scopes. It does not claim to discover arbitrary dynamic imports or direct ORM, SQL, filesystem or external-system mutations; those are handled by separate reviewed surface baselines.",
     "writer_surface_usage_scheme": "ast_all_scope_import_alias_instance_scope_v2",
-    "writer_surface_usage_count": 370,
-    "writer_surface_call_graph_sha256": "92e1bb32257b898ae362d0fe9b1ba328c9dde45b688fa2324f06f0f8fbfbac29",
+    "writer_surface_usage_count": 371,
+    "writer_surface_call_graph_sha256": "7dd17adbc20f63f29c61755676943fb4250564ebff688df1fb09cf84cf3e2af5",
     "allowed_legacy_caller_scope": "Every current aletheia-package caller must be covered by allowed_legacy_callers. Operational scripts are fully frozen in call_sites and may be omitted from the post-cutover application allowlist.",
     "shared_generic_writer_implementations": {
       "aletheia.observations.store._append_exact": {
@@ -111,7 +111,7 @@
       "execution.transactional_outbox": "PR-4b composes the immutable runtime-v2 terminal intent writers but retains the uncalled v1 compatibility writer and has no dispatcher; exact callers and direct ORM mutation scopes are frozen separately.",
       "observations.protocol_compilation": "PR-5 defines the exact append-only compilation store, but production ControllerStepExecutionPort composition is deliberately still absent; the local vertical-cut fixture exercises this surface directly.",
       "observations.continuation_receipt": "PR-5 defines the exact append-only continuation store, but production ControllerStepExecutionPort composition is deliberately still absent; the local vertical-cut fixture exercises this surface directly.",
-      "research_store.transactional_outbox": "The caller-owned mark_outbox_published_in_session surface is composed by the PR-5 dispatcher; its transaction-owning mark_outbox_published wrapper remains an explicit uncalled compatibility surface."
+      "research_store.transactional_outbox": "The authority-minimal PostgreSQLResearchKernelOutbox caller-owned publication surface is composed by the controller dispatcher; the full-store transaction-owning mark_outbox_published wrapper remains an explicit uncalled compatibility surface."
     },
     "direct_file_sink_scheme": "ast_reviewed_direct_file_sink_v1",
     "direct_file_sink_scope_count": 178,
@@ -341,7 +341,7 @@
     "direct_orm_mutation_scheme": "ast_import_bound_orm_mutation_v2",
     "direct_orm_mutation_scope_count": 273,
     "direct_orm_mutation_call_count": 435,
-    "direct_orm_mutation_graph_sha256": "856a0c5c10ac0cd01baff24e4fc7f9a8f1379a34e30659d5cb769a7b8b5553bc",
+    "direct_orm_mutation_graph_sha256": "a79f71887100a0c933d15fcf4c88447c596db98ebecde71717e637dc6d441b94",
     "direct_orm_authority_source": "Every resolved table is classified by the postgres storage_target/storage_targets records in this inventory; non-constructor mutation scopes must match a declared legacy_entrypoint or additional_writers symbol.",
     "direct_orm_review_limit": "This static AST baseline resolves explicit imports/re-exports and aliases for every declared SQLAlchemy model; ORM class self/cls bindings; model construction; query/get/select/scalar result flows; attribute, setattr and relationship mutation; explicit aliases of recognized setattr/session/query/table/SQLAlchemy mutation callables; session add/delete/merge/bulk APIs; SQLAlchemy/table/query insert/update/delete; literal mutating SQL; and fail-closed f-string/binary SQL edges. It does not claim to resolve dynamic imports, reflection-generated models, runtime monkeypatching, helper-returned model instances, dynamically selected mutator callables, or dynamic SQL hidden behind an untyped variable; any semantic change in legacy Python remains guarded by the separate normalized-AST source freeze.",
     "protected_orm_reference_scheme": "ast_explicit_import_and_reference_scope_v1",
@@ -2802,6 +2802,14 @@
         {
           "module": "aletheia.research_store.store",
           "symbol": "ResearchKernelStore.mark_outbox_published_in_session"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "PostgreSQLResearchKernelOutbox.mark_outbox_published_in_session"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "_mark_outbox_published_in_session"
         }
       ],
       "call_sites": [
@@ -2828,6 +2836,14 @@
         {
           "module": "aletheia.research_store.store",
           "symbol": "ResearchKernelStore.mark_outbox_published"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.mark_outbox_published_in_session"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "PostgreSQLResearchKernelOutbox.mark_outbox_published_in_session"
         }
       ],
       "storage_target": "postgres.research_store_persistence.research_kernel_outbox",
@@ -2835,7 +2851,7 @@
       "scientific_semantics": "Stores only the immutable event-delivery intent plus mutable at-least-once delivery bookkeeping; it references an authoritative event but is operational transport state, never scientific truth.",
       "authority_class": "operational_state",
       "current_owner": "aletheia.research_store.store.ResearchKernelStore.commit",
-      "current_commit_boundary": "the same ResearchKernelStore.commit PostgreSQL transaction as the authoritative event bundle",
+      "current_commit_boundary": "intent creation is in the authoritative event transaction; publication is in the same dispatcher transaction as durable task and delivery receipt",
       "target_owner": "aletheia.research_store.store.ResearchKernelStore.commit",
       "target_command_or_object": "TransactionalResearchEventOutboxIntent",
       "migration_mode": "retain_transactional_operational_projection",
@@ -2863,6 +2879,14 @@
         {
           "module": "aletheia.research_store.store",
           "symbol": "ResearchKernelStore.mark_outbox_published"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "ResearchKernelStore.mark_outbox_published_in_session"
+        },
+        {
+          "module": "aletheia.research_store.store",
+          "symbol": "PostgreSQLResearchKernelOutbox.mark_outbox_published_in_session"
         }
       ],
       "dual_write_policy": "none",
