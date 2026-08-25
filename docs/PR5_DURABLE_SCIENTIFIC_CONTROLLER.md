@@ -155,6 +155,7 @@ campaigns. The F9-v1 migration adapter does not satisfy that production gate.
 Remote/GPU execution, external-effect actions,
 checkpointing, autonomous spending, claim admission, and publication remain closed.
 
-The next code slice is PR-6's explicitly limited legacy-evaluation compatibility leaf. It may
-proceed in parallel with deployment preparation, but no remote canary should run until both the
-PR-4 target-host campaign and the PR-5 production composition are independently accepted.
+PR-6's explicitly limited legacy-evaluation compatibility source/test slice is now complete; see
+[the PR-6 guide](PR6_LEGACY_EVALUATION_COMPATIBILITY.md). Its production step handler and qualified
+image remain deployment work. No remote canary should run until both the PR-4 target-host campaign
+and the PR-5 production composition are independently accepted.

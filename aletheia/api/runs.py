@@ -8,6 +8,11 @@ import uuid
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from aletheia.api.execution_surfaces import (
+    LEGACY_PROTOCOL_EXECUTOR,
+    LegacyExecutionSurface,
+    mark_legacy_protocol_executor,
+)
 from aletheia.data.registry import all_ready, pending_datasets
 from aletheia.events.store import list_events
 from aletheia.memory.service import (
@@ -40,6 +45,7 @@ class StartRunRequest(BaseModel):
 class StartRunResponse(BaseModel):
     run_id: str
     mode: str
+    execution_surface: LegacyExecutionSurface = LEGACY_PROTOCOL_EXECUTOR
 
 
 @router.post("", response_model=StartRunResponse)
@@ -55,7 +61,8 @@ async def start_run(req: StartRunRequest) -> StartRunResponse:
 
 @router.get("")
 async def get_runs() -> list[dict]:
-    return await asyncio.to_thread(list_runs)
+    rows = await asyncio.to_thread(list_runs)
+    return [mark_legacy_protocol_executor(item) for item in rows]
 
 
 @router.get("/{run_id}/events")
@@ -98,6 +105,7 @@ class LaunchResponse(BaseModel):
     task_id: str
     status: str
     mode: str
+    execution_surface: LegacyExecutionSurface = LEGACY_PROTOCOL_EXECUTOR
 
 
 @router.post("/{run_id}/launch", response_model=LaunchResponse)

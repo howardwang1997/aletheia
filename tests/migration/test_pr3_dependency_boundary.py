@@ -60,12 +60,13 @@ def test_repository_pr3_boundaries_are_non_vacuous_and_clean() -> None:
     assert find_legacy_driver_import_violations(REPOSITORY_ROOT) == ()
 
 
-def test_execution_pure_contract_allowlist_is_exact() -> None:
+def test_pure_contract_allowlist_is_exact() -> None:
     assert DEFAULT_PURE_CONTRACT_TARGET_MODULES == (
         "aletheia.execution",
         "aletheia.execution.ports",
         "aletheia.execution.runtime_contracts",
         "aletheia.execution.schemas",
+        "aletheia.legacy_evaluation.contracts",
     )
 
 

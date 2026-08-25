@@ -39,6 +39,7 @@ DEFAULT_FORBIDDEN_MODULE_PREFIXES = (
     "aletheia.data.registry",
     "aletheia.domains",
     "aletheia.events",
+    "aletheia.legacy_evaluation.capability",
     "aletheia.memory.ledger",
     "aletheia.memory.service",
     "aletheia.migration.f9_v1_observation_compatibility",
@@ -101,6 +102,7 @@ DEFAULT_PURE_CONTRACT_TARGET_MODULES = (
     "aletheia.execution.ports",
     "aletheia.execution.runtime_contracts",
     "aletheia.execution.schemas",
+    "aletheia.legacy_evaluation.contracts",
 )
 DEFAULT_PURE_CONTRACT_FORBIDDEN_MODULE_PREFIXES = (
     # Existing mutable/runtime scientific control planes.

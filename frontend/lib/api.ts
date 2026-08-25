@@ -21,6 +21,14 @@ export interface LabEvent {
   ts?: string;
 }
 
+export type ExecutionSurface = "legacy_protocol_executor";
+
+export interface LegacyExecutionResponse {
+  run_id: string;
+  mode: string;
+  execution_surface: ExecutionSurface;
+}
+
 export async function startRun(goal: string, dryRun: boolean | null = null) {
   const res = await fetch(`${API_BASE}/runs`, withCreds({
     method: "POST",
@@ -28,7 +36,7 @@ export async function startRun(goal: string, dryRun: boolean | null = null) {
     body: JSON.stringify({ goal, dry_run: dryRun }),
   }));
   if (!res.ok) throw new Error(`startRun failed: ${res.status}`);
-  return (await res.json()) as { run_id: string; mode: string };
+  return (await res.json()) as LegacyExecutionResponse;
 }
 
 export async function listRuns() {
@@ -140,7 +148,7 @@ export async function createSession(goalSeed?: string, dryRun: boolean | null = 
     body: JSON.stringify({ goal_seed: goalSeed || null, dry_run: dryRun }),
   }));
   if (!res.ok) throw new Error(`createSession failed: ${res.status}`);
-  return (await res.json()) as { run_id: string; mode: string };
+  return (await res.json()) as LegacyExecutionResponse;
 }
 
 export async function sendMessage(runId: string, text: string) {
@@ -239,7 +247,7 @@ export async function launchRun(runId: string, dryRun: boolean | null = null) {
         : `launchRun failed: ${res.status}`,
     );
   }
-  return (await res.json()) as { run_id: string; status: string; mode: string };
+  return (await res.json()) as LegacyExecutionResponse & { status: string };
 }
 
 export async function resumeRun(runId: string, dryRun: boolean | null = null) {

@@ -23,13 +23,13 @@
       "aletheia/research_kernel": "new_authority",
       "aletheia/research_store": "new_authority_adapter"
     },
-    "legacy_source_ast_file_count": 284,
-    "legacy_source_ast_graph_sha256": "f356ae5f32e01228e906be40b1bd549dedba100f2027a4147ac62cd840f46f78",
+    "legacy_source_ast_file_count": 289,
+    "legacy_source_ast_graph_sha256": "11aa1e396c61195088711d8cd8cec616e7dc7b41dc08cc6f5a778eb21bd9b306",
     "legacy_source_ast_review_limit": "This normalized-AST backstop freezes every parseable Python file in the declared legacy production roots after explicitly removing new-authority and migration-tooling roots. It catches added, removed or semantically changed legacy Python source even when a specialized sink scanner does not recognize the syntax; comments, formatting, generated runtime code, non-Python launchers and the explicitly excluded roots are outside this digest.",
     "migration_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "migration_source_ast_roots": ["aletheia/migration", "migrations"],
     "migration_source_ast_file_count": 34,
-    "migration_source_ast_graph_sha256": "2c0e2a209ec100d87178bc8bf0a96b0f31dde6908d15ddfc21275f4df1832e02",
+    "migration_source_ast_graph_sha256": "a636635cbc582135d892aee6e3eb4fcadc53b47f955ceef4d0314f14f81110cd",
     "migration_source_ast_review_limit": "Migration tooling and immutable Alembic revision history have a separate normalized-AST freeze. Historical schema DML/backfills remain deployment authority reviewed through the migration chain rather than runtime scientific write owners.",
     "non_python_invocation_source_scheme": "git_index_regular_mode_path_byte_sha256_v1",
     "non_python_invocation_source_roots": [
@@ -44,7 +44,7 @@
       "docker/**/*.py"
     ],
     "non_python_invocation_source_file_count": 29,
-    "non_python_invocation_source_graph_sha256": "8f7ee959f6768f9483c57e27f280dce25e61e2641beef7d49ede6056b413c4ed",
+    "non_python_invocation_source_graph_sha256": "eb302743df1a9edd4062d5ae93a3434f1365259545db3fc9bf9a17fdca8af7cc",
     "non_python_invocation_source_review_limit": "Every Git-indexed frontend source/configuration file, recursive shell launcher, non-Python docker launcher and root docker-compose YAML is frozen by exact relative path, regular-file Git mode and byte SHA. Symlinks and non-regular Git modes fail closed. Generated frontend/.next, frontend/node_modules and docker Python already covered by the production AST graph are excluded. The byte freeze catches otherwise-unrecognized syntax but does not infer runtime behavior of generated or third-party code.",
     "frontend_http_mutation_methods": ["DELETE", "PATCH", "POST", "PUT"],
     "non_python_invocation_authority_profiles": {
@@ -114,9 +114,9 @@
       "research_store.transactional_outbox": "The caller-owned mark_outbox_published_in_session surface is composed by the PR-5 dispatcher; its transaction-owning mark_outbox_published wrapper remains an explicit uncalled compatibility surface."
     },
     "direct_file_sink_scheme": "ast_reviewed_direct_file_sink_v1",
-    "direct_file_sink_scope_count": 176,
-    "direct_file_sink_call_count": 198,
-    "direct_file_sink_graph_sha256": "4f70d82cd204af0de3385a8177f45c024ce48c90585c77c2f98072939e109100",
+    "direct_file_sink_scope_count": 178,
+    "direct_file_sink_call_count": 200,
+    "direct_file_sink_graph_sha256": "a4ea82dc6083dfbdb06310751851079ef2b37b12aaa029aeb8573b04c1c25fec",
     "direct_file_sink_review_limit": "The baseline covers direct Path/open/os.write, archive-open modes, atomic replace, serializer, dataframe and plotting file sinks across the declared aletheia, deployed docker-worker and recursive operational-script roots. Indirect library-internal writes, arbitrary dynamic dispatch and external systems remain separate reviewed boundaries.",
     "direct_file_sink_profiles": {
       "scientific_artifact": {
@@ -264,6 +264,7 @@
       "aletheia.execution.oci_deployment": "qualification_host_control_state",
       "aletheia.execution.oci_runtime": "qualification_oci_runtime_state",
       "aletheia.knowledge.": "knowledge_archive",
+      "aletheia.legacy_evaluation.capability": "qualification_workload_output",
       "aletheia.memory.transcript": "operational_workspace",
       "aletheia.migration.f9_v1_observation_compatibility": "scientific_observation",
       "aletheia.migration.": "migration_evidence",
