@@ -98,11 +98,11 @@ terminal process's read-only PostgreSQL ACL, filesystem custody, exact authority
 public-key-only secret inventory, supervision/alerts, and kill/restart behavior. PR-4's exact
 Linux/root/systemd/loop/ext4/rootful-Docker campaign remains mandatory.
 
-The worker also remains uncommissioned. Next, the PR-6 compatibility leaf needs a qualified
-handler/image and durable execution-registration adapter. After that, independent graph-scoped
-F9-v2 validation, atomic admission/Kernel submission, continuation custody, and the full
-step-specific worker composition must be closed. No terminal wakeup is an observation, claim, or
-deployment qualification.
+The worker also remains uncommissioned. The PR-6 compatibility handler/image and durable
+execution-registration source slice, independent graph-scoped F9-v2 validation source slice, and
+atomic admission/Kernel submission adapter now exist. Their exact target-host qualification,
+external process/key composition, continuation custody, and the full step-specific worker
+composition remain open. No terminal wakeup is an observation, claim, or deployment qualification.
 
 See [ADR 0054](architecture/0054-verified-qualification-terminal-dispatcher.md), the
 [PR-7 runtime guide](PR7_CONTROLLER_PRODUCTION_RUNTIME.md), the

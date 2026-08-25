@@ -114,9 +114,9 @@
       "research_store.transactional_outbox": "The authority-minimal PostgreSQLResearchKernelOutbox caller-owned publication surface is composed by the controller dispatcher; the full-store transaction-owning mark_outbox_published wrapper remains an explicit uncalled compatibility surface."
     },
     "direct_file_sink_scheme": "ast_reviewed_direct_file_sink_v1",
-    "direct_file_sink_scope_count": 178,
-    "direct_file_sink_call_count": 200,
-    "direct_file_sink_graph_sha256": "a4ea82dc6083dfbdb06310751851079ef2b37b12aaa029aeb8573b04c1c25fec",
+    "direct_file_sink_scope_count": 179,
+    "direct_file_sink_call_count": 201,
+    "direct_file_sink_graph_sha256": "ef8597bba11444e2425fbf4a29c676b476dd357635d684bdd33a8cdd854712a2",
     "direct_file_sink_review_limit": "The baseline covers direct Path/open/os.write, archive-open modes, atomic replace, serializer, dataframe and plotting file sinks across the declared aletheia, deployed docker-worker and recursive operational-script roots. Indirect library-internal writes, arbitrary dynamic dispatch and external systems remain separate reviewed boundaries.",
     "direct_file_sink_profiles": {
       "scientific_artifact": {
@@ -268,6 +268,7 @@
       "aletheia.memory.transcript": "operational_workspace",
       "aletheia.migration.f9_v1_observation_compatibility": "scientific_observation",
       "aletheia.migration.": "migration_evidence",
+      "aletheia.observations.f9_v2_validation": "scientific_observation",
       "aletheia.orchestrator.": "operational_workspace",
       "aletheia.programs.": "scientific_program",
       "aletheia.reproducibility.": "scientific_artifact",

@@ -162,8 +162,11 @@ reservation, launch, termination, artifact/deadline, and outbox custody before d
 re-reads the source inside the delivery transaction. The production worker steps now include
 atomic signed execution registration plus independent validation and atomic admission/Kernel
 adapters. They deterministically recover raw terminal material and committed validation from
-PostgreSQL, but their external F9-v2 validator/admitter/signer deployments, terminal target-host
-ACL/custody campaign, and complete worker composition remain uncommissioned. The PR-2 store also
+PostgreSQL. A graph-scoped F9-v2 source slice now verifies the complete raw-run custody chain before
+analysis, signs the exact v2 world-model/prediction assessment, and fresh-rehashes one write-once
+campaign binding per raw run without importing legacy F9-v1. Its external RPC/key deployment, the
+admitter/signer deployments, terminal target-host ACL/custody campaign, and complete worker
+composition remain uncommissioned. The PR-2 store also
 still has one immutable policy epoch and
 `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
 the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
@@ -175,7 +178,8 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-7 runtime guide](docs/PR7_CONTROLLER_PRODUCTION_RUNTIME.md), plus the
 [PR-7b step-authority guide](docs/PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md), and the
 [PR-7c verified-terminal guide](docs/PR7C_VERIFIED_TERMINAL_DISPATCHER.md), plus
-[ADR 0056](docs/architecture/0056-independent-observation-controller-steps.md).
+[ADR 0056](docs/architecture/0056-independent-observation-controller-steps.md) and
+[ADR 0057](docs/architecture/0057-graph-scoped-f9-v2-validation-campaign.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,

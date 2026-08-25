@@ -62,8 +62,9 @@ from canonical PostgreSQL bytes. Their signer/database/Kernel services remain ex
 so this source slice does not commission or colocate those authorities.
 
 The repository still needs concrete, deployment-owned implementations for proposal materialization,
-protocol compilation persistence, an independent graph-scoped F9-v2 validation campaign service,
-external signer/RPC composition, and continuation custody. The terminal
+protocol compilation persistence, external signer/RPC composition, and continuation custody. A
+graph-scoped F9-v2 campaign service and write-once archive now exist as a source/test slice, but its
+production assessor, process isolation, and key custody are not commissioned. The terminal
 dispatcher now consumes a mechanically verified PR-4 terminal lineage through PR-7c's
 public-key-only factory; its target-host read-only ACL, filesystem/key custody, and live restart
 campaign remain open. The PR-6 evaluation leaf now has its fixed-path handler, candidate image, and
