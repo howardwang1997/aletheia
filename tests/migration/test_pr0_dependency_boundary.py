@@ -19,6 +19,7 @@ from aletheia.migration.boundary import (
 )
 from aletheia.migration.dynamic_loader import (
     load_guarded_source_module,
+    load_guarded_source_bytes,
     resolve_guarded_dynamic_attribute,
 )
 from scripts.durable_worker import _resolve_handler
@@ -729,6 +730,19 @@ def test_guarded_file_loader_rejects_resolved_driver_export(tmp_path: Path) -> N
 
     with pytest.raises(ValueError, match="resolved dynamic object belongs"):
         load_guarded_source_module("reviewed_alias", source)
+
+
+def test_guarded_byte_loader_executes_exact_supplied_bytes(tmp_path: Path) -> None:
+    source = tmp_path / "factory.py"
+    source.write_text("VALUE = 'disk'\n", encoding="utf-8")
+
+    module = load_guarded_source_bytes(
+        "reviewed_exact_bytes",
+        source,
+        b"VALUE = 'pinned'\n",
+    )
+
+    assert module.VALUE == "pinned"
 
 
 def test_guarded_file_loader_preserves_three_reviewed_call_sites(tmp_path: Path) -> None:
@@ -1449,12 +1463,13 @@ def test_audited_dynamic_loader_allowlist_is_exact_and_does_not_spread(tmp_path:
     assert DEFAULT_AUDITED_DYNAMIC_LOADER_SOURCES == (
         (
             "aletheia.migration.dynamic_loader",
-            "7c2227c3db42c5d9a3851bf4090865c544ce535c7c5a8b53358cea8ea0204a0e",
+            "3e6e22f2e7f1e6f4adc4e2c083de1e836c870a16e68775f0eeee512d4ef551bc",
         ),
     )
     assert DEFAULT_AUDITED_DYNAMIC_LOADER_ESCAPE_COUNTS == (
         ("aletheia.migration.dynamic_loader", "<non-literal-dynamic-import>", 1),
-        ("aletheia.migration.dynamic_loader", "<runtime-file-loader>", 3),
+        ("aletheia.migration.dynamic_loader", "<runtime-file-loader>", 4),
+        ("aletheia.migration.dynamic_loader", "<runtime-code-execution>", 4),
     )
     root = _minimal_repository(tmp_path)
     _source(

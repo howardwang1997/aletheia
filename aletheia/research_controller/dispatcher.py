@@ -28,7 +28,21 @@ from aletheia.research_controller.contracts import (
     controller_initial_delivery_attempt,
     controller_task_spec,
 )
-from aletheia.research_store.store import ResearchKernelStore
+
+
+class ResearchKernelOutboxPort(Protocol):
+    """Operational Kernel outbox CAS; it owns no command-signing or replay authority."""
+
+    def list_pending_outbox_in_session(
+        self,
+        session,
+        *,
+        registered_quest_ids: tuple[str, ...],
+        limit: int = 100,
+        lock_for_publish: bool = True,
+    ): ...
+
+    def mark_outbox_published_in_session(self, session, expected): ...
 
 
 class QualificationTerminalOutboxPort(Protocol):
@@ -66,7 +80,7 @@ class ResearchKernelOutboxDispatcher:
     def __init__(
         self,
         *,
-        kernel_store: ResearchKernelStore,
+        kernel_store: ResearchKernelOutboxPort,
         manifest: ResearchControllerManifest,
         queue: DurableTaskQueuePort,
     ) -> None:
@@ -273,5 +287,6 @@ __all__ = [
     "ControllerDispatchReceipt",
     "ExecutionTerminalOutboxDispatcher",
     "QualificationTerminalOutboxPort",
+    "ResearchKernelOutboxPort",
     "ResearchKernelOutboxDispatcher",
 ]

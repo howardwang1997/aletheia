@@ -16,6 +16,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError
 
+import aletheia.research_store.store as research_store_module
 from aletheia.db import create_all, engine, session_scope
 from aletheia.research_kernel.commands import (
     AuthorizedResearchCommand,
@@ -68,6 +69,7 @@ from aletheia.research_store.persistence import (
     ResearchQuestStreamRecord,
 )
 from aletheia.research_store.store import (
+    PostgreSQLResearchKernelOutbox,
     ResearchAuthorizationError,
     ResearchIdempotencyConflict,
     ResearchKernelStore,
@@ -435,6 +437,39 @@ def test_proposal_cannot_write_and_commit_is_atomic_idempotent_and_auditable(
     assert _counts(scope.quest_id) == (1, 1, 1, 1, 1)
 
 
+def test_operational_outbox_port_has_no_kernel_signing_or_archive_dependency(
+    tmp_path: Path,
+) -> None:
+    archive, scope, _charter, command, _root, trust_root, policy = _quest_fixture(
+        tmp_path / "cas",
+        label="operational-outbox",
+    )
+    receipt = _store(trust_root, policy, archive=archive).commit(command)
+    outbox = PostgreSQLResearchKernelOutbox()
+
+    with session_scope() as session:
+        pending = outbox.list_pending_outbox_in_session(
+            session,
+            registered_quest_ids=(scope.quest_id,),
+            limit=1,
+            lock_for_publish=True,
+        )
+        assert len(pending) == 1
+        assert pending[0].outbox_id == receipt.outbox_id
+        published = outbox.mark_outbox_published_in_session(session, pending[0])
+        assert published.delivery_status == "published"
+        assert outbox.mark_outbox_published_in_session(session, pending[0]) == published
+
+    with session_scope() as session:
+        assert (
+            outbox.list_pending_outbox_in_session(
+                session,
+                registered_quest_ids=(scope.quest_id,),
+            )
+            == ()
+        )
+
+
 def test_genesis_requires_the_deployment_pinned_root_and_exact_certified_policy(
     tmp_path: Path,
 ) -> None:
@@ -529,6 +564,55 @@ def test_exact_retry_precedes_stale_version_and_head_requires_version_and_hash(
         store.commit(wrong_tail)
     assert _counts(scope.quest_id) == (2, 2, 2, 2, 2)
     assert store.replay(scope.quest_id).tail_event_sha256 == (second.result_event_sha256)
+
+
+def test_stream_linearization_time_survives_database_wall_clock_regression(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive, scope, charter, genesis, root_branch_id, trust_root, policy = _quest_fixture(
+        tmp_path / "cas",
+        label="clock-regression",
+    )
+    first_observed_at = T0 + timedelta(minutes=2)
+    first_committed_at = first_observed_at + timedelta(seconds=1)
+    regressed_at = first_observed_at + timedelta(milliseconds=500)
+    database_times = iter((first_observed_at, first_committed_at, regressed_at))
+    monkeypatch.setattr(
+        research_store_module,
+        "_database_time",
+        lambda _session: next(database_times),
+    )
+
+    store = _store(trust_root, policy, archive=archive)
+    first = store.commit(genesis)
+    _problem, second_command = _problem_command(
+        archive=archive,
+        scope=scope,
+        charter=charter,
+        trust_root=trust_root,
+        policy=policy,
+        root_branch_id=root_branch_id,
+        expected_version=1,
+        expected_tail=first.result_event_sha256,
+        label="clock-regression-second",
+    )
+    second = store.commit(second_command)
+
+    with session_scope() as session:
+        events = session.scalars(
+            select(ResearchKernelEventRecord)
+            .where(ResearchKernelEventRecord.quest_id == scope.quest_id)
+            .order_by(ResearchKernelEventRecord.sequence)
+        ).all()
+        head = session.get(ResearchQuestStreamRecord, scope.quest_id)
+        assert head is not None
+        assert [event.committed_at for event in events] == [
+            first_committed_at,
+            first_committed_at,
+        ]
+        assert head.updated_at == first_committed_at
+    assert second.created is True
 
 
 def test_charter_revision_revokes_pending_action_authority_at_commit_time(

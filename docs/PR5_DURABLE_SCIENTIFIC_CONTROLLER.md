@@ -149,9 +149,11 @@ The local vertical fixture is synthetic and uses reviewed deterministic capabili
 PR-5 source/test slice separately exercises the concrete PostgreSQL/CAS custody adapters and the
 atomic coordinator contract, but it is not a live multi-process PostgreSQL kill/restart campaign.
 A production launch additionally needs deployment composition for the controller step handlers,
-signing-key custody, dispatcher/worker processes, a periodic delivery-reconciler process,
-independent F9-v2 validator adapter/service, monitoring, and process-kill PostgreSQL fault
-campaigns. The F9-v1 migration adapter does not satisfy that production gate.
+signing-key custody, terminal-dispatcher/worker processes, an independent F9-v2 validator
+adapter/service, monitoring, and process-kill PostgreSQL fault campaigns. PR-7a now supplies
+byte-pinned process loops and concrete authority-minimal PostgreSQL composition for Kernel dispatch
+and periodic delivery reconciliation; it does not supply terminal or scientific-step authority.
+The F9-v1 migration adapter does not satisfy that production gate.
 Remote/GPU execution, external-effect actions,
 checkpointing, autonomous spending, claim admission, and publication remain closed.
 

@@ -1866,6 +1866,8 @@ def test_research_store_tables_have_one_authoritative_writer_and_split_semantics
         "aletheia.research_store.store.ResearchKernelStore.commit_in_session",
         "aletheia.research_store.store.ResearchKernelStore.mark_outbox_published",
         "aletheia.research_store.store.ResearchKernelStore.mark_outbox_published_in_session",
+        "aletheia.research_store.store.PostgreSQLResearchKernelOutbox.mark_outbox_published_in_session",
+        "aletheia.research_store.store._mark_outbox_published_in_session",
     }
     assert (
         "research_store.transactional_outbox"
