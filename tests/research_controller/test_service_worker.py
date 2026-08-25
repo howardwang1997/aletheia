@@ -83,8 +83,9 @@ class _Recovery:
 class _Executor:
     calls = 0
 
-    def execute(self, *, wakeup, plan):
+    def execute(self, *, wakeup, projection, plan):
         self.calls += 1
+        assert projection == _projection()
         return ControllerStepReceipt(
             wakeup_sha256=wakeup.wakeup_sha256,
             plan_sha256=plan.plan_sha256,

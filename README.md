@@ -151,7 +151,11 @@ handler or host. PR-7a now adds the byte-pinned, one-role-per-process runtime bo
 authority-minimal PostgreSQL composition for Kernel dispatch and delivery reconciliation. It
 executes already-hashed factory bytes, binds the queue principal, recovers worker leases at startup,
 and emits non-scientific operational receipts; terminal dispatch and scientific step execution
-remain uncommissioned. The PR-2 store also still has one immutable policy epoch and
+remain uncommissioned. PR-7b now removes the generic worker callback: it forwards the exact audited
+recovery projection through an exhaustive set of eight step-specific, controller/worker-pinned
+authority manifests, keeps passive waits local, and rejects authority/key overlap or runtime
+rebinding. The concrete production step services and verified terminal adapter remain
+uncommissioned. The PR-2 store also still has one immutable policy epoch and
 `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
 the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-3 compiler guide](docs/PR3_PROTOCOL_COMPILER.md), plus the
@@ -159,7 +163,8 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-4b composition guide](docs/PR4B_LOCAL_EXECUTION_COMPOSITION.md), and
 [PR-5 controller guide](docs/PR5_DURABLE_SCIENTIFIC_CONTROLLER.md), plus the
 [PR-6 compatibility guide](docs/PR6_LEGACY_EVALUATION_COMPATIBILITY.md), and the
-[PR-7 runtime guide](docs/PR7_CONTROLLER_PRODUCTION_RUNTIME.md).
+[PR-7 runtime guide](docs/PR7_CONTROLLER_PRODUCTION_RUNTIME.md), plus the
+[PR-7b step-authority guide](docs/PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,

@@ -1624,6 +1624,20 @@ validation/admission/continuation adapter；target-host supervision 与 live pro
 `PR7_CONTROLLER_PRODUCTION_RUNTIME.md` 与
 `architecture/0052-controller-production-runtime-process-boundary.md`。
 
+### PR-7b：Controller step authority boundary
+
+- controller service 把用于计划的同一份 audited recovery projection 显式交给 step adapter；
+- 八个 active step 必须各有一个 code/config/authority-pinned adapter，三个 passive wait/block step 不得调用
+  authority adapter；
+- aggregate adapter set 精确绑定 controller manifest、worker manifest 与 worker process principal；
+- proposal 只能返回 awaiting authority，observation admission 只有在独立 admission 与 Kernel incorporation
+  同一原子提交时才能完成；
+- worker 不持有 execution/validator/admission/database/Kernel signing private key，且不存在 catch-all callback。
+
+该切片关闭 generic callback 与运行时 authority rebind 风险，但不实现八个 production step service，也不使
+worker 可部署。详见 `PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md` 与
+`architecture/0053-controller-step-authority-boundary.md`。
+
 PR-5 的本地 vertical cut 已完成；现在仍须完成 PR-4 target-host campaign 与 PR-5 production
 controller/validator/terminal-dispatcher/worker composition，之后才依据 fresh inventory 选择远程 canary。PR-6 可以在
 这些部署工作并行时推进。这样远程基础设施不会反过来固化一个错误的 `SSH + design dict` 接口。
@@ -1689,7 +1703,9 @@ durable controller local vertical**，以及 **PR-6：legacy evaluation compatib
 **PR-7a** 已增加 byte-pinned、one-role-per-process runtime，以及不持有 Kernel signing/CAS/policy 权限的
 PostgreSQL Kernel-outbox dispatcher 与 delivery reconciler composition。PR-4b 的 exact target-host
 Linux/root/systemd/loop/ext4/rootful-Docker campaign 仍是部署前硬门；通过前不把它描述为 production local
-execution service。下一项 load-bearing 工作是 PR-6 production step handler/image qualification、PR-5
+execution service。**PR-7b** 已冻结 exhaustive step-specific worker routing、实际 controller/worker deployment
+binding 与 authority separation，但 production active adapters 仍未 commissioned。下一项 load-bearing 工作是
+PR-6 production step handler/image qualification、PR-5
 deployment-owned terminal dispatcher/worker signing/validator composition 与 process-kill PostgreSQL campaign，
 而不是扩张 controller authority。checkpoint 与 external reconciliation 仍需独立 typed contracts，
 不能由 generic retry 猜测。

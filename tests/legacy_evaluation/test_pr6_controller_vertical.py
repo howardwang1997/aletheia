@@ -59,7 +59,14 @@ class _CompatibilityExecutor:
         self._ledger = ledger
         self._output_root = output_root
 
-    def execute(self, *, wakeup: ControllerWakeup, plan) -> ControllerStepReceipt:
+    def execute(
+        self,
+        *,
+        wakeup: ControllerWakeup,
+        projection: ControllerRecoveryProjection,
+        plan,
+    ) -> ControllerStepReceipt:
+        assert projection.projection_sha256 == plan.projection_sha256
         case = self._ledger.case
         if plan.step is ControllerStep.AWAIT_EXECUTION:
             timestamps = iter((NOW + timedelta(minutes=2), NOW + timedelta(minutes=3)))
