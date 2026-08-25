@@ -11,11 +11,12 @@ not a production launch composition.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import re
 import secrets
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -1491,16 +1492,58 @@ class PostgreSQLExecutionAllocator:
     ) -> ReservationClaim:
         """Reverify and atomically hold the exact quote, budget, node, and resources."""
 
+        return self._admit_and_reserve(
+            session=None,
+            bundle=bundle,
+            grant=grant,
+        )
+
+    def admit_and_reserve_in_session(
+        self,
+        session: Session,
+        *,
+        bundle: EngineeringQualificationBundle,
+        grant: EngineeringQualificationGrant,
+    ) -> ReservationClaim:
+        """Join a caller-owned transaction without committing or closing its session."""
+
+        if not isinstance(session, Session) or not session.in_transaction():
+            raise ValueError(
+                "caller-owned execution admission requires an active Session transaction"
+            )
+        return self._admit_and_reserve(
+            session=session,
+            bundle=bundle,
+            grant=grant,
+        )
+
+    @contextlib.contextmanager
+    def _admission_session(self, supplied: Session | None) -> Iterator[Session]:
+        if supplied is not None:
+            yield supplied
+            return
+        with self._sessions() as owned, owned.begin():
+            yield owned
+
+    def _admit_and_reserve(
+        self,
+        *,
+        session: Session | None,
+        bundle: EngineeringQualificationBundle,
+        grant: EngineeringQualificationGrant,
+    ) -> ReservationClaim:
+        """Shared implementation for allocator-owned and caller-owned transactions."""
+
         bundle = EngineeringQualificationBundle.model_validate(bundle.model_dump(mode="python"))
         grant = EngineeringQualificationGrant.model_validate(grant.model_dump(mode="python"))
-        with self._sessions() as session, session.begin():
+        with self._admission_session(session) as session:
             preliminary_now = _database_time(session)
             self._validate_pricing_authority(bundle)
             quote = bundle.cost_quote
             authorization = bundle.budget_authorization
             intent = bundle.intent
             if (
-                self._runtime_control_issuer is not None
+                self._runtime_control_authority is not None
                 and intent.resource_request.artifact_quota_bytes
                 < MINIMUM_LOOP_OUTPUT_FILESYSTEM_BYTES
             ):
@@ -1717,9 +1760,9 @@ class PostgreSQLExecutionAllocator:
                 raise AdmissionConflict(
                     "full quoted lease no longer fits inside every locked authority window"
                 )
-            if self._runtime_control_issuer is not None:
+            if self._runtime_control_authority is not None:
                 artifact_submission_deadline = hard_deadline + self._artifact_submission_grace
-                runtime_pin = self._runtime_control_issuer.authority_pin
+                runtime_pin = self._runtime_control_authority.authority_pin
                 if not runtime_pin.active_at(now) or artifact_submission_deadline > min(
                     node_authority.active_until,
                     runtime_pin.active_until,

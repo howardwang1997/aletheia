@@ -31,10 +31,13 @@ def test_harness_freezes_the_full_reviewed_materials_source_surface(
         "aletheia/domains/base.py",
         "aletheia/domains/materials/datasets.py",
         "aletheia/domains/materials/featurizers.py",
+        "aletheia/domains/materials/__init__.py",
         "aletheia/domains/materials/matbench_task.py",
         "aletheia/domains/protocol.py",
         "aletheia/legacy_evaluation/capability.py",
         "aletheia/legacy_evaluation/contracts.py",
+        "aletheia/legacy_evaluation/handler.py",
+        "aletheia/legacy_evaluation/launch.py",
     } == paths
     verify_legacy_evaluation_harness(
         plugin=case.plugin,

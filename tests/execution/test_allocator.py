@@ -595,6 +595,48 @@ def test_atomic_admission_is_exactly_idempotent_and_token_is_one_time(monkeypatc
         assert budget.reserved_microunits == first.snapshot.held_microunits
 
 
+def test_caller_owned_admission_transaction_rolls_back_without_an_orphan_attempt(
+    monkeypatch,
+) -> None:
+    prepared = _prepared(monkeypatch)
+    _register_and_inventory(prepared)
+    attempt_id = prepared.bundle.intent.infrastructure_attempt.infrastructure_attempt_id
+    sessions = session_factory()
+
+    with pytest.raises(RuntimeError, match="injected caller crash"):
+        with sessions() as session, session.begin():
+            claim = prepared.allocator.admit_and_reserve_in_session(
+                session,
+                bundle=prepared.bundle,
+                grant=prepared.grant,
+            )
+            assert claim.created is True
+            assert session.get(_ExecutionAttemptRecord, attempt_id) is not None
+            raise RuntimeError("injected caller crash")
+
+    with sessions() as session:
+        assert session.get(_ExecutionAttemptRecord, attempt_id) is None
+
+    committed = prepared.allocator.admit_and_reserve(
+        bundle=prepared.bundle,
+        grant=prepared.grant,
+    )
+    assert committed.created is True
+    with sessions() as session:
+        assert session.get(_ExecutionAttemptRecord, attempt_id) is not None
+
+
+def test_caller_owned_admission_requires_an_active_transaction(monkeypatch) -> None:
+    prepared = _prepared(monkeypatch)
+    with session_factory()() as session:
+        with pytest.raises(ValueError, match="active Session transaction"):
+            prepared.allocator.admit_and_reserve_in_session(
+                session,
+                bundle=prepared.bundle,
+                grant=prepared.grant,
+            )
+
+
 def test_concurrent_exact_admission_mints_only_one_raw_token(monkeypatch) -> None:
     prepared = _prepared(monkeypatch)
     _register_and_inventory(prepared)

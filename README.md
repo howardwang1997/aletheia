@@ -147,7 +147,10 @@ artifacts, and sends them through a domain-free signed structural validator. The
 and controller need no materials/MAE/MatBench/RAG special case; RAG and the full
 `ExperimentDriver` remain legacy, and old API/dashboard responses are explicitly marked
 `legacy_protocol_executor`. This too is local engineering evidence, not a qualified production
-handler or host. PR-7a now adds the byte-pinned, one-role-per-process runtime boundary and concrete
+host. A follow-up PR-6 production-boundary slice now adds a fixed-path/no-argv handler, exact PR-4
+launch spec, digest/version-pinned candidate image, and atomic SEA preregistration plus qualification
+reservation through a public-key-only worker. The built image and target host remain unqualified.
+PR-7a now adds the byte-pinned, one-role-per-process runtime boundary and concrete
 authority-minimal PostgreSQL composition for Kernel dispatch and delivery reconciliation. It
 executes already-hashed factory bytes, binds the queue principal, recovers worker leases at startup,
 and emits non-scientific operational receipts. PR-7b removes the generic worker callback: it
@@ -156,7 +159,8 @@ controller/worker-pinned
 authority manifests, keeps passive waits local, and rejects authority/key overlap or runtime
 rebinding. PR-7c adds a public-key-only terminal factory that reconstructs exact PR-4 qualification,
 reservation, launch, termination, artifact/deadline, and outbox custody before delivery, then
-re-reads the source inside the delivery transaction. The concrete production worker step services,
+re-reads the source inside the delivery transaction. The remaining production worker
+validation/admission step services,
 terminal target-host ACL/custody campaign, and independent validator deployment remain
 uncommissioned. The PR-2 store also still has one immutable policy epoch and
 `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),

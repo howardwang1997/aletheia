@@ -1604,9 +1604,14 @@ deployment gate 约束。详见
 validation，不产生 outcome、observation admission 或 claim authority。真实材料 fixture 的 canonical metric
 tuple 已冻结；新 controller instance 可在执行后从 retained projection 继续 validation，且
 `ExperimentDriver._optimize` 调用数为 0。RAG override 被机械拒绝。旧 `/runs`/`/sessions` API 与 dashboard
-现在显式返回/显示 `legacy_protocol_executor`。这仍是本地 engineering evidence，不是已 qualification 的
-production handler/image/host。详见 `PR6_LEGACY_EVALUATION_COMPATIBILITY.md` 与
-`architecture/0051-legacy-evaluation-compatibility-leaf.md`。
+现在显式返回/显示 `legacy_protocol_executor`。后续 production-boundary slice 已加入 fixed-path/no-argv
+container handler、exact PR-4 `PinnedLaunchSpec`、digest/version-pinned candidate image，以及 SEA
+preregistration 与 qualification admission/resource reservation 的单一 PostgreSQL transaction；worker
+只持 public verification authority，不持 SEA/runtime-control signer。built image digest 与 exact target-host
+campaign 仍未冻结/运行，因此这仍是本地 engineering evidence，不是已 qualification 的 production host。
+详见 `PR6_LEGACY_EVALUATION_COMPATIBILITY.md`、
+`architecture/0051-legacy-evaluation-compatibility-leaf.md` 与
+`architecture/0055-qualified-evaluation-runtime-and-registration.md`。
 
 ### PR-7a：Controller production runtime process boundary
 
@@ -1727,8 +1732,9 @@ Linux/root/systemd/loop/ext4/rootful-Docker campaign 仍是部署前硬门；通
 execution service。**PR-7b** 已冻结 exhaustive step-specific worker routing、实际 controller/worker deployment
 binding 与 authority separation，但 production active adapters 仍未 commissioned。**PR-7c** 已增加
 public-key-only verified terminal source 与 checked-in terminal composition；其 target-host ACL/custody/restart
-仍待 deployment campaign。下一项 load-bearing 工作是 PR-6 production step handler/image qualification、
-PR-5 deployment-owned worker signing/validator/admission composition 与 process-kill PostgreSQL campaign，
+仍待 deployment campaign。PR-6 production step handler/candidate image 与原子 execution registration 已有
+源码和本地测试；下一项 load-bearing 工作是冻结/qualification 真实 image/host、PR-5 deployment-owned
+validator/admission composition 与 process-kill PostgreSQL campaign，
 而不是扩张 controller authority。checkpoint 与 external reconciliation 仍需独立 typed contracts，
 不能由 generic retry 猜测。
 

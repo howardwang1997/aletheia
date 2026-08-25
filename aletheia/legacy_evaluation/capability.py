@@ -110,8 +110,11 @@ _OUTPUT_CONTRACT = (
 )
 _SOURCE_BASE = "aletheia/domains/base.py"
 _SOURCE_PROTOCOL = "aletheia/domains/protocol.py"
+_SOURCE_MATERIALS_INIT = "aletheia/domains/materials/__init__.py"
 _SOURCE_CAPABILITY = "aletheia/legacy_evaluation/capability.py"
 _SOURCE_CONTRACTS = "aletheia/legacy_evaluation/contracts.py"
+_SOURCE_HANDLER = "aletheia/legacy_evaluation/handler.py"
+_SOURCE_LAUNCH = "aletheia/legacy_evaluation/launch.py"
 _SAFE_DESIGN_KEY = r"^[a-z][a-z0-9_]{0,63}$"
 _SENSITIVE_PARAMETER_FRAGMENTS = (
     "credential",
@@ -222,8 +225,11 @@ def _source_bindings(
     paths = {
         _SOURCE_BASE,
         _SOURCE_PROTOCOL,
+        _SOURCE_MATERIALS_INIT,
         _SOURCE_CAPABILITY,
         _SOURCE_CONTRACTS,
+        _SOURCE_HANDLER,
+        _SOURCE_LAUNCH,
         _source_relative_path(plugin, source_root),
         *additional_source_paths,
     }
@@ -327,8 +333,11 @@ def verify_legacy_evaluation_harness(
     mandatory_paths = {
         _SOURCE_BASE,
         _SOURCE_PROTOCOL,
+        _SOURCE_MATERIALS_INIT,
         _SOURCE_CAPABILITY,
         _SOURCE_CONTRACTS,
+        _SOURCE_HANDLER,
+        _SOURCE_LAUNCH,
         _source_relative_path(plugin, source_root),
     }
     frozen_paths = {item.relative_path for item in manifest.source_bindings}
@@ -796,6 +805,123 @@ def _normalize_artifacts(
     return tuple(sorted(normalized, key=lambda item: item.artifact_key))
 
 
+def execute_qualified_legacy_evaluation_workload(
+    *,
+    plugin: DomainPlugin,
+    harness: LegacyEvaluationHarnessManifest,
+    source_root: Path,
+    invocation: LegacyEvaluationInvocation,
+    input_table_path: Path,
+    output_root: Path,
+    clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+) -> LegacyEvaluationRawResult:
+    """Run the launch-gated inner workload after PR-4 has bound the full Intent.
+
+    The container receives no caller-selectable resource, retry, network, WorkOrder, or output
+    policy. It independently rehashes the frozen source closure and staged table before invoking
+    only the reviewed plugin's ``featurize`` and ``train_evaluate`` methods.
+    """
+
+    try:
+        invocation = LegacyEvaluationInvocation.model_validate(invocation.model_dump(mode="python"))
+        harness = LegacyEvaluationHarnessManifest.model_validate(harness.model_dump(mode="python"))
+        verify_legacy_evaluation_harness(
+            plugin=plugin,
+            manifest=harness,
+            source_root=source_root,
+        )
+        if (
+            invocation.harness_manifest_sha256 != harness.manifest_sha256
+            or invocation.capability_id != harness.capability_id
+        ):
+            raise LegacyEvaluationCapabilityError(
+                "qualified workload invocation selected another frozen harness"
+            )
+        design = _validate_design(invocation, harness)
+        table_bytes = _read_regular_file(
+            input_table_path,
+            maximum_bytes=harness.maximum_input_bytes,
+            label="legacy evaluation input table",
+        )
+        if (
+            len(table_bytes) != invocation.input_table.bytes
+            or hashlib.sha256(table_bytes).hexdigest() != invocation.input_table.content_sha256
+            or invocation.input_table.schema_sha256 != harness.input_table_schema_sha256
+        ):
+            raise LegacyEvaluationCapabilityError("legacy evaluation input table changed")
+        root = _prepare_output_root(output_root)
+        started_at = clock()
+        if started_at < invocation.issued_at or started_at >= invocation.deadline:
+            raise LegacyEvaluationCapabilityError(
+                "legacy evaluation started outside its authorization"
+            )
+
+        import pandas as pd
+
+        frame = pd.read_csv(BytesIO(table_bytes))
+        if not 10 <= len(frame) <= harness.maximum_rows:
+            raise LegacyEvaluationCapabilityError("legacy evaluation row count is outside policy")
+        if len(frame.columns) != len(set(str(item) for item in frame.columns)):
+            raise LegacyEvaluationCapabilityError("legacy evaluation input repeats a column")
+        frame.attrs["data_spec"] = {}
+        features, target, feature_names, groups = plugin.featurize(frame, design)
+        result = plugin.train_evaluate(
+            features,
+            target,
+            design,
+            root,
+            groups=groups,
+        )
+        if not isinstance(result, ExperimentResult):
+            raise LegacyEvaluationCapabilityError("legacy evaluation returned another result type")
+        result.info.setdefault("feature_count", len(feature_names))
+        result.info.setdefault("n_rows", int(getattr(frame, "shape", [0])[0]))
+        metric_names = tuple(item.metric_name for item in harness.metric_projections)
+        if set(result.metrics) != set(metric_names):
+            raise LegacyEvaluationCapabilityError("legacy evaluation metric surface changed")
+        metrics = tuple(
+            LegacyEvaluationMetric(name=name, value=float(result.metrics[name]))
+            for name in sorted(result.metrics)
+        )
+        info_json = canonical_json_text(result.info)
+        artifacts = _normalize_artifacts(
+            root=root,
+            result=result,
+            maximum_bytes=harness.maximum_artifact_bytes,
+        )
+        ended_at = clock()
+        if ended_at < started_at or ended_at >= invocation.deadline:
+            raise LegacyEvaluationCapabilityError(
+                "legacy evaluation ended outside its authorization"
+            )
+        raw_result = LegacyEvaluationRawResult(
+            invocation_sha256=invocation.invocation_sha256,
+            harness_manifest_sha256=harness.manifest_sha256,
+            capability_manifest_sha256=invocation.capability_manifest_sha256,
+            plugin_name=harness.plugin_name,
+            executor_principal_id=harness.executor_principal_id,
+            metrics=metrics,
+            info_json=info_json,
+            artifacts=artifacts,
+            started_at=started_at,
+            ended_at=ended_at,
+        )
+        _write_once(root / RAW_RESULT_RELATIVE_PATH, canonical_json_bytes(raw_result))
+        declared_paths = {item.relative_path for item in artifacts} | {RAW_RESULT_RELATIVE_PATH}
+        actual_paths = {
+            item.relative_to(root).as_posix()
+            for item in root.iterdir()
+            if item.is_file() and not item.is_symlink()
+        }
+        if actual_paths != declared_paths or any(item.is_dir() for item in root.iterdir()):
+            raise LegacyEvaluationCapabilityError("legacy evaluation left undeclared outputs")
+        return raw_result
+    except LegacyEvaluationCapabilityError:
+        raise
+    except Exception as exc:  # the source-pinned legacy plugin is an untrusted leaf
+        raise LegacyEvaluationCapabilityError("legacy evaluation failed closed") from exc
+
+
 class LegacyEvaluationCapability:
     """Source-pinned adapter that executes only the isolated tabular evaluation methods."""
 
@@ -827,6 +953,7 @@ class LegacyEvaluationCapability:
         self._protocol_manifest = CapabilityManifestV2.model_validate(
             protocol_manifest.model_dump(mode="python")
         )
+        self._source_root = Path(source_root)
         self._clock = clock
 
     def execute(
@@ -853,89 +980,15 @@ class LegacyEvaluationCapability:
                     invocation_artifact_verified_receipt_sha256
                 ),
             )
-            design = _validate_design(invocation, self._harness)
-            table_bytes = _read_regular_file(
-                input_table_path,
-                maximum_bytes=self._harness.maximum_input_bytes,
-                label="legacy evaluation input table",
+            return execute_qualified_legacy_evaluation_workload(
+                plugin=self._plugin,
+                harness=self._harness,
+                source_root=self._source_root,
+                invocation=invocation,
+                input_table_path=input_table_path,
+                output_root=output_root,
+                clock=self._clock,
             )
-            if (
-                len(table_bytes) != invocation.input_table.bytes
-                or hashlib.sha256(table_bytes).hexdigest() != invocation.input_table.content_sha256
-                or invocation.input_table.schema_sha256 != self._harness.input_table_schema_sha256
-            ):
-                raise LegacyEvaluationCapabilityError("legacy evaluation input table changed")
-            root = _prepare_output_root(output_root)
-            started_at = self._clock()
-            if started_at < invocation.issued_at or started_at >= invocation.deadline:
-                raise LegacyEvaluationCapabilityError(
-                    "legacy evaluation started outside its authorization"
-                )
-
-            import pandas as pd
-
-            frame = pd.read_csv(BytesIO(table_bytes))
-            if not 10 <= len(frame) <= self._harness.maximum_rows:
-                raise LegacyEvaluationCapabilityError(
-                    "legacy evaluation row count is outside policy"
-                )
-            if len(frame.columns) != len(set(str(item) for item in frame.columns)):
-                raise LegacyEvaluationCapabilityError("legacy evaluation input repeats a column")
-            frame.attrs["data_spec"] = {}
-            features, target, feature_names, groups = self._plugin.featurize(frame, design)
-            result = self._plugin.train_evaluate(
-                features,
-                target,
-                design,
-                root,
-                groups=groups,
-            )
-            if not isinstance(result, ExperimentResult):
-                raise LegacyEvaluationCapabilityError(
-                    "legacy evaluation returned another result type"
-                )
-            result.info.setdefault("feature_count", len(feature_names))
-            result.info.setdefault("n_rows", int(getattr(frame, "shape", [0])[0]))
-            metric_names = tuple(item.metric_name for item in self._harness.metric_projections)
-            if set(result.metrics) != set(metric_names):
-                raise LegacyEvaluationCapabilityError("legacy evaluation metric surface changed")
-            metrics = tuple(
-                LegacyEvaluationMetric(name=name, value=float(result.metrics[name]))
-                for name in sorted(result.metrics)
-            )
-            info_json = canonical_json_text(result.info)
-            artifacts = _normalize_artifacts(
-                root=root,
-                result=result,
-                maximum_bytes=self._harness.maximum_artifact_bytes,
-            )
-            ended_at = self._clock()
-            if ended_at < started_at or ended_at >= invocation.deadline:
-                raise LegacyEvaluationCapabilityError(
-                    "legacy evaluation ended outside its authorization"
-                )
-            raw_result = LegacyEvaluationRawResult(
-                invocation_sha256=invocation.invocation_sha256,
-                harness_manifest_sha256=self._harness.manifest_sha256,
-                capability_manifest_sha256=self._protocol_manifest.manifest_sha256,
-                plugin_name=self._harness.plugin_name,
-                executor_principal_id=self._harness.executor_principal_id,
-                metrics=metrics,
-                info_json=info_json,
-                artifacts=artifacts,
-                started_at=started_at,
-                ended_at=ended_at,
-            )
-            _write_once(root / RAW_RESULT_RELATIVE_PATH, canonical_json_bytes(raw_result))
-            declared_paths = {item.relative_path for item in artifacts} | {RAW_RESULT_RELATIVE_PATH}
-            actual_paths = {
-                item.relative_to(root).as_posix()
-                for item in root.iterdir()
-                if item.is_file() and not item.is_symlink()
-            }
-            if actual_paths != declared_paths or any(item.is_dir() for item in root.iterdir()):
-                raise LegacyEvaluationCapabilityError("legacy evaluation left undeclared outputs")
-            return raw_result
         except LegacyEvaluationCapabilityError:
             raise
         except Exception as exc:  # the source-pinned legacy plugin is an untrusted leaf
@@ -985,6 +1038,7 @@ __all__ = [
     "TABLE_PORT_ID",
     "build_legacy_evaluation_protocol_manifest",
     "execute_legacy_evaluation",
+    "execute_qualified_legacy_evaluation_workload",
     "freeze_legacy_evaluation_harness",
     "legacy_evaluation_artifact_paths",
     "legacy_evaluation_expected_artifacts",

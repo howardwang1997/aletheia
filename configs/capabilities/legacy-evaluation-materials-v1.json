@@ -12,6 +12,10 @@
       "content_sha256": "73fa26823d51b41c484fc83a5efbc579f043352f7a9704fa27316912cfae4da0"
     },
     {
+      "relative_path": "aletheia/domains/materials/__init__.py",
+      "content_sha256": "e12780f4729e7eaf06e218cbc8b0509aa49c693dd49d60783d44835bebe1ec17"
+    },
+    {
       "relative_path": "aletheia/domains/materials/datasets.py",
       "content_sha256": "74f23fcebe82c171e75c8192fda853f228ba389e837f16bc0373c8e05e116b3f"
     },
@@ -29,11 +33,19 @@
     },
     {
       "relative_path": "aletheia/legacy_evaluation/capability.py",
-      "content_sha256": "21f572785368a397a0905423f489d8ecdf766fae96c236987a9d73d8b2cfe068"
+      "content_sha256": "a38cd65de27080bc8704b0dfc12a385905522c95ebaa09d2d4401bf773484770"
     },
     {
       "relative_path": "aletheia/legacy_evaluation/contracts.py",
       "content_sha256": "2e15a63e59be1784e6449782d8cdaee62ed45ccbe5d1b8b98f0e9adb83b0933f"
+    },
+    {
+      "relative_path": "aletheia/legacy_evaluation/handler.py",
+      "content_sha256": "7cbeda184a7aa4262024c60338e692da871788e4231224d51f457a492756c810"
+    },
+    {
+      "relative_path": "aletheia/legacy_evaluation/launch.py",
+      "content_sha256": "e6feff8aedd2d2b63c2dac8f7a28277624438379781f0c7354bd7188be8a32e6"
     }
   ],
   "allowed_design_keys": [
