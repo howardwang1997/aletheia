@@ -159,10 +159,12 @@ controller/worker-pinned
 authority manifests, keeps passive waits local, and rejects authority/key overlap or runtime
 rebinding. PR-7c adds a public-key-only terminal factory that reconstructs exact PR-4 qualification,
 reservation, launch, termination, artifact/deadline, and outbox custody before delivery, then
-re-reads the source inside the delivery transaction. The remaining production worker
-validation/admission step services,
-terminal target-host ACL/custody campaign, and independent validator deployment remain
-uncommissioned. The PR-2 store also still has one immutable policy epoch and
+re-reads the source inside the delivery transaction. The production worker steps now include
+atomic signed execution registration plus independent validation and atomic admission/Kernel
+adapters. They deterministically recover raw terminal material and committed validation from
+PostgreSQL, but their external F9-v2 validator/admitter/signer deployments, terminal target-host
+ACL/custody campaign, and complete worker composition remain uncommissioned. The PR-2 store also
+still has one immutable policy epoch and
 `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
 the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-3 compiler guide](docs/PR3_PROTOCOL_COMPILER.md), plus the
@@ -172,7 +174,8 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-6 compatibility guide](docs/PR6_LEGACY_EVALUATION_COMPATIBILITY.md), and the
 [PR-7 runtime guide](docs/PR7_CONTROLLER_PRODUCTION_RUNTIME.md), plus the
 [PR-7b step-authority guide](docs/PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md), and the
-[PR-7c verified-terminal guide](docs/PR7C_VERIFIED_TERMINAL_DISPATCHER.md).
+[PR-7c verified-terminal guide](docs/PR7C_VERIFIED_TERMINAL_DISPATCHER.md), plus
+[ADR 0056](docs/architecture/0056-independent-observation-controller-steps.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,

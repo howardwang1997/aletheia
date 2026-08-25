@@ -138,6 +138,12 @@ controller dependency. A deployment must bind
 each step to its dedicated signing, compiler, PR-4, validation, admission, or continuation adapter;
 there is intentionally no catch-all model callback and no legacy `ExperimentDriver` fallback.
 
+The `REGISTER_EXECUTION`, `COMMIT_VALIDATION`, and `COMMIT_ADMISSION` production-boundary adapters
+are now checked in. Validation reconstructs a deterministic raw envelope from the SEA row and a
+full verified PR-4 terminal-material projection, while admission reloads the exact canonical
+committed-validation row. Both steps require separately bound external services; only the atomic
+admission coordinator may report simultaneous observation and Kernel authority.
+
 ## Remaining gates
 
 PR-5 does not make PR-4 deployable. Before unattended or remote execution, the exact target host
@@ -148,15 +154,17 @@ installer, concrete Linux observer, frozen installed-manifest instance, or campa
 The local vertical fixture is synthetic and uses reviewed deterministic capability adapters. The
 PR-5 source/test slice separately exercises the concrete PostgreSQL/CAS custody adapters and the
 atomic coordinator contract, but it is not a live multi-process PostgreSQL kill/restart campaign.
-A production launch additionally needs deployment composition for the controller step handlers,
-signing-key custody, terminal-dispatcher/worker processes, an independent F9-v2 validator
-adapter/service, monitoring, and process-kill PostgreSQL fault campaigns. PR-7a now supplies
+A production launch additionally needs deployment composition for the remaining controller step
+handlers, external signing-key custody, terminal-dispatcher/worker processes, an independent
+graph-scoped F9-v2 campaign validator service, monitoring, and process-kill PostgreSQL fault
+campaigns. PR-7a now supplies
 byte-pinned process loops and concrete authority-minimal PostgreSQL composition for Kernel dispatch
 and periodic delivery reconciliation. PR-7c supplies a public-key-only terminal source composition
 that replays exact PR-4 lineage, but not its target-host ACL/custody/restart evidence. Neither slice
 supplies scientific-step authority.
 PR-7b supplies the exhaustive step-specific routing/authority manifest boundary and forwards the
-exact audited recovery projection, but the concrete active step services remain uncommissioned.
+exact audited recovery projection. Three active step adapters now have production-boundary source
+slices, but the complete external service composition remains uncommissioned.
 The F9-v1 migration adapter does not satisfy that production gate.
 Remote/GPU execution, external-effect actions,
 checkpointing, autonomous spending, claim admission, and publication remain closed.
