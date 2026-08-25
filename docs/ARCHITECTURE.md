@@ -1,5 +1,14 @@
 # Aletheia — Architecture
 
+> **Status note (2026-08-24):** the body of this file describes the legacy execution architecture.
+> The current target and PR-0→PR-4b migration state are maintained in
+> [`END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md`](END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md).
+> PR-0→PR-3 now provide the legacy freeze, authoritative Research Kernel event store, and pure
+> Protocol IR/compiler. PR-4a/PR-4b add a qualification-only local CPU execution substrate, but its
+> exact target-host Linux/root/systemd/loop/Docker deployment gate and the PR-5 scientific bridge
+> remain open. The fixed global FSM and regression-shaped `DomainPlugin` below are compatibility
+> paths; new scientific functionality must target the RFC boundaries rather than extend them.
+
 ## Ultimate goal
 
 **用AI做最前沿的科学研究 — AI conducting frontier scientific research, end to end.**
@@ -53,13 +62,15 @@ campaigns, and multi-domain generalization follow).
 ## Components
 
 ```
-Next.js dashboard  ⇄  FastAPI (session auth + RBAC)  ⇄  event bus → SSE
-                                  │
-   ┌──────────────┬──────────────┼───────────────┬──────────────┐
+Next.js dashboard  ⇄  FastAPI control plane  ⇄  Postgres task + command/event ledger  → cursor SSE
+                                                    │
+                                           independent durable workers
+                                                    │
+   ┌──────────────┬──────────────┬──────────────────┼──────────────┐
    orchestrator    critic gateway   memory/ledger    scheduler/FSM   compute + IAM
-   (Claude or GPT, (cross-vendor    (Postgres +      (driver:        (local subprocess
-    isolated per    peer review)     pgvector recall)  stages+gates)   / Docker sandbox;
-    stage)                                                            GitHub App repos)
+   (Claude or GPT, (cross-vendor    (Postgres +      (durable task   (local subprocess
+    isolated per    peer review)     pgvector recall)  + driver)       / Docker sandbox;
+    stage)                                                               GitHub App repos)
 ```
 
 - **orchestrator** (`aletheia/orchestrator/`): isolated `run_worker` per stage, selected globally via
@@ -72,7 +83,12 @@ Next.js dashboard  ⇄  FastAPI (session auth + RBAC)  ⇄  event bus → SSE
   consensus.
 - **memory** (`aletheia/memory/`): the ledger is the source of truth; pgvector `recall` surfaces relevant
   prior work (own runs and — from the SURVEY iteration — external literature) before designing.
-- **scheduler** (`aletheia/scheduler/`): the deterministic driver walks the FSM and enforces budget.
+- **scheduler/jobs** (`aletheia/scheduler/`, `aletheia/jobs/`): launch/resume enters the Postgres
+  durable queue; a separate worker leases and heartbeats the deterministic FSM driver. Queue state
+  coordinates delivery but never replaces typed scientific ledgers. Transactional scientific
+  commands atomically bind migrated domain writes to result receipts and keyed events. One-time
+  outward actions expose one raw authorization token, retain a stable provider idempotency key, and
+  require reconciliation instead of automatic replay when the remote outcome is unknown.
 - **compute** (`aletheia/compute/`): `local` restricted subprocess (default) or `docker` hard sandbox.
 - **coder** (`aletheia/coder/`): authors model code behind the AST gate; runs only in the sandbox.
 - **iam** (`aletheia/iam/`, `aletheia/auth/`): GitHub App for repo/branch/PR-per-experiment; session login

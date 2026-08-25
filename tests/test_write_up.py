@@ -166,3 +166,76 @@ def test_write_up_dry_uses_claim_ledger_not_analysis_as_verdict():
     assert "The method shows only preliminary grouped-CV evidence" in report
     assert "Novelty was not verified" in report
     assert "Hypothesis supported" not in report
+
+
+def test_diagnostic_write_up_reports_only_the_sealed_endpoint():
+    create_all()
+    run_id = create_run("diagnostic report", domain="materials", status="planned")
+    exp_id = finalize_plan(run_id, {"objective": "paired error audit", "domain": "materials"})
+    d = ExperimentDriver(run_id, dry_run=True)
+    from aletheia.domains.registry import get_domain_plugin
+
+    d.profile = get_domain_plugin("materials").profile(target_column="critical_temp")
+    d.survey_papers = _papers()
+    d.hypothesis = {
+        "statement": "cuprate error exceeds its matched control",
+        "contribution_type": "diagnostic",
+        "hypothesis_locked": True,
+        "demonstration": {"form": "discriminating_instance", "claim": "paired gap"},
+    }
+    prereg = {
+        "statistic_name": "alpha-aware paired lower bound",
+        "computation": "paired bootstrap lower bound",
+        "control_description": "within-pair label swaps",
+        "expected_control": "label swaps destroy the chemistry assignment",
+        "supported_if": {"op": ">", "threshold": 0.0},
+        "control_silent_if": {"op": "<=", "threshold": 0.0},
+    }
+    result = {
+        "metrics": {"diagnostic_test_statistic": 1.2, "diagnostic_control_statistic": -0.4},
+        "info": {
+            "protocol_status": "demonstration_only",
+            "demonstration": {
+                "holds": True,
+                "test_statistic": 1.2,
+                "control_statistic": -0.4,
+                "test_triggers": True,
+                "control_silent": True,
+                "n_confirm": 300,
+                "sandbox_image_id": "sha256:" + "a" * 64,
+                "preregistration": prereg,
+                "probes": {"clean": True, "flags": []},
+                "components": {"family_alpha_used": 0.008, "matched_pairs": 80},
+                "split_meta": {
+                    "role": "confirmation",
+                    "confirmation_batch": 1,
+                    "confirmation_index_hash": "fresh-hash",
+                    "family_alpha": 0.008,
+                },
+            },
+            "reproduction": {
+                "demonstration_verdict_stable": True,
+                "demonstration_statistic_stable": True,
+                "demonstration_reproduced": True,
+                "demonstration_original_statistic": 1.2,
+                "demonstration_repro_statistic": 1.1,
+            },
+        },
+    }
+    rpanel = types.SimpleNamespace(consensus_verdict="approve", gate_passed=True)
+    asyncio.run(d._write_up(
+        {"objective": "paired error audit"},
+        {"model": "random_forest"},
+        result,
+        "Harness-owned descriptive analysis.",
+        rpanel,
+        exp_id,
+    ))
+    report = (run_artifacts_dir(run_id) / "report.md").read_text()
+    assert "generic repeated/grouped-CV benchmark" in report
+    assert "were intentionally not run" in report
+    assert "family_alpha_used" in report
+    assert "within-pair label swaps" in report
+    assert "figures/parity.png" not in report
+    assert "Known SOTA" not in report
+    assert "Under grouped CV" not in report

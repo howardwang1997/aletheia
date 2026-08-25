@@ -18,10 +18,19 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from aletheia.memory.service import get_run, list_claims, list_credences, list_metrics
+from aletheia.memory.service import (
+    get_campaign_split_ledger,
+    get_external_validation_ledger,
+    get_run,
+    list_claims,
+    list_credences,
+    list_hypothesis_attempts,
+    list_metrics,
+)
 from aletheia.memory.transcript import export_transcript
 from aletheia.memory.usage import aggregate_run_usage, format_usage, run_rate_limit
 from aletheia.paths import artifacts_dir
+from aletheia.research.split_ledger import public_split_summary
 
 # the explicit capability id the driver routes to when the AI authored the computation; any other
 # value (or None) means a registered/hand-built demonstration ran instead.
@@ -29,7 +38,13 @@ AI_AUTHORED_CAPABILITY_ID = "ai_authored_demonstration"
 
 # K2 events that form a per-round TRAJECTORY (one per round) — accumulated as a list, not last-wins,
 # so a multi-round campaign's belief evolution survives into the summary.
-_LIST_EVENTS = ("belief_prior", "belief_prediction", "belief_update", "campaign_reason")
+_LIST_EVENTS = (
+    "belief_prior",
+    "belief_prediction",
+    "belief_update",
+    "campaign_reason",
+    "hypothesis_attempt",
+)
 
 
 class RunRecorder:
@@ -122,6 +137,8 @@ def write_e2e_summary(
     exploration = recorder.payload("demonstration_exploration")  # K1 explore->confirm seal
     run = get_run(run_id) or {}
     route = demo.get("capability")  # None until a demonstration actually computes
+    split_ledger = get_campaign_split_ledger(run_id) or {}
+    external_ledger = get_external_validation_ledger(run_id) or {}
 
     summary: dict[str, Any] = {
         "run_id": run_id,
@@ -135,6 +152,23 @@ def write_e2e_summary(
         "ai_authored_route": route == AI_AUTHORED_CAPABILITY_ID,
         "metrics": list_metrics(exp_id),
         "claims": _claim_ledger(run_id),
+        "campaign_split": {
+            **public_split_summary(split_ledger.get("plan") or {}),
+            "dataset_fingerprint": split_ledger.get("dataset_fingerprint"),
+            "row_identity_hash": split_ledger.get("row_identity_hash"),
+            "state": split_ledger.get("state"),
+            "final_opened_at": split_ledger.get("final_opened_at"),
+        },
+        "family_hypothesis_attempts": list_hypothesis_attempts(run_id),
+        "final_holdout": recorder.payload("final_holdout") or split_ledger.get("final_result"),
+        "external_replication": {
+            "state": external_ledger.get("state"),
+            "opened_at": external_ledger.get("opened_at"),
+            "dataset_fingerprint": external_ledger.get("dataset_fingerprint"),
+            "row_identity_hash": external_ledger.get("row_identity_hash"),
+            "provenance": external_ledger.get("provenance"),
+            "result": recorder.payload("external_replication") or external_ledger.get("result"),
+        },
         "demonstration": {
             "computed": demo.get("computed"),
             "holds": demo.get("holds"),
@@ -147,6 +181,7 @@ def write_e2e_summary(
             # caps the formulation claim below `strong`.
             "exploration_applied": demo.get("exploration_applied"),
             "n_confirm": demo.get("n_confirm"),
+            "sandbox_image_id": demo.get("sandbox_image_id"),
         },
         # the EXPLORATION phase: descriptive observations the AI measured on the disjoint explore
         # subset to calibrate its pre-registered threshold (never an input to the verdict). Empty
@@ -160,6 +195,7 @@ def write_e2e_summary(
             "n_explore": exploration.get("n_explore"),
             "n_confirm": exploration.get("n_confirm") or demo.get("n_confirm"),
             "split": exploration.get("split") or demo.get("split_meta"),
+            "sandbox_image_id": exploration.get("sandbox_image_id"),
         },
         "demonstration_audit": {
             "verdict": audit.get("verdict"),  # passed | reject | degraded | error

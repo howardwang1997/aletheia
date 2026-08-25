@@ -1,0 +1,20 @@
+schema_name: aletheia.capability_planning_query
+schema_version: 1
+query_id: materials-band-gap-range-compression-exploratory-v2
+domain: materials
+scientific_question_id: materials.band_gap.range_compression
+claim_type: predictive
+minimum_evidence_level: exploratory
+available_data_modalities:
+  - composition_property_table
+available_metadata:
+  - composition
+  - property_unit
+  - target
+maximum_safety_class: low_risk_compute
+allowed_approval_classes:
+  - operator
+explicit_capability_id: materials.band_gap.range_compression
+explicit_version: 2.0.0
+allow_provisional: true
+observation_access: none

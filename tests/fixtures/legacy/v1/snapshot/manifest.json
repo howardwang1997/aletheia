@@ -1,0 +1,64 @@
+{
+  "exporter_code_sha256": "fb35c84fba0865893237862b30b2a6833f810379fdb783a6b86d2cb1514572ac",
+  "exporter_entrypoint": "exporter.py",
+  "exporter_entrypoint_sha256": "c00d87ac4ac9b352114b4deab7546edc8366c2ff85f7a0489ae1bf84ad0801f8",
+  "exporter_execution_assurance": "operator_attested",
+  "exporter_git_commit": "605964af640d4f24ad66eaa833f005790e312858",
+  "exporter_git_tree": "06fd277358e7992940714a3f50ef33463be5b1af",
+  "exporter_identity_scheme": "git_tracked_entrypoint_v1",
+  "freezer_identity": {
+    "code_sha256": "9e98c59bcf29bd36c6378279ae96ec55bb5d4a6aaa22502d2efa2e570ba75a00",
+    "entrypoint": "scripts/freeze_legacy_snapshot.py",
+    "execution_assurance": "runtime_source_bytes_hashed_before_freeze",
+    "identity_scheme": "runtime_source_bundle_sha256_v1",
+    "schema_name": "aletheia.legacy_freezer_runtime_identity",
+    "schema_version": 1,
+    "source_files": [
+      {
+        "relative_path": "aletheia/migration/legacy.py",
+        "sha256": "9d7892391570f9620d3234b6677adf29c99fb2d592550571cb203245bfdb7173",
+        "size_bytes": 29994
+      },
+      {
+        "relative_path": "scripts/freeze_legacy_snapshot.py",
+        "sha256": "269854b15cfd43de481b9836786191d17dd87b8721b89e0c1d1a3562c7c9c76b",
+        "size_bytes": 12824
+      }
+    ]
+  },
+  "legacy_mutation_propagates": false,
+  "live_refresh_allowed": false,
+  "object_count": 2,
+  "objects": [
+    {
+      "cas_relative_uri": "objects/sha256/f4/f4cc6bb4873744a4fae4eb6d243929ddd86c96891f6ccab8cb9825a6bf3c6c49",
+      "data_class": "internal_sanitized",
+      "logical_name": "endurance-terminal-report",
+      "media_type": "application/json",
+      "role": "report",
+      "sha256": "f4cc6bb4873744a4fae4eb6d243929ddd86c96891f6ccab8cb9825a6bf3c6c49",
+      "size_bytes": 8444,
+      "source_relative_path": "endurance/report.json"
+    },
+    {
+      "cas_relative_uri": "objects/sha256/bb/bb1c3273e82969ae1d9ed4d3ccf593ee4a277914492cb9fb8a7232090cf55624",
+      "data_class": "internal_sanitized",
+      "logical_name": "legacy-run-projections",
+      "media_type": "application/json",
+      "role": "manifest",
+      "sha256": "bb1c3273e82969ae1d9ed4d3ccf593ee4a277914492cb9fb8a7232090cf55624",
+      "size_bytes": 10251,
+      "source_relative_path": "run_projections.v1.json"
+    }
+  ],
+  "payload_authority": "snapshot_cas",
+  "redaction_manifest_sha256": "71e24e7a127004526e855b2d9fc24398f95d809301db33377dc8f30a98763031",
+  "schema_name": "aletheia.legacy_snapshot",
+  "schema_version": 1,
+  "snapshot_id": "lgs_134ee8f705cafb3f361719ec6429f6fe",
+  "snapshot_sha256": "134ee8f705cafb3f361719ec6429f6fe86e2a8f42feda40d3715bc722d044ecc",
+  "source_scope": "migration/pr0",
+  "source_system": "aletheia-legacy-v1-fixtures",
+  "source_version": "legacy-fixtures/v1/2026-08-23",
+  "total_bytes": 18695
+}

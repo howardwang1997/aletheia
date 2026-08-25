@@ -4,6 +4,7 @@ import { Activity } from "@/components/Activity";
 import { AuthGate, useCanControl } from "@/components/AuthGate";
 import { Conversation } from "@/components/Conversation";
 import { DataPanel } from "@/components/DataPanel";
+import { ProgramGraph } from "@/components/ProgramGraph";
 import { useSession } from "@/lib/useSession";
 
 export default function Home() {
@@ -23,6 +24,7 @@ function Lab() {
         <h1>Aletheia</h1>
         <span className="sub">lights-out lab · scope → connect data → launch</span>
       </div>
+      <ProgramGraph />
       <div className="two-pane">
         <div className="left-col">
           <Conversation

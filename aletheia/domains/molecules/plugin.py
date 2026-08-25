@@ -57,17 +57,14 @@ class MoleculePropertyPlugin(DomainPlugin):
 
     # --- train / evaluate ---
     def _load_solution_pipeline(self, path: str):
-        import importlib.util
-
         from aletheia.coder.sandbox import check_code
+        from aletheia.migration.dynamic_loader import load_guarded_source_module
 
         src = Path(path).read_text()
         ok, reasons = check_code(src)
         if not ok:
             raise RuntimeError(f"solution failed the code gate: {reasons}")
-        spec = importlib.util.spec_from_file_location("aletheia_solution", path)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        mod = load_guarded_source_module("aletheia_solution", path)
         return mod.build_pipeline()
 
     def _make_model(self, design: dict[str, Any]):

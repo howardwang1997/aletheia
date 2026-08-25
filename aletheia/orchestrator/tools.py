@@ -72,7 +72,7 @@ def build_memory_tool(run_id: str):
 
 
 def build_search_literature_tool(run_id: str):
-    """A ``search_literature`` MCP tool: search arXiv + OpenAlex for prior work and
+    """A ``search_literature`` MCP tool: search independent scholarly metadata sources and
     ingest the results into the recall store. Granted ONLY to the SURVEY worker."""
     async def search_literature(args: dict[str, Any]) -> dict[str, Any]:
         from aletheia.research import literature
@@ -87,7 +87,8 @@ def build_search_literature_tool(run_id: str):
 
     return ToolSpec(
         "search_literature",
-        "Search academic literature (arXiv + OpenAlex) for prior work relevant to a query. "
+        "Search academic literature (Semantic Scholar, arXiv, OpenAlex, and DOI-backed Crossref) "
+        "for prior work relevant to a query. "
         "Results are ingested into memory and the top papers are returned. Call this a few "
         "times with focused queries to map the prior work before designing.",
         {"query": str},
@@ -229,9 +230,12 @@ def build_inspect_dataset_tool(run_id: str):
         asset_id = str(args.get("asset_id", "")).strip()
         if asset_id:
             one = await asyncio.to_thread(get_dataset, asset_id)
-            assets = [one] if one else []
+            assets = [one] if one and one.get("role", "primary") == "primary" else []
         else:
-            assets = await asyncio.to_thread(list_datasets, run_id)
+            assets = [
+                a for a in await asyncio.to_thread(list_datasets, run_id)
+                if a.get("role", "primary") == "primary"
+            ]
         if not assets:
             text = "No datasets are registered for this run yet."
         else:

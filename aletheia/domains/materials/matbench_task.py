@@ -229,18 +229,16 @@ class MaterialsBandGapPlugin(DomainPlugin):
     def _load_solution_pipeline(self, path: str):
         """Load a coder-authored ``build_pipeline()`` estimator, re-checking the
         AST gate (defense in depth — the driver already gated it before submit)."""
-        import importlib.util
         from pathlib import Path
 
         from aletheia.coder.sandbox import check_code
+        from aletheia.migration.dynamic_loader import load_guarded_source_module
 
         src = Path(path).read_text()
         ok, reasons = check_code(src)
         if not ok:
             raise RuntimeError(f"solution failed the code gate: {reasons}")
-        spec = importlib.util.spec_from_file_location("aletheia_solution", path)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        mod = load_guarded_source_module("aletheia_solution", path)
         return mod.build_pipeline()
 
     def _make_model(self, design: dict[str, Any]):

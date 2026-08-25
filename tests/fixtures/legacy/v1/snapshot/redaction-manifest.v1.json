@@ -1,0 +1,39 @@
+{
+  "schema_name": "aletheia.legacy_snapshot_redaction_manifest",
+  "schema_version": 1,
+  "review_status": "operator_reviewed",
+  "data_class": "internal_sanitized",
+  "objects": [
+    {
+      "source_relative_path": "endurance/report.json",
+      "retained": [
+        "content-addressed terminal disposition",
+        "checkpoint counts and chain identity",
+        "typed blocker"
+      ],
+      "excluded": [
+        "raw checkpoint payloads",
+        "credentials",
+        "absolute paths"
+      ]
+    },
+    {
+      "source_relative_path": "run_projections.v1.json",
+      "retained": [
+        "terminal status",
+        "event and artifact projection identities",
+        "engineering invariants"
+      ],
+      "excluded": [
+        "event payloads",
+        "artifact bytes",
+        "prompts and transcripts",
+        "credentials and private evaluator content"
+      ]
+    }
+  ],
+  "claim_ceiling": "engineering_regression_only",
+  "scientific_admission_allowed": false,
+  "training_use_allowed": false,
+  "live_refresh_allowed": false
+}

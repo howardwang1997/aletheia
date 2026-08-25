@@ -5,10 +5,12 @@ fakeability guardrail). Offline, no spend. See docs/PARADIGM_MODE_DESIGN.md."""
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import aletheia.scheduler.driver as drv
 from aletheia.critics.gateway import _instruction
 from aletheia.db import create_all
+from aletheia.events.store import list_run_events
 from aletheia.memory.service import create_run, finalize_plan, list_claims
 from aletheia.scheduler.driver import ExperimentDriver
 
@@ -30,6 +32,156 @@ def test_results_instruction_paradigm_ignores_sota_and_demands_demonstration():
 def test_non_results_target_unaffected_by_mode():
     # paradigm mode only changes the RESULTS standard; design/direction are unchanged
     assert _instruction("design", "adversarial", mode="paradigm") == _instruction("design", "adversarial")
+
+
+def test_diagnostic_review_standard_does_not_demand_novelty_or_sota():
+    direction = _instruction("direction", "adversarial", mode="diagnostic")
+    results = _instruction("results", "adversarial", mode="diagnostic")
+    assert "Novelty and benchmark gains are not required" in direction
+    assert "pre-specified DIAGNOSTIC" in results
+    assert "Novelty and beating SOTA" in results
+
+
+def test_locked_diagnostic_design_is_a_complete_harness_contract():
+    create_all()
+    run_id = create_run("locked design contract", domain="materials", status="planned")
+    exp_id = finalize_plan(run_id, {"objective": "x", "domain": "materials"})
+    d = ExperimentDriver(run_id, dry_run=True)
+    d.hypothesis = {
+        "statement": "paired cuprate error audit",
+        "hypothesis_locked": True,
+        "contribution_type": "diagnostic",
+        "demonstration": {"form": "discriminating_instance", "claim": "paired gap"},
+    }
+    from aletheia.domains.registry import get_domain_plugin
+
+    design = asyncio.run(d._design(
+        {"objective": "paired audit"},
+        {"target_column": "critical_temp"},
+        get_domain_plugin("materials"),
+        exp_id,
+    ))
+    assert design["model"] == "random_forest"
+    assert "GroupShuffleSplit" in design["role_internal_split"]
+    assert design["test_size"] == 0.5
+    assert "10 nearest" in design["density_descriptor"]
+    assert "2048" in design["density_descriptor"]
+    assert "smallest original" in design["matching"]
+    assert "family_alpha" in design["test_statistic"]
+    assert "10000" in design["test_statistic"]
+    assert "minimum_pairs=20" in design["sample_accounting"]
+    assert "not_evaluated" in design["sample_accounting"]
+    assert "No target/Tc" in design["control_pool"]
+    assert "descriptive conditional" in design["interpretation"]
+    assert design["decision_rules"] == {
+        "supported_if": {"op": ">", "threshold": 0.0},
+        "control_silent_if": {"op": "<=", "threshold": 0.0},
+    }
+
+
+def test_locked_direction_and_design_approval_are_hash_bound_and_reused_after_restart():
+    """Fresh batches reuse one pre-result review of identical science.  A restart
+    restores the durable receipts, while a changed executable design fails closed."""
+    create_all()
+    run_id = create_run("locked gate receipt", domain="materials", status="planned")
+    exp_id = finalize_plan(run_id, {"objective": "paired audit", "domain": "materials"})
+    hypothesis = {
+        "statement": "paired cuprate error audit",
+        "rationale": "descriptive conditional contrast",
+        "prediction": "test > 0 and control <= 0",
+        "hypothesis_locked": True,
+        "contribution_type": "diagnostic",
+        "demonstration": {"form": "discriminating_instance", "claim": "paired gap"},
+    }
+    design = {
+        "model": "random_forest",
+        "estimand": "family-alpha paired lower bound",
+        "decision_rules": {
+            "supported_if": {"op": ">", "threshold": 0.0},
+            "control_silent_if": {"op": "<=", "threshold": 0.0},
+        },
+    }
+    calls = {"n": 0}
+
+    async def approve(target, payload, target_ref, **kwargs):
+        calls["n"] += 1
+        return SimpleNamespace(
+            gate_passed=True,
+            consensus_verdict="approve",
+            critiques=[
+                SimpleNamespace(critic_id="anthropic"),
+                SimpleNamespace(critic_id="grok"),
+            ],
+        )
+
+    d = ExperimentDriver(run_id, dry_run=True)
+    d.hypothesis = dict(hypothesis)
+    d.gateway = SimpleNamespace(review=approve)
+    assert asyncio.run(d._direction_gate({"objective": "paired audit"}, exp_id))
+    assert asyncio.run(d._design_gate(
+        dict(design), {"objective": "paired audit"}, object(), exp_id
+    )) == design
+    assert calls["n"] == 2
+
+    # A new process restores both receipts. Procedural continuation fields are not
+    # scientific drift and therefore do not trigger another stochastic review.
+    d2 = ExperimentDriver(run_id, dry_run=True)
+    d2._restore_locked_gate_receipts()
+    d2.hypothesis = {
+        **hypothesis,
+        "experiment_type": "reproduction",
+        "open_question": "paired audit",
+        "continuation_rationale": "fresh confirmation batch",
+    }
+
+    async def must_not_review(*args, **kwargs):
+        raise AssertionError("unchanged locked science must reuse its hash-bound approval")
+
+    d2.gateway = SimpleNamespace(review=must_not_review)
+    assert asyncio.run(d2._direction_gate({"objective": "paired audit"}, exp_id))
+    assert asyncio.run(d2._design_gate(
+        dict(design), {"objective": "paired audit"}, object(), exp_id
+    )) == design
+
+    events = list_run_events(run_id)
+    assert [e["type"] for e in events].count("locked_gate_approved") == 2
+    assert [e["type"] for e in events].count("direction_gate_reused") == 1
+    assert [e["type"] for e in events].count("design_gate_reused") == 1
+
+    # Reusing an approval is conditional on exact executable bytes. Any scientific
+    # change after results were seen is blocked, not re-reviewed into a new target.
+    changed = {**design, "estimand": "post-result changed estimand"}
+    assert asyncio.run(d2._design_gate(
+        changed, {"objective": "paired audit"}, object(), exp_id
+    )) is None
+
+
+def test_locked_gate_receipt_requires_the_cross_vendor_floor():
+    create_all()
+    run_id = create_run("locked gate vendor floor", domain="materials", status="planned")
+    exp_id = finalize_plan(run_id, {"objective": "paired audit", "domain": "materials"})
+    d = ExperimentDriver(run_id, dry_run=True)
+    d.hypothesis = {
+        "statement": "paired audit",
+        "hypothesis_locked": True,
+        "contribution_type": "diagnostic",
+        "demonstration": {"form": "discriminating_instance", "claim": "paired gap"},
+    }
+
+    async def one_vendor_approve(*args, **kwargs):
+        return SimpleNamespace(
+            gate_passed=True,
+            consensus_verdict="approve",
+            critiques=[SimpleNamespace(critic_id="anthropic")],
+        )
+
+    d.gateway = SimpleNamespace(review=one_vendor_approve)
+    assert not asyncio.run(d._direction_gate({"objective": "paired audit"}, exp_id))
+    assert "direction" not in d._locked_gate_receipts
+    assert any(
+        e["type"] == "locked_gate_approval_rejected"
+        for e in list_run_events(run_id)
+    )
 
 
 # --- discriminating-demonstration requirement (the guardrail) -------------------
@@ -69,6 +221,31 @@ def test_paradigm_with_demonstration_is_honored(monkeypatch):
     )
     assert d._contribution_type() == "paradigm"
     assert d._paradigm_demonstration()["form"] == "discriminating_instance"
+
+
+def test_locked_diagnostic_keeps_operator_scope_and_uses_demonstration(monkeypatch):
+    create_all()
+    run_id = create_run("locked diagnostic", domain="materials", status="planned")
+    exp_id = finalize_plan(run_id, {"objective": "x", "domain": "materials"})
+
+    async def should_not_generate(*args, **kwargs):
+        raise AssertionError("locked diagnostic must not be novelty-rewritten")
+
+    monkeypatch.setattr(drv, "reason_stage", should_not_generate)
+    d = ExperimentDriver(run_id, dry_run=True)
+    plan = {
+        "objective": "audit a known model failure",
+        "hypothesis": "cuprate MAE exceeds a complexity-matched control",
+        "hypothesis_locked": True,
+        "contribution_type": "diagnostic",
+        "demonstration": {"form": "discriminating_instance", "claim": "locked MAE gap"},
+    }
+    asyncio.run(d._ideate(plan, exp_id))
+    assert d.hypothesis["statement"] == plan["hypothesis"]
+    assert d.hypothesis["hypothesis_locked"] is True
+    assert d._contribution_type() == "diagnostic"
+    assert d._uses_discriminating_demonstration()
+    assert any(c["claim_type"] == "formulation" for c in list_claims(run_id))
 
 
 # --- robust paradigm framing: string demos + plan-declared intent ---------------

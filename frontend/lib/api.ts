@@ -37,6 +37,36 @@ export async function listRuns() {
   return (await res.json()) as Array<Record<string, unknown>>;
 }
 
+// --- durable Quest / Program / Campaign graph ---
+
+export interface LegacyResearchGraphNode {
+  node_id: string;
+  quest_id: string;
+  parent_node_id?: string | null;
+  node_type: "quest" | "program" | "campaign";
+  state: string;
+  state_version: number;
+  spec: Record<string, unknown>;
+}
+
+export interface LegacyQuestGraphSnapshot {
+  quest_id: string;
+  nodes: LegacyResearchGraphNode[];
+  transitions: Array<Record<string, unknown>>;
+  dependencies: Array<Record<string, unknown>>;
+  scientific_families: Array<Record<string, unknown>>;
+  external_bindings: Array<Record<string, unknown>>;
+  data_allocations: Array<Record<string, unknown>>;
+  budget_allocations: Array<Record<string, unknown>>;
+  graph_sha256: string;
+}
+
+export async function listLegacyQuestGraphs(): Promise<LegacyQuestGraphSnapshot[]> {
+  const res = await fetch(`${API_BASE}/legacy/research-graph/quests`, withCreds());
+  if (!res.ok) throw new Error(`listLegacyQuestGraphs failed: ${res.status}`);
+  return (await res.json()) as LegacyQuestGraphSnapshot[];
+}
+
 // --- auth ---
 
 export interface AuthUser {

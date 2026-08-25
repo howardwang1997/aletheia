@@ -1,0 +1,186 @@
+schema_name: aletheia.k3_hidden_world_protocol
+schema_version: 1
+protocol_id: f9-k3-hidden-world-scientific-exit-v1
+state: protocol_frozen
+validation_repeats: 3
+test_repeats: 5
+minimum_hidden_law_tasks: 4
+required_reproduction_runs: 2
+validation_suite_bundle: ../../workspaces/evaluator/discoveryworld-k3-validation-v1/discoveryworld_suite.v1.json
+test_suite_bundle: null
+
+arms:
+  - arm_id: headline_metric
+    system_manifest_sha256: 25f80430e9984fa49d46e6db136c8fccc09d7b35a75043cf81a339bf1405db38
+    base_model_manifest_sha256: 8f52096eaf99b0af4de998034be47fda81b604b34b832ed274b26e9407f42285
+    base_task_prompt_sha256: a6d0523387fa07b6f3fdaacec9af2832b98087b2d47898b999124a99e5879738
+    treatment_prompt_sha256: e411a54cadfc6f810a2f55d117d4691039b845e25d122b0e63bdc1f46dfaabdf
+    tool_policy_sha256: f4f9136e6fc8f83cc74a64a20c1c28f34f1ae2f5c25ecbda0f43810183fb7147
+    budget_policy_sha256: 2204bd8c9c01af2d743b7d56f898ea660b0d30969420c4f4ba5e047e9c900d36
+    wall_time_policy_sha256: f9f1417ee685fbd8f8302c58193c8fdd2300532dfd0bb8a39b5163d727cc9b0b
+    sampling_policy_sha256: 2779ad3794180834584df043e1a2a10f0dd1602f6db2b31ad62ab2b8c5b80411
+    tool_names: [filesystem, python]
+    epistemic_state: none
+    prediction_policy: none
+    experiment_selection_policy: headline_metric
+    alternative_exclusion_gate: false
+    description: Optimize only the public headline task objective; retain no explicit epistemic state.
+
+  - arm_id: k2_single_hypothesis
+    system_manifest_sha256: 9d25b4cc3104d9aee0b71d0fd7178e9dc6ebadeb495c62892bbf101ab4534820
+    base_model_manifest_sha256: 8f52096eaf99b0af4de998034be47fda81b604b34b832ed274b26e9407f42285
+    base_task_prompt_sha256: a6d0523387fa07b6f3fdaacec9af2832b98087b2d47898b999124a99e5879738
+    treatment_prompt_sha256: 89e36d5e2a25fa10fe63441226ab366400124842861c8aed1bb869fa15d8b810
+    tool_policy_sha256: f4f9136e6fc8f83cc74a64a20c1c28f34f1ae2f5c25ecbda0f43810183fb7147
+    budget_policy_sha256: 2204bd8c9c01af2d743b7d56f898ea660b0d30969420c4f4ba5e047e9c900d36
+    wall_time_policy_sha256: f9f1417ee685fbd8f8302c58193c8fdd2300532dfd0bb8a39b5163d727cc9b0b
+    sampling_policy_sha256: 2779ad3794180834584df043e1a2a10f0dd1602f6db2b31ad62ab2b8c5b80411
+    tool_names: [filesystem, python]
+    epistemic_state: single_proposition_beta
+    prediction_policy: single_proposition
+    experiment_selection_policy: single_proposition_eig
+    alternative_exclusion_gate: false
+    description: Use the historical K2 single-proposition Beta belief and experiment loop.
+
+  - arm_id: k3_competing_hypotheses
+    system_manifest_sha256: ff9f8df577d9ba446b472fa347cf3c920ff8cc654eec0700a0f8a7d187193b68
+    base_model_manifest_sha256: 8f52096eaf99b0af4de998034be47fda81b604b34b832ed274b26e9407f42285
+    base_task_prompt_sha256: a6d0523387fa07b6f3fdaacec9af2832b98087b2d47898b999124a99e5879738
+    treatment_prompt_sha256: 75a2fb625df9dd98f83d38a8e98bc41cd2e64a55413c2dc868a6c4109739a068
+    tool_policy_sha256: f4f9136e6fc8f83cc74a64a20c1c28f34f1ae2f5c25ecbda0f43810183fb7147
+    budget_policy_sha256: 2204bd8c9c01af2d743b7d56f898ea660b0d30969420c4f4ba5e047e9c900d36
+    wall_time_policy_sha256: f9f1417ee685fbd8f8302c58193c8fdd2300532dfd0bb8a39b5163d727cc9b0b
+    sampling_policy_sha256: 2779ad3794180834584df043e1a2a10f0dd1602f6db2b31ad62ab2b8c5b80411
+    tool_names: [filesystem, python]
+    epistemic_state: versioned_competing_hypotheses
+    prediction_policy: per_hypothesis_preobservation
+    experiment_selection_policy: multi_hypothesis_eig_discrimination
+    alternative_exclusion_gate: true
+    description: Use the complete F9 versioned competing-hypothesis, prediction, selection, update, and alternative-exclusion treatment.
+
+analysis:
+  primary_endpoints:
+    - wrong_explanation_elimination_score
+    - discriminating_trial_rate
+  calibration_endpoint: top_label_ece
+  proper_scoring_endpoint: posterior_brier_score
+  false_mechanism_endpoint: false_mechanism_rate
+  confidence_level: 0.95
+  bootstrap_resamples: 10000
+  bootstrap_seed: 20260815
+  calibration_bins: 10
+  resampling_scheme: paired_hierarchical_task_repeat_v1
+  missing_cell_policy: fail_closed
+  attempt_selection_policy: all_preregistered_slots_no_best_of_n
+  multiplicity_correction: holm_two_primary_comparisons
+
+threshold_policy:
+  schema_version: 1
+  policy_id: f9-k3-hidden-world-thresholds-v1
+  false_discovery_mapping: false_mechanism_rate
+  calibration_mapping: top_label_ece
+  false_discovery_direction: maximum
+  calibration_direction: maximum
+  thresholds:
+    schema_version: 1
+    minimum_valid_cell_fraction: 0.80
+    maximum_posterior_ece: 0.10
+    maximum_mean_posterior_brier: 0.10
+    maximum_false_mechanism_rate: 0.05
+    minimum_mechanism_claim_coverage: 0.80
+    minimum_hypothesis_contraction_rate: 0.80
+    minimum_elimination_effect: 0.05
+    minimum_discrimination_effect: 0.05
+    scientific_success_noninferiority_margin: 0.05
+    maximum_holm_adjusted_p_value: 0.05
+    require_positive_hierarchical_ci: true
+    require_zero_human_interventions: true
+    require_zero_contamination_declarations: true
+  rationale: Freeze F7-aligned calibration and false-discovery dimensions plus paired epistemic endpoints before any validation access.
+  frozen_at: 2026-08-15T12:00:00+12:00
+  state: frozen
+
+manifest_descriptors:
+  8f52096eaf99b0af4de998034be47fda81b604b34b832ed274b26e9407f42285:
+    schema: aletheia.model_manifest_descriptor
+    provider: openai
+    model: gpt-5.6-sol
+    snapshot_status: provider_receipt_required_at_execution
+  a6d0523387fa07b6f3fdaacec9af2832b98087b2d47898b999124a99e5879738:
+    schema: aletheia.base_task_prompt
+    text: Use only public observations and the frozen action protocol to discover the governing hidden law.
+  e411a54cadfc6f810a2f55d117d4691039b845e25d122b0e63bdc1f46dfaabdf:
+    schema: aletheia.treatment_prompt
+    arm: headline_metric
+    objective: maximize official public task progress; no explicit epistemic state
+  89e36d5e2a25fa10fe63441226ab366400124842861c8aed1bb869fa15d8b810:
+    schema: aletheia.treatment_prompt
+    arm: k2_single_hypothesis
+    objective: maintain one proposition Beta belief and choose single-proposition EIG experiments
+  75a2fb625df9dd98f83d38a8e98bc41cd2e64a55413c2dc868a6c4109739a068:
+    schema: aletheia.treatment_prompt
+    arm: k3_competing_hypotheses
+    objective: maintain versioned competing hypotheses, commit predictions, select multi-hypothesis EIG experiments, update only on valid observations, gate mechanism claims on alternative exclusion
+  f4f9136e6fc8f83cc74a64a20c1c28f34f1ae2f5c25ecbda0f43810183fb7147:
+    schema: aletheia.tool_policy
+    tools: [filesystem, python]
+    network: none
+  2204bd8c9c01af2d743b7d56f898ea660b0d30969420c4f4ba5e047e9c900d36:
+    schema: aletheia.budget_policy
+    wall_time_s: 600
+    cpu_seconds: 300
+    memory_mb: 1024
+    max_world_actions: 80
+  f9f1417ee685fbd8f8302c58193c8fdd2300532dfd0bb8a39b5163d727cc9b0b:
+    schema: aletheia.wall_time_policy
+    wall_time_s: 600
+    candidate_wall_time_s: 120
+    environment_wall_time_s: 150
+  2779ad3794180834584df043e1a2a10f0dd1602f6db2b31ad62ab2b8c5b80411:
+    schema: aletheia.sampling_policy
+    paired_seed: true
+    temperature: 0
+    no_best_of_n: true
+  25f80430e9984fa49d46e6db136c8fccc09d7b35a75043cf81a339bf1405db38:
+    schema: aletheia.k3_hidden_world_system
+    arm: headline_metric
+    base_model_manifest_sha256: 8f52096eaf99b0af4de998034be47fda81b604b34b832ed274b26e9407f42285
+    base_task_prompt_sha256: a6d0523387fa07b6f3fdaacec9af2832b98087b2d47898b999124a99e5879738
+    treatment_prompt_sha256: e411a54cadfc6f810a2f55d117d4691039b845e25d122b0e63bdc1f46dfaabdf
+    tool_policy_sha256: f4f9136e6fc8f83cc74a64a20c1c28f34f1ae2f5c25ecbda0f43810183fb7147
+    budget_policy_sha256: 2204bd8c9c01af2d743b7d56f898ea660b0d30969420c4f4ba5e047e9c900d36
+    wall_time_policy_sha256: f9f1417ee685fbd8f8302c58193c8fdd2300532dfd0bb8a39b5163d727cc9b0b
+    sampling_policy_sha256: 2779ad3794180834584df043e1a2a10f0dd1602f6db2b31ad62ab2b8c5b80411
+  9d25b4cc3104d9aee0b71d0fd7178e9dc6ebadeb495c62892bbf101ab4534820:
+    schema: aletheia.k3_hidden_world_system
+    arm: k2_single_hypothesis
+    base_model_manifest_sha256: 8f52096eaf99b0af4de998034be47fda81b604b34b832ed274b26e9407f42285
+    base_task_prompt_sha256: a6d0523387fa07b6f3fdaacec9af2832b98087b2d47898b999124a99e5879738
+    treatment_prompt_sha256: 89e36d5e2a25fa10fe63441226ab366400124842861c8aed1bb869fa15d8b810
+    tool_policy_sha256: f4f9136e6fc8f83cc74a64a20c1c28f34f1ae2f5c25ecbda0f43810183fb7147
+    budget_policy_sha256: 2204bd8c9c01af2d743b7d56f898ea660b0d30969420c4f4ba5e047e9c900d36
+    wall_time_policy_sha256: f9f1417ee685fbd8f8302c58193c8fdd2300532dfd0bb8a39b5163d727cc9b0b
+    sampling_policy_sha256: 2779ad3794180834584df043e1a2a10f0dd1602f6db2b31ad62ab2b8c5b80411
+  ff9f8df577d9ba446b472fa347cf3c920ff8cc654eec0700a0f8a7d187193b68:
+    schema: aletheia.k3_hidden_world_system
+    arm: k3_competing_hypotheses
+    base_model_manifest_sha256: 8f52096eaf99b0af4de998034be47fda81b604b34b832ed274b26e9407f42285
+    base_task_prompt_sha256: a6d0523387fa07b6f3fdaacec9af2832b98087b2d47898b999124a99e5879738
+    treatment_prompt_sha256: 75a2fb625df9dd98f83d38a8e98bc41cd2e64a55413c2dc868a6c4109739a068
+    tool_policy_sha256: f4f9136e6fc8f83cc74a64a20c1c28f34f1ae2f5c25ecbda0f43810183fb7147
+    budget_policy_sha256: 2204bd8c9c01af2d743b7d56f898ea660b0d30969420c4f4ba5e047e9c900d36
+    wall_time_policy_sha256: f9f1417ee685fbd8f8302c58193c8fdd2300532dfd0bb8a39b5163d727cc9b0b
+    sampling_policy_sha256: 2779ad3794180834584df043e1a2a10f0dd1602f6db2b31ad62ab2b8c5b80411
+
+unresolved_scientific_exit_inputs:
+  - operator_materialized_scorer_bound_validation_suite
+  - private_prospective_hidden_law_test_suite
+  - passing_private_suite_custody_evidence
+  - provider_model_snapshot_receipt
+  - evaluator_owned_three_arm_runner_factory
+  - funded_live_validation_and_test_execution
+
+notes:
+  - The current DiscoveryWorld bundle is public validation and cannot satisfy the private scientific exit.
+  - Positive synthetic tests validate the protocol implementation, not K3 scientific superiority.
+  - A real decision must reaggregate signed raw receipts and cannot import an operator-authored summary.

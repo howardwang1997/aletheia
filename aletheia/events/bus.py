@@ -1,9 +1,9 @@
-"""In-process async event bus.
+"""In-process low-latency event fan-out layered over the durable event store.
 
 Single source of observability: the orchestrator and all services publish
 canonical events here. The bus persists each event to the ledger and fans it out
-to live subscribers (the FastAPI SSE endpoint). One process, so an in-memory
-pub/sub is sufficient; swap for Redis if we ever scale to multiple processes.
+to local subscribers.  The FastAPI SSE endpoint reads the database cursor directly, so replay and
+cross-process delivery do not depend on this process-local optimization.
 """
 
 from __future__ import annotations

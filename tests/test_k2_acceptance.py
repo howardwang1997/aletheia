@@ -91,6 +91,79 @@ def test_single_round_with_a_verdict_is_partial_not_full():
     assert result.verdict == "partial"  # only 1 round -> the K2 cross-round thesis isn't exercised
 
 
+def test_strict_full_requires_seal_fresh_batches_final_and_external_replication():
+    qk = "lineage-a"
+    events = [
+        _evt("campaign_split_sealed", split_algo_version=2),
+        _evt("external_validation_sealed", dataset_fingerprint="external"),
+        _evt("belief_prior", question_key=qk, mean=0.55, weak_prior=True),
+        _evt("belief_prediction", question_key=qk, predicted_p_holds=0.55),
+        _evt("hypothesis_attempt", attempt_id=1, phase="confirmation", status="registered",
+             split_hash="batch-a", alpha=0.01),
+        _evt("experiment", round=1, exp_id="exp-1"),
+        _evt("demonstration", computed=True, exploration_applied=True, holds=True),
+        _evt("belief_update", question_key=qk, realized=1.0, surprise=0.45, mean=0.7,
+             n_updates=1),
+        _evt("hypothesis_attempt", attempt_id=1, phase="confirmation", status="evaluated"),
+        _evt("campaign_plan", round=1, **{"continue": True}),
+        _evt("campaign_reason", round=1, reason="generalized", recoverable=True),
+        _evt("hypothesis_attempt", attempt_id=2, phase="confirmation", status="registered",
+             split_hash="batch-b", alpha=0.01),
+        _evt("campaign_reason", round=2, reason="did_not_generalize", recoverable=True),
+        _evt("hypothesis_attempt", attempt_id=2, phase="confirmation", status="evaluated"),
+        _evt("campaign_finished", calibration=0.2, n_belief_updates=1),
+        _evt("final_holdout", evaluated=True, holds=True),
+        # A negative replication is still a completed, honest K2 evaluation. Run-level result
+        # support is rejected elsewhere; acceptance here checks that it was not skipped/tuned away.
+        _evt("external_replication", evaluated=True, holds=False),
+    ]
+    creds = [{"question_key": qk, "alpha": 2.0, "beta": 1.0, "n_updates": 1}]
+    strict = score_k2(
+        events, creds, require_seal_v2=True, require_external=True
+    )
+    assert strict.verdict == "full"
+    missing_external = score_k2(
+        events[:-1], creds, require_seal_v2=True, require_external=True
+    )
+    assert missing_external.verdict == "partial"
+
+
+def test_resume_references_do_not_retimestamp_original_seals():
+    qk = "lineage-a"
+    events = [
+        _evt("campaign_split_sealed", split_algo_version=2, reused=False),
+        _evt("external_validation_sealed", dataset_fingerprint="external", reused=False),
+        _evt("belief_prior", question_key=qk, mean=0.5, weak_prior=True),
+        _evt("belief_prediction", question_key=qk, predicted_p_holds=0.5),
+        # Historical versions emitted these event types again on resume. They only
+        # referenced the immutable ledger and therefore must not become a later seal.
+        _evt("campaign_split_sealed", split_algo_version=2, reused=True),
+        _evt("external_validation_sealed", dataset_fingerprint="external", reused=True),
+        _evt("hypothesis_attempt", attempt_id=1, phase="confirmation", status="registered",
+             split_hash="batch-a", alpha=0.01),
+        _evt("experiment", round=1, exp_id="exp-1"),
+        _evt("demonstration", computed=True, exploration_applied=True, holds=True),
+        _evt("belief_update", question_key=qk, realized=1.0, surprise=0.5, n_updates=1),
+        _evt("hypothesis_attempt", attempt_id=1, phase="confirmation", status="evaluated"),
+        _evt("campaign_plan", round=1, **{"continue": True}),
+        _evt("campaign_reason", round=1, reason="generalized", recoverable=True),
+        _evt("hypothesis_attempt", attempt_id=2, phase="confirmation", status="registered",
+             split_hash="batch-b", alpha=0.01),
+        _evt("campaign_reason", round=2, reason="did_not_generalize", recoverable=True),
+        _evt("hypothesis_attempt", attempt_id=2, phase="confirmation", status="evaluated"),
+        _evt("campaign_finished", calibration=0.2, n_belief_updates=1),
+        _evt("final_holdout", evaluated=True, holds=True),
+        _evt("external_replication", evaluated=True, holds=False),
+    ]
+    result = score_k2(
+        events,
+        [{"question_key": qk, "alpha": 2.0, "beta": 1.0, "n_updates": 1}],
+        require_seal_v2=True,
+        require_external=True,
+    )
+    assert result.verdict == "full"
+
+
 def test_belief_moved_without_a_verdict_is_a_fail():
     # spine VIOLATION: a belief_update with no matching harness confirm-split verdict
     qk = "lineage-a"

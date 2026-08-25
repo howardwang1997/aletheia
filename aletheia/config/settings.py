@@ -85,6 +85,28 @@ class Settings(BaseSettings):
     # --- database ---
     database_url: str = "postgresql+psycopg://aletheia:aletheia@localhost:5432/aletheia"
 
+    # --- authoritative research-kernel custody ---
+    # There are deliberately no development defaults for scientific authority.  Production must
+    # pin exact, pre-existing custody paths and the raw SHA-256 of both JSON control files.  The API
+    # refuses kernel traffic with 503 until all five values are configured and verified.
+    research_kernel_trust_root_path: Path | None = None
+    research_kernel_trust_root_file_sha256: str | None = None
+    research_kernel_genesis_policy_registry_path: Path | None = None
+    research_kernel_genesis_policy_registry_file_sha256: str | None = None
+    research_kernel_cas_root: Path | None = None
+
+    # --- durable Research Kernel controller custody ---
+    # Launch callers select only an existing Quest/head.  Controller code, capability catalog,
+    # bridge policy, retry policy, and worker identity come from this exact deployment-owned file.
+    research_controller_manifest_path: Path | None = None
+    research_controller_manifest_file_sha256: str | None = None
+
+    # --- reproducibility identity ---
+    # Formal scientific runs freeze an immutable manifest before the first scientific action.
+    # Development/dry runs may use the same mechanism, but only a clean git tree qualifies for a
+    # release-grade frozen manifest unless this explicit local escape hatch is enabled.
+    allow_dirty_frozen_manifest: bool = False
+
     # --- semantic recall (pgvector) ---
     # backend: "local" = sentence-transformers (offline, production default);
     #          "hash"  = deterministic offline stub (tests / dry-run, zero spend).
@@ -146,12 +168,13 @@ class Settings(BaseSettings):
     reranker_min_relevance: float = 0.05  # sigmoid(score) below this is off-topic -> dropped
 
     # --- coder sandbox (executing AI-authored model code) ---
-    # NB: the AST allowlist + rlimits are a guardrail against runaway/accidental
-    # code, NOT a hard boundary against truly adversarial code (Docker is the
-    # stronger option). The code is authored by the configured orchestrator model.
+    # The AST policy is defense in depth. Every AI-authored execution path defaults
+    # to the hard Docker boundary below; host execution is development-only.
+    sandbox_preflight_timeout_s: float = 120.0  # bounded allowance for first image cold-start
     sandbox_timeout_s: float = 600.0  # wall-clock kill for a training subprocess
     sandbox_cpu_seconds: int = 600  # RLIMIT_CPU
     sandbox_max_memory_mb: int = 4096  # RLIMIT_AS (best-effort on macOS)
+    sandbox_output_limit_bytes: int = 262_144
     coder_enabled: bool = True  # author a solution.py each run (falls back if it fails the gate)
 
     # --- AI-authored demonstration (the frontier path) ---
@@ -176,14 +199,33 @@ class Settings(BaseSettings):
     demonstration_explore_confirm_enabled: bool = True
 
     # --- compute backend ---
-    # "local"  = restricted subprocess on the host (soft guardrails).
+    # "local"  = restricted subprocess on the host (development only; never unattended real science).
     # "docker" = HARD sandbox: host featurizes + stages X/y, a light no-network
     #            container runs only the (untrusted) model code via train_evaluate.
-    compute_backend: Literal["local", "docker"] = "local"
+    compute_backend: Literal["local", "docker"] = "docker"
+    # Every direct authored-code path (smoke, exploration, demonstration) uses this separate,
+    # unified boundary. ``local_dev`` is an explicit test/developer escape hatch only.
+    authored_code_backend: Literal["docker", "local_dev"] = "docker"
+    allow_unsafe_host_authored_code: bool = False
+    sandbox_docker_command: str = "docker"
     sandbox_docker_image: str = "aletheia-sandbox:latest"
+    # F7 research-plane image. Unlike ``sandbox_docker_image`` this must not bake in the
+    # Aletheia package, evaluator runner, scorer code, or hidden assets.
+    evaluator_agent_docker_image: str = "aletheia-evaluator-agent:latest"
+    # Reviewed scientific runtime for the default ScienceAgentBench CC-BY mini-suite.
+    # The adapter resolves this tag to an immutable image ID before freezing a suite.
+    scienceagentbench_docker_image: str = "aletheia-scienceagentbench:latest"
+    # Reviewed offline runtime for the Asta CORE-Bench-Hard MIT/CC0 validation mini-suite.
+    corebench_docker_image: str = "aletheia-corebench:latest"
+    # DiscoveryWorld uses two distinct images: a neutral policy runtime with no evaluator/source
+    # code and a trusted official hidden-world runtime. Both are resolved to immutable IDs.
+    discoveryworld_candidate_docker_image: str = "aletheia-discoveryworld-candidate:latest"
+    discoveryworld_docker_image: str = "aletheia-discoveryworld:latest"
     sandbox_docker_cpus: float = 2.0
     sandbox_docker_pids: int = 256
-    sandbox_allow_network: bool = False  # keep False — the hard boundary is no-network
+    sandbox_allow_network: bool = (
+        False  # deprecated compatibility field; authored code is always offline
+    )
 
     # --- budget guardrails (per run) ---
     budget_usd: float = 20.0
@@ -234,7 +276,23 @@ class Settings(BaseSettings):
     # window to the wall and dying mid-stream. Resume on a fresh window replays the prefix for 0 tokens,
     # so work spreads across windows rather than burning one. None = off (0..1, e.g. 0.85).
     window_stop_utilization: float | None = None
-    max_experiments_per_campaign: int = 3  # one Run -> up to N linked experiments (go/no-go decides)
+    max_experiments_per_campaign: int = (
+        3  # one Run -> up to N linked experiments (go/no-go decides)
+    )
+    min_experiments_per_campaign: int = (
+        1  # validation runs may require a genuinely multi-round trace
+    )
+    # Epistemic Seal v2: roles are allocated ONCE before ideation. Confirmation batches are
+    # mutually exclusive across adaptive rounds; the final holdout is opened exactly once.
+    campaign_split_seed: int = 20260812
+    campaign_seal_v2_enabled: bool = True
+    campaign_explore_fraction: float = 0.50
+    campaign_final_holdout_fraction: float = 0.20
+    campaign_family_alpha: float = 0.05
+    campaign_final_alpha: float = 0.01
+    campaign_external_validation_required: bool = False
+    campaign_external_alpha: float = 0.05
+    campaign_external_timeout_s: float = 600.0
     # K2 S3.5: a paradigm round that produces NO demonstration (e.g. the AI could not author a
     # threshold consistent with its own exploration) is an informative negative — the campaign may
     # PIVOT to a different hypothesis this many times before failing closed (pausing the run).
@@ -245,7 +303,9 @@ class Settings(BaseSettings):
     # dimensions that make an experiment worth running at all.
     hypothesis_min_novelty: float = 0.4
     hypothesis_min_eval_clarity: float = 0.4
-    campaign_min_eig: float = 0.3  # stop the campaign when expected information gain drops below this
+    campaign_min_eig: float = (
+        0.3  # stop the campaign when expected information gain drops below this
+    )
 
     # --- reproduction pass (a metric claim earns `strong` only when re-run confirms it) ---
     reproduction_enabled: bool = True
@@ -276,9 +336,15 @@ class Settings(BaseSettings):
     github_app_id: str | None = Field(default=None, alias="GITHUB_APP_ID")
     github_app_installation_id: str | None = Field(default=None, alias="GITHUB_APP_INSTALLATION_ID")
     github_app_private_key: str | None = Field(default=None, alias="GITHUB_APP_PRIVATE_KEY")
-    github_app_private_key_path: str | None = Field(default=None, alias="GITHUB_APP_PRIVATE_KEY_PATH")
-    github_owner: str | None = Field(default=None, alias="GITHUB_OWNER")  # else derived from install
-    github_owner_is_org: bool = Field(default=False, alias="GITHUB_OWNER_IS_ORG")  # org vs personal acct
+    github_app_private_key_path: str | None = Field(
+        default=None, alias="GITHUB_APP_PRIVATE_KEY_PATH"
+    )
+    github_owner: str | None = Field(
+        default=None, alias="GITHUB_OWNER"
+    )  # else derived from install
+    github_owner_is_org: bool = Field(
+        default=False, alias="GITHUB_OWNER_IS_ORG"
+    )  # org vs personal acct
 
     # --- IAM policy (irreversible-op guardrails) ---
     iam_repo_prefix: str = "aletheia"  # repos the agent may touch must start with this
@@ -417,7 +483,9 @@ def _sciminer_grok_key() -> str | None:
     override = _os.environ.get("SCIMINER_ENV")
     # settings.py -> .../aletheia/aletheia/config/settings.py; parents[3] = the dir that
     # holds both the aletheia repo and its sibling sciminer.
-    path = _Path(override) if override else _Path(__file__).resolve().parents[3] / "sciminer" / ".env"
+    path = (
+        _Path(override) if override else _Path(__file__).resolve().parents[3] / "sciminer" / ".env"
+    )
     try:
         m = _re.search(r"^GROK_API_KEY=(.+)$", _Path(path).read_text(), _re.M)
         return m.group(1).strip().strip('"').strip("'") if m else None

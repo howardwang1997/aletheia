@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from aletheia.data.registry import (
     all_ready,
@@ -86,3 +87,57 @@ def test_data_spec_omits_composition_column_when_absent():
                      target_column="gap expt", status="ready")
     spec = resolve_data_spec(run_id)
     assert "composition_column" not in spec
+
+
+def test_external_asset_never_replaces_primary_data_spec():
+    from aletheia.compute.mcp_tools import resolve_data_spec, resolve_external_data_spec
+
+    create_all()
+    run_id = create_run("role isolation", domain="materials", status="scoping")
+    register_dataset(
+        run_id,
+        source="upload",
+        role="external_validation",
+        ref="external.csv",
+        uri="external.csv",
+        target_column="external_target",
+        status="ready",
+        content_sha256="e" * 64,
+    )
+    register_dataset(
+        run_id,
+        source="upload",
+        role="primary",
+        ref="primary.csv",
+        uri="primary.csv",
+        target_column="primary_target",
+        status="ready",
+        content_sha256="p" * 64,
+    )
+    assert resolve_data_spec(run_id)["target_column"] == "primary_target"
+    ext = resolve_external_data_spec(run_id)
+    assert ext is not None and ext["target_column"] == "external_target"
+    assert ext["role"] == "external_validation"
+
+
+@pytest.mark.asyncio
+async def test_external_asset_profile_is_hidden_from_model_dataset_tool():
+    from aletheia.orchestrator.tools import build_inspect_dataset_tool
+
+    create_all()
+    run_id = create_run("external profile isolation", domain="materials", status="scoping")
+    external_id = register_dataset(
+        run_id,
+        source="upload",
+        role="external_validation",
+        ref="external.csv",
+        uri="external.csv",
+        target_column="secret_external_outcome",
+        status="ready",
+        profile_json={"columns": ["secret_external_outcome"], "n_rows": 99},
+    )
+    tool = build_inspect_dataset_tool(run_id)
+    listing = await tool.handler({"asset_id": ""})
+    direct = await tool.handler({"asset_id": external_id})
+    assert "secret_external_outcome" not in listing["content"][0]["text"]
+    assert "secret_external_outcome" not in direct["content"][0]["text"]

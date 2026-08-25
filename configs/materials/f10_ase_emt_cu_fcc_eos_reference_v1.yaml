@@ -1,0 +1,67 @@
+schema_name: aletheia.ase_emt_simulation_protocol
+schema_version: 1
+protocol_id: ase-emt-cu-fcc-eos-reference-v1
+
+container:
+  schema_version: 1
+  image_id: sha256:54190c4fdf338fa4cf342f11f573593d47a623fabfe9c34f0828b8cac29b4b24
+  image_tag: aletheia-ase-emt:3.29.0
+  platform: linux/arm64
+  worker_sha256: d4e5f88056f7770595ea29a9759f953d143b08b4e13f9d095142c871ff4c9b8a
+  init: true
+  network: none
+  read_only_root: true
+  cap_drop: ALL
+  no_new_privileges: true
+  user: "65532:65532"
+  pids_limit: 32
+  memory_mebibytes: 256
+  cpus: 1.0
+  timeout_seconds: 10.0
+  output_file_limit: 4
+  output_bytes_limit: 8388608
+
+calculator:
+  name: ase.emt
+  asap_cutoff: false
+
+scan:
+  eos_model: sj
+  points: 5
+  volume_strain_fraction: 0.04
+
+runtime_versions:
+  ase: 3.29.0
+  numpy: 2.4.6
+  scipy: 1.17.1
+
+host_executor_implementation_sha256: 0ea92ee24d1b7e8308f4fdac740fb1f7a34782c2aae85631a3776ac8a59bfe4d
+parser_implementation_sha256: 951baeb8ca0634e7760ee7db52858b5ab7e2a01a43c400200006d923fa82b3b3
+validator_implementation_sha256: 951baeb8ca0634e7760ee7db52858b5ab7e2a01a43c400200006d923fa82b3b3
+
+quality:
+  schema_version: 1
+  require_fit_inside_scan: true
+  require_sample_minimum_interior: true
+  minimum_bulk_modulus_eV_per_angstrom3: 0.1
+  maximum_bulk_modulus_eV_per_angstrom3: 2.0
+  maximum_fit_rmse_eV: 0.00001
+  maximum_fit_absolute_residual_eV: 0.00002
+
+gold_reference:
+  schema_version: 1
+  reference_id: ase-official-cu-fcc-eos-doctest-v1
+  job_sha256: 4885a3fbe4943c2cd39ea2695909c63b239a4b3a472ef925f3fed526eabcabce
+  exact_job_bytes_sha256: e1b7f957186fee7340e7d1e108f7a84a69a155b1f9b44752a7590ad211c27bfa
+  expected_result_payload_sha256: f8d94b2850f51ec72037521fb87d72546e966968fc2de9845c8dfe2c6c7057f7
+  lattice_relation: fcc_conventional_a_from_primitive_volume
+  expected_lattice_constant_angstrom: 3.589825
+  lattice_absolute_tolerance_angstrom: 0.000001
+  official_reference_uri: https://docs.ase-lib.org/ase/eos.html
+
+evidence_scope: classical_potential_reference_calibration
+dft_claim_forbidden: true
+experimental_claim_forbidden: true
+mechanism_claim_forbidden: true
+frozen_at: 2026-08-15T09:23:34Z
+state: frozen

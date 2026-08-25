@@ -1,0 +1,61 @@
+{
+  "audit_id": "f10-s7-materials-promotion-readiness-v1",
+  "audited_at": "2026-08-16T06:00:00Z",
+  "blockers": [
+    "materials.band_gap.range_compression:authorized_registry_update_missing",
+    "materials.band_gap.range_compression:independent_domain_review_missing",
+    "materials.band_gap.range_compression:independent_validation_missing",
+    "materials.band_gap.range_compression:signed_promotion_audit_missing",
+    "materials.band_gap.range_compression:trusted_promotion_policy_missing",
+    "materials.band_gap.range_compression:validator_is_agent_authored",
+    "materials.simulation.ase_emt_eos_reference:authorized_registry_update_missing",
+    "materials.simulation.ase_emt_eos_reference:independent_domain_review_missing",
+    "materials.simulation.ase_emt_eos_reference:independent_validation_missing",
+    "materials.simulation.ase_emt_eos_reference:signed_promotion_audit_missing",
+    "materials.simulation.ase_emt_eos_reference:trusted_promotion_policy_missing",
+    "materials.simulation.ase_emt_eos_reference:validator_is_agent_authored"
+  ],
+  "candidates": [
+    {
+      "blockers": [
+        "authorized_registry_update_missing",
+        "independent_domain_review_missing",
+        "independent_validation_missing",
+        "signed_promotion_audit_missing",
+        "trusted_promotion_policy_missing",
+        "validator_is_agent_authored"
+      ],
+      "capability_id": "materials.band_gap.range_compression",
+      "lifecycle": "provisional",
+      "manifest_sha256": "33af6218c330569ca8800093d2bb8bae3db2b77d1407e94a2b6beaa7bba93d4b",
+      "promotion_ready": false,
+      "schema_version": 1,
+      "validator_agent_authored": true,
+      "version": "2.1.0"
+    },
+    {
+      "blockers": [
+        "authorized_registry_update_missing",
+        "independent_domain_review_missing",
+        "independent_validation_missing",
+        "signed_promotion_audit_missing",
+        "trusted_promotion_policy_missing",
+        "validator_is_agent_authored"
+      ],
+      "capability_id": "materials.simulation.ase_emt_eos_reference",
+      "lifecycle": "provisional",
+      "manifest_sha256": "ff5507f8fd891b6fea3354a2e963da74f3c5bd0c8af1d49ac1340eea97931546",
+      "promotion_ready": false,
+      "schema_version": 1,
+      "validator_agent_authored": true,
+      "version": "1.0.0"
+    }
+  ],
+  "production_promotion_ready": false,
+  "registered_capability_count": 0,
+  "registry_id": "materials-capabilities-v4",
+  "registry_snapshot_sha256": "80ea6dfa5c250dbdb76a4b3b38ceb7460580d17d7cdb47695da93ff38930ad77",
+  "schema_name": "aletheia.capability_promotion_readiness_audit",
+  "schema_version": 1,
+  "state": "frozen"
+}

@@ -1,6 +1,6 @@
 """Cross-encoder reranking for retrieved literature.
 
-A multi-source candidate pool (Semantic Scholar + arXiv + OpenAlex) is reordered by
+A multi-source candidate pool (Semantic Scholar + arXiv + OpenAlex + Crossref) is reordered by
 GENUINE query relevance and off-topic hits are dropped — the fix for keyword retrieval
 returning unrelated papers. A cross-encoder (jointly scores the (query, paper) pair) is
 the right tool here, far better than bi-encoder cosine; ``ms-marco-MiniLM-L-6-v2`` is the
@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import math
 import sys
+import threading
 from typing import Any
 
 from aletheia.config import get_settings
 
 _cached_model: Any = None
 _cached_name: str | None = None
+_model_lock = threading.RLock()
 
 
 def _sigmoid(x: float) -> float:
@@ -31,15 +33,16 @@ def _sigmoid(x: float) -> float:
 
 
 def _load(name: str) -> Any:
-    """Lazy-load + cache the cross-encoder (so the model is loaded at most once)."""
+    """Lazy-load + cache the cross-encoder exactly once, including under survey fan-out."""
     global _cached_model, _cached_name
-    if _cached_model is not None and _cached_name == name:
-        return _cached_model
-    from sentence_transformers import CrossEncoder
+    with _model_lock:
+        if _cached_model is not None and _cached_name == name:
+            return _cached_model
+        from sentence_transformers import CrossEncoder
 
-    model = CrossEncoder(name)
-    _cached_model, _cached_name = model, name
-    return model
+        model = CrossEncoder(name)
+        _cached_model, _cached_name = model, name
+        return model
 
 
 def rerank_papers(query: str, papers: list[Any], *, top_k: int = 8,
@@ -54,9 +57,13 @@ def rerank_papers(query: str, papers: list[Any], *, top_k: int = 8,
         return papers[:cut]
     mr = s.reranker_min_relevance if min_relevance is None else min_relevance
     try:
-        model = _load(s.reranker_model)
         pairs = [(query, f"{p.title}. {(p.abstract or '')[:1000]}") for p in papers]
-        scores = [float(x) for x in model.predict(pairs)]
+        # PyTorch/transformers model construction and inference are not reliably
+        # re-entrant across the librarian thread fan-out (a live run hit SIGSEGV).
+        # Serialize this small CPU stage; network retrieval remains parallel.
+        with _model_lock:
+            model = _load(s.reranker_model)
+            scores = [float(x) for x in model.predict(pairs)]
     except Exception as exc:  # noqa: BLE001 - reranking is best-effort
         print(f"[rerank] unavailable ({type(exc).__name__}: {exc}); keeping merge order",
               file=sys.stderr)

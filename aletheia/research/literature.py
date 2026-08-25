@@ -1,6 +1,6 @@
 """Literature access — the lab's eyes on human knowledge.
 
-Keyless clients for arXiv (Atom API) + OpenAlex (JSON), merged + deduped into a
+Keyless clients for Semantic Scholar, arXiv, OpenAlex, and Crossref, merged + deduped into a
 normalized ``Paper``. ``search`` is **best-effort**: any network/parse failure on a
 source is logged and skipped (returns whatever the other source gave, or []), so
 literature is an enrichment, never a dependency that can break the loop.
@@ -19,6 +19,7 @@ from typing import Any
 ARXIV_API = "https://export.arxiv.org/api/query"
 OPENALEX_API = "https://api.openalex.org/works"
 SEMANTIC_SCHOLAR_API = "https://api.semanticscholar.org/graph/v1/paper/search"
+CROSSREF_API = "https://api.crossref.org/works"
 _TIMEOUT = 20.0
 
 # arXiv asks for <= 1 request / 3s and a descriptive User-Agent; bursting the survey's
@@ -284,12 +285,75 @@ def _semantic_scholar(query: str, k: int) -> list[Paper]:
     return papers
 
 
+def _crossref(query: str, k: int) -> list[Paper]:
+    """Crossref REST API — broad, DOI-backed metadata fallback.
+
+    Crossref is deliberately an additional source rather than a substitute for
+    relevance-ranked Semantic Scholar/OpenAlex.  Its independent infrastructure
+    keeps a temporary outage or shared-pool throttle at those services from turning
+    a citable-literature gate into a single point of failure.
+    """
+    import html
+    import re
+
+    import httpx
+
+    params = {
+        "query.bibliographic": query,
+        "rows": min(max(k, 1), 100),
+        "mailto": "aletheia-agent@users.noreply.github.com",
+        "select": (
+            "DOI,title,author,published,container-title,URL,"
+            "is-referenced-by-count,abstract"
+        ),
+    }
+    with httpx.Client(timeout=_TIMEOUT, follow_redirects=True, headers=_HEADERS) as c:
+        r = _get_with_retry(c, CROSSREF_API, params)
+        data = r.json()
+
+    papers: list[Paper] = []
+    for w in ((data.get("message") or {}).get("items") or []):
+        titles = w.get("title") or []
+        title = str(titles[0] if titles else "").strip()
+        if not title:
+            continue
+        date_parts = ((w.get("published") or {}).get("date-parts") or [[]])[0]
+        year = int(date_parts[0]) if date_parts and str(date_parts[0]).isdigit() else None
+        authors = []
+        for author in w.get("author") or []:
+            name = " ".join(
+                x for x in (str(author.get("given") or "").strip(),
+                            str(author.get("family") or "").strip()) if x
+            )
+            if name:
+                authors.append(name)
+        containers = w.get("container-title") or []
+        raw_abstract = str(w.get("abstract") or "")
+        abstract = " ".join(
+            html.unescape(re.sub(r"<[^>]+>", " ", raw_abstract)).split()
+        )[:2000]
+        papers.append(
+            Paper(
+                title=title,
+                authors=authors,
+                year=year,
+                doi=w.get("DOI"),
+                venue=str(containers[0]).strip() if containers else None,
+                abstract=abstract,
+                url=w.get("URL") or (f"https://doi.org/{w['DOI']}" if w.get("DOI") else None),
+                citations=w.get("is-referenced-by-count"),
+                source="crossref",
+            )
+        )
+    return papers
+
+
 _search_cache: dict[tuple[str, int], list[Paper]] = {}
 _search_cache_lock = threading.Lock()
 
 
 def search(query: str, k: int = 8) -> list[Paper]:
-    """Search Semantic Scholar + arXiv + OpenAlex, merge + dedupe, then RERANK the pooled
+    """Search Semantic Scholar, arXiv, OpenAlex, and Crossref; merge, dedupe, then rerank
     candidates by genuine query relevance (cross-encoder) and drop off-topic hits — so
     keyword recall is filtered to what actually matters. Best-effort: a failing source is
     skipped; if the reranker can't load, the merge order is kept. Returns up to ``k``.
@@ -308,7 +372,7 @@ def search(query: str, k: int = 8) -> list[Paper]:
     per_source = max(k, 15)
     found: list[Paper] = []
     degraded = False
-    for fn in (_semantic_scholar, _arxiv, _openalex):  # S2 first: best relevance for dedupe
+    for fn in (_semantic_scholar, _arxiv, _openalex, _crossref):  # S2 first: best relevance
         src = fn.__name__
         if not _breaker_allows(src):
             degraded = True

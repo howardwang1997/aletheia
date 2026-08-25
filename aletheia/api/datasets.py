@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from typing import Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -30,8 +31,11 @@ router = APIRouter(prefix="/runs", tags=["datasets"])
 
 class RegisterDatasetRequest(BaseModel):
     source: str  # benchmark | upload | api
+    role: Literal["primary", "external_validation"] = "primary"
     ref: str | None = None  # benchmark name / api dataset id
     target_column: str | None = None
+    composition_column: str | None = None
+    content_sha256: str | None = None
     feature_kind: str | None = "composition"
     description: str | None = None
     # benchmark/api are auto-downloadable -> ready by default; uploads come via /upload
@@ -63,7 +67,9 @@ async def register(run_id: str, req: RegisterDatasetRequest) -> dict:
                 attach_local,
                 run_id,
                 req.ref,
+                role=req.role,
                 target_column=req.target_column,
+                composition_column=req.composition_column,
                 feature_kind=req.feature_kind,
                 description=req.description,
             )
@@ -82,7 +88,9 @@ async def register(run_id: str, req: RegisterDatasetRequest) -> dict:
                 attach_url,
                 run_id,
                 req.ref,
+                role=req.role,
                 target_column=req.target_column,
+                composition_column=req.composition_column,
                 feature_kind=req.feature_kind,
                 description=req.description,
             )
@@ -97,8 +105,11 @@ async def register(run_id: str, req: RegisterDatasetRequest) -> dict:
             register_dataset,
             run_id,
             src,
+            role=req.role,
             ref=req.ref,
             target_column=req.target_column,
+            composition_column=req.composition_column,
+            content_sha256=req.content_sha256,
             feature_kind=req.feature_kind,
             description=req.description,
             status=status,
@@ -144,6 +155,8 @@ async def upload(
     run_id: str,
     file: UploadFile = File(...),
     target_column: str | None = Form(None),
+    composition_column: str | None = Form(None),
+    role: str = Form("primary"),
     feature_kind: str | None = Form("composition"),
     description: str | None = Form(None),
     asset_id: str | None = Form(None),  # satisfy an existing pull request
@@ -157,7 +170,9 @@ async def upload(
         run_id,
         str(dest),
         asset_id=asset_id,
+        role=role,
         target_column=target_column,
+        composition_column=composition_column,
         feature_kind=feature_kind,
         description=description,
     )

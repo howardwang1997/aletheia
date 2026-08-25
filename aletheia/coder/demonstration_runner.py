@@ -1,7 +1,8 @@
-"""Run an AI-authored ``compute_demonstration`` on host-staged arrays in an isolated,
-resource-limited subprocess — the same trust split the Docker backend uses (host featurizes;
-sandbox computes on staged numpy arrays). The AI code never touches data/files/network: it
-receives ``X``/``y``/``groups`` via a temp ``.npz`` and returns a JSON result on stdout.
+"""Run an AI-authored ``compute_demonstration`` through the unified execution boundary.
+
+The host featurizes and stages only ``X``/``y``/``groups``; production execution happens in the
+same immutable, no-network container used by every other authored-code path.  ``local_dev`` is
+available only as an explicit test/developer override.
 
 This is best-effort and FAIL-CLOSED: any failure (timeout, non-zero exit, unparseable output,
 missing keys, non-finite statistics) returns ``None``, which the caller maps to
@@ -85,47 +86,49 @@ print("ALETHEIA_DEMO_OK " + json.dumps(out))
 
 def _stage_and_run(
     code: str, X: Any, y: Any, groups: Any, meta: dict[str, Any],
-    runner_script: str, timeout_s: float,
+    runner_script: str, timeout_s: float, backend: str | None = None,
 ) -> dict[str, Any] | None:
     """Stage ``X``/``y``/``groups`` + ``meta`` into a temp dir and run ``runner_script`` (which
     imports ``demo.py`` and prints an ``ALETHEIA_DEMO_OK <json>`` line) in an isolated rlimit
     subprocess. Returns the parsed result dict, or ``None`` on any failure (FAIL CLOSED)."""
+    import io
     import json
-    import subprocess
-    import sys
-    import tempfile
-    from pathlib import Path
 
     import numpy as np
 
-    from aletheia.coder.sandbox import resource_limits
+    from aletheia.coder.executor import execute_python_files
 
     try:
-        with tempfile.TemporaryDirectory() as td:
-            tdp = Path(td)
-            (tdp / "demo.py").write_text(code)
-            (tdp / "meta.json").write_text(json.dumps(meta))
-            np.savez(
-                tdp / "staged.npz",
-                X=np.asarray(X, dtype=float),
-                y=np.asarray(y, dtype=float),
-                groups=(np.asarray(groups, dtype=object) if groups is not None
-                        else np.asarray([], dtype=object)),
-            )
-            proc = subprocess.run(
-                [sys.executable, "-c", runner_script],
-                cwd=str(tdp), capture_output=True, text=True, timeout=timeout_s,
-                stdin=subprocess.DEVNULL, preexec_fn=resource_limits(),
-            )
+        staged = io.BytesIO()
+        np.savez(
+            staged,
+            X=np.asarray(X, dtype=float),
+            y=np.asarray(y, dtype=float),
+            groups=(np.asarray(groups, dtype=object) if groups is not None
+                    else np.asarray([], dtype=object)),
+        )
+        result = execute_python_files(
+            {
+                "demo.py": code,
+                "meta.json": json.dumps(meta),
+                "staged.npz": staged.getvalue(),
+                "runner.py": runner_script,
+            },
+            timeout_s=timeout_s,
+            backend=backend,
+        )
     except Exception:  # noqa: BLE001 - any staging/timeout failure -> fail closed
         return None
 
-    if proc.returncode != 0:
+    if not result.ok:
         return None
-    for line in (proc.stdout or "").splitlines():
+    for line in (result.output or "").splitlines():
         if line.startswith("ALETHEIA_DEMO_OK "):
             try:
-                return json.loads(line[len("ALETHEIA_DEMO_OK "):])
+                parsed = json.loads(line[len("ALETHEIA_DEMO_OK "):])
+                if isinstance(parsed, dict):
+                    parsed["sandbox_image_id"] = result.image_id
+                return parsed
             except (ValueError, TypeError):
                 return None
     return None
@@ -145,10 +148,14 @@ def run_authored_demonstration(
     groups: Any,
     meta: dict[str, Any],
     timeout_s: float | None = None,
+    *,
+    backend: str | None = None,
 ) -> dict[str, Any] | None:
     """Execute ``code``'s ``compute_demonstration`` on staged ``X``/``y``/``groups`` in an
     isolated rlimit subprocess. Returns the validated result dict, or ``None`` on any failure."""
-    return _stage_and_run(code, X, y, groups, meta, _RUNNER_SCRIPT, _resolve_timeout(timeout_s))
+    return _stage_and_run(
+        code, X, y, groups, meta, _RUNNER_SCRIPT, _resolve_timeout(timeout_s), backend
+    )
 
 
 def run_authored_exploration(
@@ -158,9 +165,13 @@ def run_authored_exploration(
     groups: Any,
     meta: dict[str, Any],
     timeout_s: float | None = None,
+    *,
+    backend: str | None = None,
 ) -> dict[str, Any] | None:
     """Execute ``code``'s ``explore_demonstration`` on the staged EXPLORATION arrays in an isolated
     rlimit subprocess. Returns ``{"observations": {..}, "detail": str, "n": int}`` with descriptive
     numbers only, or ``None`` on any failure — INCLUDING when the AI smuggles a verdict field, which
     the runner rejects (the exploration step must never touch the verdict)."""
-    return _stage_and_run(code, X, y, groups, meta, _EXPLORE_RUNNER_SCRIPT, _resolve_timeout(timeout_s))
+    return _stage_and_run(
+        code, X, y, groups, meta, _EXPLORE_RUNNER_SCRIPT, _resolve_timeout(timeout_s), backend
+    )

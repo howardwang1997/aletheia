@@ -7,17 +7,27 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from aletheia.api import auth, datasets, events_sse, runs, sessions
+from aletheia.api import (
+    auth,
+    datasets,
+    events_sse,
+    programs,
+    research_kernel,
+    runs,
+    sessions,
+    tasks,
+)
 from aletheia.api.deps import require_access
 from aletheia.auth.users import bootstrap_owner
-from aletheia.db import create_all
+from aletheia.db import require_schema_current
 from aletheia.orchestrator.session import get_session_manager
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Phase 0 convenience: ensure tables exist. Alembic owns migrations later.
-    create_all()
+    # Runtime code never mutates the schema. Deployments migrate explicitly and startup refuses
+    # empty, stale, future, or unversioned databases.
+    require_schema_current()
     bootstrap_owner()  # seed the owner's local login from settings (idempotent)
     yield
     # Shut down any live conversation sessions cleanly.
@@ -42,8 +52,25 @@ app.include_router(runs.router, dependencies=_protected)
 app.include_router(sessions.router, dependencies=_protected)
 app.include_router(datasets.router, dependencies=_protected)
 app.include_router(events_sse.router, dependencies=_protected)
+app.include_router(tasks.router, dependencies=_protected)
+# Deprecated legacy-program routes resolve the same dependency themselves so their legacy
+# mutation provenance can bind the authenticated user rather than caller-supplied provenance.
+app.include_router(programs.router)
+# Kernel routes also resolve auth themselves: HTTP identity permits transport, while the exact
+# signed command principal remains the sole scientific mutation authority.
+app.include_router(research_kernel.router)
 
 
 @app.get("/healthz", tags=["meta"])
 async def healthz() -> dict:
     return {"status": "ok", "service": "aletheia"}
+
+
+@app.get("/readyz", tags=["meta"])
+async def readyz() -> dict:
+    status = require_schema_current()
+    return {
+        "status": "ready",
+        "service": "aletheia",
+        "schema_revision": status.current_revision,
+    }

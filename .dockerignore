@@ -1,0 +1,13 @@
+.git
+.env
+.claude
+.agents
+.codex
+artifacts
+workspaces
+frontend
+tests
+docs
+__pycache__
+*.pyc
+*.log

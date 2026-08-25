@@ -1,0 +1,246 @@
+schema_name: aletheia.experiment_capability_manifest
+schema_version: 1
+capability_id: materials.band_gap.range_compression
+version: 2.0.0
+domain: materials
+lifecycle: provisional
+scientific_question_ids:
+  - materials.band_gap.range_compression
+claim_types_supported:
+  - descriptive
+  - predictive
+maximum_evidence_level: exploratory
+
+input_schema:
+  schema_id: materials.band_gap.range_compression.preregistration_input
+  version: 2.0.0
+  media_type: application/schema+json
+  json_schema:
+    $schema: https://json-schema.org/draft/2020-12/schema
+    type: object
+    properties:
+      schema_name: {const: aletheia.materials_k3_preregistration}
+      schema_version: {const: 1}
+      preregistration_id: {type: string}
+      protocol: {type: object}
+      protocol_sha256: {type: string, pattern: "^[0-9a-f]{64}$"}
+      implementation_sha256: {type: string, pattern: "^[0-9a-f]{64}$"}
+      candidate_audits: {type: array}
+      selected_candidate_id: {type: string}
+      observation_access_during_selection: {const: none}
+      preregistered_at: {type: string, format: date-time}
+      state: {const: frozen_before_measurement}
+    required:
+      - schema_name
+      - schema_version
+      - preregistration_id
+      - protocol
+      - protocol_sha256
+      - implementation_sha256
+      - candidate_audits
+      - selected_candidate_id
+      - observation_access_during_selection
+      - preregistered_at
+      - state
+    additionalProperties: false
+  json_schema_sha256: b4893eadd39d5da6922b2c65caf33e7150dfdabe0cc731fd9a88f1d414780dc6
+
+output_schema:
+  schema_id: materials.band_gap.range_compression.experiment_result
+  version: 2.0.0
+  media_type: application/schema+json
+  json_schema:
+    $schema: https://json-schema.org/draft/2020-12/schema
+    type: object
+    properties:
+      schema_version: {const: 1}
+      dataset: {type: object}
+      split: {type: object}
+      metrics: {type: object}
+      outcome_id:
+        enum:
+          - ambiguous_pattern
+          - generic_model_shrinkage
+          - no_material_compression
+          - unseen_system_specific_compression
+      unseen_predictions_sha256: {type: string, pattern: "^[0-9a-f]{64}$"}
+      control_predictions_sha256: {type: string, pattern: "^[0-9a-f]{64}$"}
+      fitted_model_identity_sha256: {type: string, pattern: "^[0-9a-f]{64}$"}
+    required:
+      - schema_version
+      - dataset
+      - split
+      - metrics
+      - outcome_id
+      - unseen_predictions_sha256
+      - control_predictions_sha256
+      - fitted_model_identity_sha256
+    additionalProperties: false
+  json_schema_sha256: e7854d99f84fcc5cad02a5cb3eff83f037d0e9320c419f834e7664a54f08bf83
+
+accepted_data_modalities:
+  - composition_property_table
+required_metadata:
+  - composition
+  - property_unit
+  - target
+units_and_ontologies:
+  - eV
+  - pymatgen.chemical_system
+action_type: computational_experiment
+
+roles:
+  - role: planner
+    adapter_ref: aletheia.capabilities.planner:plan_capability
+    implementation_sha256: fdafe6aba6f07290367acb5b1245b1f2f04421a6ed852252847d8ebaab059183
+    principal_sha256: 15d423d883a1b94b1a3f4b36daabde3a0771e7a13b7f95656becc7b82e0cc9ba
+    runtime: deterministic
+    boundary: no_execution
+    allowed_tools: []
+    agent_authored: true
+    frozen_at: 2026-08-15T05:38:30Z
+  - role: executor
+    adapter_ref: aletheia.domains.materials.k3_evidence:run_materials_experiment
+    implementation_sha256: 0bd322d28a989a79457802bfc0e0be89758e71b370c391729fdf0a79f9ed136c
+    principal_sha256: 3d62b28828a28183aba81a0d53161ba986c2babba16da9e394f7b077732291db
+    runtime: sandboxed_code
+    boundary: hard_sandbox
+    allowed_tools: [cpu]
+    agent_authored: true
+    frozen_at: 2026-08-15T05:38:30Z
+  - role: observation_parser
+    adapter_ref: aletheia.domains.materials.capabilities.range_compression:parse_range_compression_observation
+    implementation_sha256: 140a194b1006dc51f726f8269aad94fdd28d4dbbf6e37c64e30a03e83b571d60
+    principal_sha256: d0dbcf0e154c1640b8eadbd4b530013fea9af462710956ad7c6b1b224e1e469a
+    runtime: deterministic
+    boundary: hard_sandbox
+    allowed_tools: []
+    agent_authored: true
+    frozen_at: 2026-08-15T05:38:30Z
+  - role: validator
+    adapter_ref: aletheia.domains.materials.k3_evidence:validate_materials_observation
+    implementation_sha256: 0bd322d28a989a79457802bfc0e0be89758e71b370c391729fdf0a79f9ed136c
+    principal_sha256: dd63dccdb818b6ce52fe671b8a2eaccb53c333d2fbda77817b48ef1e04744317
+    runtime: deterministic
+    boundary: hard_sandbox
+    allowed_tools: []
+    agent_authored: true
+    frozen_at: 2026-08-15T05:38:30Z
+
+preregistration_schema:
+  schema_id: materials.band_gap.range_compression.replication_plan
+  version: 2.0.0
+  media_type: application/schema+json
+  json_schema:
+    $schema: https://json-schema.org/draft/2020-12/schema
+    type: object
+    properties:
+      schema_name: {const: aletheia.materials_replication_plan}
+      schema_version: {const: 1}
+      plan_id: {type: string}
+      capability_manifest: {type: object}
+      capability_manifest_sha256: {type: string, pattern: "^[0-9a-f]{64}$"}
+      registry_snapshot_sha256: {type: string, pattern: "^[0-9a-f]{64}$"}
+      base_protocol: {type: object}
+      base_protocol_sha256: {type: string, pattern: "^[0-9a-f]{64}$"}
+      replication_implementation_sha256: {type: string, pattern: "^[0-9a-f]{64}$"}
+      aggregation_rule: {type: object}
+      slots: {type: array, minItems: 5, maxItems: 5}
+      observation_access_before_freeze: {const: none}
+      evidence_level: {const: exploratory}
+      protocol_frozen_at: {type: string, format: date-time}
+      preregistered_at: {type: string, format: date-time}
+      frozen_at: {type: string, format: date-time}
+      state: {const: all_slots_frozen_before_measurement}
+    required:
+      - schema_name
+      - schema_version
+      - plan_id
+      - capability_manifest
+      - capability_manifest_sha256
+      - registry_snapshot_sha256
+      - base_protocol
+      - base_protocol_sha256
+      - replication_implementation_sha256
+      - aggregation_rule
+      - slots
+      - observation_access_before_freeze
+      - evidence_level
+      - protocol_frozen_at
+      - preregistered_at
+      - frozen_at
+      - state
+    additionalProperties: false
+  json_schema_sha256: 62e23c36671bb3d68fd9e7f01b0d20c389cc051cd064b1cb4e18ac08bd8f4993
+
+controls_required:
+  - control_id: control.negative.represented_system
+    kind: negative_control
+    description: Held-out rows from chemical systems that remain represented in training.
+    required: true
+  - control_id: control.positive.synthetic_compression
+    kind: positive_control
+    description: Synthetic fixture with a known additional unseen-system compression effect.
+    required: true
+
+assumptions:
+  - assumption_id: assumption.comparable_units
+    statement: All target values share experimental band-gap semantics in eV.
+    violation_consequence: Prediction-spread comparisons become uninterpretable.
+    test_or_monitor: Require target/unit metadata and the frozen Matbench dataset identity.
+  - assumption_id: assumption.group_identity
+    statement: Pymatgen chemical-system identity is the relevant generalization grouping.
+    violation_consequence: The contrast may not isolate the intended unseen-chemistry boundary.
+    test_or_monitor: Retain group hashes and report this construct limitation.
+
+known_failure_modes:
+  - failure_id: failure.partition_instability
+    description: Outcome classification changes across preregistered partition seeds.
+    detection: Execute every frozen replication slot and report heterogeneity.
+    disposition: exploratory_only
+  - failure_id: failure.public_retrospective
+    description: Public labels and earlier partitions informed the hypothesis and protocol.
+    detection: Preserve contamination disclosure in every result.
+    disposition: exploratory_only
+
+minimum_sample_rule:
+  sampling_unit: chemical_system
+  minimum_count: 100
+  power_or_precision_rule: Each unseen/control comparison must include at least 100 chemical systems.
+  rule_sha256: 9464d689f1ce08c0579befe6ca159884603d9a2cb56f953f80b52b6ad155d28b
+
+resources:
+  estimated_cost_usd: 1.0
+  estimated_wall_time_seconds: 180
+  cpu_seconds: 180
+  memory_mb: 4096
+  gpu_seconds: 0
+  external_resource_units: {}
+
+nondeterminism_policy:
+  mode: frozen_seeds
+  frozen_seeds: [20260818, 20260819, 20260820, 20260821, 20260822]
+  maximum_attempts_per_slot: 1
+  best_of_n_forbidden: true
+  aggregation_rule: Retain all five slots; classify a pattern only with at least four matching outcomes.
+  stopping_rule: Run all five slots without efficacy, futility, or significance stopping.
+
+reproduction_policy:
+  minimum_exact_reexecutions: 2
+  independent_validator_recomputation: true
+  independent_implementation_required: false
+  independent_dataset_required: false
+  metric_tolerance: 1.0e-12
+  failure_retention: true
+
+safety_class: low_risk_compute
+approval_class: operator
+license_egress_policy:
+  allowed_data_classes: [public_benchmark]
+  network_egress: none
+  raw_data_retention: required
+  license_evidence_sha256: 692809c43cccdb76f4fcd5e5c3e0e6e4a27a07f8fb4b806779054ed257e046a7
+
+supersedes_manifest_sha256: 3f67775a74a78eba77d8c009ea413997b2e033fafeab188ade397bf47f89d972
+frozen_at: 2026-08-15T05:58:30Z
+state: frozen

@@ -14,10 +14,13 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -130,6 +133,22 @@ class Run(Base):
     experiments: Mapped[list["Experiment"]] = relationship(back_populates="run")
 
 
+class RunManifestRecord(Base):
+    """Immutable, content-addressed identity frozen before a formal run does science."""
+
+    __tablename__ = "run_manifests"
+    __table_args__ = (UniqueConstraint("run_id", name="uq_run_manifest_run"),)
+
+    manifest_sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    schema_version: Mapped[int] = mapped_column(Integer)
+    parent_manifest_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
+    uri: Mapped[str] = mapped_column(Text)
+    payload_json: Mapped[dict] = mapped_column(JSONB)
+    state: Mapped[str] = mapped_column(String(16), default="frozen")
+    frozen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Experiment(Base):
     __tablename__ = "experiments"
 
@@ -172,13 +191,36 @@ class Artifact(Base):
     uri: Mapped[str] = mapped_column(Text)
     sha256: Mapped[str | None] = mapped_column(String(64))
     bytes: Mapped[int | None] = mapped_column(BigInteger)
+    scientific_command_id: Mapped[str | None] = mapped_column(
+        ForeignKey("scientific_commands.command_id"), index=True
+    )
+    commit_ordinal: Mapped[int | None] = mapped_column(Integer)
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "(scientific_command_id IS NULL AND commit_ordinal IS NULL) OR "
+            "(scientific_command_id IS NOT NULL AND commit_ordinal IS NOT NULL)",
+            name="ck_artifacts_scientific_commit_pair",
+        ),
+        UniqueConstraint(
+            "scientific_command_id",
+            "commit_ordinal",
+            name="uq_artifacts_scientific_commit_ordinal",
+        ),
+    )
 
 
 class Decision(Base):
     """Why the system transitioned between stages — the auditable reasoning chain."""
 
     __tablename__ = "decisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "scientific_command_id",
+            name="uq_decisions_scientific_command_id",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
@@ -188,6 +230,9 @@ class Decision(Base):
     rationale: Mapped[str | None] = mapped_column(Text)
     actor: Mapped[str | None] = mapped_column(String(64))  # orchestrator | human | <subagent>
     critique_panel_id: Mapped[str | None] = mapped_column(ForeignKey("critique_panels.id"))
+    scientific_command_id: Mapped[str | None] = mapped_column(
+        ForeignKey("scientific_commands.command_id"), index=True
+    )
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -195,7 +240,9 @@ class CritiquePanel(Base):
     __tablename__ = "critique_panels"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    target: Mapped[str] = mapped_column(String(32))  # design | direction | results | demonstration_audit
+    target: Mapped[str] = mapped_column(
+        String(32)
+    )  # design | direction | results | demonstration_audit
     target_ref: Mapped[str | None] = mapped_column(String(32))  # ledger id
     consensus_verdict: Mapped[str | None] = mapped_column(String(32))
     gate_passed: Mapped[bool | None] = mapped_column()
@@ -258,7 +305,9 @@ class BeliefState(Base):
     question_key: Mapped[str] = mapped_column(String(96), index=True)
     alpha: Mapped[float] = mapped_column(Float)
     beta: Mapped[float] = mapped_column(Float)
-    n_updates: Mapped[int] = mapped_column(default=0)  # harness-verified confirm-split updates folded in
+    n_updates: Mapped[int] = mapped_column(
+        default=0
+    )  # harness-verified confirm-split updates folded in
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -276,7 +325,9 @@ class HypothesisScorecard(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
     experiment_id: Mapped[str | None] = mapped_column(ForeignKey("experiments.id"), index=True)
-    scores: Mapped[dict | None] = mapped_column(JSONB)  # {novelty, feasibility, expected_information_gain, …}
+    scores: Mapped[dict | None] = mapped_column(
+        JSONB
+    )  # {novelty, feasibility, expected_information_gain, …}
     decision: Mapped[str | None] = mapped_column(String(16))  # proceed | block
     rationale: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -329,6 +380,9 @@ class BudgetEvent(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    research_budget_allocation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("research_budget_allocations.allocation_id"), index=True
+    )
     kind: Mapped[str] = mapped_column(String(32))  # usd | gpu_hours | agent_sdk_credit | tokens
     amount: Mapped[float] = mapped_column(Float)
     cumulative: Mapped[float | None] = mapped_column(Float)
@@ -379,6 +433,10 @@ class DataAsset(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    # ``primary`` is the only role visible to adaptive design/training.  A ready
+    # ``external_validation`` asset is sealed up front but opened only after the
+    # campaign and its one-time internal final holdout have finished.
+    role: Mapped[str] = mapped_column(String(32), default="primary")
     source: Mapped[str] = mapped_column(String(16))  # benchmark | upload | api
     ref: Mapped[str | None] = mapped_column(Text)  # benchmark name | file path | api dataset id
     target_column: Mapped[str | None] = mapped_column(String(128))
@@ -390,8 +448,112 @@ class DataAsset(Base):
     description: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default="needed")  # needed | ready | error
     uri: Mapped[str | None] = mapped_column(Text)  # stored path for uploads
+    content_sha256: Mapped[str | None] = mapped_column(String(64))
     profile_json: Mapped[dict | None] = mapped_column(JSONB)  # columns/dtypes/n_rows/stats
     requested_by: Mapped[str] = mapped_column(String(16), default="human")  # agent | human
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CampaignSplitLedger(Base):
+    """Immutable campaign-wide row-role allocation for Epistemic Seal v2."""
+
+    __tablename__ = "campaign_split_ledgers"
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_campaign_split_run"),
+        UniqueConstraint(
+            "final_action_id",
+            name="uq_campaign_split_ledgers_final_action_id",
+        ),
+        ForeignKeyConstraint(
+            ["final_action_id", "final_action_receipt_sha256"],
+            [
+                "external_action_receipts.action_id",
+                "external_action_receipts.receipt_sha256",
+            ],
+            name="fk_campaign_split_ledgers_final_action_receipt",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    dataset_fingerprint: Mapped[str] = mapped_column(String(64))
+    row_identity_hash: Mapped[str] = mapped_column(String(64))
+    split_algo_version: Mapped[int] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(String(24), default="sealed")
+    plan_json: Mapped[dict] = mapped_column(JSONB)
+    final_result_json: Mapped[dict | None] = mapped_column(JSONB)
+    final_action_id: Mapped[str | None] = mapped_column(
+        ForeignKey("one_time_external_actions.action_id"), index=True
+    )
+    final_action_receipt_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
+    final_opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ExternalValidationLedger(Base):
+    """One-time, locked-code evaluation on a separately sourced dataset."""
+
+    __tablename__ = "external_validation_ledgers"
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_external_validation_run"),
+        UniqueConstraint(
+            "action_id",
+            name="uq_external_validation_ledgers_action_id",
+        ),
+        ForeignKeyConstraint(
+            ["action_id", "action_receipt_sha256"],
+            [
+                "external_action_receipts.action_id",
+                "external_action_receipts.receipt_sha256",
+            ],
+            name="fk_external_validation_ledgers_action_receipt",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    data_asset_id: Mapped[str] = mapped_column(ForeignKey("data_assets.id"), index=True)
+    dataset_fingerprint: Mapped[str] = mapped_column(String(64))
+    row_identity_hash: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(24), default="sealed")
+    provenance_json: Mapped[dict] = mapped_column(JSONB)
+    result_json: Mapped[dict | None] = mapped_column(JSONB)
+    action_id: Mapped[str | None] = mapped_column(
+        ForeignKey("one_time_external_actions.action_id"), index=True
+    )
+    action_receipt_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class HypothesisAttempt(Base):
+    """Family-level disclosure of every hypothesis assigned a confirm/final test."""
+
+    __tablename__ = "hypothesis_attempts"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id", "experiment_id", "phase", name="uq_hypothesis_attempt_run_exp_phase"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), index=True)
+    research_family_id: Mapped[str | None] = mapped_column(
+        ForeignKey("research_scientific_families.family_id"), index=True
+    )
+    experiment_id: Mapped[str | None] = mapped_column(ForeignKey("experiments.id"), index=True)
+    family_key: Mapped[str] = mapped_column(String(64), index=True)
+    hypothesis_key: Mapped[str] = mapped_column(String(64))
+    hypothesis_text: Mapped[str] = mapped_column(Text)
+    round_index: Mapped[int] = mapped_column(Integer)
+    phase: Mapped[str] = mapped_column(
+        String(24)
+    )  # confirmation | final_holdout | external_replication
+    confirmation_batch: Mapped[int | None] = mapped_column(Integer)
+    split_hash: Mapped[str] = mapped_column(String(64))
+    alpha_allocated: Mapped[float] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String(24), default="registered")
+    outcome_json: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -471,8 +633,17 @@ class Event(Base):
     """Canonical event-bus sink: every SDK message + service event."""
 
     __tablename__ = "events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_key IS NULL OR event_sha256 IS NOT NULL",
+            name="ck_events_key_has_sha256",
+        ),
+        UniqueConstraint("event_key", name="uq_events_event_key"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    event_key: Mapped[str | None] = mapped_column(String(128))
+    event_sha256: Mapped[str | None] = mapped_column(String(64))
     run_id: Mapped[str | None] = mapped_column(String(32), index=True)
     agent: Mapped[str | None] = mapped_column(String(64))
     parent_tool_use_id: Mapped[str | None] = mapped_column(String(128))

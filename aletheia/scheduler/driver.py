@@ -9,6 +9,8 @@ subprocess. Everything is recorded to the ledger and streamed to the dashboard.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import inspect
 import json
 import re
 from typing import Any
@@ -19,11 +21,13 @@ from aletheia.coder.demonstration import (
     CANNED_DEMO,
     DEMO_SYSTEM,
     EXPLORE_SYSTEM,
+    MAX_DEMONSTRATION_CODE_CHARS,
     demonstration_prompt,
     exploration_prompt,
     extract_preregistration,
 )
 from aletheia.coder.demonstration_runner import run_authored_exploration
+from aletheia.coder.executor import hard_sandbox_preflight
 from aletheia.coder.sandbox import (
     DEMO_REQUIRED_FUNCTION,
     EXPLORE_REQUIRED_FUNCTION,
@@ -34,25 +38,34 @@ from aletheia.coder.sandbox import (
 from aletheia.coder.worker import CANNED_SOLUTION, CODER_SYSTEM, coder_prompt, extract_code
 from aletheia.compute.base import JobSpec
 from aletheia.compute.factory import get_compute_backend
-from aletheia.compute.mcp_tools import resolve_data_spec
+from aletheia.compute.mcp_tools import resolve_data_spec, resolve_external_data_spec
 from aletheia.config import get_settings
 from aletheia.critics.gateway import CriticGateway
 from aletheia.domains.base import DomainPlugin, DomainProfile
 from aletheia.domains.registry import get_domain_plugin
 from aletheia.events.bus import get_bus, make_event
+from aletheia.events.store import list_run_events
 from aletheia.iam import policy
 from aletheia.iam.github_app import GitHubBackend, RepoResult, get_github_backend
 from aletheia.memory.service import (
     attach_claim_evidence,
+    claim_external_validation,
+    claim_final_holdout,
     create_claim,
     create_experiment,
+    finish_hypothesis_attempt,
     get_run,
     list_claims,
     record_artifacts,
+    record_external_validation_result,
     record_literature_finding,
     record_metrics,
+    record_final_holdout_result,
     record_scorecard,
     record_sota_result,
+    register_hypothesis_attempt,
+    seal_campaign_splits,
+    seal_external_validation,
     set_experiment_hypothesis,
     set_experiment_repo,
     set_run_status,
@@ -65,6 +78,12 @@ from aletheia.orchestrator.gate import build_tool_gate
 from aletheia.orchestrator.tools import build_search_literature_tool
 from aletheia.research import literature
 from aletheia.research.citations import numbered_references, to_bibtex
+from aletheia.research.split_ledger import (
+    allocate_campaign_splits,
+    public_split_summary,
+    staged_data_identity,
+)
+from aletheia.reproducibility import ManifestCompatibilityError, freeze_run_manifest
 from aletheia.notify.feishu import notify_feishu
 from aletheia.orchestrator.reasoner import reason_stage
 from aletheia.orchestrator.worker import is_degraded, run_worker
@@ -145,7 +164,17 @@ def detect_method_drift(hypothesis_text: str, requested: str, executed_impl: str
 
 
 class ExperimentDriver:
-    def __init__(self, run_id: str, dry_run: bool = False) -> None:
+    # Frozen PR-0 compatibility controller; new science belongs in the research kernel.
+    COMPATIBILITY_API = True
+    MIGRATION_STATUS = "legacy_protocol_executor"
+    NEW_SCIENTIFIC_EXTENSIONS_ALLOWED = False
+
+    def __init__(
+        self,
+        run_id: str,
+        dry_run: bool = False,
+        auditable_sota_campaign_fn=None,
+    ) -> None:
         self.run_id = run_id
         self.dry_run = dry_run
         self.gateway = CriticGateway()
@@ -162,6 +191,10 @@ class ExperimentDriver:
         self.survey_papers: list[literature.Paper] = []  # citable refs for WRITE_UP
         self.survey_findings: list[dict[str, Any]] = []  # structured LiteratureFinding rows
         self.survey_sota: list[dict[str, Any]] = []  # structured SOTAResult rows (curated + extracted)
+        # Optional F8-S6 evaluator boundary. It receives only current-result identities and must
+        # return ``(SOTAEvaluationCampaign, receipt_verification_key)``. When present, WRITE_UP
+        # bypasses the legacy caller-score shortcut and fails closed on every binding error.
+        self.auditable_sota_campaign_fn = auditable_sota_campaign_fn
         self.survey_weak: bool = False  # retrieval health: too few citable papers to ground novelty
         self.hypothesis: dict[str, Any] = {}  # the hypothesis chosen by IDEATE
         self._discovered_demo: dict[str, Any] | None = None  # {code, prereg} from the discovery stage
@@ -178,6 +211,216 @@ class ExperimentDriver:
         # K2-S4: per lineage, the forward P(holds) prediction committed BEFORE a round runs (a
         # pre-registration) so the predicted−realized surprise can't be back-fitted.
         self._pending_prediction: dict[str, float] = {}
+        # Epistemic Seal v2: one immutable allocation shared by every adaptive round.
+        self._campaign_split_plan: dict[str, Any] | None = None
+        self._campaign_dataset_identity: dict[str, Any] | None = None
+        self._external_validation_spec: dict[str, Any] | None = None
+        self._external_dataset_identity: dict[str, Any] | None = None
+        self._current_round_idx: int = 1
+        self._current_attempt_sequence: int = 0
+        self._current_attempt_id: int | None = None
+        self._family_key: str = ""
+        # Source of the successful AI-authored exploration probe for the current
+        # attempt.  It is code-only (no confirmation rows/results) and lets the
+        # confirmatory author reuse the already-executed estimand instead of writing
+        # a second long implementation from scratch over a flaky model connection.
+        self._exploration_code: str | None = None
+        self._demonstration_smoke_sample: tuple[Any, Any, Any] | None = None
+        self._demonstration_design_contract: dict[str, Any] | None = None
+        # First independently non-refuted artifact for an operator-locked diagnostic.
+        # Fresh campaign batches reuse this exact source + scientific preregistration;
+        # per-batch split/alpha live in the harness ledger, not in a rewritten rule.
+        self._locked_diagnostic_artifact: dict[str, Any] | None = None
+        # A locked scientific direction/design is reviewed once, before any result is
+        # observed.  Later confirmation batches must not turn an unchanged artifact
+        # into a repeated, stochastic approval lottery.  These durable receipts are
+        # keyed by gate and bind approval to canonical bytes of the scientific
+        # artifact (procedural continuation metadata is deliberately excluded).
+        self._locked_gate_receipts: dict[str, dict[str, Any]] = {}
+
+    @staticmethod
+    def _locked_scientific_hypothesis(hypothesis: dict[str, Any]) -> dict[str, Any]:
+        """Return only the immutable scientific fields reviewed by locked gates.
+
+        ``experiment_type``, ``open_question`` and ``continuation_rationale`` describe
+        why another fresh batch was opened; they do not alter the pre-registered
+        question, estimand, prediction, or demonstration.  Including them in the
+        approval identity would make identical science look different each round.
+        """
+        keys = (
+            "statement",
+            "rationale",
+            "prediction",
+            "novelty_note",
+            "contribution_type",
+            "demonstration",
+            "hypothesis_locked",
+        )
+        return {key: hypothesis.get(key) for key in keys if key in hypothesis}
+
+    @staticmethod
+    def _locked_gate_fingerprint(gate: str, artifact: dict[str, Any]) -> str:
+        blob = json.dumps(
+            {"gate": gate, "artifact": artifact},
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            default=str,
+        ).encode()
+        return hashlib.sha256(blob).hexdigest()
+
+    def _restore_locked_gate_receipts(self) -> None:
+        """Restore persisted, hash-bound approvals after a process restart."""
+        for event in list_run_events(self.run_id):
+            if event.get("type") != "locked_gate_approved":
+                continue
+            payload = event.get("payload") or {}
+            gate = str(payload.get("gate") or "")
+            fingerprint = str(payload.get("artifact_sha256") or "")
+            if gate not in {"direction", "design"} or len(fingerprint) != 64:
+                continue
+            self._locked_gate_receipts[gate] = {
+                "artifact_sha256": fingerprint,
+                "approval_event_id": event.get("id"),
+                "target_ref": payload.get("target_ref"),
+                "verdict": payload.get("verdict"),
+                "reviewers": payload.get("reviewers") or [],
+            }
+
+    async def _record_locked_gate_approval(
+        self,
+        gate: str,
+        fingerprint: str,
+        panel: Any,
+        target_ref: str,
+    ) -> bool:
+        """Persist a gate receipt before treating a locked approval as reusable."""
+        reviewers = sorted({
+            str(c.critic_id)
+            for c in getattr(panel, "critiques", [])
+            if str(getattr(c, "critic_id", ""))
+        })
+        min_reviewers = int(get_settings().min_review_vendors)
+        if len(reviewers) < min_reviewers:
+            await get_bus().publish(make_event(
+                "locked_gate_approval_rejected",
+                run_id=self.run_id,
+                payload={
+                    "gate": gate,
+                    "artifact_sha256": fingerprint,
+                    "target_ref": target_ref,
+                    "reviewers": reviewers,
+                    "min_reviewers": min_reviewers,
+                    "reason": "cross-vendor reviewer floor was not met",
+                },
+            ))
+            return False
+        event = await get_bus().publish(make_event(
+            "locked_gate_approved",
+            run_id=self.run_id,
+            payload={
+                "gate": gate,
+                "artifact_sha256": fingerprint,
+                "target_ref": target_ref,
+                "verdict": getattr(panel, "consensus_verdict", None),
+                "reviewers": reviewers,
+                "timing": "before_confirmation_execution",
+            },
+        ))
+        if event.get("id") is None:
+            return False
+        self._locked_gate_receipts[gate] = {
+            "artifact_sha256": fingerprint,
+            "approval_event_id": event.get("id"),
+            "target_ref": target_ref,
+            "verdict": getattr(panel, "consensus_verdict", None),
+            "reviewers": reviewers,
+        }
+        return True
+
+    async def _reuse_locked_gate_if_approved(
+        self,
+        gate: str,
+        fingerprint: str,
+        target_ref: str,
+    ) -> bool:
+        receipt = self._locked_gate_receipts.get(gate) or {}
+        if receipt.get("artifact_sha256") != fingerprint:
+            return False
+        event = await get_bus().publish(make_event(
+            f"{gate}_gate_reused",
+            run_id=self.run_id,
+            payload={
+                "artifact_sha256": fingerprint,
+                "approval_event_id": receipt.get("approval_event_id"),
+                "approval_target_ref": receipt.get("target_ref"),
+                "target_ref": target_ref,
+                "verdict": receipt.get("verdict"),
+                "reviewers": receipt.get("reviewers") or [],
+                "reason": "unchanged operator-locked scientific artifact",
+            },
+        ))
+        # A reused approval is part of the evidence chain.  If it cannot be
+        # persisted, do not silently proceed on an in-memory assertion.
+        return event.get("id") is not None
+
+    def _restore_locked_diagnostic_artifact(self) -> None:
+        """Restore a pre-confirmation-locked artifact after a process restart.
+
+        Files are only storage; the durable event's hashes are the trust anchor.
+        Any missing/mutated bytes fail closed instead of silently re-authoring.
+        """
+        if self._locked_diagnostic_artifact is not None:
+            return
+        locks = [
+            e.get("payload") or {}
+            for e in list_run_events(self.run_id)
+            if e.get("type") == "diagnostic_artifact_locked"
+        ]
+        if not locks:
+            return
+        lock = locks[-1]
+        locked_dir = run_artifacts_dir(self.run_id) / "locked_candidate"
+        code_path = locked_dir / "demonstration.py"
+        prereg_path = locked_dir / "preregistration.json"
+        exploration_path = locked_dir / "exploration.json"
+        if not code_path.is_file() or not prereg_path.is_file():
+            raise RuntimeError("locked diagnostic artifact bytes are missing on resume")
+        code = code_path.read_text()
+        prereg_blob = prereg_path.read_text()
+        code_hash = hashlib.sha256(code.encode()).hexdigest()
+        prereg_hash = hashlib.sha256(prereg_blob.encode()).hexdigest()
+        if code_hash != lock.get("code_sha256") or prereg_hash != lock.get(
+            "preregistration_sha256"
+        ):
+            raise RuntimeError("locked diagnostic artifact hash mismatch on resume")
+        try:
+            prereg = json.loads(prereg_blob)
+            exploration = (
+                json.loads(exploration_path.read_text())
+                if exploration_path.is_file()
+                else None
+            )
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"locked diagnostic artifact is corrupt: {exc}") from exc
+        audit_events = [
+            e.get("payload") or {}
+            for e in list_run_events(self.run_id)
+            if e.get("type") == "demonstration_audit"
+        ]
+        eligible = any(
+            a.get("gate_passed") is True
+            and len(set(a.get("auditors") or [])) >= int(get_settings().min_review_vendors)
+            for a in audit_events
+        )
+        if any(a.get("gate_passed") is False for a in audit_events):
+            eligible = False
+        self._locked_diagnostic_artifact = {
+            "code": code,
+            "preregistration": prereg,
+            "exploration": exploration,
+            "eligible": eligible,
+        }
 
     @staticmethod
     def _claim_strength(
@@ -516,7 +759,8 @@ class ExperimentDriver:
         return await run_worker(
             self.run_id, f"survey:{subq[:24]}",
             f"Research this sub-question for the direction '{topic}':\n{subq}\n\n"
-            "Call search_literature with focused queries, then give a ≤70-word finding that names the "
+            "Call search_literature with focused queries (the tool now includes a DOI-backed Crossref "
+            "fallback), then give a ≤70-word finding that names the "
             "strongest / state-of-the-art METHODS the field uses, the prior work they come from, and any "
             "gap you notice.",
             system="You are a meticulous research librarian; ground claims in retrieved papers, never invent.",
@@ -736,6 +980,7 @@ class ExperimentDriver:
         if get_settings().discovery_enabled and await self._discover(plan, exp_id):
             return self.hypothesis
         await self._status("ideating", "forming a hypothesis")
+        locked = bool(plan.get("hypothesis_locked"))
         prompt = (
             f"PLAN:\n{json.dumps(plan, indent=2)}\n\n"
             + (self.survey_brief + "\n\n" if self.survey_brief else "")
@@ -746,28 +991,59 @@ class ExperimentDriver:
             "and feasible on CPU within budget.\n"
             "Also classify the CONTRIBUTION TYPE of the chosen hypothesis:\n"
             "- \"performance\": the goal is to beat/match a benchmark on an established metric.\n"
+            "- \"diagnostic\": the goal is to pre-specify and quantify a narrow model failure "
+            "without claiming methodological novelty or a benchmark win. It still requires a "
+            "concrete discriminating demonstration and negative control.\n"
             "- \"paradigm\": the goal is to change the QUESTION — a new problem formulation, "
             "representation, or evaluation metric — where beating the incumbent benchmark is NOT the "
             "point. Choose this ONLY if you can name a concrete discriminating demonstration the new "
             "frame would make (a case the incumbent provably cannot handle/distinguish).\n"
-            "If (and ONLY if) paradigm, also give a \"demonstration\": "
+            "If diagnostic or paradigm, also give a \"demonstration\": "
             '{"form": "discriminating_instance | enablement | unification | impossibility", '
             '"claim": "the concrete, checkable case the incumbent frame provably cannot '
             'handle/distinguish", "capability": "<one of the DEMONSTRATION CAPABILITIES ids '
             "above, if your demonstration matches it — the harness will then COMPUTE exactly "
             "that; omit/leave blank to propose a NEW demonstration the harness cannot yet "
-            'compute (it will stay UNVERIFIED)"}. A paradigm hypothesis WITHOUT a concrete '
+            'compute (it will stay UNVERIFIED)"}. A diagnostic/paradigm hypothesis WITHOUT a concrete '
             "demonstration will be treated as a performance contribution.\n"
             "Return ONLY JSON for the chosen one: "
             '{"statement": "...", "rationale": "...", "prediction": "...", "novelty_note": "...", '
-            '"contribution_type": "performance" | "paradigm", '
+            '"contribution_type": "performance" | "diagnostic" | "paradigm", '
             '"demonstration": {"form": "...", "claim": "...", "capability": "..."}}.'
         )
-        text = await reason_stage(
-            self.run_id, "ideate", prompt, dry_run=self.dry_run,
-            dry_text=json.dumps(self.profile.dry_hypothesis if self.profile else {}),
-        )
-        hypo = _parse_json(text, _JSON, {})
+        if locked:
+            # An operator may deliberately pre-register a narrow confirmatory/diagnostic
+            # question. Preserve that scope instead of letting novelty-seeking ideation
+            # inflate it into an unsupported causal or paradigm claim. Independent
+            # scorecard + critic gates still review it below.
+            hypo = {
+                "statement": str(plan.get("hypothesis") or plan.get("objective") or "").strip(),
+                "rationale": str(plan.get("direction") or plan.get("objective") or "").strip(),
+                "prediction": str(plan.get("prediction") or plan.get("success_criteria") or "").strip(),
+                "novelty_note": str(
+                    plan.get("novelty_note")
+                    or "Pre-specified diagnostic; no broad methodological novelty is asserted."
+                ).strip(),
+                "contribution_type": plan.get("contribution_type") or "diagnostic",
+                "demonstration": plan.get("demonstration"),
+                "hypothesis_locked": True,
+            }
+            await get_bus().publish(
+                make_event(
+                    "hypothesis_locked",
+                    run_id=self.run_id,
+                    payload={
+                        "scope": "operator_pre_registered",
+                        "contribution_type": hypo["contribution_type"],
+                    },
+                )
+            )
+        else:
+            text = await reason_stage(
+                self.run_id, "ideate", prompt, dry_run=self.dry_run,
+                dry_text=json.dumps(self.profile.dry_hypothesis if self.profile else {}),
+            )
+            hypo = _parse_json(text, _JSON, {})
         statement = str(
             hypo.get("statement") or plan.get("hypothesis") or plan.get("objective") or ""
         ).strip()
@@ -785,7 +1061,8 @@ class ExperimentDriver:
         await self._index("hypothesis", statement, exp_id)
         # scrutinize + REFINE the idea through a bounded adversarial debate BEFORE it is
         # committed (so a weak/known proposal is strengthened, not just gated later).
-        await self._debate_hypothesis(exp_id)
+        if not locked:
+            await self._debate_hypothesis(exp_id)
         statement = str(self.hypothesis.get("statement", "")).strip() or statement
         # evidence-ledger: a novelty claim per hypothesis, now GROUNDED in concrete
         # prior-work rows (Phase H). The full novelty *judgment* (scorecard) is Phase I,
@@ -801,9 +1078,14 @@ class ExperimentDriver:
             {"evidence_kind": "experiment", "evidence_ref": exp_id or self.run_id,
              "note": "no structured prior work retrieved; novelty unchecked"}
         ]
+        diagnostic = self._contribution_type() == "diagnostic"
+        novelty_text = (
+            f"No broad methodological novelty is asserted for this diagnostic: {note or statement}"
+            if diagnostic else f"This direction is novel: {note or statement}"
+        )
         self._claim_ids["novelty"] = await asyncio.to_thread(
             create_claim, self.run_id,
-            claim_text=f"This direction is novel: {note or statement}",
+            claim_text=novelty_text,
             claim_type="novelty", strength=self._claim_strength("novelty"),
             status="unverified", experiment_id=exp_id, created_by="ideate", stage="ideate",
             evidence=evidence,
@@ -821,11 +1103,9 @@ class ExperimentDriver:
                 evidence=[{"evidence_kind": "experiment", "evidence_ref": exp_id or self.run_id,
                            "note": "weak prior-work retrieval"}],
             )
-        # a PARADIGM hypothesis gets a first-class `formulation` claim (the contribution is
-        # the new frame, not a benchmark number). It stays `proposed`/`speculative` until a
-        # reproducible discriminating demonstration grounds it (see PARADIGM_MODE_DESIGN.md);
-        # this is the honest vocabulary so the contribution is not flattened into a metric.
-        if self._contribution_type() == "paradigm":
+        # A demonstration-based diagnostic/paradigm hypothesis gets a first-class
+        # formulation claim. It stays proposed until the locked computation grounds it.
+        if self._uses_discriminating_demonstration():
             demo = self._paradigm_demonstration() or {}
             form_evidence = evidence + [{
                 "evidence_kind": "demonstration",
@@ -834,7 +1114,11 @@ class ExperimentDriver:
             }]
             self._claim_ids["formulation"] = await asyncio.to_thread(
                 create_claim, self.run_id,
-                claim_text=f"New formulation proposed ({demo.get('form', 'discriminating')}): {note or statement}",
+                claim_text=(
+                    f"Diagnostic proposed ({demo.get('form', 'discriminating')}): {statement}"
+                    if diagnostic
+                    else f"New formulation proposed ({demo.get('form', 'discriminating')}): {note or statement}"
+                ),
                 claim_type="formulation", strength="speculative",
                 status="proposed", experiment_id=exp_id, created_by="ideate", stage="ideate",
                 evidence=form_evidence,
@@ -901,15 +1185,21 @@ class ExperimentDriver:
             await asyncio.to_thread(set_experiment_hypothesis, exp_id, stmt)
 
     def _contribution_type(self) -> str:
-        """`performance` (beat a benchmark) or `paradigm` (change the question). Selects
+        """Return the evidence/review mode, guarded by a concrete demonstration.
+
+        ``performance`` beats a benchmark, ``diagnostic`` characterizes a narrow
+        pre-specified failure without a novelty claim, and ``paradigm`` changes the question. Selects
         the results-gate review STANDARD and the write-up framing (see
         docs/PARADIGM_MODE_DESIGN.md). A `paradigm` claim is honored ONLY if it names a
         concrete discriminating demonstration — the fakeability guardrail; otherwise it
         falls back to the conservative `performance`."""
         ct = str(self.hypothesis.get("contribution_type", "")).strip().lower()
-        if ct == "paradigm" and self._paradigm_demonstration() is not None:
-            return "paradigm"
+        if ct in {"diagnostic", "paradigm"} and self._paradigm_demonstration() is not None:
+            return ct
         return "performance"
+
+    def _uses_discriminating_demonstration(self) -> bool:
+        return self._contribution_type() in {"diagnostic", "paradigm"}
 
     def _paradigm_demonstration(self) -> dict | None:
         """The discriminating demonstration a paradigm hypothesis must name: a concrete
@@ -941,16 +1231,60 @@ class ExperimentDriver:
             await get_bus().publish(make_event("direction_gate_skipped", run_id=self.run_id, payload={
                 "reason": "discovery-sourced hypothesis already cleared the cross-vendor novelty gate"}))
             return True
+        locked = bool(self.hypothesis.get("hypothesis_locked"))
+        locked_fingerprint = self._locked_gate_fingerprint(
+            "direction", self._locked_scientific_hypothesis(self.hypothesis)
+        )
+        if locked:
+            receipt = self._locked_gate_receipts.get("direction") or {}
+            if receipt.get("artifact_sha256") == locked_fingerprint:
+                if await self._reuse_locked_gate_if_approved(
+                    "direction", locked_fingerprint, exp_id or self.run_id
+                ):
+                    return True
+                await self._block_run(
+                    exp_id,
+                    "could not persist reuse of the locked direction approval; refusing "
+                    "an unauditable continuation",
+                )
+                return False
+            if receipt:
+                await self._block_run(
+                    exp_id,
+                    "locked scientific direction differs from its pre-result approval; "
+                    "refusing post-result scope drift",
+                )
+                return False
         while True:
             content = {
                 "hypothesis": self.hypothesis, "gaps": self.survey_gaps, "literature": self.survey_brief,
+                "artifact_locked": locked,
             }
             panel = await self.gateway.review(
-                "direction", content, exp_id or self.run_id, run_id=self.run_id, dry_run=self.dry_run
+                "direction",
+                content,
+                exp_id or self.run_id,
+                run_id=self.run_id,
+                dry_run=self.dry_run,
+                mode=self._contribution_type(),
             )
             if panel.gate_passed:
+                if locked and not await self._record_locked_gate_approval(
+                    "direction", locked_fingerprint, panel, exp_id or self.run_id
+                ):
+                    await self._block_run(
+                        exp_id,
+                        "could not persist the locked direction approval before execution",
+                    )
+                    return False
                 return True
             n = self.guard.bump("direction")
+            if self.hypothesis.get("hypothesis_locked"):
+                await self._block_run(
+                    exp_id,
+                    "locked pre-registration rejected by the direction gate; refusing post-review scope drift",
+                )
+                return False
             if self.guard.exceeded("direction"):
                 await get_bus().publish(
                     make_event("escalation", run_id=self.run_id, payload={
@@ -982,6 +1316,88 @@ class ExperimentDriver:
             stmt = str(self.hypothesis.get("statement", "")).strip()
             if stmt and exp_id:
                 await asyncio.to_thread(set_experiment_hypothesis, exp_id, stmt)
+
+    async def _resolve_auditable_sota_claim(
+        self,
+        *,
+        headline_metric: str,
+        headline_score: float | None,
+        candidate_protocol_sha256: str,
+        experiment_id: str | None,
+    ) -> dict[str, Any]:
+        """Turn an evaluator-owned F8-S6 campaign into exact claim-ledger fields."""
+        from aletheia.research.sota_claims import (
+            blocked_sota_writeup_decision,
+            screen_auditable_sota_campaign,
+        )
+
+        request = {
+            "run_id": self.run_id,
+            "experiment_id": experiment_id,
+            "headline_metric": headline_metric,
+            "headline_score": headline_score,
+            "candidate_protocol_sha256": candidate_protocol_sha256,
+            "contribution_type": self._contribution_type(),
+        }
+        try:
+            provided = self.auditable_sota_campaign_fn(request)
+            if inspect.isawaitable(provided):
+                provided = await provided
+            if not isinstance(provided, tuple) or len(provided) != 2:
+                raise TypeError("campaign provider must return (campaign, receipt_key)")
+            campaign, receipt_key = provided
+            if not isinstance(receipt_key, bytes):
+                raise TypeError("campaign receipt verification key must be bytes")
+            decision = screen_auditable_sota_campaign(
+                campaign=campaign,
+                receipt_key=receipt_key,
+                expected_candidate_protocol_sha256=candidate_protocol_sha256,
+                headline_metric=headline_metric,
+                headline_score=headline_score,
+                contribution_type=self._contribution_type(),
+            )
+        except Exception as exc:  # noqa: BLE001 - manuscript SOTA claims fail closed
+            decision = blocked_sota_writeup_decision(
+                headline_metric=headline_metric,
+                headline_score=headline_score,
+                reason_code=f"auditable_sota_provider_error:{type(exc).__name__}",
+            )
+
+        evidence: list[dict[str, str]] = []
+        if decision.campaign_sha256:
+            evidence.append({
+                "evidence_kind": "artifact",
+                "evidence_ref": decision.campaign_sha256,
+                "note": f"F8-S6 campaign; verdict={decision.campaign_verdict.value}",
+            })
+        if decision.candidate_result_receipt_sha256:
+            evidence.append({
+                "evidence_kind": "metric",
+                "evidence_ref": decision.candidate_result_receipt_sha256,
+                "note": "signed candidate benchmark result receipt",
+            })
+        evidence.extend(
+            {
+                "evidence_kind": "artifact",
+                "evidence_ref": row_sha256,
+                "note": "derived protocol/statistical SOTA comparison row",
+            }
+            for row_sha256 in decision.comparison_row_sha256s
+        )
+        if not evidence:
+            evidence.append({
+                "evidence_kind": "metric",
+                "evidence_ref": headline_metric,
+                "note": ",".join(decision.reason_codes),
+            })
+        return {
+            "claim_text": decision.claim_text,
+            "strength": decision.claim_strength,
+            "status": decision.claim_status,
+            "evidence": evidence,
+            "decision_sha256": decision.decision_sha256,
+            "headline_authorized": decision.headline_authorized,
+        }
 
     @staticmethod
     def _writeup_claim_policy(claims: list[dict[str, Any]]) -> dict[str, str]:
@@ -1092,15 +1508,20 @@ class ExperimentDriver:
 
     def _scorecard_decision(self, scores: dict[str, float]) -> tuple[bool, str]:
         """Fixed harness rule: an experiment is worth running only if it clears the
-        novelty + evaluation-clarity floors. Low on either → block."""
+        mode-appropriate value + evaluation-clarity floors. A diagnostic deliberately
+        makes no novelty claim, so expected information gain replaces novelty."""
         s = get_settings()
         nov = float(scores.get("novelty", 0.0))
+        eig = float(scores.get("expected_information_gain", 0.0))
         clar = float(scores.get("evaluation_clarity", 0.0))
-        if nov < s.hypothesis_min_novelty:
+        if self._contribution_type() == "diagnostic" and eig < s.campaign_min_eig:
+            return False, f"information gain {eig:.2f} below floor {s.campaign_min_eig}"
+        if self._contribution_type() != "diagnostic" and nov < s.hypothesis_min_novelty:
             return False, f"novelty {nov:.2f} below floor {s.hypothesis_min_novelty}"
         if clar < s.hypothesis_min_eval_clarity:
             return False, f"evaluation clarity {clar:.2f} below floor {s.hypothesis_min_eval_clarity}"
-        return True, "scorecard cleared the novelty + evaluation floors"
+        axis = "information-gain" if self._contribution_type() == "diagnostic" else "novelty"
+        return True, f"scorecard cleared the {axis} + evaluation floors"
 
     async def _scorecard_gate(self, plan: dict, exp_id: str | None) -> bool:
         """Score the hypothesis, persist the scorecard, and gate on it (cheap +
@@ -1161,6 +1582,12 @@ class ExperimentDriver:
                         "reason": "hypothesis scorecard could not clear the floors", "detail": reason})
                 )
                 await self._block_run(exp_id, f"hypothesis blocked by scorecard: {reason}")
+                return False
+            if self.hypothesis.get("hypothesis_locked"):
+                await self._block_run(
+                    exp_id,
+                    f"locked pre-registration blocked by scorecard: {reason}; refusing to rewrite it",
+                )
                 return False
             # re-ideate for a more novel / clearly-evaluable hypothesis
             await self._reideate_for_scorecard(plan, exp_id, reason)
@@ -1299,6 +1726,74 @@ class ExperimentDriver:
         feature_desc = self.profile.feature_desc if self.profile else "a dense numeric feature matrix"
         min_n = int(getattr(get_settings(), "demonstration_min_samples", 20))
         rs = int(design.get("random_state", 42))
+        self._exploration_code = None
+        self._demonstration_smoke_sample = None
+        self._demonstration_design_contract = design
+
+        locked_artifact = self._locked_diagnostic_artifact
+        if (
+            locked_artifact is not None
+            and self._campaign_split_plan is not None
+            and self._contribution_type() == "diagnostic"
+            and self.hypothesis.get("hypothesis_locked")
+        ):
+            # Resolve + identity-check the new sealed batch without exposing any
+            # row or result to an author. `_stage_explore_arrays` is trusted staging;
+            # its exploration arrays are discarded here.
+            try:
+                staged = await asyncio.to_thread(
+                    self._stage_explore_arrays, plugin, demo, data_spec, rs
+                )
+            except Exception as exc:  # noqa: BLE001 - fail closed below
+                staged = None
+                reuse_error = str(exc)
+            else:
+                reuse_error = "sealed batch could not be staged"
+            if staged is None:
+                await get_bus().publish(make_event(
+                    "demonstration_rejected",
+                    run_id=self.run_id,
+                    payload={"reason": f"locked artifact reuse failed: {reuse_error}"},
+                ))
+                return
+            _xe, _ye, _ge, confirm_index, split_meta = staged
+            code = str(locked_artifact["code"])
+            prereg = dict(locked_artifact["preregistration"])
+            exploration_obs = locked_artifact.get("exploration")
+            await asyncio.to_thread(
+                attach_claim_evidence,
+                fid,
+                "preregistration",
+                str(prereg.get("statistic_name", "statistic")),
+                json.dumps(prereg),
+            )
+            design["demonstration_code"] = code
+            design["demonstration_confirm_index"] = confirm_index
+            design["demonstration_split_meta"] = split_meta
+            if exploration_obs is not None:
+                design["demonstration_exploration"] = exploration_obs
+            await asyncio.to_thread(
+                attach_claim_evidence,
+                fid,
+                "split",
+                f"locked artifact on fresh confirmation batch "
+                f"{split_meta.get('confirmation_batch')}",
+                json.dumps(split_meta),
+            )
+            await get_bus().publish(make_event(
+                "demonstration_code_reused",
+                run_id=self.run_id,
+                payload={
+                    "code_sha256": hashlib.sha256(code.encode()).hexdigest(),
+                    "preregistration_sha256": hashlib.sha256(
+                        (json.dumps(prereg, indent=2, sort_keys=True) + "\n").encode()
+                    ).hexdigest(),
+                    "confirmation_batch": split_meta.get("confirmation_batch"),
+                    "confirmation_index_hash": split_meta.get("confirmation_index_hash"),
+                    "family_alpha": split_meta.get("family_alpha"),
+                },
+            ))
+            return
 
         # K1 EXPLORE phase (the explore->confirm seal): author + run an exploration probe on a
         # DISJOINT explore subset so the threshold is CALIBRATED to observed data, then have the
@@ -1313,12 +1808,12 @@ class ExperimentDriver:
             exploration_obs, confirm_index, split_meta = await self._explore_for_demonstration(
                 plugin, demo, data_spec, feature_desc, rs, exp_id
             )
-        if self.hypothesis.get("discovery_sourced") and confirm_index is None:
-            # A discovery candidate was selected after looking at EXPLORE. Running it on full data
-            # would mix those selection rows into the verdict. Never degrade this path to blind/full.
+        if (self.hypothesis.get("discovery_sourced") or self._campaign_split_plan) and confirm_index is None:
+            # Under either discovery or the campaign ledger, running on full data would mix
+            # exploration/previous/final rows into the verdict. Never degrade to blind/full.
             await get_bus().publish(make_event(
                 "demonstration_rejected", run_id=self.run_id,
-                payload={"reason": "discovery requires an intact explore/confirm seal"},
+                payload={"reason": "campaign requires an intact fresh confirmation batch"},
             ))
             return
 
@@ -1326,6 +1821,8 @@ class ExperimentDriver:
         base_prompt = demonstration_prompt(
             self.hypothesis, demo, data_spec,
             feature_desc=feature_desc, min_samples=min_n, exploration=exploration_obs,
+            exploration_code=self._exploration_code,
+            design=design,
         )
         retry_note = ""
         code, prereg = "", None
@@ -1357,12 +1854,52 @@ class ExperimentDriver:
                     return  # worker unavailable -> fall back to registered capability
                 code = extract_code(text)
                 prereg = extract_preregistration(text)
-            ok, reasons = check_code(code, required_function=DEMO_REQUIRED_FUNCTION)
+                # When a successful exploration implementation was supplied, the
+                # final author is asked for only a compact adapter.  Concatenate the
+                # exact AI-authored source that produced the archived observations;
+                # no trusted code changes its statistic or matching algorithm.
+                if (
+                    self._exploration_code
+                    and "explore_demonstration(" in code
+                    and "def explore_demonstration" not in code
+                ):
+                    code = self._exploration_code.rstrip() + "\n\n" + code.lstrip()
+            if len(code) > MAX_DEMONSTRATION_CODE_CHARS:
+                ok, reasons = False, [
+                    f"demonstration source exceeds the auditable limit "
+                    f"({len(code)} > {MAX_DEMONSTRATION_CODE_CHARS} characters)"
+                ]
+            else:
+                ok, reasons = check_code(code, required_function=DEMO_REQUIRED_FUNCTION)
             if ok:
-                smoke_ok, smoke_err = await asyncio.to_thread(smoke_test_demonstration, code)
+                smoke_ok, smoke_err = await asyncio.to_thread(
+                    smoke_test_demonstration,
+                    code,
+                    float(get_settings().demonstration_timeout_s),
+                    self._demonstration_smoke_sample,
+                )
                 if not smoke_ok:
                     ok, reasons = False, [*reasons, f"import/run failed: {smoke_err}"]
             valid_prereg = self._valid_preregistration(prereg)
+            expected_rules = design.get("decision_rules") or {}
+            if valid_prereg and expected_rules:
+                try:
+                    rule_match = all(
+                        str((prereg.get(key) or {}).get("op"))
+                        == str((expected_rules.get(key) or {}).get("op"))
+                        and float((prereg.get(key) or {}).get("threshold"))
+                        == float((expected_rules.get(key) or {}).get("threshold"))
+                        for key in ("supported_if", "control_silent_if")
+                    )
+                except (TypeError, ValueError):
+                    rule_match = False
+                if not rule_match:
+                    valid_prereg = False
+                    reasons = [
+                        *reasons,
+                        "pre-registration decision rules differ from the locked executable "
+                        f"contract: expected {expected_rules}",
+                    ]
             # K1 seal #5 (DETERMINISTIC, pre-commit): a threshold inconsistent with what the AI
             # observed on the explore subset (doom-to-zero / control-not-silent / trivially-easy)
             # is NOT committed.
@@ -1407,12 +1944,27 @@ class ExperimentDriver:
                 "runtime error. If the pre-registration was malformed, return both decision rules as "
                 "{op, threshold}."
             )
+        if accepted and isinstance(prereg, dict) and split_meta is not None:
+            # Harness-owned family-wise metadata is committed with the decision rule. The model
+            # cannot choose a looser alpha after seeing which campaign round it occupies. The
+            # actual role/batch/alpha are intentionally kept in split_meta + the attempt ledger,
+            # leaving this scientific preregistration byte-identical across later phases.
+            prereg = {
+                **prereg,
+                "familywise_error": {
+                    "family_key": self._family_key,
+                    "alpha_source": "harness_runtime_family_alpha",
+                    "method": "bonferroni_fixed_sequence",
+                    "decision_rules_invariant": True,
+                },
+            }
         await get_bus().publish(
             make_event("demonstration_code", run_id=self.run_id, payload={
                 "accepted": accepted, "lines": code.count("\n") + 1, "reasons": reasons[:5],
                 "preregistration_valid": valid_prereg,
                 "exploration_applied": confirm_index is not None,
-                "exploration_consistent": consistent})
+                "exploration_consistent": consistent,
+                "family_alpha": (split_meta or {}).get("family_alpha")})
         )
         if not accepted:
             await record_transition(
@@ -1430,7 +1982,10 @@ class ExperimentDriver:
             make_event("preregistration", run_id=self.run_id, payload={
                 "statistic": prereg.get("statistic_name"),
                 "supported_if": prereg.get("supported_if"),
-                "control_silent_if": prereg.get("control_silent_if")})
+                "control_silent_if": prereg.get("control_silent_if"),
+                "familywise_error": prereg.get("familywise_error"),
+                "allocated_alpha": (split_meta or {}).get("family_alpha"),
+                "confirmation_batch": (split_meta or {}).get("confirmation_batch")})
         )
         design["demonstration_code"] = code
         # K1: carry the held-out CONFIRM partition (+ its audit meta) so the compute step runs the
@@ -1446,6 +2001,48 @@ class ExperimentDriver:
                 f"explore/confirm seal (algo v{split_meta.get('split_algo_version')})",
                 json.dumps(split_meta),
             )
+        if (
+            self._locked_diagnostic_artifact is None
+            and self._campaign_split_plan is not None
+            and self._contribution_type() == "diagnostic"
+            and self.hypothesis.get("hypothesis_locked")
+        ):
+            # Freeze at PRE-COMMIT, before confirmation execution or any verdict.
+            # Later batches may validate/refute this artifact but cannot rewrite it.
+            self._locked_diagnostic_artifact = {
+                "code": code,
+                "preregistration": dict(prereg),
+                "exploration": exploration_obs,
+                "eligible": False,
+            }
+            locked_dir = run_artifacts_dir(self.run_id) / "locked_candidate"
+            locked_dir.mkdir(parents=True, exist_ok=True)
+            locked_code = locked_dir / "demonstration.py"
+            locked_prereg = locked_dir / "preregistration.json"
+            locked_exploration = locked_dir / "exploration.json"
+            prereg_blob = json.dumps(prereg, indent=2, sort_keys=True) + "\n"
+            locked_code.write_text(code)
+            locked_prereg.write_text(prereg_blob)
+            locked_exploration.write_text(
+                json.dumps(exploration_obs, indent=2, sort_keys=True, default=str) + "\n"
+            )
+            lock_event = await get_bus().publish(make_event(
+                "diagnostic_artifact_locked",
+                run_id=self.run_id,
+                payload={
+                    "code_sha256": hashlib.sha256(code.encode()).hexdigest(),
+                    "preregistration_sha256": hashlib.sha256(prereg_blob.encode()).hexdigest(),
+                    "code_uri": str(locked_code),
+                    "preregistration_uri": str(locked_prereg),
+                    "exploration_uri": str(locked_exploration),
+                    "timing": "before_confirmation_execution",
+                },
+            ))
+            if lock_event.get("id") is None:
+                raise RuntimeError(
+                    "locked diagnostic artifact event was not durably persisted; "
+                    "refusing to open confirmation data"
+                )
         await self._index("design_rationale", f"AI-authored demonstration:\n{code[:400]}", exp_id)
 
     async def _explore_for_demonstration(
@@ -1477,7 +2074,13 @@ class ExperimentDriver:
         await self._status("coding", "authoring the exploration probe")
         text = await run_worker(
             self.run_id, "coder",
-            exploration_prompt(self.hypothesis, demo, data_spec, feature_desc=feature_desc),
+            exploration_prompt(
+                self.hypothesis,
+                demo,
+                data_spec,
+                feature_desc=feature_desc,
+                design=self._demonstration_design_contract,
+            ),
             system=EXPLORE_SYSTEM, dry_run=self.dry_run,
             dry_value="```python\n" + CANNED_EXPLORATION + "```",
         )
@@ -1488,17 +2091,40 @@ class ExperimentDriver:
         if not ok:
             return None, None, None
         obs = await asyncio.to_thread(
-            run_authored_exploration, code, x_explore, y_explore, groups_explore, {"random_state": rs},
+            run_authored_exploration,
+            code,
+            x_explore,
+            y_explore,
+            groups_explore,
+            {
+                "random_state": rs,
+                "family_alpha": float(split_meta.get("family_alpha") or 0.05),
+            },
         )
         if obs is None:
             return None, None, None
+        self._exploration_code = code
+        # Runnability smoke-testing on random integer groups falsely rejects
+        # materials code whose documented input is a chemical-system string. Keep
+        # a bounded deterministic slice of the already-exposed exploration pool;
+        # confirmation rows remain sealed and unseen.
+        import numpy as np
+
+        smoke_n = min(3000, int(len(y_explore)))
+        smoke_idx = np.linspace(0, len(y_explore) - 1, smoke_n, dtype=int)
+        self._demonstration_smoke_sample = (
+            np.asarray(x_explore)[smoke_idx],
+            np.asarray(y_explore)[smoke_idx],
+            np.asarray(groups_explore, dtype=object)[smoke_idx]
+            if groups_explore is not None else None,
+        )
         await get_bus().publish(make_event("demonstration_exploration", run_id=self.run_id, payload={
             "observations": obs.get("observations"), "n_explore": obs.get("n"),
-            "n_confirm": split_meta.get("n_confirm"), "split": split_meta}))
+            "n_confirm": split_meta.get("n_confirm"), "split": split_meta,
+            "sandbox_image_id": obs.get("sandbox_image_id")}))
         return obs, confirm_index, split_meta
 
-    @staticmethod
-    def _stage_explore_arrays(plugin, demo: dict, data_spec: dict, rs: int):
+    def _stage_explore_arrays(self, plugin, demo: dict, data_spec: dict, rs: int):
         """Load + featurize (the SAME way the compute step does) and return the EXPLORE-subset
         arrays + the held-out confirm index + split meta, or ``None`` when the data cannot support
         an honest 4-way split. Pure/sync (run in a thread)."""
@@ -1512,8 +2138,42 @@ class ExperimentDriver:
                 df.attrs["data_spec"] = data_spec
             except Exception:  # noqa: BLE001 - not all frames carry attrs
                 pass
-        X, y, _names, groups = plugin.featurize(df, {"random_state": rs})
-        split = plugin._split_explore_confirm(groups, len(y), rs)
+        X, y, names, groups = plugin.featurize(df, {"random_state": rs})
+        if self._campaign_split_plan:
+            identity = staged_data_identity(X, y, groups, list(names) if names is not None else [])
+            expected = self._campaign_dataset_identity or {}
+            if identity.get("dataset_fingerprint") != expected.get("dataset_fingerprint"):
+                raise RuntimeError("staged data changed after campaign split sealing")
+            if identity.get("row_identity_hash") != expected.get("row_identity_hash"):
+                raise RuntimeError("row identities changed after campaign split sealing")
+            explore = dict(self._campaign_split_plan.get("explore") or {})
+            confirm = self._confirmation_for_attempt()
+            ex = np.asarray(explore.get("indices") or [], dtype=int)
+            cf = np.asarray(confirm.get("indices") or [], dtype=int)
+            if ex.size == 0 or cf.size == 0:
+                raise RuntimeError("sealed campaign allocation is empty")
+            combined_hash = hashlib.sha256(
+                f"{explore.get('index_hash')}|{confirm.get('index_hash')}".encode()
+            ).hexdigest()[:16]
+            split = {
+                "explore_idx": ex,
+                "confirm_idx": cf,
+                "meta": {
+                    "seed": self._campaign_split_plan.get("seed"),
+                    "n_explore": int(ex.size),
+                    "n_confirm": int(cf.size),
+                    "split_algo_version": self._campaign_split_plan.get("split_algo_version"),
+                    "group_disjoint": self._campaign_split_plan.get("group_disjoint"),
+                    "index_hash": combined_hash,
+                    "explore_index_hash": explore.get("index_hash"),
+                    "confirmation_index_hash": confirm.get("index_hash"),
+                    "confirmation_batch": confirm.get("batch"),
+                    "family_alpha": confirm.get("alpha"),
+                    "membership_hash": self._campaign_split_plan.get("membership_hash"),
+                },
+            }
+        else:
+            split = plugin._split_explore_confirm(groups, len(y), rs)
         if split is None:
             return None
         ex = split["explore_idx"]
@@ -1706,7 +2366,7 @@ class ExperimentDriver:
         # write-up), NOT a blocker. A MISSING demonstration is no longer hard-paused here:
         # K2 S3.5 turns it into a bounded campaign PIVOT (an informative negative), decided
         # in the campaign loop — _run_experiment surfaces it as an "undemonstrated" outcome.
-        if self._contribution_type() == "paradigm":
+        if self._uses_discriminating_demonstration():
             pass  # skip the fitted-artifact requirement; the loop handles a missing demonstration
         else:
             required = set(self.profile.required_artifacts) if self.profile else {"eval", "model"}
@@ -1751,7 +2411,11 @@ class ExperimentDriver:
         non-reproduction, never crashes the experiment."""
         if not get_settings().reproduction_enabled:
             return {"attempted": False}
-        hk = self.profile.headline_metric if self.profile else "mae"
+        hk = (
+            "diagnostic_test_statistic"
+            if self._contribution_type() == "diagnostic"
+            else (self.profile.headline_metric if self.profile else "mae")
+        )
         original = (result.get("metrics") or {}).get(hk)
         await self._guard_budget("usd", get_settings().est_stage_cost_usd)
         await self._status("reproducing", "independent re-run (locked code, new seed)")
@@ -1831,6 +2495,7 @@ class ExperimentDriver:
         the critic must judge (SOTA-delta is irrelevant in that mode)."""
         info = result.get("info") or {}
         return {
+            "artifact_locked": True,
             "design": design,
             "metrics": result.get("metrics"),
             "eval_summary": info.get("eval_summary", ""),
@@ -2051,6 +2716,567 @@ class ExperimentDriver:
             await self._status("paused", "budget cap reached")
             raise BudgetPaused()
 
+    @staticmethod
+    def _build_campaign_split(plugin, data_spec: dict[str, Any], batches: int):
+        """Trusted host-side staging used once, before the first adaptive decision."""
+        settings = get_settings()
+        df = plugin.load_data(data_spec)
+        X, y, names, groups = plugin.featurize(
+            df, {"random_state": int(settings.campaign_split_seed)}
+        )
+        identity = staged_data_identity(X, y, groups, list(names) if names is not None else [])
+        split = allocate_campaign_splits(
+            groups,
+            len(y),
+            seed=int(settings.campaign_split_seed),
+            confirmation_batches=int(batches),
+            explore_fraction=float(settings.campaign_explore_fraction),
+            final_holdout_fraction=float(settings.campaign_final_holdout_fraction),
+            min_confirmation_n=2 * int(settings.demonstration_min_samples),
+            family_alpha=float(settings.campaign_family_alpha),
+            final_alpha=float(settings.campaign_final_alpha),
+        )
+        return identity, split
+
+    async def _seal_campaign_data(
+        self, plan: dict[str, Any], plugin: Any, data_spec: dict[str, Any], batches: int
+    ) -> bool:
+        """Seal all campaign row roles before literature synthesis or hypothesis ideation."""
+        try:
+            identity, proposed = await asyncio.to_thread(
+                self._build_campaign_split, plugin, data_spec, batches
+            )
+            sealed = await asyncio.to_thread(
+                seal_campaign_splits,
+                self.run_id,
+                dataset_fingerprint=identity["dataset_fingerprint"],
+                row_identity_hash=identity["row_identity_hash"],
+                plan=proposed,
+            )
+        except Exception as exc:
+            await self._block_run(
+                (await asyncio.to_thread(get_run, self.run_id) or {}).get("plan_experiment_id"),
+                f"could not create immutable campaign split ledger: {exc}",
+            )
+            return False
+        self._campaign_dataset_identity = identity
+        self._campaign_split_plan = dict(sealed["plan"])
+        family_material = "|".join(
+            [
+                str(plan.get("objective") or plan.get("direction") or "campaign"),
+                identity["dataset_fingerprint"],
+            ]
+        )
+        self._family_key = hashlib.sha256(family_material.encode()).hexdigest()
+        await get_bus().publish(
+            make_event(
+                "campaign_split_reused" if sealed.get("reused") else "campaign_split_sealed",
+                run_id=self.run_id,
+                payload={
+                    **public_split_summary(self._campaign_split_plan),
+                    "dataset_fingerprint": identity["dataset_fingerprint"],
+                    "row_identity_hash": identity["row_identity_hash"],
+                    "family_key": self._family_key,
+                    "reused": bool(sealed.get("reused")),
+                },
+            )
+        )
+        return True
+
+    @staticmethod
+    def _build_external_identity(plugin: Any, data_spec: dict[str, Any]):
+        """Trusted staging pass; no authored/model code or adaptive logic sees these values."""
+        from pathlib import Path
+
+        from aletheia.data.external_supercon2 import file_sha256
+
+        declared_sha = str(data_spec.get("content_sha256") or "").strip()
+        uri = data_spec.get("uri")
+        if not declared_sha:
+            raise RuntimeError("external-validation asset requires a declared content SHA-256")
+        if uri and Path(str(uri)).is_file():
+            actual_sha = file_sha256(Path(str(uri)))
+            if actual_sha != declared_sha:
+                raise RuntimeError(
+                    f"external-validation content hash mismatch: {actual_sha} != {declared_sha}"
+                )
+        df = plugin.load_data(data_spec)
+        X, y, names, groups = plugin.featurize(
+            df, {"random_state": int(get_settings().campaign_split_seed)}
+        )
+        identity = staged_data_identity(X, y, groups, list(names) if names is not None else [])
+        identity["n_rows"] = int(len(y))
+        return identity
+
+    async def _seal_external_data(self, plugin: Any) -> bool:
+        """Seal a separately sourced validation asset before the adaptive campaign starts."""
+        try:
+            spec = await asyncio.to_thread(resolve_external_data_spec, self.run_id)
+        except Exception as exc:
+            await self._block_run(None, f"could not resolve external-validation asset: {exc}")
+            return False
+        required = bool(get_settings().campaign_external_validation_required)
+        if spec is None:
+            if required:
+                await self._block_run(
+                    None, "campaign requires a ready external_validation data asset"
+                )
+                return False
+            return True
+        try:
+            identity = await asyncio.to_thread(self._build_external_identity, plugin, spec)
+            provenance = {
+                "asset_id": spec.get("asset_id"),
+                "source": spec.get("source"),
+                "ref": spec.get("ref"),
+                "content_sha256": spec.get("content_sha256"),
+                "profile": spec.get("profile") or {},
+                "n_featurized_rows": identity["n_rows"],
+            }
+            sealed = await asyncio.to_thread(
+                seal_external_validation,
+                self.run_id,
+                data_asset_id=str(spec.get("asset_id") or ""),
+                dataset_fingerprint=identity["dataset_fingerprint"],
+                row_identity_hash=identity["row_identity_hash"],
+                provenance=provenance,
+            )
+        except Exception as exc:
+            await self._block_run(None, f"could not seal external-validation asset: {exc}")
+            return False
+        self._external_validation_spec = spec
+        self._external_dataset_identity = identity
+        await get_bus().publish(
+            make_event(
+                "external_validation_reused" if sealed.get("reused") else "external_validation_sealed",
+                run_id=self.run_id,
+                payload={
+                    "asset_id": spec.get("asset_id"),
+                    "dataset_fingerprint": identity["dataset_fingerprint"],
+                    "row_identity_hash": identity["row_identity_hash"],
+                    "n_rows": identity["n_rows"],
+                    "content_sha256": spec.get("content_sha256"),
+                    "reused": bool(sealed.get("reused")),
+                },
+            )
+        )
+        return True
+
+    def _confirmation_for_attempt(self, attempt_sequence: int | None = None) -> dict[str, Any]:
+        plan = self._campaign_split_plan or {}
+        confirmations = list(plan.get("confirmations") or [])
+        idx = int(attempt_sequence or self._current_attempt_sequence) - 1
+        if idx < 0 or idx >= len(confirmations):
+            raise RuntimeError(
+                "fresh confirmation data exhausted; campaign must stop rather than reshuffle"
+            )
+        return dict(confirmations[idx])
+
+    async def _register_family_attempt(
+        self, exp_id: str | None, round_idx: int
+    ) -> bool:
+        if not self._campaign_split_plan:
+            return True
+        try:
+            batch = self._confirmation_for_attempt()
+            statement = str(self.hypothesis.get("statement") or "").strip() or "(unnamed hypothesis)"
+            attempt_id = await asyncio.to_thread(
+                register_hypothesis_attempt,
+                self.run_id,
+                experiment_id=exp_id,
+                family_key=self._family_key,
+                hypothesis_text=statement,
+                round_index=round_idx,
+                phase="confirmation",
+                confirmation_batch=int(batch["batch"]),
+                split_hash=str(batch["index_hash"]),
+                alpha_allocated=float(batch["alpha"]),
+            )
+            self._current_attempt_id = attempt_id
+            await get_bus().publish(
+                make_event(
+                    "hypothesis_attempt",
+                    run_id=self.run_id,
+                    payload={
+                        "attempt_id": attempt_id,
+                        "round": round_idx,
+                        "phase": "confirmation",
+                        "batch": batch["batch"],
+                        "split_hash": batch["index_hash"],
+                        "alpha": batch["alpha"],
+                        "family_key": self._family_key,
+                        "status": "registered",
+                    },
+                )
+            )
+            return True
+        except Exception as exc:
+            await self._block_run(exp_id, str(exc))
+            return False
+
+    async def _finish_family_attempt(self, outcome: dict[str, Any]) -> None:
+        if self._current_attempt_id is None:
+            return
+        compact = {
+            "reason": outcome.get("reason"),
+            "verdict": outcome.get("verdict"),
+            "demonstration_holds": outcome.get("demonstration_holds"),
+            "undemonstrated": bool(outcome.get("undemonstrated")),
+            "headline_metric": outcome.get("headline_metric"),
+            "headline": outcome.get("headline"),
+        }
+        status = "not_evaluated" if outcome.get("undemonstrated") else "evaluated"
+        await asyncio.to_thread(
+            finish_hypothesis_attempt,
+            self._current_attempt_id,
+            status=status,
+            outcome=compact,
+        )
+        await get_bus().publish(
+            make_event(
+                "hypothesis_attempt",
+                run_id=self.run_id,
+                payload={
+                    "attempt_id": self._current_attempt_id,
+                    "round": outcome.get("round"),
+                    "phase": "confirmation",
+                    "status": status,
+                    "outcome": compact,
+                },
+            )
+        )
+
+    def _select_final_candidate(self, outcomes: list[dict[str, Any]]) -> dict[str, Any] | None:
+        if (
+            self._contribution_type() == "diagnostic"
+            and self.hypothesis.get("hypothesis_locked")
+            and self._locked_diagnostic_artifact is not None
+            and not self._locked_diagnostic_artifact.get("eligible")
+        ):
+            return None
+        candidates = [o for o in outcomes if o.get("_final_candidate")]
+        if not candidates:
+            return None
+        if (
+            self._contribution_type() == "diagnostic"
+            and self.hypothesis.get("hypothesis_locked")
+        ):
+            # Predeclared anti-winner's-curse policy: lock the first committable
+            # implementation. Later batches measure replication; they do not permit
+            # choosing the largest observed effect after several looks.
+            return candidates[0]
+        scored = [o for o in candidates if o.get("headline") is not None]
+        return (
+            (max if self._maximize() else min)(scored, key=lambda o: o["headline"])
+            if scored
+            else candidates[-1]
+        )
+
+    async def _validate_final_holdout(
+        self, outcomes: list[dict[str, Any]], data_spec: dict[str, Any], plugin: Any
+    ) -> dict[str, Any]:
+        """Select on confirmation evidence, then open the reserved holdout exactly once."""
+        if not self._campaign_split_plan:
+            return {"evaluated": False, "reason": "campaign split ledger disabled"}
+        selected = self._select_final_candidate(outcomes)
+        if selected is None:
+            return {"evaluated": False, "reason": "no demonstrated candidate for final holdout"}
+        final = dict(self._campaign_split_plan.get("final_holdout") or {})
+        candidate = dict(selected["_final_candidate"])
+        code_text = str(candidate["code"])
+        prereg_text = json.dumps(candidate["preregistration"], indent=2, sort_keys=True)
+        code_sha256 = hashlib.sha256(code_text.encode()).hexdigest()
+        prereg_blob = prereg_text + "\n"
+        prereg_sha256 = hashlib.sha256(prereg_blob.encode()).hexdigest()
+        locked_dir = run_artifacts_dir(self.run_id) / "locked_validation"
+        locked_dir.mkdir(parents=True, exist_ok=True)
+        locked_code = locked_dir / "demonstration.py"
+        locked_prereg = locked_dir / "preregistration.json"
+        locked_code.write_text(code_text)
+        locked_prereg.write_text(prereg_blob)
+        attempt_id = await asyncio.to_thread(
+            register_hypothesis_attempt,
+            self.run_id,
+            experiment_id=selected.get("exp_id"),
+            family_key=self._family_key,
+            hypothesis_text=str(selected.get("hypothesis") or "(unnamed hypothesis)"),
+            round_index=int(selected.get("round") or 0),
+            phase="final_holdout",
+            confirmation_batch=None,
+            split_hash=str(final.get("index_hash") or ""),
+            alpha_allocated=float(final.get("alpha") or 0.0),
+        )
+        claim = await asyncio.to_thread(
+            claim_final_holdout,
+            self.run_id,
+            claim_owner=f"experiment-driver:{self.run_id}",
+        )
+        if not claim.get("claimed"):
+            if claim.get("result") is not None:
+                return dict(claim["result"])
+            raise RuntimeError(
+                "final holdout was already claimed without a completed receipt; "
+                "reconciliation is required and a second look is forbidden"
+            )
+        action_id = str(claim["action_id"])
+        execution_token = str(claim["execution_token"])
+
+        split_meta = {
+            "split_algo_version": self._campaign_split_plan.get("split_algo_version"),
+            "role": "final_holdout",
+            "index_hash": final.get("index_hash"),
+            "n_confirm": final.get("n"),
+            "group_disjoint": self._campaign_split_plan.get("group_disjoint"),
+            "alpha": final.get("alpha"),
+        }
+        spec = {
+            **dict(candidate.get("demonstration") or {}),
+            "capability": plugin.AI_AUTHORED_CAPABILITY_ID,
+            "demonstration_code": candidate["code"],
+            "preregistration": candidate["preregistration"],
+            "random_state": int(candidate.get("random_state", 42)),
+            "confirm_index": list(final.get("indices") or []),
+            "split_meta": split_meta,
+            "family_alpha": float(final.get("alpha") or 0.0),
+            "external_action": {
+                "action_id": action_id,
+                "provider_idempotency_key": claim["provider_idempotency_key"],
+                "delivery": "at_most_once_reconcile_on_unknown",
+            },
+        }
+        execution_status = "returned"
+        try:
+            demo = await asyncio.to_thread(
+                plugin.run_demonstration,
+                spec,
+                data_spec,
+                run_artifacts_dir(self.run_id) / "final_holdout",
+            )
+            result = {
+                "evaluated": isinstance(demo, dict) and demo.get("holds") is not None,
+                "selected_round": selected.get("round"),
+                "selected_experiment_id": selected.get("exp_id"),
+                "hypothesis": selected.get("hypothesis"),
+                "holds": demo.get("holds") if isinstance(demo, dict) else None,
+                "test_statistic": demo.get("test_statistic") if isinstance(demo, dict) else None,
+                "control_statistic": demo.get("control_statistic") if isinstance(demo, dict) else None,
+                "detail": demo.get("detail") if isinstance(demo, dict) else "demonstration failed",
+                "split_hash": final.get("index_hash"),
+                "n": final.get("n"),
+                "alpha": final.get("alpha"),
+                "sandbox_image_id": demo.get("sandbox_image_id") if isinstance(demo, dict) else None,
+                "locked_code_sha256": code_sha256,
+                "locked_preregistration_sha256": prereg_sha256,
+            }
+        except Exception as exc:
+            execution_status = "raised"
+            result = {
+                "evaluated": False,
+                "selected_round": selected.get("round"),
+                "selected_experiment_id": selected.get("exp_id"),
+                "hypothesis": selected.get("hypothesis"),
+                "holds": None,
+                "detail": f"final holdout execution failed: {exc}",
+                "split_hash": final.get("index_hash"),
+                "n": final.get("n"),
+                "alpha": final.get("alpha"),
+                "locked_code_sha256": code_sha256,
+                "locked_preregistration_sha256": prereg_sha256,
+            }
+        await asyncio.to_thread(
+            record_final_holdout_result,
+            self.run_id,
+            result,
+            action_id=action_id,
+            execution_token=execution_token,
+            provider_receipt={
+                "executor": "plugin.run_demonstration",
+                "execution_status": execution_status,
+                "sandbox_image_id": result.get("sandbox_image_id"),
+            },
+            completed_by=f"experiment-driver:{self.run_id}",
+        )
+        await asyncio.to_thread(
+            finish_hypothesis_attempt,
+            attempt_id,
+            status="evaluated" if result["evaluated"] else "not_evaluated",
+            outcome=result,
+        )
+        artifact = run_artifacts_dir(self.run_id) / "final_holdout.json"
+        artifact.write_text(json.dumps(result, indent=2, default=str))
+        if selected.get("exp_id"):
+            await asyncio.to_thread(
+                record_artifacts,
+                selected["exp_id"],
+                [
+                    {"kind": "final_holdout", "uri": str(artifact)},
+                    {"kind": "locked_demonstration_code", "uri": str(locked_code)},
+                    {"kind": "locked_preregistration", "uri": str(locked_prereg)},
+                ],
+            )
+        await get_bus().publish(make_event("final_holdout", run_id=self.run_id, payload=result))
+        return result
+
+    async def _validate_external_replication(
+        self, outcomes: list[dict[str, Any]], plugin: Any
+    ) -> dict[str, Any] | None:
+        """Run the locked winning code/rule once on the pre-sealed external dataset."""
+        if self._external_validation_spec is None:
+            return None
+        selected = self._select_final_candidate(outcomes)
+        if selected is None:
+            return {"evaluated": False, "reason": "no demonstrated candidate for external replication"}
+        candidate = dict(selected["_final_candidate"])
+        code_sha256 = hashlib.sha256(str(candidate["code"]).encode()).hexdigest()
+        prereg_blob = json.dumps(candidate["preregistration"], indent=2, sort_keys=True) + "\n"
+        prereg_sha256 = hashlib.sha256(prereg_blob.encode()).hexdigest()
+        identity = await asyncio.to_thread(
+            self._build_external_identity, plugin, self._external_validation_spec
+        )
+        expected = self._external_dataset_identity or {}
+        if identity.get("dataset_fingerprint") != expected.get("dataset_fingerprint"):
+            raise RuntimeError("external dataset changed after pre-campaign sealing")
+        if identity.get("row_identity_hash") != expected.get("row_identity_hash"):
+            raise RuntimeError("external row identities changed after pre-campaign sealing")
+
+        alpha = float(get_settings().campaign_external_alpha)
+        attempt_id = await asyncio.to_thread(
+            register_hypothesis_attempt,
+            self.run_id,
+            experiment_id=selected.get("exp_id"),
+            family_key=self._family_key,
+            hypothesis_text=str(selected.get("hypothesis") or "(unnamed hypothesis)"),
+            round_index=int(selected.get("round") or 0),
+            phase="external_replication",
+            confirmation_batch=None,
+            split_hash=str(identity["row_identity_hash"]),
+            alpha_allocated=alpha,
+        )
+        claim = await asyncio.to_thread(
+            claim_external_validation,
+            self.run_id,
+            claim_owner=f"experiment-driver:{self.run_id}",
+            claim_ttl_seconds=max(
+                60,
+                int(get_settings().campaign_external_timeout_s) + 300,
+            ),
+        )
+        if not claim.get("claimed"):
+            if claim.get("result") is not None:
+                return dict(claim["result"])
+            raise RuntimeError(
+                "external-validation action was already claimed without a completed receipt; "
+                "reconciliation is required and a second look is forbidden"
+            )
+        action_id = str(claim["action_id"])
+        execution_token = str(claim["execution_token"])
+
+        split_meta = {
+            "role": "external_replication",
+            "dataset_fingerprint": identity["dataset_fingerprint"],
+            "row_identity_hash": identity["row_identity_hash"],
+            "n_confirm": identity["n_rows"],
+            "alpha": alpha,
+            "locked_after_round": selected.get("round"),
+        }
+        spec = {
+            **dict(candidate.get("demonstration") or {}),
+            "capability": plugin.AI_AUTHORED_CAPABILITY_ID,
+            "demonstration_code": candidate["code"],
+            "preregistration": candidate["preregistration"],
+            "random_state": int(candidate.get("random_state", 42)),
+            "confirm_index": list(range(int(identity["n_rows"]))),
+            "split_meta": split_meta,
+            "family_alpha": alpha,
+            "execution_timeout_s": float(get_settings().campaign_external_timeout_s),
+            "external_action": {
+                "action_id": action_id,
+                "provider_idempotency_key": claim["provider_idempotency_key"],
+                "delivery": "at_most_once_reconcile_on_unknown",
+            },
+        }
+        execution_status = "returned"
+        try:
+            demo = await asyncio.to_thread(
+                plugin.run_demonstration,
+                spec,
+                self._external_validation_spec,
+                run_artifacts_dir(self.run_id) / "external_replication",
+            )
+            result = {
+                "evaluated": isinstance(demo, dict) and demo.get("holds") is not None,
+                "selected_round": selected.get("round"),
+                "selected_experiment_id": selected.get("exp_id"),
+                "hypothesis": selected.get("hypothesis"),
+                "holds": demo.get("holds") if isinstance(demo, dict) else None,
+                "test_statistic": demo.get("test_statistic") if isinstance(demo, dict) else None,
+                "control_statistic": demo.get("control_statistic") if isinstance(demo, dict) else None,
+                "detail": demo.get("detail") if isinstance(demo, dict) else "demonstration failed",
+                "dataset_fingerprint": identity["dataset_fingerprint"],
+                "row_identity_hash": identity["row_identity_hash"],
+                "n": identity["n_rows"],
+                "alpha": alpha,
+                "data_asset_id": self._external_validation_spec.get("asset_id"),
+                "content_sha256": self._external_validation_spec.get("content_sha256"),
+                "sandbox_image_id": demo.get("sandbox_image_id") if isinstance(demo, dict) else None,
+                "independence_class": (
+                    (self._external_validation_spec.get("profile") or {})
+                    .get("external_provenance", {})
+                    .get("independence_class")
+                ),
+                "locked_code_sha256": code_sha256,
+                "locked_preregistration_sha256": prereg_sha256,
+            }
+        except Exception as exc:
+            execution_status = "raised"
+            result = {
+                "evaluated": False,
+                "selected_round": selected.get("round"),
+                "selected_experiment_id": selected.get("exp_id"),
+                "hypothesis": selected.get("hypothesis"),
+                "holds": None,
+                "detail": f"external replication execution failed: {exc}",
+                "dataset_fingerprint": identity["dataset_fingerprint"],
+                "row_identity_hash": identity["row_identity_hash"],
+                "n": identity["n_rows"],
+                "alpha": alpha,
+                "data_asset_id": self._external_validation_spec.get("asset_id"),
+                "content_sha256": self._external_validation_spec.get("content_sha256"),
+                "locked_code_sha256": code_sha256,
+                "locked_preregistration_sha256": prereg_sha256,
+            }
+        await asyncio.to_thread(
+            record_external_validation_result,
+            self.run_id,
+            result,
+            action_id=action_id,
+            execution_token=execution_token,
+            provider_receipt={
+                "executor": "plugin.run_demonstration",
+                "execution_status": execution_status,
+                "sandbox_image_id": result.get("sandbox_image_id"),
+            },
+            completed_by=f"experiment-driver:{self.run_id}",
+        )
+        await asyncio.to_thread(
+            finish_hypothesis_attempt,
+            attempt_id,
+            status="evaluated" if result["evaluated"] else "not_evaluated",
+            outcome=result,
+        )
+        artifact = run_artifacts_dir(self.run_id) / "external_replication.json"
+        artifact.write_text(json.dumps(result, indent=2, default=str))
+        if selected.get("exp_id"):
+            await asyncio.to_thread(
+                record_artifacts,
+                selected["exp_id"],
+                [{"kind": "external_replication", "uri": str(artifact)}],
+            )
+        await get_bus().publish(
+            make_event("external_replication", run_id=self.run_id, payload=result)
+        )
+        return result
+
     # --- entry point ---
     async def run(self) -> None:
         try:
@@ -2094,6 +3320,97 @@ class ExperimentDriver:
         self.profile = plugin.profile(target_column=data_spec.get("target_column"))
         self.budget = await asyncio.to_thread(BudgetTracker, self.run_id)
 
+        # Production safety gate: every path that can execute model-authored Python must have the
+        # same hard, no-network container boundary.  This runs before survey/model spend.  A local
+        # subprocess remains useful for explicit unit/developer work, but an unattended real run
+        # may never silently downgrade to it.
+        if not self.dry_run and (
+            get_settings().coder_enabled
+            or get_settings().ai_demonstration_enabled
+            or get_settings().discovery_enabled
+        ):
+            unsafe_reasons: list[str] = []
+            if get_settings().authored_code_backend != "docker":
+                unsafe_reasons.append("authored_code_backend is not docker")
+            if not self.profile.host_side_run and get_settings().compute_backend != "docker":
+                unsafe_reasons.append("compute_backend is not docker for authored model training")
+            if get_settings().sandbox_allow_network:
+                unsafe_reasons.append("sandbox network escape hatch is enabled")
+            if unsafe_reasons:
+                await self._block_run(
+                    exp_id,
+                    "unattended real run requires the hard sandbox: " + "; ".join(unsafe_reasons),
+                )
+                return
+            preflight = await asyncio.to_thread(hard_sandbox_preflight)
+            await get_bus().publish(
+                make_event("sandbox_preflight", run_id=self.run_id, payload=preflight)
+            )
+            if not preflight.get("ok"):
+                await self._block_run(
+                    exp_id,
+                    f"hard sandbox unavailable; refusing authored-code execution: "
+                    f"{preflight.get('error')}",
+                )
+                return
+
+        max_exps = max(1, get_settings().max_experiments_per_campaign)
+        max_pivots = max(0, int(get_settings().campaign_max_pivots))
+        max_hypothesis_attempts = max_exps + max_pivots
+        if (
+            not self.dry_run
+            and get_settings().campaign_seal_v2_enabled
+            and not self.profile.host_side_run
+        ):
+            if not await self._seal_campaign_data(
+                plan, plugin, data_spec, max_hypothesis_attempts
+            ):
+                return
+            if not await self._seal_external_data(plugin):
+                return
+            if plan.get("hypothesis_locked") and str(
+                plan.get("contribution_type") or ""
+            ).strip().lower() == "diagnostic":
+                try:
+                    await asyncio.to_thread(self._restore_locked_gate_receipts)
+                    await asyncio.to_thread(self._restore_locked_diagnostic_artifact)
+                except Exception as exc:  # noqa: BLE001 - resume integrity is fail-closed
+                    await self._block_run(
+                        exp_id,
+                        f"could not restore locked campaign approvals/artifact safely: {exc}",
+                    )
+                    return
+        elif not self.dry_run and get_settings().campaign_external_validation_required:
+            await self._block_run(
+                exp_id, "external validation requires Epistemic Seal v2 on a non-host-side domain"
+            )
+            return
+
+        # Freeze exact code/model/data/split/policy identity after deterministic protocol sealing
+        # and before SURVEY, model calls, or scientific observations. Dry runs permit a dirty
+        # development tree; real release runs require a clean tree unless explicitly overridden.
+        try:
+            manifest = await asyncio.to_thread(
+                freeze_run_manifest,
+                self.run_id,
+                allow_dirty=True if self.dry_run else None,
+            )
+        except ManifestCompatibilityError as exc:
+            await self._block_run(exp_id, f"run manifest gate failed: {exc}")
+            return
+        await get_bus().publish(
+            make_event(
+                "run_manifest_frozen",
+                run_id=self.run_id,
+                payload={
+                    "manifest_sha256": manifest.manifest_sha256,
+                    "schema_version": manifest.payload.schema_version,
+                    "dirty": manifest.payload.git.dirty,
+                    "split_ledgers": len(manifest.payload.split_ledgers),
+                },
+            )
+        )
+
         await asyncio.to_thread(set_run_status, self.run_id, "active")
         await get_bus().publish(
             make_event("run_started", run_id=self.run_id, payload={"mode": "dry_run" if self.dry_run else "real"})
@@ -2119,14 +3436,19 @@ class ExperimentDriver:
         # CAMPAIGN LOOP: one Run -> up to N linked experiments. Each round poses a
         # hypothesis, runs the full experiment, then a go/no-go step decides whether
         # the next experiment is worth running (and what it should test).
-        max_exps = max(1, get_settings().max_experiments_per_campaign)
-        max_pivots = max(0, int(get_settings().campaign_max_pivots))
         outcomes: list[dict[str, Any]] = []
         cur_exp_id = exp_id
         next_hint: dict[str, Any] | None = None
         round_idx = 1
+        min_exps = max(
+            1,
+            min(int(get_settings().min_experiments_per_campaign), int(max_exps)),
+        )
         pivots_used = 0  # K2 S3.5: undemonstrated rounds that triggered a bounded pivot
         while True:
+            self._current_round_idx = round_idx
+            self._current_attempt_sequence += 1
+            self._current_attempt_id = None
             # per-round guard isolation so design/direction revision counters don't
             # bleed across experiments
             self.guard = LoopGuard(get_settings().critics.consensus.max_design_iterations)
@@ -2134,15 +3456,44 @@ class ExperimentDriver:
             # formulation claims ideate creates survive into _finalize_claims.
             self._claim_ids = {}
             await get_bus().publish(
-                make_event("experiment", run_id=self.run_id,
-                           payload={"round": round_idx, "exp_id": cur_exp_id, "of": max_exps})
+                make_event(
+                    "experiment",
+                    run_id=self.run_id,
+                    payload={
+                        "round": round_idx,
+                        "attempt_sequence": self._current_attempt_sequence,
+                        "exp_id": cur_exp_id,
+                        "of": max_exps,
+                    },
+                )
             )
             # IDEATE the first hypothesis from the survey; every later attempt — a campaign
             # CONTINUATION or a bounded PIVOT (K2 S3.5) — adopts the go/no-go step's proposal.
             if next_hint is None:
                 await self._ideate(plan, cur_exp_id)
+            elif plan.get("hypothesis_locked"):
+                # An operator-locked confirmatory diagnostic remains the SAME scientific
+                # question across fresh batches.  The campaign planner may decide that a
+                # replication is informative, but it may not replace the preregistered
+                # stratum/statistic after seeing an earlier outcome (or an infrastructure
+                # failure). Rebuild the exact locked hypothesis and retain only procedural
+                # provenance from the planning step.
+                await self._ideate(plan, cur_exp_id)
+                self.hypothesis["experiment_type"] = "reproduction"
+                self.hypothesis["open_question"] = str(plan.get("objective") or "").strip()
+                self.hypothesis["continuation_rationale"] = str(
+                    next_hint.get("rationale") or next_hint.get("open_question") or ""
+                ).strip()
+                await get_bus().publish(make_event(
+                    "hypothesis_locked_continuation", run_id=self.run_id, payload={
+                        "round": round_idx,
+                        "scope": "same_preregistered_question",
+                        "fresh_confirmation_batch": self._current_attempt_sequence,
+                    }))
             else:
                 await self._adopt_hypothesis(next_hint or {}, cur_exp_id)
+            if not await self._register_family_attempt(cur_exp_id, round_idx):
+                return
             # SCORECARD gate (cheap + deterministic) BEFORE the cross-model direction
             # gate: block low-novelty / unclear-evaluation hypotheses before spending
             # peer-review + compute on them.
@@ -2156,6 +3507,7 @@ class ExperimentDriver:
             if outcome is None:
                 return  # a gate rejected past the loop limit -> paused + escalated
             outcomes.append(outcome)
+            await self._finish_family_attempt(outcome)
 
             # K2 S3.5: a PARADIGM round that produced no demonstration is an informative negative.
             # PIVOT to a different hypothesis (bounded by campaign_max_pivots) instead of aborting;
@@ -2193,11 +3545,59 @@ class ExperimentDriver:
                 break
             decision = await self._campaign_step(plan, outcomes, round_idx, max_exps)
             if not decision.get("continue"):
+                if round_idx >= min_exps:
+                    await get_bus().publish(
+                        make_event("campaign", run_id=self.run_id,
+                                   payload={"decision": "stop", "rationale": decision.get("rationale", "")})
+                    )
+                    break
+                # A live validation may explicitly require that the cross-round thesis is actually
+                # exercised.  Continue with a conservative fresh-batch replication if the planner
+                # would otherwise stop after round one; no verdict or threshold is relaxed.
+                decision = {
+                    **decision,
+                    "continue": True,
+                    "next_hypothesis": decision.get("next_hypothesis") or {
+                        "statement": str(self.hypothesis.get("statement") or "").strip(),
+                        "rationale": (
+                            "Fresh-batch replication required by the predeclared minimum-round "
+                            "validation protocol."
+                        ),
+                        "prediction": str(self.hypothesis.get("prediction") or "").strip(),
+                        "novelty_note": (
+                            "This is a confirmatory replication round, not a new novelty claim."
+                        ),
+                    },
+                    "rationale": (
+                        f"minimum campaign length is {min_exps}; run a locked fresh-batch "
+                        "replication before stopping"
+                    ),
+                }
                 await get_bus().publish(
-                    make_event("campaign", run_id=self.run_id,
-                               payload={"decision": "stop", "rationale": decision.get("rationale", "")})
+                    make_event(
+                        "campaign",
+                        run_id=self.run_id,
+                        payload={
+                            "decision": "minimum_round_replication",
+                            "round": round_idx,
+                            "minimum": min_exps,
+                            "rationale": decision["rationale"],
+                        },
+                    )
                 )
-                break
+                await get_bus().publish(
+                    make_event(
+                        "campaign_plan",
+                        run_id=self.run_id,
+                        payload={
+                            "round": round_idx,
+                            "continue": True,
+                            "next_hypothesis": decision["next_hypothesis"],
+                            "rationale": decision["rationale"],
+                            "protocol_override": "minimum_round_replication",
+                        },
+                    )
+                )
             next_hint = decision.get("next_hypothesis") or {}
             cur_exp_id = await asyncio.to_thread(
                 create_experiment, self.run_id, plan, parent_experiment_id=cur_exp_id
@@ -2208,9 +3608,49 @@ class ExperimentDriver:
         # metrics and finalized no claims, so it must not drive the run-level verdict or synthesis.
         demonstrated = [o for o in outcomes if not o.get("undemonstrated")]
 
+        final_validation: dict[str, Any] | None = None
+        external_validation: dict[str, Any] | None = None
+        if self._campaign_split_plan:
+            try:
+                final_validation = await self._validate_final_holdout(
+                    demonstrated, data_spec, plugin
+                )
+            except Exception as exc:
+                await self._block_run(cur_exp_id, f"final holdout could not be opened safely: {exc}")
+                return
+            if not final_validation.get("evaluated"):
+                await self._block_run(
+                    cur_exp_id,
+                    "final holdout did not produce a harness verdict; headline remains unverified",
+                )
+                return
+
+        if self._external_validation_spec is not None:
+            try:
+                external_validation = await self._validate_external_replication(
+                    demonstrated, plugin
+                )
+            except Exception as exc:
+                await self._block_run(
+                    cur_exp_id, f"external replication could not be opened safely: {exc}"
+                )
+                return
+            if not external_validation or not external_validation.get("evaluated"):
+                await self._block_run(
+                    cur_exp_id,
+                    "external replication did not produce a harness verdict; result is not portable",
+                )
+                return
+
         # campaign-level synthesis across the experiments (only when >1 demonstrated)
         if len(demonstrated) > 1:
-            await self._campaign_synthesis(plan, demonstrated, exp_id)
+            await self._campaign_synthesis(
+                plan,
+                demonstrated,
+                exp_id,
+                final_validation=final_validation,
+                external_validation=external_validation,
+            )
 
         # ARCHIVE -------------------------------------------------------------
         # A run whose concluding experiment's results gate REJECTED is distinguished
@@ -2218,7 +3658,14 @@ class ExperimentDriver:
         # did not endorse the result. The claims already carry the refutation; this
         # makes the run-level outcome legible too.
         last_exp_id = demonstrated[-1]["exp_id"] if demonstrated else cur_exp_id
-        results_rejected = bool(demonstrated) and demonstrated[-1].get("verdict") == "reject"
+        results_rejected = (
+            bool(demonstrated)
+            and (
+                demonstrated[-1].get("verdict") == "reject"
+                or (final_validation is not None and final_validation.get("holds") is not True)
+                or (external_validation is not None and external_validation.get("holds") is not True)
+            )
+        )
         final_status = "results_rejected" if results_rejected else "completed"
         await record_transition(self.run_id, last_exp_id, "write_up", "archive", "campaign complete")
         await asyncio.to_thread(set_run_status, self.run_id, final_status)
@@ -2232,6 +3679,8 @@ class ExperimentDriver:
                     "experiments": len(demonstrated),
                     "pivots": pivots_used,
                     "metrics": demonstrated[-1].get("metrics") if demonstrated else None,
+                    "final_holdout": final_validation,
+                    "external_replication": external_validation,
                 },
             )
         )
@@ -2266,6 +3715,18 @@ class ExperimentDriver:
         # generation STRATEGY (answer prompt + k); regression domains get build_pipeline().
         if self.profile and self.profile.host_side_run:
             await self._code_rag(design, exp_id)
+        elif self._contribution_type() == "diagnostic":
+            # The authored discriminating demonstration below contains and executes
+            # the diagnostic model/statistic. A second authored build_pipeline plus
+            # the generic 5x5/grouped/baseline benchmark is not evidence for this
+            # question and previously consumed the full sandbox wall clock before the
+            # primary statistic could run.
+            await get_bus().publish(make_event(
+                "code", run_id=self.run_id, payload={
+                    "accepted": None,
+                    "skipped": True,
+                    "reason": "diagnostic is evaluated by the authored preregistered demonstration",
+                }))
         else:
             solution_code = await self._code(design, data_spec, exp_id)
             if solution_code:
@@ -2274,7 +3735,7 @@ class ExperimentDriver:
         # 2c) DEMONSTRATION CODE (paradigm only, the frontier path): the AI authors the
         # DISCRIMINATING COMPUTATION itself + pre-registers its decision rule, committed
         # immutably BEFORE execution so it can't be tuned to the result.
-        if self._contribution_type() == "paradigm":
+        if self._uses_discriminating_demonstration():
             await self._demonstration_code(design, data_spec, exp_id)
 
         # 3) EXECUTION
@@ -2298,7 +3759,7 @@ class ExperimentDriver:
         # outcome so the campaign loop can PIVOT to a different hypothesis (bounded) rather than
         # abort. The round is honestly NOT evaluated (no claims finalized, no metrics) — the spine
         # is unchanged; only the response to it (pivot vs hard-pause) moved up to the loop.
-        if (not self.dry_run and self._contribution_type() == "paradigm"
+        if (not self.dry_run and self._uses_discriminating_demonstration()
                 and not (result.get("info") or {}).get("demonstration")):
             return await self._undemonstrated_outcome(round_idx, exp_id)
 
@@ -2374,6 +3835,24 @@ class ExperimentDriver:
             dry_run=self.dry_run,
             mode=contribution_type,  # paradigm work is judged on the right axes, not SOTA-delta
         )
+        if (
+            self._locked_diagnostic_artifact is not None
+            and design.get("demonstration_code")
+            == self._locked_diagnostic_artifact.get("code")
+        ):
+            # Candidate eligibility is earned only by a completed independent audit
+            # of the executed source. It is deliberately independent of whether the
+            # observed scientific result held or whether a results reviewer liked the
+            # direction of that result: selecting only positive outcomes would be a
+            # winner's curse. A missing audit never upgrades; a substantive code-audit
+            # rejection on any fresh recomputation revokes eligibility.
+            produced_verdict = isinstance(
+                (info.get("demonstration") or {}).get("holds"), bool
+            )
+            if produced_verdict and audit_passed is True and not audit_error:
+                self._locked_diagnostic_artifact["eligible"] = True
+            elif audit_passed is False and not audit_error:
+                self._locked_diagnostic_artifact["eligible"] = False
         await record_transition(
             self.run_id, exp_id, "analysis", "optimize",
             f"results reviewed: {rpanel.consensus_verdict} (gate_passed={rpanel.gate_passed})",
@@ -2423,7 +3902,11 @@ class ExperimentDriver:
         await self._write_up(plan, best_design, best_result, analysis, rpanel, exp_id)
 
         metrics = best_result.get("metrics", {})
-        hk = self.profile.headline_metric if self.profile else "mae"
+        hk = (
+            "diagnostic_test_statistic"
+            if self._contribution_type() == "diagnostic"
+            else (self.profile.headline_metric if self.profile else "mae")
+        )
         # K2: classify WHY the demonstration held/failed (deterministic, harness-owned) so the
         # next campaign round is shaped by this round's reason, not a fresh blind guess. Read the
         # POST-audit demonstration in ``info`` (the same dict the audit mutated + claims read);
@@ -2443,6 +3926,23 @@ class ExperimentDriver:
                 "recoverable": demo_outcome["recoverable"], "detail": demo_outcome["detail"]})
         )
         # the belief was already folded (above, before claim finalization); reuse post_cred/sig.
+        final_candidate = None
+        demo_result = info.get("demonstration") or {}
+        locked_eligible = (
+            self._locked_diagnostic_artifact is None
+            or bool(self._locked_diagnostic_artifact.get("eligible"))
+        )
+        if (
+            design.get("demonstration_code")
+            and demo_result.get("preregistration")
+            and locked_eligible
+        ):
+            final_candidate = {
+                "code": design["demonstration_code"],
+                "preregistration": demo_result["preregistration"],
+                "demonstration": self._paradigm_demonstration() or {},
+                "random_state": int(design.get("random_state", 42)),
+            }
         return {
             "round": round_idx,
             "exp_id": exp_id,
@@ -2470,6 +3970,10 @@ class ExperimentDriver:
             "belief_surprise": sig["surprise"],
             "belief_remaining_eig": sig["remaining_eig"],
             "belief_predicted_p_holds": sig["predicted"],
+            "demonstration_holds": demo_result.get("holds"),
+            # Internal-only payload consumed after adaptive selection, when the one-time final
+            # holdout opens. It is never sent to the campaign planner or synthesis prompt.
+            "_final_candidate": final_candidate,
         }
 
     async def _undemonstrated_outcome(self, round_idx: int, exp_id: str | None) -> dict[str, Any]:
@@ -2664,11 +4168,23 @@ class ExperimentDriver:
         )
         return decision
 
-    async def _campaign_synthesis(self, plan: dict, outcomes: list[dict], first_exp_id: str | None) -> None:
+    async def _campaign_synthesis(
+        self,
+        plan: dict,
+        outcomes: list[dict],
+        first_exp_id: str | None,
+        *,
+        final_validation: dict[str, Any] | None = None,
+        external_validation: dict[str, Any] | None = None,
+    ) -> None:
         """Write a campaign-level summary tying the experiments together: the
         trajectory, which experiment won, what the program learned, open gaps."""
         await self._status("synthesizing", "summarizing the campaign")
-        hk = self.profile.headline_metric if self.profile else "mae"
+        hk = (
+            "diagnostic_test_statistic"
+            if self._contribution_type() == "diagnostic"
+            else (self.profile.headline_metric if self.profile else "mae")
+        )
         units = self.profile.units if self.profile else ""
         usfx = f" {units}" if units else ""
         rows = "\n".join(
@@ -2679,9 +4195,17 @@ class ExperimentDriver:
             for o in outcomes
         )
         scored = [o for o in outcomes if o.get("headline") is not None]
+        locked_diagnostic = (
+            self._contribution_type() == "diagnostic"
+            and self.hypothesis.get("hypothesis_locked")
+        )
         best = (
-            (max if self._maximize() else min)(scored, key=lambda o: o["headline"])
-            if scored else outcomes[-1]
+            outcomes[0]
+            if locked_diagnostic
+            else (
+                (max if self._maximize() else min)(scored, key=lambda o: o["headline"])
+                if scored else outcomes[-1]
+            )
         )
         # K2-S5: the BELIEF trajectory + calibration — the north-star progress signal, surfaced
         # HONESTLY as early/weak. A credence is calibrated only by harness-verified confirm-split
@@ -2709,6 +4233,36 @@ class ExperimentDriver:
                 "\n\n## Belief trajectory (calibrated only by held-out verdicts; early/weak)\n\n"
                 f"{traj}\n\n**Calibration:** {cal}\n"
             )
+        validation_block = ""
+        if final_validation is not None or external_validation is not None:
+            final = final_validation or {}
+            external = external_validation or {}
+            validation_block = (
+                "\n\n## Locked validation\n\n"
+                "The selected implementation was fixed before either validation set was opened. "
+                "These are one-time harness results, not inputs to candidate selection.\n\n"
+                "### Internal final holdout\n\n"
+                f"- evaluated: `{final.get('evaluated')}`; holds: `{final.get('holds')}`\n"
+                f"- test statistic: `{final.get('test_statistic')}`; control statistic: "
+                f"`{final.get('control_statistic')}`; alpha: `{final.get('alpha')}`; n: "
+                f"`{final.get('n')}`\n"
+                f"- split hash: `{final.get('split_hash')}`\n"
+                f"- locked code SHA-256: `{final.get('locked_code_sha256')}`\n"
+                f"- locked preregistration SHA-256: "
+                f"`{final.get('locked_preregistration_sha256')}`\n\n"
+                "### External replication\n\n"
+                f"- evaluated: `{external.get('evaluated')}`; holds: `{external.get('holds')}`; "
+                f"independence class: `{external.get('independence_class')}`\n"
+                f"- test statistic: `{external.get('test_statistic')}`; control statistic: "
+                f"`{external.get('control_statistic')}`; alpha: `{external.get('alpha')}`; n: "
+                f"`{external.get('n')}`\n"
+                f"- dataset fingerprint: `{external.get('dataset_fingerprint')}`\n"
+                f"- row-identity hash: `{external.get('row_identity_hash')}`\n"
+                f"- pinned content SHA-256: `{external.get('content_sha256')}`\n"
+                f"- locked code SHA-256: `{external.get('locked_code_sha256')}`\n"
+                f"- locked preregistration SHA-256: "
+                f"`{external.get('locked_preregistration_sha256')}`\n"
+            )
         prompt = (
             f"Summarize this research campaign (objective: {plan.get('objective', '')}) as a short markdown "
             f"brief. Experiments:\n{rows}\n{belief_block}\nThe best {hk} was {best.get('headline')} in round "
@@ -2718,16 +4272,32 @@ class ExperimentDriver:
             "is shown, report it + its calibration as given and label credences as early/weak — never as "
             "hard probabilities."
         )
-        summary = await reason_stage(
-            self.run_id, "campaign", prompt, dry_run=self.dry_run,
-            dry_text=(
+        deterministic_summary = (
+            "# Campaign Summary\n\n"
+            f"**Objective:** {plan.get('objective', 'n/a')}\n\n"
+            "## Trajectory\n\n"
+            f"{rows}{belief_block}{validation_block}\n"
+            "## Outcome\n\n"
+            "The operator-locked diagnostic was repeated on fresh, disjoint confirmation "
+            "batches. The first committable code and preregistration were selected a priori for "
+            "the one-time final holdout; later batches were replication evidence, not a "
+            "winner-selection pool.\n\n"
+            "## Open gaps\n\n- " + "\n- ".join(self.survey_gaps or ["(none recorded)"])
+        )
+        summary = (
+            deterministic_summary
+            if locked_diagnostic
+            else await reason_stage(
+                self.run_id, "campaign", prompt, dry_run=self.dry_run,
+                dry_text=(
                 f"# Campaign Summary\n\n**Objective:** {plan.get('objective', 'n/a')}\n\n"
                 f"## Trajectory\n\n{rows}\n{belief_block}\n"
                 f"## Outcome\n\nThe best {hk} was {best.get('headline')}{usfx} in "
                 f"round {best.get('round')} ({best.get('model')}). Across {len(outcomes)} experiments the "
                 f"program refined its hypothesis from the survey gaps toward the most informative test.\n\n"
                 f"## Open gaps\n\n- " + "\n- ".join(self.survey_gaps or ["(none recorded)"])
-            ),
+                ),
+            )
         )
         path = run_artifacts_dir(self.run_id) / "campaign.md"
         path.write_text(summary)
@@ -2737,8 +4307,8 @@ class ExperimentDriver:
             )
         await self._index(
             "conclusion",
-            f"campaign ({len(outcomes)} experiments) best {hk} {best.get('headline')} "
-            f"in round {best.get('round')} ({best.get('model')}).",
+            f"campaign ({len(outcomes)} experiments) selected {hk} {best.get('headline')} "
+            f"from round {best.get('round')} ({best.get('model')}).",
             first_exp_id, headline=best.get("headline"), experiments=len(outcomes),
         )
         await get_bus().publish(
@@ -2752,6 +4322,8 @@ class ExperimentDriver:
                     for o in belief_rows
                 ],
                 "calibration": calibration, "n_belief_updates": n_updates,
+                "final_holdout": final_validation,
+                "external_replication": external_validation,
             })
         )
 
@@ -2762,6 +4334,110 @@ class ExperimentDriver:
         fallback.setdefault("random_state", 42)
         if data_spec.get("target_column"):
             fallback["target_column"] = data_spec["target_column"]
+        if (
+            self._contribution_type() == "diagnostic"
+            and self.hypothesis.get("hypothesis_locked")
+        ):
+            # Full executable contract for the locked endpoint. A generic design
+            # model JSON cannot faithfully carry leakage, matching, multiplicity,
+            # and interpretation constraints, so the harness materializes them.
+            design = {
+                **fallback,
+                "model": "random_forest",
+                "model_params": {
+                    "n_estimators": 300,
+                    "max_features": 1.0,
+                    "min_samples_leaf": 1,
+                    "n_jobs": 1,
+                },
+                "featurizer": "magpie",
+                "test_size": 0.5,
+                "random_state": int(fallback.get("random_state", 42)),
+                "contribution_type": "diagnostic",
+                "estimand": (
+                    "one-sided family-alpha bootstrap lower confidence bound for the mean "
+                    "paired absolute-error excess: multi-alkaline-earth cuprate minus a "
+                    "non-cuprate matched on element count and training-derived Magpie density"
+                ),
+                "stratum": (
+                    "target-blind: group contains Cu and O and at least two of Ba/Sr/Ca/Mg"
+                ),
+                "role_internal_split": (
+                    "GroupShuffleSplit(n_splits=1, test_size=0.5, random_state=runtime seed) "
+                    "by chemical-system group. RandomForestRegressor uses the same runtime seed. "
+                    "Training-column median imputation, StandardScaler, the RF, and the density "
+                    "neighbor index are fit only on the training side; evaluation rows never "
+                    "enter any fitted preprocessing or model."
+                ),
+                "control_pool": (
+                    "all evaluation rows that do not satisfy the target-blind case definition: "
+                    "not (Cu and O and at least two of Ba/Sr/Ca/Mg); rows may contain Cu or O "
+                    "individually. No target/Tc value is used to form either pool."
+                ),
+                "density_descriptor": (
+                    "after training-only median imputation and StandardScaler, choose at most "
+                    "2048 training rows without replacement with seed+17; density for every "
+                    "evaluation row is -log(mean Euclidean distance to its 10 nearest reference "
+                    "rows + 1e-12). Standardize density using the reference-density mean/std. "
+                    "This scalar is only a declared matching descriptor, not a claim that "
+                    "high-dimensional distance exhausts applicability-domain differences."
+                ),
+                "matching": (
+                    "use every available case up to min(n_case,n_control). Standardize element "
+                    "count by its training-row mean/std; combine it with the standardized density "
+                    "as a two-dimensional vector. Process cases in ascending original evaluation "
+                    "row index and greedily choose the unused control with minimum Euclidean "
+                    "distance; exact ties go to the smallest original evaluation row index. "
+                    "Matching is 1:1 without replacement and never uses the target/Tc."
+                ),
+                "sample_accounting": (
+                    "minimum_pairs=20 is an execution/probe floor calibrated from an archived "
+                    "prior campaign, not a power guarantee. Report n_case_available, "
+                    "n_control_available, n_pairs, paired SD and SE. Fewer than 20 pairs is "
+                    "not_evaluated/sample_starved, never a scientific refutation."
+                ),
+                "test_statistic": (
+                    "with 10000 repetitions and seed+307, resample the fixed matched-pair rows "
+                    "with replacement and compute mean absolute-error excess each time; the "
+                    "statistic is quantile family_alpha of those means. Authored code reports "
+                    "family_alpha_used and bootstrap_repetitions."
+                ),
+                "negative_control": (
+                    "keep the fixed, unique pair membership unchanged; with seed+211 flip the "
+                    "sign of exactly floor(n_pairs/2) pair differences. Apply the same 10000-row "
+                    "index bootstrap and family-alpha quantile to the signed differences. The "
+                    "control is silent when that lower bound is <= 0."
+                ),
+                "multiplicity": (
+                    "harness-supplied per-attempt Bonferroni alpha; no hard-coded CI level"
+                ),
+                "decision_rules": {
+                    "supported_if": {"op": ">", "threshold": 0.0},
+                    "control_silent_if": {"op": "<=", "threshold": 0.0},
+                },
+                "interpretation": (
+                    "descriptive conditional error contrast only; no causal mechanism, "
+                    "irreducible-error, SOTA, or universal-generalization claim"
+                ),
+                "method_note": (
+                    "operator-locked diagnostic; generic performance benchmarking and "
+                    "post-confirmation tuning are outside the primary endpoint"
+                ),
+            }
+            await record_transition(
+                self.run_id,
+                exp_id,
+                "experiment_design",
+                "experiment_design",
+                "locked diagnostic design contract generated by the harness",
+            )
+            await self._index(
+                "design_rationale",
+                f"locked diagnostic contract: {json.dumps(design, default=str)[:1200]}",
+                exp_id,
+                model=design["model"],
+            )
+            return design
         # recall-before-design: pull similar prior work from OTHER runs so the
         # design avoids repeating approaches that already failed / converged.
         query = " ".join(
@@ -2819,15 +4495,71 @@ class ExperimentDriver:
         return design
 
     async def _design_gate(self, design, plan, plugin, exp_id) -> dict[str, Any] | None:
+        locked = bool(self.hypothesis.get("hypothesis_locked"))
+        locked_artifact = {
+            "design": design,
+            "hypothesis": self._locked_scientific_hypothesis(self.hypothesis),
+            "demonstration": self._paradigm_demonstration(),
+            "plan_objective": plan.get("objective"),
+        }
+        locked_fingerprint = self._locked_gate_fingerprint("design", locked_artifact)
+        if locked:
+            receipt = self._locked_gate_receipts.get("design") or {}
+            if receipt.get("artifact_sha256") == locked_fingerprint:
+                if await self._reuse_locked_gate_if_approved(
+                    "design", locked_fingerprint, exp_id or self.run_id
+                ):
+                    return design
+                await self._block_run(
+                    exp_id,
+                    "could not persist reuse of the locked design approval; refusing "
+                    "an unauditable continuation",
+                )
+                return None
+            if receipt:
+                await self._block_run(
+                    exp_id,
+                    "locked executable design differs from its pre-result approval; "
+                    "refusing post-result design drift",
+                )
+                return None
         while True:
-            content = (
-                {"design": design, "literature": self.survey_brief} if self.survey_brief else design
-            )
+            # Review the artifact that will actually run, in the scientific context that
+            # defines its estimand.  Reviewing the small model-parameter JSON alone caused
+            # diagnostic reviewers to infer a causal claim that the locked hypothesis did
+            # not make, while an author rebuttal could promise changes to fields the parser
+            # never persisted.  Rebuttals may clarify existing text; only this outer loop can
+            # submit a materially revised artifact.
+            content = {
+                "artifact_locked": locked,
+                "design": design,
+                "hypothesis": self.hypothesis,
+                "demonstration": self._paradigm_demonstration(),
+                "plan_objective": plan.get("objective"),
+            }
+            if self.survey_brief:
+                content["literature"] = self.survey_brief
             panel = await self.gateway.review(
-                "design", content, exp_id or self.run_id, run_id=self.run_id, dry_run=self.dry_run
+                "design", content, exp_id or self.run_id, run_id=self.run_id,
+                dry_run=self.dry_run, mode=self._contribution_type(),
             )
             if panel.gate_passed:
+                if locked and not await self._record_locked_gate_approval(
+                    "design", locked_fingerprint, panel, exp_id or self.run_id
+                ):
+                    await self._block_run(
+                        exp_id,
+                        "could not persist the locked design approval before execution",
+                    )
+                    return None
                 return design
+            if self.hypothesis.get("hypothesis_locked"):
+                await self._block_run(
+                    exp_id,
+                    "locked pre-registration rejected by the design gate; refusing to treat "
+                    "an unimplemented rebuttal or post-review estimand change as approval",
+                )
+                return None
             n = self.guard.bump("design")
             if self.guard.exceeded("design"):
                 await get_bus().publish(
@@ -2868,18 +4600,47 @@ class ExperimentDriver:
         The paradigm demonstration IS the contribution, so it is computed even when the
         (secondary) performance eval fails/times out — a failed performance model must not
         sink a paradigm run."""
-        paradigm = self._contribution_type() == "paradigm"
-        try:
-            result = await self._dispatch_eval(design, data_spec, domain, exp_id)
-        except Exception as exc:
-            if not paradigm:
-                raise
+        paradigm = self._uses_discriminating_demonstration()
+        diagnostic_primary = self._contribution_type() == "diagnostic"
+        if diagnostic_primary and not self.dry_run:
+            # A diagnostic's preregistered demonstration is the primary evaluation.
+            # Do not run the unrelated full benchmark protocol (25 repeated folds +
+            # grouped folds + baseline panel + final fit) before it. This is not a
+            # relaxed path: the demonstration still runs in the immutable hard
+            # sandbox, on the sealed fresh batch, under the committed rule and audit.
+            result = {
+                "job_id": "diagnostic-demonstration",
+                "metrics": {},
+                "artifacts": [],
+                "info": {
+                    "performance_eval_skipped": True,
+                    "protocol_status": "demonstration_only",
+                    "model": design.get("model"),
+                    "model_impl": "AI-authored preregistered diagnostic",
+                    "eval_summary": (
+                        "Primary evaluation is the sealed confirm-batch discriminating "
+                        "demonstration; the generic benchmark suite was not run."
+                    ),
+                },
+            }
             await get_bus().publish(make_event(
-                "compute_status", run_id=self.run_id,
-                payload={"job_id": "eval-failed", "status": "failed", "error": str(exc),
-                         "note": "performance eval failed; paradigm demonstration still computed"}))
-            result = {"job_id": "eval-failed", "metrics": {}, "artifacts": [],
-                      "info": {"eval_error": str(exc)}}
+                "compute_status", run_id=self.run_id, payload={
+                    "job_id": "diagnostic-demonstration",
+                    "status": "skipped_secondary_benchmark",
+                    "metrics": None,
+                }))
+        else:
+            try:
+                result = await self._dispatch_eval(design, data_spec, domain, exp_id)
+            except Exception as exc:
+                if not paradigm:
+                    raise
+                await get_bus().publish(make_event(
+                    "compute_status", run_id=self.run_id,
+                    payload={"job_id": "eval-failed", "status": "failed", "error": str(exc),
+                             "note": "performance eval failed; paradigm demonstration still computed"}))
+                result = {"job_id": "eval-failed", "metrics": {}, "artifacts": [],
+                          "info": {"eval_error": str(exc)}}
         if paradigm and not result.get("blocked"):
             demo = await self._compute_demonstration(design, data_spec, domain)
             if demo is not None:
@@ -2887,6 +4648,16 @@ class ExperimentDriver:
                 # a first-class artifact so the run has a verifiable record of its contribution
                 result.setdefault("artifacts", []).append(
                     {"kind": "demonstration", "uri": f"demonstration:{demo.get('form', 'discriminating')}"})
+                if diagnostic_primary and demo.get("test_statistic") is not None:
+                    diagnostic_metrics = {
+                        "diagnostic_test_statistic": float(demo["test_statistic"]),
+                        "diagnostic_control_statistic": float(demo["control_statistic"]),
+                    }
+                    result.setdefault("metrics", {}).update(diagnostic_metrics)
+                    if exp_id:
+                        await asyncio.to_thread(
+                            record_metrics, exp_id, diagnostic_metrics, "confirmation"
+                        )
         return result
 
     async def _dispatch_eval(self, design, data_spec, domain, exp_id) -> dict[str, Any]:
@@ -2927,6 +4698,9 @@ class ExperimentDriver:
                 if design.get("demonstration_confirm_index") is not None:
                     spec["confirm_index"] = design["demonstration_confirm_index"]
                     spec["split_meta"] = design.get("demonstration_split_meta")
+                    spec["family_alpha"] = (
+                        (design.get("demonstration_split_meta") or {}).get("family_alpha")
+                    )
         try:
             demo = await asyncio.to_thread(
                 plugin.run_demonstration, spec, data_spec,
@@ -2952,6 +4726,7 @@ class ExperimentDriver:
                                     # K1 explore->confirm seal: was it applied, and on what split?
                                     "exploration_applied": demo.get("exploration_applied"),
                                     "n_confirm": demo.get("n_confirm"),
+                                    "sandbox_image_id": demo.get("sandbox_image_id"),
                                     "split_meta": demo.get("split_meta")})
             )
         return demo
@@ -2961,13 +4736,13 @@ class ExperimentDriver:
     ) -> tuple[bool | None, bool]:
         """Independently AUDIT an AI-authored demonstration with the AUTHOR vendor EXCLUDED
         (genuine cross-vendor independence, not the orchestrator reviewing its own code). A refuting audit
-        (gate did not pass) FORCES ``holds=False`` on the result — the auditor's adversarial
-        finding cannot be overridden by the author — so the formulation claim becomes
-        ``refuted``.
+        (gate did not pass) invalidates an existing boolean verdict and forces ``holds=False``;
+        it cannot turn ``holds=None`` (no scientific verdict) into counter-evidence.
 
         Returns ``(audit_passed, audit_error)``, keeping the distinct states apart:
         - ``(True, False)``  — audit ran and PASSED with >= the vendor floor of auditors;
-        - ``(False, False)`` — audit ran and REFUTED / was not independent (forces holds=False);
+        - ``(False, False)`` — audit ran and REFUTED / was not independent (forces an existing
+          boolean verdict false, while preserving not_evaluated as None);
         - ``(None, True)``   — NO USABLE independent verification: the audit infrastructure
           errored, OR it approved with fewer distinct auditors than ``min_review_vendors``
           (a one-survivor approval is not adequate independent verification). ``holds`` is
@@ -2983,6 +4758,7 @@ class ExperimentDriver:
             return None, False
         if not isinstance(demo_result, dict) or not demo_result.get("preregistration"):
             return None, False  # only AI-authored demonstrations carry a pre-registration
+        produced_scientific_verdict = isinstance(demo_result.get("holds"), bool)
         fid = self._claim_ids.get("formulation")
         # K1 seal #5 (DETERMINISTIC, runs FIRST, harness-owned): refute a pre-registered threshold
         # that is inconsistent with the AI's OWN exploration observations (doom-to-zero /
@@ -2993,7 +4769,10 @@ class ExperimentDriver:
         if exploration and prereg_rule:
             consistent, reason = self._prereg_consistent_with_exploration(prereg_rule, exploration)
             if not consistent:
-                demo_result["holds"] = False
+                # Reject the artifact definition, but never manufacture a scientific
+                # refutation when execution itself was not evaluable.
+                if produced_scientific_verdict:
+                    demo_result["holds"] = False
                 demo_result["audit_refuted"] = True
                 if fid:
                     await asyncio.to_thread(
@@ -3004,7 +4783,8 @@ class ExperimentDriver:
                     "verdict": "reject", "gate_passed": False, "auditors": [],
                     "deterministic": True, "reason": reason}))
                 await get_bus().publish(make_event("demonstration", run_id=self.run_id, payload={
-                    "computed": True, "form": demo_result.get("form"), "holds": False,
+                    "computed": True, "form": demo_result.get("form"),
+                    "holds": demo_result.get("holds"),
                     "statistic": demo_result.get("statistic"),
                     "capability": demo_result.get("capability"),
                     "test_statistic": demo_result.get("test_statistic"),
@@ -3012,6 +4792,7 @@ class ExperimentDriver:
                     "audit_refuted": True,
                     "exploration_applied": demo_result.get("exploration_applied"),
                     "n_confirm": demo_result.get("n_confirm"),
+                    "sandbox_image_id": demo_result.get("sandbox_image_id"),
                     "split_meta": demo_result.get("split_meta")}))
                 return False, False
         if not getattr(get_settings(), "demonstration_audit_enabled", True):
@@ -3026,7 +4807,10 @@ class ExperimentDriver:
                 "verdict": "disabled", "gate_passed": None, "auditors": []}))
             return None, True
         payload = {
-            "demonstration_code": str(design.get("demonstration_code", ""))[:20000],
+            "artifact_locked": True,
+            # Full source: code size was bounded before immutable pre-registration.
+            # An audit of a truncated prefix is not an audit of the executed artifact.
+            "demonstration_code": str(design.get("demonstration_code", "")),
             "test_statistic": demo_result.get("test_statistic"),
             "control_statistic": demo_result.get("control_statistic"),
             "preregistration": demo_result.get("preregistration"),
@@ -3078,7 +4862,10 @@ class ExperimentDriver:
                 "n_auditors": len(auditors), "min_vendors": min_vendors}))
             return None, True
         if not audit_passed:
-            demo_result["holds"] = False  # a refuting/non-independent audit -> refuted
+            # A substantive audit can invalidate an existing confirm verdict, but it
+            # cannot turn not_evaluated (sample/infra failure) into counter-evidence.
+            if produced_scientific_verdict:
+                demo_result["holds"] = False
             demo_result["audit_refuted"] = True
             # re-publish the demonstration with the audit's mutation applied, so the event
             # stream / e2e summary / UI reflect the POST-audit verdict instead of the stale
@@ -3086,13 +4873,14 @@ class ExperimentDriver:
             # while the audit verdict was reject).
             await get_bus().publish(make_event("demonstration", run_id=self.run_id, payload={
                 "computed": True, "form": demo_result.get("form"),
-                "holds": False, "statistic": demo_result.get("statistic"),
+                "holds": demo_result.get("holds"), "statistic": demo_result.get("statistic"),
                 "capability": demo_result.get("capability"),
                 "test_statistic": demo_result.get("test_statistic"),
                 "control_statistic": demo_result.get("control_statistic"),
                 "audit_refuted": True,
                 "exploration_applied": demo_result.get("exploration_applied"),
                 "n_confirm": demo_result.get("n_confirm"),
+                "sandbox_image_id": demo_result.get("sandbox_image_id"),
                 "split_meta": demo_result.get("split_meta")}))
         if fid:
             await asyncio.to_thread(
@@ -3306,6 +5094,28 @@ class ExperimentDriver:
         hypothesis verdict, claims (finding→mechanism→implication), an ablation reading
         of the baseline panel, a comparison to the surveyed literature/SOTA, and
         limitations. The main loop keeps only the merged text, never the sub-turns."""
+        if self._contribution_type() == "diagnostic":
+            demo = (result.get("info") or {}).get("demonstration") or {}
+            holds = demo.get("holds")
+            verdict = (
+                "met the preregistered rule" if holds is True else
+                "did not meet the preregistered rule" if holds is False else
+                "was not evaluable"
+            )
+            prereg = demo.get("preregistration") or {}
+            probes = demo.get("probes") or {}
+            return (
+                "Harness-owned diagnostic analysis: the sealed fresh-confirmation evaluation "
+                f"{verdict}. The prespecified test statistic was "
+                f"{demo.get('test_statistic')} K under supported_if={prereg.get('supported_if')}; "
+                f"the matched/permuted negative-control statistic was "
+                f"{demo.get('control_statistic')} K under "
+                f"control_silent_if={prereg.get('control_silent_if')}. "
+                f"The confirmation sample count was {demo.get('n_confirm')}; deterministic "
+                f"degeneracy probes were clean={probes.get('clean')}. This is a descriptive, "
+                "chemistry-stratified model-error audit only: it does not identify a causal "
+                "materials mechanism, establish irreducible error, or claim benchmark novelty."
+            )
         metrics = result.get("metrics", {})
         eval_summary = (result.get("info") or {}).get("eval_summary", "")
         hm = self.profile.headline_metric if self.profile else "mae"
@@ -3408,6 +5218,15 @@ class ExperimentDriver:
         return synthesis
 
     async def _optimize(self, design, result, data_spec, domain, exp_id, plugin, *, gate_passed: bool = True):
+        if self._uses_discriminating_demonstration():
+            # Tuning a secondary benchmark after seeing the confirm-batch diagnostic
+            # cannot strengthen the preregistered statistic and risks adaptive drift.
+            await get_bus().publish(make_event(
+                "optimize", run_id=self.run_id, payload={
+                    "skipped": True,
+                    "reason": "locked demonstration is the primary endpoint",
+                }))
+            return design, result
         # the results gate rejected: optimizing the metric won't address the critique,
         # so skip the extra training stage and keep the reviewed result as-is.
         if not gate_passed:
@@ -3446,7 +5265,139 @@ class ExperimentDriver:
         )
         return design, result
 
+    async def _write_up_diagnostic(
+        self, plan, design, result, analysis, rpanel, exp_id
+    ) -> None:
+        """Write a deterministic report for a pre-registered diagnostic.
+
+        The generic writer assumes a fitted benchmark model, grouped-CV headline,
+        baseline panel and SOTA comparison.  A diagnostic intentionally skips that
+        unrelated suite: its evidence is the sealed demonstration, negative control,
+        fixed alpha and locked-code recomputation.  Keeping this report harness-owned
+        prevents a language model from filling absent benchmark fields with a stronger
+        story than the ledger supports.
+        """
+        info = result.get("info") or {}
+        demo = info.get("demonstration") or {}
+        prereg = demo.get("preregistration") or {}
+        probes = demo.get("probes") or {}
+        split_meta = demo.get("split_meta") or {}
+        components = demo.get("components") or {}
+        repro = info.get("reproduction") or {}
+        claims = await asyncio.to_thread(list_claims, self.run_id, exp_id)
+        claim_policy = self._writeup_claim_policy(claims)
+        refs, references_md = numbered_references(self.survey_papers)
+        cite = " ".join(f"[{i}]" for i in range(1, min(3, len(refs)) + 1))
+        prior_sentence = (
+            f"The pre-run literature survey supplied the study context {cite}."
+            if cite else
+            "The literature survey did not yield a citable reference for this report."
+        )
+        holds = demo.get("holds")
+        verdict = (
+            "met" if holds is True else "did not meet" if holds is False else "did not produce"
+        )
+        alpha_used = components.get("family_alpha_used")
+        component_text = json.dumps(components, indent=2, sort_keys=True, default=str)[:6000]
+        prereg_text = json.dumps(prereg, indent=2, sort_keys=True, default=str)[:6000]
+        report = (
+            "# A sealed chemistry-stratified error audit of a composition-only Tc model\n\n"
+            "## Abstract\n\n"
+            "We evaluated a pre-specified descriptive diagnostic on a fresh, sealed "
+            f"confirmation batch. The harness {verdict} a confirmatory verdict: the locked "
+            f"test statistic was {demo.get('test_statistic')} K and the matched/permuted "
+            f"negative-control statistic was {demo.get('control_statistic')} K at allocated "
+            f"alpha {split_meta.get('family_alpha', alpha_used)}. The result was derived by "
+            "sandboxed authored code under a rule committed before confirmation data were "
+            "opened. This is a conditional model-error audit, not evidence for a causal "
+            "materials mechanism, irreducible error, benchmark superiority, or universal "
+            "generality.\n\n"
+            "## 1. Introduction\n\n"
+            f"{prior_sentence} The locked question was: "
+            f"{self.hypothesis.get('statement', plan.get('objective', 'n/a'))}\n\n"
+            "## 2. Related Work\n\n"
+            f"The survey retrieved {len(refs)} citable work(s). It was used to motivate and "
+            "bound the question, not to assert novelty or import a published benchmark number.\n\n"
+            "## 3. Method\n\n"
+            "The primary endpoint was the AI-authored discriminating demonstration; the "
+            "generic repeated/grouped-CV benchmark and post-confirmation optimization suite "
+            "were intentionally not run. The chemistry stratum and matching descriptors were "
+            "defined without the target. Authored code ran inside the immutable hard sandbox "
+            f"image `{demo.get('sandbox_image_id')}`. The confirmation role was "
+            f"`{split_meta.get('role')}`, batch `{split_meta.get('confirmation_batch')}`, "
+            f"with n={demo.get('n_confirm')} and split hash "
+            f"`{split_meta.get('confirmation_index_hash') or split_meta.get('index_hash')}`. "
+            f"The code reported use of harness alpha `{alpha_used}`; the harness rejected a "
+            "missing or mismatched report. The exact committed rule was:\n\n"
+            f"```json\n{prereg_text}\n```\n\n"
+            "## 4. Results\n\n"
+            f"The test statistic was `{demo.get('test_statistic')}` K and its pre-registered "
+            f"rule was `{prereg.get('supported_if')}`. The negative-control statistic was "
+            f"`{demo.get('control_statistic')}` K and its silence rule was "
+            f"`{prereg.get('control_silent_if')}`. The harness verdict was `holds={holds}`; "
+            f"test trigger=`{demo.get('test_triggers')}`, control silent="
+            f"`{demo.get('control_silent')}`, deterministic probes clean="
+            f"`{probes.get('clean')}`. Supporting components were:\n\n"
+            f"```json\n{component_text}\n```\n\n"
+            "The same locked code was recomputed on the same confirmation batch with a "
+            f"different seed: verdict stable=`{repro.get('demonstration_verdict_stable')}`, "
+            f"statistic stable=`{repro.get('demonstration_statistic_stable')}`, and strict "
+            f"demonstration reproduction=`{repro.get('demonstration_reproduced')}` "
+            f"(original `{repro.get('demonstration_original_statistic')}`, recomputation "
+            f"`{repro.get('demonstration_repro_statistic')}`). This is a robustness "
+            "recomputation, not a fresh-data replication.\n\n"
+            "## 5. Discussion & Limitations\n\n"
+            f"The results-review panel returned `{rpanel.consensus_verdict}`. {analysis}\n\n"
+            "The comparison is descriptive and conditional on the declared matching "
+            "variables. It does not show that chemistry caused the error gap, that the "
+            "matching variables exhaust all generic differences, or that the same fitted "
+            "model transfers between datasets. Internal final-holdout and external "
+            "locked-procedure results occur only after campaign selection and are therefore "
+            "reported in the campaign artifact, not retrofitted into this round report.\n\n"
+            "### Claim-ledger view\n\n"
+            f"Allowed findings:\n\n{claim_policy['allowed']}\n\n"
+            f"Required limitations:\n\n{claim_policy['limitations']}\n\n"
+            f"Not findings / must remain qualified:\n\n{claim_policy['restricted']}"
+        )
+        if references_md:
+            report += "\n\n" + references_md
+        adir = run_artifacts_dir(self.run_id)
+        path = adir / "report.md"
+        path.write_text(report)
+        # Keep a per-experiment immutable copy: `report.md` is the convenient
+        # latest view, but a multi-round campaign must not overwrite round 1's
+        # evidence when round 2 writes its report.
+        versioned_path = adir / f"report_{exp_id}.md" if exp_id else path
+        if versioned_path != path:
+            versioned_path.write_text(report)
+        artifacts: list[dict[str, str]] = [
+            {"kind": "report", "uri": str(versioned_path)}
+        ]
+        bib = to_bibtex(self.survey_papers)
+        if bib:
+            bib_path = adir / "references.bib"
+            bib_path.write_text(bib)
+            artifacts.append({"kind": "bibliography", "uri": str(bib_path)})
+        if exp_id:
+            await asyncio.to_thread(record_artifacts, exp_id, artifacts)
+        await get_bus().publish(
+            make_event("report", run_id=self.run_id, payload={"uri": str(path), "preview": report[:400]})
+        )
+        await self._index(
+            "conclusion",
+            f"{plan.get('objective', '')}: sealed diagnostic test={demo.get('test_statistic')} K, "
+            f"control={demo.get('control_statistic')} K, holds={holds}; verdict "
+            f"{rpanel.consensus_verdict}.",
+            exp_id,
+            headline=demo.get("test_statistic"),
+            model=design.get("model"),
+        )
+        await self._iam_finalize(report, bib, rpanel, exp_id)
+
     async def _write_up(self, plan, design, result, analysis, rpanel, exp_id) -> None:
+        if self._contribution_type() == "diagnostic":
+            await self._write_up_diagnostic(plan, design, result, analysis, rpanel, exp_id)
+            return
         metrics = result.get("metrics", {})
         info = result.get("info") or {}
         eval_summary = info.get("eval_summary", "")
@@ -3467,43 +5418,63 @@ class ExperimentDriver:
         )
         # evidence-ledger: finalize this experiment's claims before the writer sees them.
         protocol_status = info.get("protocol_status")
-        # SOTA claim now stands on STRUCTURED rows (Phase H): find the best comparable
-        # published number on the headline metric family and compute a real win/loss.
-        best_sota, comparable, beat = self._compare_to_sota(hk, hv)
-        if not comparable or best_sota is None:
-            # best_sota is None with comparable rows when there is NO headline value to
-            # compare (the performance eval produced no metrics) — no comparison happened.
-            sota_text = (
-                f"No structured SOTA row comparable on {hk}; known reference: {sota}."
-                if not comparable
-                else f"No headline {hk} was measured (performance eval produced no metrics); "
-                f"{len(comparable)} comparable SOTA row(s) exist but no comparison is possible."
+        # An injected F8-S6 evaluator campaign replaces the legacy caller-score shortcut. The
+        # current result must expose its exact candidate ProtocolSignature identity; absence or
+        # mismatch becomes an unverified weak claim, never a fallback to the legacy comparison.
+        if self.auditable_sota_campaign_fn is not None:
+            audited_sota = await self._resolve_auditable_sota_claim(
+                headline_metric=hk,
+                headline_score=hv,
+                candidate_protocol_sha256=str(
+                    info.get("candidate_protocol_sha256") or ""
+                ),
+                experiment_id=exp_id,
             )
-            sota_strength = "weak"
+            sota_text = audited_sota["claim_text"]
+            sota_strength = audited_sota["strength"]
+            sota_status = audited_sota["status"]
+            sota_evidence = audited_sota["evidence"]
         else:
-            rel = "beats" if beat else "does not beat"
-            sota_text = (
-                f"The headline {hk} ({hv}{usfx}) {rel} the best comparable published result "
-                f"({best_sota.get('method')} {best_sota.get('score')} on {best_sota.get('dataset')})."
-            )
-            # only a grouped + gate-passed WIN earns 'strong'; otherwise comparable -> moderate.
-            # single-vendor (degraded) review caps it at weak (see _claim_strength rationale).
-            _xv = len({c.critic_id for c in (rpanel.critiques or [])}) >= int(get_settings().min_review_vendors)
-            sota_strength = (
-                "strong" if (beat and protocol_status == "grouped" and rpanel.gate_passed) else "moderate"
-            )
-            if not _xv and sota_strength in ("moderate", "strong"):
+            # Backward-compatible Phase-H path for deployments that have not yet materialized an
+            # evaluator-owned F8-S6 campaign.
+            best_sota, comparable, beat = self._compare_to_sota(hk, hv)
+            if not comparable or best_sota is None:
+                # best_sota is None with comparable rows when there is NO headline value to
+                # compare (the performance eval produced no metrics) — no comparison happened.
+                sota_text = (
+                    f"No structured SOTA row comparable on {hk}; known reference: {sota}."
+                    if not comparable
+                    else f"No headline {hk} was measured (performance eval produced no metrics); "
+                    f"{len(comparable)} comparable SOTA row(s) exist but no comparison is possible."
+                )
                 sota_strength = "weak"
-        sota_evidence = [
-            {"evidence_kind": "paper",
-             "evidence_ref": f"{r.get('method')} ({r.get('source')})",
-             "note": f"{r.get('metric')}={r.get('score')} on {r.get('dataset')} [{r.get('split_policy')}]"}
-            for r in comparable[:4]
-        ] or [{"evidence_kind": "metric", "evidence_ref": hk, "note": f"curated SOTA string: {sota}"}]
+            else:
+                rel = "beats" if beat else "does not beat"
+                sota_text = (
+                    f"The headline {hk} ({hv}{usfx}) {rel} the best comparable published result "
+                    f"({best_sota.get('method')} {best_sota.get('score')} on {best_sota.get('dataset')})."
+                )
+                # only a grouped + gate-passed WIN earns 'strong'; otherwise comparable -> moderate.
+                # single-vendor (degraded) review caps it at weak (see _claim_strength rationale).
+                _xv = len({c.critic_id for c in (rpanel.critiques or [])}) >= int(get_settings().min_review_vendors)
+                sota_strength = (
+                    "strong" if (beat and protocol_status == "grouped" and rpanel.gate_passed) else "moderate"
+                )
+                if not _xv and sota_strength in ("moderate", "strong"):
+                    sota_strength = "weak"
+            sota_status = (
+                "supported" if (comparable and best_sota is not None) else "unverified"
+            )
+            sota_evidence = [
+                {"evidence_kind": "paper",
+                 "evidence_ref": f"{r.get('method')} ({r.get('source')})",
+                 "note": f"{r.get('metric')}={r.get('score')} on {r.get('dataset')} [{r.get('split_policy')}]"}
+                for r in comparable[:4]
+            ] or [{"evidence_kind": "metric", "evidence_ref": hk, "note": f"curated SOTA string: {sota}"}]
         await asyncio.to_thread(
             create_claim, self.run_id,
             claim_text=sota_text, claim_type="sota", strength=sota_strength,
-            status=("supported" if (comparable and best_sota is not None) else "unverified"),
+            status=sota_status,
             experiment_id=exp_id, created_by="write_up", stage="write_up",
             evidence=sota_evidence,
         )
@@ -3541,7 +5512,7 @@ class ExperimentDriver:
         # paradigm contribution whose discriminating demonstration was never executed:
         # record it as a limitation so the report states the formulation is a PROPOSAL
         # (the formulation claim is already not_evaluated/speculative in _finalize_claims).
-        if self._contribution_type() == "paradigm" and not info.get("demonstration"):
+        if self._uses_discriminating_demonstration() and not info.get("demonstration"):
             await asyncio.to_thread(
                 create_claim, self.run_id,
                 claim_text=("The proposed new formulation's discriminating demonstration was not "
@@ -3598,6 +5569,7 @@ class ExperimentDriver:
             "tested-and-failed.\n"
             if info.get("method_drift") else ""
         )
+        mode = self._contribution_type()
         paradigm_note = (
             "CONTRIBUTION TYPE = PARADIGM: this study's contribution is a NEW FORMULATION "
             "(a new question / representation / metric), NOT beating a benchmark. Frame the "
@@ -3605,7 +5577,14 @@ class ExperimentDriver:
             "comparison as CONTEXT only — do NOT present trailing the incumbent benchmark as "
             "failure, and do NOT claim a performance win. The contribution stands on the "
             "formulation claim and its demonstration, not on the headline metric delta.\n"
-            if self._contribution_type() == "paradigm" else ""
+            if mode == "paradigm"
+            else (
+                "CONTRIBUTION TYPE = DIAGNOSTIC: this pre-specified study characterizes a narrow "
+                "model failure. Do NOT claim methodological novelty, a causal mechanism, universal "
+                "generality, or a benchmark win. Lead with the locked statistic, negative control, "
+                "uncertainty, reproduction, and external-validation result.\n"
+                if mode == "diagnostic" else ""
+            )
         )
         prompt = (
             "Write a structured scientific paper in markdown (IMRAD), grounded ONLY in the numbers and "

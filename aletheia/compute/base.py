@@ -37,6 +37,11 @@ class JobStatus:
 
 
 class ComputeBackend(ABC):
+    # Existing backends remain leaves for the legacy controller until the typed execution-site cut.
+    COMPATIBILITY_API = True
+    MIGRATION_STATUS = "legacy_protocol_executor_port"
+    NEW_SCIENTIFIC_EXTENSIONS_ALLOWED = False
+
     name: str = "base"
 
     @abstractmethod

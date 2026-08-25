@@ -1,0 +1,9 @@
+{
+  "schema_name": "aletheia.capability_minimum_sample_evidence",
+  "schema_version": 1,
+  "capability_id": "materials.simulation.ase_emt_eos_reference",
+  "sampling_unit": "reference_system",
+  "minimum_count": 1,
+  "rationale": "One frozen Cu fcc system is sufficient only to calibrate the adapter against the ASE documentation example. It is not a statistical sample, a transferability test, or evidence about another element, structure, calculator, or physical system.",
+  "status": "reference_calibration_floor_not_scientific_power"
+}

@@ -1,0 +1,40 @@
+{
+  "assurance_scope": "historical_external_capture_origin",
+  "objects": [
+    {
+      "declared_source_authority": "validating_postgresql_store",
+      "origin_evidence_limit": "The frozen bytes and internal references are verifiable; this repository does not contain independent evidence that reconstructs their PostgreSQL capture.",
+      "path": "endurance/bundle-receipt.json",
+      "sha256": "0ad97cb8d90cf0d45e06671020248cd22b584acfb7a7c58335b5d4093bdb2e7e",
+      "source_origin_assurance": "operator_attested"
+    },
+    {
+      "declared_source_authority": "validating_postgresql_store",
+      "origin_evidence_limit": "The frozen bytes and internal references are verifiable; this repository does not contain independent evidence that reconstructs their PostgreSQL capture.",
+      "path": "endurance/checkpoint-identities.json",
+      "sha256": "c0edd03bd15dd17e89b250662d8e01e69e4b83151144539dea55f7594c26e587",
+      "source_origin_assurance": "operator_attested"
+    },
+    {
+      "declared_source_authority": "validating_postgresql_store_and_local_workspace",
+      "origin_evidence_limit": "The sanitized source manifest is content-pinned, but the original database/workspace capture cannot be independently reconstructed from this repository.",
+      "path": "run_projection_sources.v1.json",
+      "sha256": "e1b5ec4847301e6299b5e87a76bc1cffba5aebd32a6a54cb44d59824909232f0",
+      "source_origin_assurance": "operator_attested"
+    },
+    {
+      "declared_source_authority": "validating_postgresql_store_and_local_workspace",
+      "origin_evidence_limit": "The sanitized projection is content-pinned, but the original database/workspace capture cannot be independently reconstructed from this repository.",
+      "path": "run_projections.v1.json",
+      "sha256": "bb1c3273e82969ae1d9ed4d3ccf593ee4a277914492cb9fb8a7232090cf55624",
+      "source_origin_assurance": "operator_attested"
+    }
+  ],
+  "policy": {
+    "declared_source_authority_is_cryptographic_provenance": false,
+    "fixture_integrity_is_independently_verifiable": true,
+    "scientific_admission_allowed": false
+  },
+  "schema_name": "aletheia.legacy_origin_assurance",
+  "schema_version": 1
+}

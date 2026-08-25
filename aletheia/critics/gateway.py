@@ -74,6 +74,33 @@ def _instruction(target: str, stance: str, mode: str = "performance") -> str:
             "for a demonstration that is leaky, confounded, degenerate, or whose code does not "
             "implement the pre-registered rule — i.e. evidence that should NOT be trusted."
         )
+    elif target == "design" and mode == "diagnostic":
+        focus = (
+            "Review the EXPERIMENT DESIGN for a pre-specified DIAGNOSTIC study. Novelty, "
+            "benchmark gains, and a causal mechanism are explicitly NOT the bar. The estimand "
+            "may be a descriptive CONDITIONAL contrast: an error gap for a chemistry-defined "
+            "stratum after matching a negative-control stratum on declared generic descriptors. "
+            "Conditioning in such a descriptive audit is not, by itself, a causal-adjustment "
+            "claim. Judge whether (1) the stratum is target-blind; (2) model fitting and any "
+            "density descriptor use training data only, with the statistic evaluated on fresh "
+            "rows; (3) matching, uncertainty, multiplicity alpha, sample-size accounting, and "
+            "the permuted negative control implement the locked estimand reproducibly; and (4) "
+            "the stated interpretation stays descriptive. Reject real leakage, an ill-defined "
+            "estimand, invalid inference, or an unimplementable design, but do not demand an "
+            "unplanned causal intervention or structure-aware dataset."
+        )
+    elif target == "results" and mode == "diagnostic":
+        focus = (
+            "Review the RESULTS of a pre-specified DIAGNOSTIC study. Novelty and beating SOTA are "
+            "EXPLICITLY NOT the bar: the study may carefully quantify a known limitation. Judge "
+            "ONLY whether (1) the diagnostic question is precise and scientifically useful; (2) "
+            "the stratum is defined without the target and the matched negative control conditions "
+            "on the stated generic descriptors; (3) the COMPUTED discriminating "
+            "demonstration implements the pre-registration without leakage or post-outcome tuning; "
+            "(4) uncertainty, sample sizes, reproduction, and limitations are reported honestly. "
+            "Do not demand a structure-aware experiment for a composition-only error audit whose "
+            "mechanistic explanation is explicitly motivation rather than a measured claim."
+        )
     elif target == "results" and mode == "paradigm":
         focus = (
             "Review the RESULTS of a PARADIGM contribution — a new problem formulation, "
@@ -88,6 +115,16 @@ def _instruction(target: str, stance: str, mode: str = "performance") -> str:
             "demonstration reproducible and free of leakage. Reserve 'reject'/'blocker' "
             "for a frame that is not novel, not well-posed, or whose demonstration does "
             "not hold or does not match the claim."
+        )
+    elif target == "direction" and mode == "diagnostic":
+        focus = (
+            "Review a pre-specified DIAGNOSTIC research direction. Novelty and benchmark gains are "
+            "not required; a careful, independently confirmed characterization of a known model "
+            "limitation can be worth pursuing. Judge whether the question is precise, useful, "
+            "answerable with the declared data, non-circular, adequately powered, and paired with "
+            "a valid negative control. Enforce its deliberately narrow scope: reject unsupported "
+            "causal/mechanistic or universal claims, but do not inflate the task into a paradigm "
+            "claim or require data that the diagnostic explicitly says it does not measure."
         )
     else:
         focus = {
@@ -139,8 +176,11 @@ def _round_context(prev: list[Critique], rebuttal: str) -> str:
         "\n\n--- PRIOR ROUND PEER REVIEWS ---\n" + reviews
         + "\n\n--- AUTHOR REBUTTAL ---\n" + rebuttal
         + "\n\nReconsider your verdict in light of the other reviews and the author's "
-        "rebuttal. Update it (or maintain it) and justify; drop objections the rebuttal "
-        "adequately answers."
+        "rebuttal. The artifact above is UNCHANGED: a promised future fix, concession, or "
+        "new method described only in the rebuttal is NOT implemented evidence and cannot "
+        "clear a blocker. Drop an objection only when the rebuttal points to evidence already "
+        "present in the artifact or demonstrates that the objection does not apply; otherwise "
+        "retain it so the caller can revise the artifact and submit it to a new review."
     )
 
 
@@ -343,7 +383,9 @@ class CriticGateway:
             f"You are the AUTHOR defending your {target}. Reviewers raised: {objections}.\n"
             f"ARTIFACT: {json.dumps(content_obj, default=str)}\n"
             "Respond concisely: for each, either refute it with evidence or concede and "
-            "state the fix. Be honest — concede real problems."
+            "state the fix. Be honest — concede real problems. This rebuttal does NOT mutate "
+            "the reviewed artifact: clearly label any proposed fix as future work, and never "
+            "claim that an unimplemented change is already present."
         )
         return await run_worker(
             run_id or "", "author-rebuttal", prompt,
@@ -402,7 +444,13 @@ class CriticGateway:
         else:
             assignments = policy.assign_stances(providers)
             rconf = self.config.rounds
-            max_rounds = rconf.max_rounds(target)
+            # A locked or already-observed artifact cannot be mutated by a rebuttal.
+            # Review it once and return that verdict; otherwise a later model turn can
+            # mistake a promised future fix for evidence in the unchanged artifact.
+            max_rounds = (
+                1 if bool(content_obj.get("artifact_locked"))
+                else rconf.max_rounds(target)
+            )
             base_content = json.dumps(content_obj, indent=2, default=str)
             extra = ""
             r = 0

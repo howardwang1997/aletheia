@@ -40,7 +40,11 @@ that defines EXACTLY one function:
     def compute_demonstration(X, y, groups, meta):
         \"\"\"X: (n, d) float ndarray — {feature_desc} (host-featurized, trusted).
         y: (n,) float target. groups: (n,) object array (a grouping key, e.g. scaffold) or None.
-        meta: {{"random_state": int, "preregistration": <your committed rule, read-only>}}.
+        meta: {{"random_state": int, "preregistration": <your committed rule, read-only>,
+               "family_alpha": float}}. `family_alpha` is harness-owned and may differ between
+        confirmation, final-holdout, and external replication. Your bootstrap/test MUST use this
+        runtime value (never hard-code 0.05/0.025), and `components` MUST include
+        `"family_alpha_used": float(meta["family_alpha"])` so the harness can verify it.
 
         Compute the discriminating statistic on a TEST condition AND a CONTROL condition where,
         if the claimed effect is REAL, the statistic should VANISH (the negative control). Use
@@ -107,6 +111,11 @@ CANNED_PREREGISTRATION = {
 
 _JSON_BLOCK_LANGS = ("json", "JSON")
 
+# The independent audit must receive the entire accepted module.  Bound source
+# size before pre-registration so CLI transports stay below their argument limit;
+# never silently truncate code and ask an auditor to approve only its prefix.
+MAX_DEMONSTRATION_CODE_CHARS = 100_000
+
 # --- K1: the EXPLORATION probe (explore->confirm seal) ---------------------------------
 EXPLORE_SYSTEM = (
     "You are a meticulous research scientist running an EXPLORATORY analysis. You look at an "
@@ -125,7 +134,10 @@ EXPLORATION PHASE. Write a Python module that defines EXACTLY one function:
     def explore_demonstration(X, y, groups, meta):
         \"\"\"X: (n, d) float ndarray — {feature_desc} (host-featurized, trusted; the EXPLORATION
         subset only). y: (n,) float target. groups: (n,) object array (a grouping key) or None.
-        meta: {{"random_state": int}}.
+        meta: {{"random_state": int, "family_alpha": float}}. `family_alpha` is fixed by
+        the harness before adaptation. If the claimed statistic uses a confidence bound,
+        quantile, or hypothesis test, use this runtime value rather than a hard-coded
+        0.025/0.05. The hypothesis/demonstration below defines the exact estimand.
 
         Measure DESCRIPTIVE quantities that reveal how large the claimed effect is on this kind of
         data, and how a future TEST statistic and its negative CONTROL would behave — enough to set
@@ -136,8 +148,7 @@ EXPLORATION PHASE. Write a Python module that defines EXACTLY one function:
         STRONGLY RECOMMENDED keys in `observations` (the harness uses them to sanity-check your later
         threshold against this exploration, so you cannot pre-register a threshold this data already
         contradicts):
-            "expected_test_statistic": float,     # your point estimate, ON THIS EXPLORE SUBSET, of the
-                                                  # TEST statistic you will later compute
+            "expected_test_statistic": float,     # the exact statistic you will later compute
             "expected_control_statistic": float   # the same estimate for the negative CONTROL
         You are NOT deciding whether anything holds. Returning ANY verdict field — `holds`,
         `test_statistic`, `control_statistic`, `supported_if`, `control_silent_if`, `verdict` —
@@ -171,13 +182,20 @@ def exploration_prompt(
     data_spec: dict[str, Any],
     *,
     feature_desc: str = "a dense numeric feature matrix",
+    design: dict[str, Any] | None = None,
 ) -> str:
+    design_block = (
+        f"LOCKED EXECUTABLE DESIGN CONTRACT:\n{json.dumps(design, indent=2)}\n\n"
+        if design else ""
+    )
     return (
         "Author the EXPLORATION probe for this PARADIGM contribution.\n\n"
         f"HYPOTHESIS:\n{json.dumps(hypothesis, indent=2)}\n\n"
         f"DEMONSTRATION CLAIM (the concrete case the incumbent frame cannot handle):\n"
         f"{json.dumps(demonstration, indent=2)}\n\n"
-        f"DATA:\n{json.dumps(data_spec, indent=2)}\n\n" + _EXPLORE_CONTRACT.format(feature_desc=feature_desc)
+        f"DATA:\n{json.dumps(data_spec, indent=2)}\n\n"
+        + design_block
+        + _EXPLORE_CONTRACT.format(feature_desc=feature_desc)
     )
 
 
@@ -189,6 +207,8 @@ def demonstration_prompt(
     feature_desc: str = "a dense numeric feature matrix",
     min_samples: int = 20,
     exploration: dict[str, Any] | None = None,
+    exploration_code: str | None = None,
+    design: dict[str, Any] | None = None,
 ) -> str:
     contract = _CONTRACT_TEMPLATE.format(feature_desc=feature_desc, min_samples=min_samples)
     explore_block = ""
@@ -199,12 +219,37 @@ def demonstration_prompt(
             "subset your code has NOT seen, so a threshold tuned to noise will be refuted):\n"
             f"{json.dumps(exploration, indent=2)}\n\n"
         )
+    code_block = ""
+    if exploration_code:
+        code_block = (
+            "EXPLORATION CODE THAT PRODUCED THOSE OBSERVATIONS (AI-authored on the disjoint "
+            "exploration pool):\n```python\n"
+            f"{exploration_code.rstrip()}\n```\n"
+            "Reuse this exact stratum definition, matching algorithm, model family, and statistic. "
+            "Your python block must be a SHORT ADAPTER: define `compute_demonstration` and call the "
+            "already-defined `explore_demonstration(X, y, groups, meta)` helper, then map its "
+            "`observations` into the required test/control/components/sample-count fields. Do NOT "
+            "repeat or rewrite `explore_demonstration`; the harness concatenates that source before "
+            "your adapter. Use `expected_test_statistic` and `expected_control_statistic` as the two "
+            "statistics when they are present. Copy all exploration observations into `components`, "
+            "add `family_alpha_used=float(meta[\"family_alpha\"])`, and set n_test/n_control from "
+            "the matched-pair count (never from the total rows). For this locked paired lower-bound "
+            "diagnostic, pre-register the theory-derived rules `supported_if: {op: \">\", "
+            "threshold: 0.0}` and `control_silent_if: {op: \"<=\", threshold: 0.0}`; do not tune "
+            "either threshold to the exploration estimate. This code-only source exposes no "
+            "confirmation rows.\n\n"
+        )
+    design_block = (
+        f"LOCKED EXECUTABLE DESIGN CONTRACT:\n{json.dumps(design, indent=2)}\n\n"
+        if design else ""
+    )
     return (
         "Author the discriminating demonstration for this PARADIGM contribution.\n\n"
         f"HYPOTHESIS:\n{json.dumps(hypothesis, indent=2)}\n\n"
         f"DEMONSTRATION CLAIM (the concrete case the incumbent frame cannot handle):\n"
         f"{json.dumps(demonstration, indent=2)}\n\n"
-        f"DATA:\n{json.dumps(data_spec, indent=2)}\n\n" + explore_block + contract
+        f"DATA:\n{json.dumps(data_spec, indent=2)}\n\n"
+        + design_block + explore_block + code_block + contract
     )
 
 

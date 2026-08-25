@@ -52,8 +52,26 @@ _OPENALEX_JSON = {
     ]
 }
 
+_CROSSREF_JSON = {
+    "message": {
+        "items": [
+            {
+                "DOI": "10.2/crossref",
+                "title": ["A DOI-backed materials paper"],
+                "author": [{"given": "Ada", "family": "Lovelace"}],
+                "published": {"date-parts": [[2025, 2, 1]]},
+                "container-title": ["Materials Journal"],
+                "URL": "https://doi.org/10.2/crossref",
+                "is-referenced-by-count": 9,
+                "abstract": "<jats:p>Composition &amp; prediction.</jats:p>",
+            }
+        ]
+    }
+}
 
-def _fake_httpx(*, arxiv_text=_ARXIV_XML, openalex_json=_OPENALEX_JSON, s2_json=None, raise_on=None):
+
+def _fake_httpx(*, arxiv_text=_ARXIV_XML, openalex_json=_OPENALEX_JSON,
+                crossref_json=None, s2_json=None, raise_on=None):
     class _Resp:
         def __init__(self, text="", data=None):
             self._text, self._data = text, data
@@ -85,6 +103,8 @@ def _fake_httpx(*, arxiv_text=_ARXIV_XML, openalex_json=_OPENALEX_JSON, s2_json=
                 return _Resp(text=arxiv_text)
             if "semanticscholar" in url:
                 return _Resp(data=s2_json or {"data": []})  # default: S2 contributes nothing
+            if "crossref" in url:
+                return _Resp(data=crossref_json or {"message": {"items": []}})
             return _Resp(data=openalex_json)
 
     mod = types.ModuleType("httpx")
@@ -120,6 +140,20 @@ def test_semantic_scholar_parsed(monkeypatch):
     assert s2p[0].venue == "EMNLP"
 
 
+def test_crossref_parsed(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "httpx",
+        _fake_httpx(crossref_json=_CROSSREF_JSON, arxiv_text="<feed/>", openalex_json={}),
+    )
+    papers = search("materials", k=8)
+    p = next(p for p in papers if p.source == "crossref")
+    assert p.title == "A DOI-backed materials paper"
+    assert p.authors == ["Ada Lovelace"] and p.year == 2025
+    assert p.doi == "10.2/crossref" and p.venue == "Materials Journal"
+    assert p.abstract == "Composition & prediction." and p.citations == 9
+
+
 def test_search_caches_repeated_query(monkeypatch):
     n = {"arxiv": 0}
 
@@ -130,6 +164,7 @@ def test_search_caches_repeated_query(monkeypatch):
     monkeypatch.setattr(literature, "_arxiv", fake_arxiv)
     monkeypatch.setattr(literature, "_semantic_scholar", lambda q, k: [])
     monkeypatch.setattr(literature, "_openalex", lambda q, k: [])
+    monkeypatch.setattr(literature, "_crossref", lambda q, k: [])
     a = search("dup query", k=5)
     b = search("dup query", k=5)  # second call must hit the cache, not the sources
     assert n["arxiv"] == 1
@@ -153,6 +188,7 @@ def test_circuit_breaker_skips_a_throttled_source(monkeypatch):
     monkeypatch.setattr(literature, "_arxiv", flaky_arxiv)
     monkeypatch.setattr(literature, "_semantic_scholar", ok_s2)
     monkeypatch.setattr(literature, "_openalex", lambda q, k: [])
+    monkeypatch.setattr(literature, "_crossref", lambda q, k: [])
 
     # threshold consecutive failures open arXiv's circuit; distinct queries avoid the cache
     for i in range(literature._BREAKER_THRESHOLD):
@@ -182,6 +218,7 @@ def test_circuit_breaker_success_resets_failures(monkeypatch):
     monkeypatch.setattr(literature, "_arxiv", intermittent_arxiv)
     monkeypatch.setattr(literature, "_semantic_scholar", lambda q, k: [])
     monkeypatch.setattr(literature, "_openalex", lambda q, k: [])
+    monkeypatch.setattr(literature, "_crossref", lambda q, k: [])
     for i in range(3):
         search(f"qq{i}", k=5)
     # all three attempts ran (the success in the middle reset the count; breaker never opened)
@@ -203,6 +240,7 @@ def test_degraded_search_result_is_not_cached(monkeypatch):
     monkeypatch.setattr(literature, "_arxiv", arxiv)
     monkeypatch.setattr(literature, "_semantic_scholar", lambda q, k: [Paper(title="s2", source="s2")])
     monkeypatch.setattr(literature, "_openalex", lambda q, k: [])
+    monkeypatch.setattr(literature, "_crossref", lambda q, k: [])
 
     first = search("same query", k=5)
     assert [p.title for p in first] == ["s2"]

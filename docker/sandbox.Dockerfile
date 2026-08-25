@@ -3,17 +3,24 @@
 # Deliberately minimal: only the sklearn training stack — NOT matminer/pymatgen
 # or the agent runtime. The host featurizes the data (network) and stages X/y;
 # this container runs ONLY `train_evaluate` on the staged arrays, offline.
-# The aletheia source is mounted read-only at /repo (PYTHONPATH), not installed,
-# so the image stays small and the agent runtime never enters the sandbox.
+# The small trusted evaluation subset of Aletheia is baked into the image. The
+# repository (and therefore .env/credentials) is never mounted at runtime.
 #
-# Build:  docker build -t aletheia-sandbox:latest -f docker/sandbox.Dockerfile docker/
-FROM python:3.11-slim
+# Build from the repository root:
+#   docker build -t aletheia-sandbox:latest -f docker/sandbox.Dockerfile .
+FROM python:3.11-slim@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff
 
 RUN pip install --no-cache-dir \
-    "numpy" "pandas" "scikit-learn" "scipy" "joblib" "matplotlib" \
-    "xgboost" "lightgbm"
+    "numpy==2.4.6" "pandas==2.3.3" "scikit-learn==1.8.0" \
+    "scipy==1.17.1" "joblib==1.5.3" "matplotlib==3.10.9" \
+    "xgboost==3.2.0" "lightgbm==4.6.0" "cloudpickle==3.1.2" \
+    "pydantic==2.13.4" "pydantic-settings==2.14.1" "PyYAML==6.0.3"
+
+COPY aletheia /opt/aletheia/aletheia
 
 ENV MPLBACKEND=Agg \
+    MPLCONFIGDIR=/tmp \
+    PYTHONPATH=/opt/aletheia \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 

@@ -22,6 +22,7 @@ from aletheia.coder.sandbox import DEMO_REQUIRED_FUNCTION, check_code, smoke_tes
 
 # ideate_fn(avoid_titles, lessons) -> list of candidate dicts {title, insight, claim, code, prereg}
 IdeateFn = Callable[[list[str], list[str]], list[dict[str, Any]]]
+AuditableNoveltyGateFn = Callable[[dict[str, Any]], Any]
 
 IDEATE_SYSTEM = (
     "You are a brilliant, contrarian ML-for-science researcher who finds OBLIQUE, high-novelty angles "
@@ -371,6 +372,55 @@ def screen_novelty_grounding(cand: dict, gateway, run_id: str, *, search_fn, bri
             "novelty_pass": bool(panel.gate_passed) and not nov_findings and not author_leak}
 
 
+def screen_auditable_novelty_gate(
+    cand: dict[str, Any], gate_fn: AuditableNoveltyGateFn
+) -> dict[str, Any]:
+    """Use the F8-S5 artifact gate instead of the legacy count+critic shortcut.
+
+    The candidate must carry the exact atomic-claim SHA-256 gated by the returned artifact. Any
+    callback failure, wrong artifact type, or identity mismatch fails closed.
+    """
+    try:
+        from aletheia.knowledge.novelty_decision import ResearchDirectionGate
+
+        gate = gate_fn(cand)
+        if not isinstance(gate, ResearchDirectionGate):
+            raise TypeError("callback did not return a ResearchDirectionGate")
+        assessment = gate.novelty_decision.assessment
+        candidate_sha256 = str(cand.get("candidate_claim_sha256", ""))
+        identity_matches = assessment.candidate_claim_sha256s == (candidate_sha256,)
+        coverage_ok = (
+            gate.novelty_decision.coverage.decision_verdict.value
+            == "coverage_sufficient"
+        )
+        authorized = bool(gate.experiment_authorized and identity_matches and coverage_ok)
+        objection = ""
+        if not identity_matches:
+            objection = "auditable novelty gate candidate identity mismatch"
+        elif not authorized:
+            objection = ", ".join(gate.rationale_codes)
+        return {
+            "grounded": coverage_ok,
+            "n_papers": len(assessment.nearest_prior_art),
+            "gate_passed": authorized,
+            "consensus": gate.disposition.value,
+            "novelty_objection": objection,
+            "novelty_pass": authorized,
+            "auditable_direction_gate_sha256": gate.gate_sha256,
+            "novelty_classification": assessment.classification.value,
+            "claim_strength_ceiling": assessment.claim_strength_ceiling.value,
+        }
+    except Exception as exc:  # noqa: BLE001 - the scientific gate must fail closed
+        return {
+            "grounded": None,
+            "n_papers": 0,
+            "gate_passed": False,
+            "consensus": "error",
+            "novelty_objection": f"auditable novelty gate error: {type(exc).__name__}",
+            "novelty_pass": False,
+        }
+
+
 def _lesson_from(row: dict) -> str:
     """An actionable, failure-mode-specific lesson fed back to the ideator next round — so it learns
     the RIGHT correction (a null effect needs a real mechanism; a known effect needs more novelty)."""
@@ -388,13 +438,18 @@ def _lesson_from(row: dict) -> str:
 def discover(*, ideate_fn: IdeateFn, plugin, X, y, groups, gateway, run_id: str,
              k_survivors: int = 2, max_rounds: int = 3,
              search_fn=None, briefing_fn=None, novelty_exclude: set | None = None,
+             auditable_novelty_gate_fn: AuditableNoveltyGateFn | None = None,
              log=print) -> tuple[list[dict], list[dict]]:
     """Run the discovery loop: up to ``max_rounds`` ideation rounds (each LEARNS from prior
     rejections) or until ``k_survivors`` banked. Returns (survivors, all_screened) as dicts.
     A survivor ran clean, showed a non-trivial exploratory signal, and was grounded + novel.
     It is not confirmatory support until the sealed confirmation stage. ``cand`` dicts carry
-    their `code`/`prereg`, so the driver can hand the demonstration straight to the campaign."""
-    if search_fn is None or briefing_fn is None:
+    their `code`/`prereg`, so the driver can hand the demonstration straight to the campaign.
+    When supplied, ``auditable_novelty_gate_fn`` replaces the legacy count/critic shortcut and
+    requires an exact F8-S5 gate bound to ``candidate_claim_sha256``."""
+    if auditable_novelty_gate_fn is None and (
+        search_fn is None or briefing_fn is None
+    ):
         from aletheia.research.literature import briefing as _b, search as _s
         search_fn = search_fn or (lambda q, k: _s(q, k))
         briefing_fn = briefing_fn or _b
@@ -420,8 +475,18 @@ def discover(*, ideate_fn: IdeateFn, plugin, X, y, groups, gateway, run_id: str,
                    "test": sc.test, "control": sc.control, "n_test": sc.n_test, "n_control": sc.n_control,
                    "holds": sc.holds}
             if sc.survives:  # passed the cheap pass -> apply the scarce filters
-                vet = screen_novelty_grounding(cand, gateway, run_id, search_fn=search_fn,
-                                               briefing_fn=briefing_fn, exclude_vendors=novelty_exclude)
+                vet = (
+                    screen_auditable_novelty_gate(cand, auditable_novelty_gate_fn)
+                    if auditable_novelty_gate_fn is not None
+                    else screen_novelty_grounding(
+                        cand,
+                        gateway,
+                        run_id,
+                        search_fn=search_fn,
+                        briefing_fn=briefing_fn,
+                        exclude_vendors=novelty_exclude,
+                    )
+                )
                 row.update(vet)
                 # A retrieval error yields grounded=None; absence of evidence must never pass.
                 row["survives"] = bool(vet["novelty_pass"] and vet.get("grounded") is True)

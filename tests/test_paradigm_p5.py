@@ -18,7 +18,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from aletheia.coder.demonstration import CANNED_DEMO, CANNED_PREREGISTRATION, extract_preregistration
+from aletheia.coder.demonstration import (
+    CANNED_DEMO,
+    CANNED_PREREGISTRATION,
+    demonstration_prompt,
+    extract_preregistration,
+)
 from aletheia.coder.demonstration_runner import run_authored_demonstration
 from aletheia.coder.sandbox import (
     DEMO_REQUIRED_FUNCTION,
@@ -211,15 +216,16 @@ def test_ai_demo_refuted_when_effect_is_an_artifact_on_control(molecules_plugin)
     assert d["holds"] is False and d["control_silent"] is False
 
 
-def test_ai_demo_refuted_on_degenerate_control_probe(molecules_plugin):
-    # EVIDENCE-STRENGTH: a sham control (n_control below the floor) cannot ground the claim.
+def test_ai_demo_not_evaluated_on_degenerate_control_probe(molecules_plugin):
+    # EVIDENCE-STRENGTH: a sham control cannot ground a claim, but an invalid
+    # experiment is missing evidence rather than scientific counter-evidence.
     d = molecules_plugin.run_demonstration(_spec(_DEGENERATE), _TOY_MOL_SPEC, "/tmp/p5_degen")
-    assert d["holds"] is False and any("control" in f for f in d["probes"]["flags"])
+    assert d["holds"] is None and any("control" in f for f in d["probes"]["flags"])
 
 
 def test_ai_demo_fails_closed_on_code_gate_reject(molecules_plugin):
     d = molecules_plugin.run_demonstration(_spec(_BAD_IMPORT), _TOY_MOL_SPEC, "/tmp/p5_badimp")
-    assert d["holds"] is False and "code gate" in d["detail"]  # no crash
+    assert d["holds"] is None and "code gate" in d["detail"]  # no crash, no fake refute
 
 
 def test_ai_demo_not_evaluated_without_preregistration(molecules_plugin):
@@ -232,6 +238,24 @@ def test_ai_demo_ignores_ai_asserted_holds(molecules_plugin):
     # derives holds from the rule (test_statistic 0 fails supported_if >= 1).
     d = molecules_plugin.run_demonstration(_spec(_CHEAT), _TOY_MOL_SPEC, "/tmp/p5_cheat")
     assert d["holds"] is False
+
+
+def test_family_alpha_must_be_used_and_reported_by_authored_statistic(molecules_plugin):
+    missing = molecules_plugin.run_demonstration(
+        _spec(_HOLDS, family_alpha=0.008), _TOY_MOL_SPEC, "/tmp/p5_alpha_missing"
+    )
+    assert missing["holds"] is None
+    assert any("family_alpha" in flag for flag in missing["probes"]["flags"])
+
+    alpha_aware = _HOLDS.replace(
+        "'components': {}",
+        "'components': {'family_alpha_used': float(meta['family_alpha'])}",
+    )
+    used = molecules_plugin.run_demonstration(
+        _spec(alpha_aware, family_alpha=0.008), _TOY_MOL_SPEC, "/tmp/p5_alpha_used"
+    )
+    assert used["holds"] is True
+    assert used["components"]["family_alpha_used"] == 0.008
 
 
 def test_ai_demo_is_seed_perturbed_for_real_reproduction(molecules_plugin):
@@ -267,12 +291,12 @@ def test_confirm_index_out_of_range_is_seal_mismatch_not_evaluated(molecules_plu
     assert d["exploration_applied"] is False
 
 
-def test_starved_confirm_partition_fails_the_probe_floor(molecules_plugin):
-    # a confirm subset below the probe min-sample floor cannot ground the claim (fail closed)
+def test_starved_confirm_partition_is_not_evaluated(molecules_plugin):
+    # A confirm subset below the floor is missing evidence, never a refutation.
     d = molecules_plugin.run_demonstration(
         _spec(_LEN_STAT, confirm_index=[0, 1, 2, 3, 4], split_meta={"index_hash": "z"}),
         _TOY_MOL_SPEC, "/tmp/p5_starved")
-    assert d["holds"] is False and any("too small" in f for f in d["probes"]["flags"])
+    assert d["holds"] is None and any("too small" in f for f in d["probes"]["flags"])
 
 
 def test_no_seal_marks_exploration_not_applied(molecules_plugin):
@@ -472,6 +496,24 @@ def test_canned_preregistration_is_valid_and_extractable():
     assert extract_preregistration(reply) == CANNED_PREREGISTRATION
 
 
+def test_confirmatory_prompt_reuses_successful_exploration_as_short_adapter():
+    source = "def explore_demonstration(X, y, groups, meta):\n    return {'observations': {'expected_test_statistic': 1.0}, 'detail': 'x', 'n': len(y)}"
+    prompt = demonstration_prompt(
+        {"statement": "locked diagnostic"},
+        {"claim": "matched gap"},
+        {"source": "upload"},
+        exploration={"observations": {"expected_test_statistic": 1.0}},
+        exploration_code=source,
+        design={"role_internal_split": "GroupShuffleSplit", "test_statistic": "family_alpha"},
+    )
+    assert source in prompt
+    assert "SHORT ADAPTER" in prompt
+    assert "family_alpha_used" in prompt
+    assert "GroupShuffleSplit" in prompt
+    assert 'supported_if: {op: ">", threshold: 0.0}' in prompt
+    assert 'control_silent_if: {op: "<=", threshold: 0.0}' in prompt
+
+
 # --- independence: the AUTHOR vendor is excluded from the audit panel ----------------------
 def test_providers_exclude_author_vendor():
     from aletheia.critics.gateway import CriticGateway
@@ -501,6 +543,29 @@ def test_audit_refutation_forces_holds_false():
     passed, err = asyncio.run(d._audit_demonstration({"demonstration_code": _HOLDS}, demo))
     assert passed is False and err is False  # audit RAN and refuted -> not an infra error
     assert demo["holds"] is False and demo["audit_refuted"] is True
+
+
+def test_audit_rejection_does_not_turn_not_evaluated_into_counterevidence():
+    d = ExperimentDriver("rid-audit-no-verdict", dry_run=False)
+    d._claim_ids = {}
+
+    async def fake_review(*args, **kwargs):
+        return _fake_panel("reject", False, ["gemini", "deepseek"])
+
+    d.gateway = SimpleNamespace(review=fake_review)
+    demo = {
+        "holds": None,
+        "preregistration": _PREREG,
+        "test_statistic": 5.0,
+        "control_statistic": 0.0,
+        "detail": "not evaluated: test sample too small",
+    }
+    passed, err = asyncio.run(
+        d._audit_demonstration({"demonstration_code": _HOLDS}, demo)
+    )
+    assert passed is False and err is False
+    assert demo["holds"] is None
+    assert demo["audit_refuted"] is True
 
 
 def test_audit_not_independent_if_author_present_fails_closed():
@@ -622,6 +687,129 @@ def test_audit_two_auditor_approve_passes():
     demo = {"holds": True, "preregistration": _PREREG, "test_statistic": 5.0, "control_statistic": 0.0}
     passed, err = asyncio.run(d._audit_demonstration({"demonstration_code": _HOLDS}, demo))
     assert passed is True and err is False and demo["holds"] is True
+
+
+def test_independent_audit_receives_the_complete_bounded_source():
+    d = ExperimentDriver("rid-audit-full-source", dry_run=False)
+    d._claim_ids = {}
+    captured = {}
+
+    async def fake_review(target, payload, *args, **kwargs):
+        captured.update(payload)
+        return _fake_panel("approve", True, ["grok", "gemini"])
+
+    d.gateway = SimpleNamespace(review=fake_review)
+    source = _HOLDS + ("# audit-tail\n" * 2500)
+    assert len(source) > 20000
+    demo = {
+        "holds": True,
+        "preregistration": _PREREG,
+        "test_statistic": 5.0,
+        "control_statistic": 0.0,
+    }
+    passed, err = asyncio.run(
+        d._audit_demonstration({"demonstration_code": source}, demo)
+    )
+    assert passed is True and err is False
+    assert captured["demonstration_code"] == source
+
+
+def test_locked_artifact_restore_verifies_durable_hashes(monkeypatch):
+    import hashlib
+    import aletheia.scheduler.driver as drv
+    from aletheia.paths import run_artifacts_dir
+
+    run_id = "restore-locked-artifact"
+    code = _HOLDS
+    prereg_blob = json.dumps(_PREREG, indent=2, sort_keys=True) + "\n"
+    locked = run_artifacts_dir(run_id) / "locked_candidate"
+    locked.mkdir(parents=True, exist_ok=True)
+    (locked / "demonstration.py").write_text(code)
+    (locked / "preregistration.json").write_text(prereg_blob)
+    (locked / "exploration.json").write_text(
+        json.dumps({"observations": {"expected_test_statistic": 5.0}}) + "\n"
+    )
+    events = [{
+        "type": "diagnostic_artifact_locked",
+        "payload": {
+            "code_sha256": hashlib.sha256(code.encode()).hexdigest(),
+            "preregistration_sha256": hashlib.sha256(prereg_blob.encode()).hexdigest(),
+        },
+    }]
+    monkeypatch.setattr(drv, "list_run_events", lambda rid: events)
+
+    d = ExperimentDriver(run_id, dry_run=False)
+    d._restore_locked_diagnostic_artifact()
+    assert d._locked_diagnostic_artifact["code"] == code
+    assert d._locked_diagnostic_artifact["preregistration"] == _PREREG
+
+    (locked / "demonstration.py").write_text(code + "# tampered\n")
+    d2 = ExperimentDriver(run_id, dry_run=False)
+    with pytest.raises(RuntimeError, match="hash mismatch"):
+        d2._restore_locked_diagnostic_artifact()
+
+
+def test_later_confirmation_batch_reuses_exact_locked_artifact(monkeypatch):
+    import aletheia.scheduler.driver as drv
+    from aletheia.db import create_all
+    from aletheia.memory.service import create_claim, create_run, finalize_plan
+
+    create_all()
+    run_id = create_run("reuse locked artifact", domain="materials", status="planned")
+    finalize_plan(run_id, {"objective": "x", "domain": "materials"})
+    fid = create_claim(
+        run_id, claim_text="f", claim_type="formulation", strength="speculative"
+    )
+    d = ExperimentDriver(run_id, dry_run=False)
+    d._claim_ids = {"formulation": fid}
+    d.hypothesis = {
+        "statement": "locked paired audit",
+        "hypothesis_locked": True,
+        "contribution_type": "diagnostic",
+        "demonstration": {
+            "form": "discriminating_instance",
+            "claim": "paired gap",
+            "authoring": "ai",
+        },
+    }
+    d.plugin = object()
+    d._campaign_split_plan = {"confirmations": [{"batch": 2}]}
+    d._locked_diagnostic_artifact = {
+        "code": _HOLDS,
+        "preregistration": _PREREG,
+        "exploration": {"observations": {"expected_test_statistic": 5.0}},
+        "eligible": True,
+    }
+    split_meta = {
+        "confirmation_batch": 2,
+        "confirmation_index_hash": "fresh-batch-2",
+        "family_alpha": 0.008,
+        "split_algo_version": 2,
+    }
+    monkeypatch.setattr(
+        d,
+        "_stage_explore_arrays",
+        lambda *args, **kwargs: (
+            np.zeros((4, 2)), np.zeros(4), np.asarray(["a", "b", "c", "d"]),
+            [11, 12, 13], split_meta,
+        ),
+    )
+
+    async def noop_index(*args, **kwargs):
+        return None
+
+    d._index = noop_index
+
+    async def must_not_author(*args, **kwargs):
+        raise AssertionError("a later locked batch must not call the author")
+
+    monkeypatch.setattr(drv, "run_worker", must_not_author)
+    design = {"random_state": 42}
+    asyncio.run(d._demonstration_code(design, {"source": "toy"}, None))
+    assert design["demonstration_code"] == _HOLDS
+    assert design["demonstration_confirm_index"] == [11, 12, 13]
+    assert design["demonstration_split_meta"] == split_meta
+    assert _committed_prereg(run_id, fid) == _PREREG
 
 
 def test_refuting_audit_republishes_demonstration_event():

@@ -27,6 +27,25 @@ body {
 .header h1 { font-size: 20px; margin: 0; }
 .header .sub { color: var(--muted); }
 
+/* This is a projection of the server ledger, never a second source of program state. */
+.program-graph { margin-bottom: 14px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel); overflow: hidden; }
+.pg-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  border-bottom: 1px solid var(--border); }
+.pg-head span { color: var(--muted); font-size: 11px; }
+.pg-head button { margin-left: auto; padding: 3px 8px; font-size: 11px; }
+.pg-quests { display: flex; gap: 8px; overflow-x: auto; padding: 8px; }
+.pg-quest { min-width: 280px; flex: 1; padding: 8px 10px; border: 1px solid var(--border);
+  border-radius: 7px; background: var(--panel2); }
+.pg-title { display: flex; justify-content: space-between; gap: 10px; font-weight: 600; }
+.pg-title em { color: var(--accent); font-size: 11px; font-style: normal; }
+.pg-counts, .pg-lineage, .pg-empty, .pg-error { margin-top: 5px; color: var(--muted);
+  font-size: 11px; }
+.pg-lineage { display: flex; flex-direction: column; gap: 2px; }
+.pg-quest code { display: block; margin-top: 6px; color: var(--green); font-size: 10px; }
+.pg-empty, .pg-error { padding: 0 12px 9px; }
+.pg-error { color: var(--red); }
+
 /* two-pane layout: (conversation + data panel) | activity */
 .two-pane { display: grid; grid-template-columns: 1fr 400px; gap: 16px; flex: 1; min-height: 0; }
 .left-col { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
