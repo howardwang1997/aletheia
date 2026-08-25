@@ -459,17 +459,26 @@ class _VerticalStepExecutor:
     def __init__(self, ledger: _DurableVerticalLedger) -> None:
         self._ledger = ledger
 
-    def execute(self, *, wakeup: ControllerWakeup, plan) -> ControllerStepReceipt:
-        projection = self._ledger.projection
+    def execute(
+        self,
+        *,
+        wakeup: ControllerWakeup,
+        projection: ControllerRecoveryProjection,
+        plan,
+    ) -> ControllerStepReceipt:
+        assert projection.projection_sha256 == plan.projection_sha256
+        durable_projection = self._ledger.projection
         if plan.step is ControllerStep.DERIVE_CONTINUATION:
-            world_model = projection.compilation_request.protocol.world_model
+            world_model = durable_projection.compilation_request.protocol.world_model
             assert world_model is not None
             continuation = derive_continuation_v2(
                 world_model=world_model,
-                observation=projection.observation,
-                assessments=projection.assessments,
+                observation=durable_projection.observation,
+                assessments=durable_projection.assessments,
             )
-            self._ledger.projection = projection.model_copy(update={"continuation": continuation})
+            self._ledger.projection = durable_projection.model_copy(
+                update={"continuation": continuation}
+            )
             return ControllerStepReceipt(
                 wakeup_sha256=wakeup.wakeup_sha256,
                 plan_sha256=plan.plan_sha256,
@@ -480,10 +489,10 @@ class _VerticalStepExecutor:
 
         if plan.step is not ControllerStep.PROPOSE_FOLLOWUP:
             raise AssertionError(f"unexpected vertical controller step: {plan.step.value}")
-        continuation = projection.continuation
+        continuation = durable_projection.continuation
         assert continuation is not None
-        state = projection.kernel_state
-        world_model = projection.compilation_request.protocol.world_model
+        state = durable_projection.kernel_state
+        world_model = durable_projection.compilation_request.protocol.world_model
         assert world_model is not None
         assert state.tail_event_sha256 is not None and state.charter_ref is not None
         continuation_evidence = EvidenceRef(
@@ -492,9 +501,9 @@ class _VerticalStepExecutor:
         )
         followup = ResearchActionProposal(
             action_id="action:vertical-hypothesis-fork",
-            quest_id=projection.source_action.quest_id,
+            quest_id=durable_projection.source_action.quest_id,
             charter_ref=state.charter_ref,
-            question_ref=projection.source_action.question_ref,
+            question_ref=durable_projection.source_action.question_ref,
             basis_tail_event_sha256=state.tail_event_sha256,
             kind=continuation.proposed_action_kind,
             epistemic_purpose=(
@@ -503,7 +512,7 @@ class _VerticalStepExecutor:
             candidate_outcomes=("discriminating_negative", "discriminating_support"),
             evidence_refs=tuple(
                 sorted(
-                    (continuation_evidence, projection.observation_evidence_ref),
+                    (continuation_evidence, durable_projection.observation_evidence_ref),
                     key=lambda item: (
                         item.kind.value,
                         item.object_sha256,
@@ -516,23 +525,25 @@ class _VerticalStepExecutor:
             requested_authority_class="transition",
             proposed_by_principal_id="controller:vertical-proposal",
             proposed_at=(
-                projection.committed_admission.message.committed_at + timedelta(seconds=10)
+                durable_projection.committed_admission.message.committed_at + timedelta(seconds=10)
             ),
         )
         command_proposal = ResearchCommandProposal(
             quest_id=followup.quest_id,
-            scope_binding=projection.compilation_request.protocol.graph_scope.scope_binding,
+            scope_binding=(
+                durable_projection.compilation_request.protocol.graph_scope.scope_binding
+            ),
             expected_stream_version=state.stream_version,
             expected_tail_event_sha256=state.tail_event_sha256,
             event_type=EventType.ACTION_PROPOSED,
             payload=ActionProposedPayload(
                 action_ref=followup.object_ref,
-                branch_id=projection.compilation_request.protocol.graph_scope.branch_id,
+                branch_id=durable_projection.compilation_request.protocol.graph_scope.branch_id,
             ),
             proposed_by_principal_id=followup.proposed_by_principal_id,
             proposed_at=followup.proposed_at,
         )
-        self._ledger.projection = projection.model_copy(
+        self._ledger.projection = durable_projection.model_copy(
             update={
                 "followup_action": followup,
                 "followup_command_proposal": command_proposal,

@@ -123,6 +123,7 @@ class ControllerStepExecutionPort(Protocol):
         self,
         *,
         wakeup: ControllerWakeup,
+        projection: ControllerRecoveryProjection,
         plan: ControllerTickPlan,
     ) -> ControllerStepReceipt: ...
 
@@ -144,7 +145,11 @@ class ResearchControllerService:
         if projection.quest_id != wakeup.quest_id:
             raise ValueError("controller recovery projection belongs to another Quest")
         plan = plan_recovery_tick(projection)
-        step_receipt = self._executor.execute(wakeup=wakeup, plan=plan)
+        step_receipt = self._executor.execute(
+            wakeup=wakeup,
+            projection=projection,
+            plan=plan,
+        )
         return ControllerTickReceipt(
             wakeup_sha256=wakeup.wakeup_sha256,
             recovery_projection_sha256=projection.projection_sha256,

@@ -124,6 +124,11 @@ key custody, independent F9-v2 validator service, systemd units, health/alert po
 multi-process PostgreSQL kill/restart campaign remain open. No host is called deployable, and no
 scientific claim follows from these process receipts.
 
+PR-7b now closes the generic worker-callback boundary with an exhaustive, controller/worker-pinned
+adapter set and exact recovery-projection forwarding. It deliberately does not provide the concrete
+step services listed above; see
+[the PR-7b guide](PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md).
+
 See [ADR 0052](architecture/0052-controller-production-runtime-process-boundary.md), the
 [PR-5 guide](PR5_DURABLE_SCIENTIFIC_CONTROLLER.md), and the
 [end-to-end architecture](END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md).
