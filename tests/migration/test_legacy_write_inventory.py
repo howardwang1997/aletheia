@@ -1593,6 +1593,7 @@ def test_legacy_and_migration_python_source_ast_graphs_are_frozen() -> None:
     assert legacy_paths.isdisjoint(excluded_paths)
     assert legacy_paths | excluded_paths == set(_production_python_paths())
     assert REPOSITORY_ROOT / "aletheia" / "research_controller_runtime.py" in legacy_paths
+    assert REPOSITORY_ROOT / "aletheia" / "research_controller_terminal_runtime.py" in legacy_paths
     durable_contract_paths = {
         path
         for path in _production_python_paths()

@@ -467,7 +467,10 @@ def _validate_role_dependencies(
     elif role is ResearchControllerRuntimeRole.TERMINAL_DISPATCHER:
         _require_methods(
             dependencies.terminal_outbox,
-            ("load_qualification_terminal_outbox_in_session",),
+            (
+                "load_verified_qualification_terminal_source",
+                "load_qualification_terminal_outbox_in_session",
+            ),
             label="qualification terminal outbox",
         )
     elif role is ResearchControllerRuntimeRole.WORKER:

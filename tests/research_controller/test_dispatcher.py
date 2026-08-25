@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 
 from aletheia.jobs.contracts import RetryPolicy
 from aletheia.jobs.queue import TaskConcurrencyConflict
+from aletheia.execution.allocator import VerifiedQualificationTerminalSource
 from aletheia.observations.store import ControllerDeliveryWrite, ControllerRegistrationWrite
 from aletheia.research_controller.contracts import (
     ControllerWakeup,
@@ -75,6 +76,41 @@ def _outbox() -> ResearchKernelOutboxItem:
         delivery_attempts=0,
         available_at=NOW,
         created_at=NOW,
+    )
+
+
+def _verified_terminal_source(item) -> VerifiedQualificationTerminalSource:
+    return VerifiedQualificationTerminalSource(
+        execution_id=item.execution_id,
+        attempt_id=item.attempt_id,
+        intent_sha256="1" * 64,
+        qualification_bundle_sha256="2" * 64,
+        qualification_grant_sha256="3" * 64,
+        qualification_admission_sha256="4" * 64,
+        qualification_admitted_at=NOW - timedelta(seconds=3),
+        resource_reservation_sha256="5" * 64,
+        resource_reserved_at=NOW - timedelta(seconds=3),
+        runtime_launch_sha256="6" * 64,
+        runtime_launched_at=NOW - timedelta(seconds=2),
+        accepted_runtime_termination_sha256="7" * 64,
+        outbox_id=item.outbox_id,
+        terminal_authority_kind=item.terminal_authority_kind,
+        terminal_authority_sha256=item.terminal_authority_sha256,
+        payload_sha256=item.payload_sha256,
+        outbox_created_at=item.created_at,
+        lineage_evidence_sha256="8" * 64,
+        verified_at=NOW,
+    )
+
+
+def _terminal_authorization():
+    return SimpleNamespace(
+        quest_id=_registration().quest_id,
+        execution_id="exe_" + "c" * 32,
+        attempt_id="iat_" + "d" * 32,
+        qualification_bundle_sha256="2" * 64,
+        qualification_grant_sha256="3" * 64,
+        registered_at=NOW - timedelta(seconds=4),
     )
 
 
@@ -166,23 +202,29 @@ def test_active_quest_task_leaves_exact_outbox_pending(monkeypatch) -> None:
 def test_execution_terminal_outbox_wakes_owning_quest_once(monkeypatch) -> None:
     recorded = []
     _patch(monkeypatch, recorded)
-    authorization = SimpleNamespace(
-        quest_id=_registration().quest_id,
-        execution_id="exe_" + "c" * 32,
-        attempt_id="iat_" + "d" * 32,
-    )
+    authorization = _terminal_authorization()
     monkeypatch.setattr(
         "aletheia.research_controller.dispatcher.list_scientific_execution_authorizations",
         lambda _session: (authorization,),
     )
     item = SimpleNamespace(
         outbox_id="qto_" + "e" * 64,
+        terminal_authority_kind="accepted_terminal_submission",
         terminal_authority_sha256="e" * 64,
+        payload_sha256="e" * 64,
         execution_id=authorization.execution_id,
         attempt_id=authorization.attempt_id,
+        created_at=NOW,
     )
 
     class _Terminal:
+        def load_verified_qualification_terminal_source(self, **kwargs):
+            assert kwargs == {
+                "execution_id": authorization.execution_id,
+                "attempt_id": authorization.attempt_id,
+            }
+            return _verified_terminal_source(item)
+
         def load_qualification_terminal_outbox_in_session(self, _session, **kwargs):
             assert kwargs == {
                 "execution_id": authorization.execution_id,
@@ -201,26 +243,141 @@ def test_execution_terminal_outbox_wakes_owning_quest_once(monkeypatch) -> None:
     assert recorded[1].generation == 0
 
 
-def test_execution_terminal_existing_delivery_is_audited_before_skip(monkeypatch) -> None:
+def test_execution_terminal_outbox_without_verified_lineage_fails_closed(monkeypatch) -> None:
     recorded = []
     _patch(monkeypatch, recorded)
-    authorization = SimpleNamespace(
-        quest_id=_registration().quest_id,
-        execution_id="exe_" + "c" * 32,
-        attempt_id="iat_" + "d" * 32,
-    )
+    authorization = _terminal_authorization()
     monkeypatch.setattr(
         "aletheia.research_controller.dispatcher.list_scientific_execution_authorizations",
         lambda _session: (authorization,),
     )
     item = SimpleNamespace(
         outbox_id="qto_" + "e" * 64,
+        terminal_authority_kind="accepted_terminal_submission",
         terminal_authority_sha256="e" * 64,
+        payload_sha256="e" * 64,
         execution_id=authorization.execution_id,
         attempt_id=authorization.attempt_id,
+        created_at=NOW,
     )
 
     class _Terminal:
+        def load_verified_qualification_terminal_source(self, **_kwargs):
+            return None
+
+        def load_qualification_terminal_outbox_in_session(self, _session, **_kwargs):
+            return item
+
+    with pytest.raises(ValueError, match="lacks verified PR-4 lineage"):
+        ExecutionTerminalOutboxDispatcher(
+            terminal_outbox=_Terminal(), manifest=_manifest(), queue=_Queue()
+        ).dispatch_once()
+
+    assert recorded == []
+
+
+def test_execution_terminal_outbox_rebound_after_verification_fails_closed(monkeypatch) -> None:
+    recorded = []
+    _patch(monkeypatch, recorded)
+    authorization = _terminal_authorization()
+    monkeypatch.setattr(
+        "aletheia.research_controller.dispatcher.list_scientific_execution_authorizations",
+        lambda _session: (authorization,),
+    )
+    item = SimpleNamespace(
+        outbox_id="qto_" + "e" * 64,
+        terminal_authority_kind="accepted_terminal_submission",
+        terminal_authority_sha256="e" * 64,
+        payload_sha256="e" * 64,
+        execution_id=authorization.execution_id,
+        attempt_id=authorization.attempt_id,
+        created_at=NOW,
+    )
+    verified = _verified_terminal_source(item)
+    item.payload_sha256 = "f" * 64
+
+    class _Terminal:
+        def load_verified_qualification_terminal_source(self, **_kwargs):
+            return verified
+
+        def load_qualification_terminal_outbox_in_session(self, _session, **_kwargs):
+            return item
+
+    with pytest.raises(ValueError, match="changed before delivery"):
+        ExecutionTerminalOutboxDispatcher(
+            terminal_outbox=_Terminal(), manifest=_manifest(), queue=_Queue()
+        ).dispatch_once()
+
+    assert recorded == []
+
+
+@pytest.mark.parametrize(
+    "source_update",
+    (
+        {"qualification_bundle_sha256": "f" * 64},
+        {"qualification_grant_sha256": "f" * 64},
+        {"qualification_admitted_at": NOW - timedelta(seconds=4)},
+    ),
+)
+def test_execution_terminal_source_must_match_preregistered_authorization(
+    monkeypatch,
+    source_update,
+) -> None:
+    recorded = []
+    _patch(monkeypatch, recorded)
+    authorization = _terminal_authorization()
+    monkeypatch.setattr(
+        "aletheia.research_controller.dispatcher.list_scientific_execution_authorizations",
+        lambda _session: (authorization,),
+    )
+    item = SimpleNamespace(
+        outbox_id="qto_" + "e" * 64,
+        terminal_authority_kind="accepted_terminal_submission",
+        terminal_authority_sha256="e" * 64,
+        payload_sha256="e" * 64,
+        execution_id=authorization.execution_id,
+        attempt_id=authorization.attempt_id,
+        created_at=NOW,
+    )
+    source = _verified_terminal_source(item).model_copy(update=source_update)
+
+    class _Terminal:
+        def load_verified_qualification_terminal_source(self, **_kwargs):
+            return source
+
+        def load_qualification_terminal_outbox_in_session(self, _session, **_kwargs):
+            return item
+
+    with pytest.raises(ValueError, match="preregistered scientific authorization"):
+        ExecutionTerminalOutboxDispatcher(
+            terminal_outbox=_Terminal(), manifest=_manifest(), queue=_Queue()
+        ).dispatch_once()
+
+    assert recorded == []
+
+
+def test_execution_terminal_existing_delivery_is_audited_before_skip(monkeypatch) -> None:
+    recorded = []
+    _patch(monkeypatch, recorded)
+    authorization = _terminal_authorization()
+    monkeypatch.setattr(
+        "aletheia.research_controller.dispatcher.list_scientific_execution_authorizations",
+        lambda _session: (authorization,),
+    )
+    item = SimpleNamespace(
+        outbox_id="qto_" + "e" * 64,
+        terminal_authority_kind="accepted_terminal_submission",
+        terminal_authority_sha256="e" * 64,
+        payload_sha256="e" * 64,
+        execution_id=authorization.execution_id,
+        attempt_id=authorization.attempt_id,
+        created_at=NOW,
+    )
+
+    class _Terminal:
+        def load_verified_qualification_terminal_source(self, **_kwargs):
+            return _verified_terminal_source(item)
+
         def load_qualification_terminal_outbox_in_session(self, _session, **_kwargs):
             return item
 

@@ -53,9 +53,11 @@ from aletheia.execution.runtime_v2_contracts import (
     AcceptedQualificationTerminalSubmission,
     MINIMUM_LOOP_OUTPUT_FILESYSTEM_BYTES,
     OutputQuotaProvisioningReceipt,
+    PinnedRuntimeControlVerificationAuthority,
     PinnedInputPath,
     RuntimeControlAuthorityVerifier,
 )
+from aletheia.execution.terminal_source import VerifiedQualificationTerminalOutboxReader
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from postgres_test_safety import require_isolated_pr4_postgres  # noqa: E402
@@ -236,6 +238,26 @@ def _running_v2(monkeypatch, tmp_path, *, start: bool = True):
     return prepared, allocator, adapter, agent, runtime, state, claim
 
 
+def _verification_only_allocator(
+    allocator: PostgreSQLExecutionAllocator,
+) -> PostgreSQLExecutionAllocator:
+    runtime_authority = PinnedRuntimeControlVerificationAuthority(
+        allocator._runtime_control_issuer.authority_pin
+    )
+    assert not hasattr(runtime_authority, "issue_launch_authorization")
+    return PostgreSQLExecutionAllocator(
+        authority=allocator._authority,
+        artifact_resolver=allocator._artifact_resolver,
+        execution_authority_resolver=allocator._execution_authority_resolver,
+        pricing_authority=allocator._pricing_authority,
+        node_authorities=tuple(allocator._node_authorities.values()),
+        node_assignment_transport_pins=tuple(allocator._node_assignment_transport_pins.values()),
+        terminal_verification_authority=allocator._terminal_verification_authority,
+        allocator_principal_id=allocator._allocator_principal_id,
+        runtime_control_authority=runtime_authority,
+    )
+
+
 def _assert_raw_runtime_v2_mutation_rejected(
     *,
     table: str,
@@ -360,6 +382,22 @@ def test_runtime_v2_terminal_acceptance_recovery_and_outbox_are_atomic(
     assert projection is not None
     assert projection.outbox_id == settled.outbox_id
     assert projection.payload == terminal_acceptance
+    terminal_reader = VerifiedQualificationTerminalOutboxReader(
+        _verification_only_allocator(allocator)
+    )
+    assert not hasattr(terminal_reader, "admit_and_reserve")
+    verified_source = terminal_reader.load_verified_qualification_terminal_source(
+        execution_id=claim.snapshot.execution_id,
+        attempt_id=claim.snapshot.attempt_id,
+    )
+    assert verified_source is not None
+    assert verified_source.outbox_id == projection.outbox_id
+    assert verified_source.terminal_authority_kind == "accepted_terminal_submission"
+    assert verified_source.terminal_authority_sha256 == (
+        terminal_acceptance.accepted_terminal_submission_sha256
+    )
+    assert verified_source.qualification_admission_sha256 == claim.snapshot.admission_sha256
+    assert verified_source.resource_reservation_sha256 == claim.snapshot.resource_lease_sha256
     with sessions() as session:
         assert (
             session.scalar(
@@ -371,6 +409,17 @@ def test_runtime_v2_terminal_acceptance_recovery_and_outbox_are_atomic(
             session,
             attempt_id_allowlist=(claim.snapshot.attempt_id,),
         ) == (projection,)
+
+    artifact_receipt_sha256 = lineage.artifact_verified_receipts[0].verified_receipt_sha256
+    artifact_resolution = prepared.artifacts._resolutions[artifact_receipt_sha256]
+    prepared.artifacts._resolutions[artifact_receipt_sha256] = artifact_resolution.model_copy(
+        update={"content_rehash_sha256": "f" * 64}
+    )
+    with pytest.raises(AdmissionConflict, match="fresh custody verification"):
+        terminal_reader.load_verified_qualification_terminal_source(
+            execution_id=claim.snapshot.execution_id,
+            attempt_id=claim.snapshot.attempt_id,
+        )
 
 
 def test_terminal_deadline_expiration_is_presigned_and_atomically_activated(
@@ -494,6 +543,22 @@ def test_terminal_deadline_expiration_is_presigned_and_atomically_activated(
         assert projection is not None
         assert projection.outbox_id == first.outbox_id
         assert projection.payload == first.terminal_expiration
+    terminal_reader = VerifiedQualificationTerminalOutboxReader(
+        _verification_only_allocator(allocator)
+    )
+    verified_source = terminal_reader.load_verified_qualification_terminal_source(
+        execution_id=claim.snapshot.execution_id,
+        attempt_id=claim.snapshot.attempt_id,
+    )
+    assert verified_source is not None
+    assert verified_source.outbox_id == first.outbox_id
+    assert verified_source.terminal_authority_kind == "terminal_deadline_expiration"
+    assert verified_source.terminal_authority_sha256 == (
+        first.terminal_expiration.terminal_deadline_expiration_sha256
+    )
+    assert verified_source.accepted_runtime_termination_sha256 == (
+        first.terminal_expiration.accepted_runtime_termination_sha256
+    )
 
 
 def test_runtime_start_exact_commit_replays_after_lease_and_ticket_expiry(

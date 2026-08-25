@@ -7,6 +7,7 @@ from typing import Protocol
 from sqlalchemy.orm import Session
 
 from aletheia.db import session_scope
+from aletheia.execution.allocator import VerifiedQualificationTerminalSource
 from aletheia.observations.store import (
     ControllerDeliveryWrite,
     ControllerRegistrationWrite,
@@ -58,7 +59,14 @@ class ControllerRecoveryError(RuntimeError):
 
 
 class QualificationTerminalRecoveryPort(Protocol):
-    """Public exact-pair PR-4 terminal projection used during restart recovery."""
+    """Verified PR-4 terminal source used during independent restart recovery."""
+
+    def load_verified_qualification_terminal_source(
+        self,
+        *,
+        execution_id: str,
+        attempt_id: str,
+    ) -> VerifiedQualificationTerminalSource | None: ...
 
     def load_qualification_terminal_outbox_in_session(
         self,
@@ -493,10 +501,24 @@ class PostgreSQLControllerRecoveryAdapter:
                 )
 
             terminal = None
+            terminal_source = None
             validation = None
             admission = None
             continuation = None
             if authorization is not None:
+                terminal_source = self._terminal_outbox.load_verified_qualification_terminal_source(
+                    execution_id=authorization.execution_id,
+                    attempt_id=authorization.attempt_id,
+                )
+                if terminal_source is not None:
+                    try:
+                        terminal_source = VerifiedQualificationTerminalSource.model_validate(
+                            terminal_source.model_dump(mode="python")
+                        )
+                    except (AttributeError, TypeError, ValueError) as exc:
+                        raise ControllerRecoveryError(
+                            "execution terminal verifier returned an invalid source"
+                        ) from exc
                 terminal = self._terminal_outbox.load_qualification_terminal_outbox_in_session(
                     session,
                     execution_id=authorization.execution_id,
@@ -516,6 +538,29 @@ class PostgreSQLControllerRecoveryAdapter:
                     session,
                     quest_id=wakeup.quest_id,
                     scientific_slot_id=authorization.scientific_slot_id,
+                )
+
+            if (terminal is None) != (terminal_source is None) or (
+                terminal is not None
+                and terminal_source is not None
+                and (
+                    terminal.execution_id != terminal_source.execution_id
+                    or terminal.attempt_id != terminal_source.attempt_id
+                    or terminal.outbox_id != terminal_source.outbox_id
+                    or terminal.terminal_authority_kind != terminal_source.terminal_authority_kind
+                    or terminal.terminal_authority_sha256
+                    != terminal_source.terminal_authority_sha256
+                    or terminal.payload_sha256 != terminal_source.payload_sha256
+                    or terminal.created_at != terminal_source.outbox_created_at
+                    or terminal_source.qualification_bundle_sha256
+                    != authorization.qualification_bundle_sha256
+                    or terminal_source.qualification_grant_sha256
+                    != authorization.qualification_grant_sha256
+                    or authorization.registered_at >= terminal_source.qualification_admitted_at
+                )
+            ):
+                raise ControllerRecoveryError(
+                    "execution terminal outbox lacks its exact verified PR-4 lineage"
                 )
 
             if terminal is not None and (

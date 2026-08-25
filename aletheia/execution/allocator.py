@@ -108,6 +108,7 @@ from aletheia.execution.runtime_v2_contracts import (
     QualificationTerminalSubmission,
     QualificationTerminalDeadlineExpiration,
     RuntimeControlIssuancePort,
+    RuntimeControlVerificationPort,
     RuntimeFenceRebindReceipt,
     RuntimeFenceRebindRequest,
     RuntimeInspectionEvidence,
@@ -499,7 +500,7 @@ class VerifiedQualificationRunLineage(ExecutionModel):
             self.qualification_admitted_at
             <= self.resource_reserved_at
             <= self.runtime_launched_at
-            < self.terminal_accepted_at
+            <= self.terminal_accepted_at
             <= self.verified_at
         ):
             raise ValueError("verified qualification run projection is not historically ordered")
@@ -517,6 +518,93 @@ class VerifiedQualificationRunLineage(ExecutionModel):
             or self.runtime_control_policy_sha256 != self.terminal_acceptance_policy_sha256
         ):
             raise ValueError("verified qualification run authority projection is rebound")
+        return self
+
+    @property
+    def lineage_sha256(self) -> str:
+        return canonical_sha256(self)
+
+
+class VerifiedQualificationTerminalSource(ExecutionModel):
+    """Read-only proof used before a controller may consume one terminal outbox source.
+
+    A terminal wakeup is operational rather than scientific authority, but it still must not be
+    derived from a bare outbox row.  This projection binds that row to the historically verified
+    qualification, reservation, launch, and runtime-termination chain.  Successful terminal
+    submissions additionally carry the complete public run-lineage projection; deadline
+    expirations carry the exact pre-signed expiration that was activated by PostgreSQL time.
+    """
+
+    schema_name: Literal["aletheia.verified_qualification_terminal_source"] = (
+        "aletheia.verified_qualification_terminal_source"
+    )
+    schema_version: Literal[1] = 1
+    execution_id: str = Field(pattern=_EXECUTION_ID_PATTERN)
+    attempt_id: str = Field(pattern=_ATTEMPT_ID_PATTERN)
+    intent_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_bundle_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_grant_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_admission_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_admitted_at: AwareDatetime
+    resource_reservation_sha256: str = Field(pattern=_SHA256_PATTERN)
+    resource_reserved_at: AwareDatetime
+    runtime_launch_sha256: str = Field(pattern=_SHA256_PATTERN)
+    runtime_launched_at: AwareDatetime
+    accepted_runtime_termination_sha256: str = Field(pattern=_SHA256_PATTERN)
+    outbox_id: str = Field(pattern=r"^qto_[0-9a-f]{64}$")
+    terminal_authority_kind: Literal["accepted_terminal_submission", "terminal_deadline_expiration"]
+    terminal_authority_sha256: str = Field(pattern=_SHA256_PATTERN)
+    payload_sha256: str = Field(pattern=_SHA256_PATTERN)
+    outbox_created_at: AwareDatetime
+    lineage_evidence_sha256: str = Field(pattern=_SHA256_PATTERN)
+    verified_at: AwareDatetime
+    custody_reverified: Literal[True] = True
+    qualification_only: Literal[True] = True
+    scientific_admission_allowed: Literal[False] = False
+
+    @model_validator(mode="after")
+    def _source_is_exact(self) -> "VerifiedQualificationTerminalSource":
+        if (
+            self.outbox_id != f"qto_{self.terminal_authority_sha256}"
+            or self.payload_sha256 != self.terminal_authority_sha256
+            or not (
+                self.qualification_admitted_at
+                <= self.resource_reserved_at
+                <= self.runtime_launched_at
+                <= self.outbox_created_at
+                <= self.verified_at
+            )
+        ):
+            raise ValueError("verified terminal source differs from its immutable outbox")
+        return self
+
+    @property
+    def source_sha256(self) -> str:
+        return canonical_sha256(self)
+
+
+class VerifiedQualificationTerminalDeadlineLineage(ExecutionModel):
+    """Hashable public evidence for one activated pre-signed terminal deadline."""
+
+    schema_name: Literal["aletheia.verified_qualification_terminal_deadline_lineage"] = (
+        "aletheia.verified_qualification_terminal_deadline_lineage"
+    )
+    schema_version: Literal[1] = 1
+    execution_id: str = Field(pattern=_EXECUTION_ID_PATTERN)
+    attempt_id: str = Field(pattern=_ATTEMPT_ID_PATTERN)
+    qualification_admission_sha256: str = Field(pattern=_SHA256_PATTERN)
+    resource_reservation_sha256: str = Field(pattern=_SHA256_PATTERN)
+    runtime_launch_sha256: str = Field(pattern=_SHA256_PATTERN)
+    accepted_runtime_termination_sha256: str = Field(pattern=_SHA256_PATTERN)
+    terminal_deadline_expiration_sha256: str = Field(pattern=_SHA256_PATTERN)
+    terminal_deadline_expired_at: AwareDatetime
+    activated_at: AwareDatetime
+    verified_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def _deadline_is_historically_ordered(self) -> "VerifiedQualificationTerminalDeadlineLineage":
+        if not self.terminal_deadline_expired_at <= self.activated_at <= self.verified_at:
+            raise ValueError("verified terminal deadline lineage is not historically ordered")
         return self
 
     @property
@@ -816,6 +904,7 @@ class PostgreSQLExecutionAllocator:
         terminal_verification_authority: TerminalVerificationAuthorityVerifier,
         allocator_principal_id: str,
         runtime_control_issuer: RuntimeControlIssuancePort | None = None,
+        runtime_control_authority: RuntimeControlVerificationPort | None = None,
         sessions: sessionmaker[Session] | Callable[[], Session] | None = None,
         max_inventory_ttl_seconds: int = 30,
         max_runtime_inspection_ttl_seconds: int = 30,
@@ -910,16 +999,20 @@ class PostgreSQLExecutionAllocator:
                 "terminal verification role must be distinct from qualification and node roles"
             )
         self._runtime_control_issuer = runtime_control_issuer
-        if runtime_control_issuer is not None:
+        self._runtime_control_authority = runtime_control_authority or runtime_control_issuer
+        if runtime_control_issuer is not None and runtime_control_authority is not None:
+            if runtime_control_issuer.authority_pin != runtime_control_authority.authority_pin:
+                raise ValueError("runtime-control issuer and read authority pins differ")
+        if self._runtime_control_authority is not None:
             try:
-                runtime_pin = runtime_control_issuer.authority_pin
-                runtime_verifier_pin = runtime_control_issuer.authority_verifier.pin
+                runtime_pin = self._runtime_control_authority.authority_pin
+                runtime_verifier_pin = self._runtime_control_authority.authority_verifier.pin
             except (AttributeError, TypeError, ValueError) as exc:
                 raise TypeError(
-                    "runtime-control issuer must expose one exact pinned verifier"
+                    "runtime-control authority must expose one exact pinned verifier"
                 ) from exc
             if runtime_pin != runtime_verifier_pin:
-                raise ValueError("runtime-control issuer and verifier pins differ")
+                raise ValueError("runtime-control authority and verifier pins differ")
             if runtime_pin.key_id in forbidden_key_ids | {
                 terminal_key_id
             } or runtime_pin.principal_id in forbidden_principal_ids | {terminal_principal_id}:
@@ -934,6 +1027,18 @@ class PostgreSQLExecutionAllocator:
         self._max_runtime_launch_authorization_seconds = max_runtime_launch_authorization_seconds
         self._max_runtime_proof_age_seconds = max_runtime_proof_age_seconds
         self._artifact_submission_grace = timedelta(seconds=artifact_submission_grace_seconds)
+
+    @property
+    def runtime_control_issuance_enabled(self) -> bool:
+        """Whether this facade was composed with an online runtime-control signer."""
+
+        return self._runtime_control_issuer is not None
+
+    @property
+    def runtime_control_verification_enabled(self) -> bool:
+        """Whether historical runtime-control signatures can be independently verified."""
+
+        return self._runtime_control_authority is not None
 
     def register_node(self, node_id: str) -> NodeRegistrationReceipt:
         authority = self._node_authorities.get(node_id)
@@ -2397,6 +2502,16 @@ class PostgreSQLExecutionAllocator:
                 )
             except (TypeError, ValueError) as exc:
                 raise AdmissionConflict("qualification run terminal artifacts are invalid") from exc
+            try:
+                self._reverify_artifact_manifest_and_receipts(
+                    manifest=manifest,
+                    receipts=receipts,
+                    observed_at=observed_at,
+                )
+            except LeaseAuthorityError as exc:
+                raise AdmissionConflict(
+                    "qualification run artifacts failed fresh custody verification"
+                ) from exc
             resource = session.execute(
                 select(_ExecutionResourceLeaseRecord).where(
                     _ExecutionResourceLeaseRecord.attempt_id == attempt_id
@@ -2433,8 +2548,8 @@ class PostgreSQLExecutionAllocator:
             }
             qualification_pin = self._authority.pin
             enrollment = node_authority.enrollment.message
-            issuer = self._require_runtime_control_issuer()
-            runtime_pin = issuer.authority_pin
+            runtime_authority = self._require_runtime_control_authority()
+            runtime_pin = runtime_authority.authority_pin
             runtime_launched_at = launch_receipt.launch_evidence.runtime_identity.started_at
             if (
                 admission.execution_id != execution_id
@@ -2543,6 +2658,215 @@ class PostgreSQLExecutionAllocator:
                 execution_id=execution_id,
                 attempt_id=attempt_id,
             )
+
+    def load_verified_qualification_terminal_source(
+        self,
+        *,
+        execution_id: str,
+        attempt_id: str,
+    ) -> VerifiedQualificationTerminalSource | None:
+        """Verify an immutable terminal outbox against its complete PR-4 history.
+
+        The database clock is sampled in the same read transaction that reloads the terminal
+        source.  Accepted submissions reuse the complete public run-lineage verifier.  Deadline
+        expirations independently replay the qualification, node enrollment, launch,
+        termination, pre-signed expiration, activation, and execution-head bindings before the
+        source can wake a controller.
+        """
+
+        with self._sessions() as session:
+            item = self.load_qualification_terminal_outbox_in_session(
+                session,
+                execution_id=execution_id,
+                attempt_id=attempt_id,
+            )
+            if item is None:
+                return None
+            observed_at = _database_time(session)
+            if item.terminal_authority_kind == "accepted_terminal_submission":
+                # The accepted-run verifier uses its own read transaction.  Every source row is
+                # append-only, and the exact outbox is rechecked below by the caller-owned
+                # delivery transaction, so no mutable state is trusted across this boundary.
+                accepted = True
+            else:
+                accepted = False
+                attempt = session.get(_ExecutionAttemptRecord, attempt_id)
+                admission = (
+                    None
+                    if attempt is None
+                    else session.get(
+                        _ExecutionQualificationAdmissionRecord,
+                        attempt.admission_sha256,
+                    )
+                )
+                node = (
+                    None if attempt is None else session.get(_ExecutionNodeRecord, attempt.node_id)
+                )
+                head = session.get(_ExecutionHeadRecord, execution_id)
+                if attempt is None or admission is None or node is None or head is None:
+                    raise AdmissionConflict(
+                        "terminal deadline source has incomplete qualification history"
+                    )
+                try:
+                    bundle = EngineeringQualificationBundle.model_validate(admission.bundle_json)
+                    grant = EngineeringQualificationGrant.model_validate(admission.grant_json)
+                except (TypeError, ValueError) as exc:
+                    raise AdmissionConflict(
+                        "terminal deadline source has invalid qualification contracts"
+                    ) from exc
+                self._validate_idempotent_attempt(
+                    session,
+                    attempt,
+                    bundle,
+                    expected_grant_sha256=grant.grant_sha256,
+                )
+                termination_record = session.execute(
+                    select(_ExecutionRuntimeTerminationAcceptanceRecord).where(
+                        _ExecutionRuntimeTerminationAcceptanceRecord.attempt_id == attempt_id
+                    )
+                ).scalar_one_or_none()
+                if termination_record is None:
+                    raise AdmissionConflict(
+                        "terminal deadline source lacks accepted runtime termination"
+                    )
+                node_authority = self._locked_node_authority(
+                    node,
+                    observed_at=termination_record.accepted_at,
+                    error_type=AdmissionConflict,
+                )
+                try:
+                    (
+                        _preparation,
+                        _authorization_request,
+                        _authorization,
+                        launch_receipt,
+                        _challenge,
+                        _node_receipt,
+                        accepted_termination,
+                        verified_termination_record,
+                    ) = self._load_accepted_runtime_termination_lineage(
+                        session,
+                        attempt,
+                        node_authority=node_authority,
+                    )
+                    expiration = QualificationTerminalDeadlineExpiration.model_validate(
+                        verified_termination_record.conditional_terminal_expiration_json
+                    )
+                except (LeaseAuthorityError, TypeError, ValueError) as exc:
+                    raise AdmissionConflict(
+                        "terminal deadline source runtime history is invalid"
+                    ) from exc
+                activation = session.get(
+                    _ExecutionQualificationTerminalDeadlineExpirationRecord,
+                    expiration.terminal_deadline_expiration_sha256,
+                )
+                resource = session.execute(
+                    select(_ExecutionResourceLeaseRecord).where(
+                        _ExecutionResourceLeaseRecord.attempt_id == attempt_id
+                    )
+                ).scalar_one_or_none()
+                runtime_pin = self._require_runtime_control_authority().authority_pin
+                if (
+                    activation is None
+                    or resource is None
+                    or item.payload != expiration
+                    or attempt.execution_id != execution_id
+                    or attempt.terminal_deadline_expiration_sha256
+                    != expiration.terminal_deadline_expiration_sha256
+                    or attempt.accepted_terminal_submission_sha256 is not None
+                    or attempt.status != "failed"
+                    or head.active_attempt_id is not None
+                    or admission.execution_id != execution_id
+                    or admission.infrastructure_attempt_id != attempt_id
+                    or activation.attempt_id != attempt_id
+                    or activation.accepted_runtime_termination_sha256
+                    != accepted_termination.accepted_termination_sha256
+                    or activation.payload_sha256 != expiration.terminal_deadline_expiration_sha256
+                    or activation.payload_json != _model_json(expiration)
+                    or activation.runtime_control_pin_sha256 != canonical_sha256(runtime_pin)
+                    or activation.runtime_control_pin_json != _model_json(runtime_pin)
+                    or activation.authorized_at != expiration.authorized_at
+                    or activation.expired_at != expiration.expired_at
+                    or activation.activated_at != item.created_at
+                    or activation.activated_at < expiration.expired_at
+                    or item.created_at > observed_at
+                ):
+                    raise AdmissionConflict(
+                        "terminal deadline source differs from its activated authority"
+                    )
+                return VerifiedQualificationTerminalSource(
+                    execution_id=execution_id,
+                    attempt_id=attempt_id,
+                    intent_sha256=bundle.intent.intent_sha256,
+                    qualification_bundle_sha256=bundle.bundle_sha256,
+                    qualification_grant_sha256=grant.grant_sha256,
+                    qualification_admission_sha256=admission.admission_sha256,
+                    qualification_admitted_at=admission.admitted_at,
+                    resource_reservation_sha256=resource.lease_sha256,
+                    resource_reserved_at=resource.acquired_at,
+                    runtime_launch_sha256=launch_receipt.launch_receipt_sha256,
+                    runtime_launched_at=launch_receipt.launch_evidence.runtime_identity.started_at,
+                    accepted_runtime_termination_sha256=(
+                        accepted_termination.accepted_termination_sha256
+                    ),
+                    outbox_id=item.outbox_id,
+                    terminal_authority_kind=item.terminal_authority_kind,
+                    terminal_authority_sha256=item.terminal_authority_sha256,
+                    payload_sha256=item.payload_sha256,
+                    outbox_created_at=item.created_at,
+                    lineage_evidence_sha256=VerifiedQualificationTerminalDeadlineLineage(
+                        execution_id=execution_id,
+                        attempt_id=attempt_id,
+                        qualification_admission_sha256=admission.admission_sha256,
+                        resource_reservation_sha256=resource.lease_sha256,
+                        runtime_launch_sha256=launch_receipt.launch_receipt_sha256,
+                        accepted_runtime_termination_sha256=(
+                            accepted_termination.accepted_termination_sha256
+                        ),
+                        terminal_deadline_expiration_sha256=(
+                            expiration.terminal_deadline_expiration_sha256
+                        ),
+                        terminal_deadline_expired_at=expiration.expired_at,
+                        activated_at=activation.activated_at,
+                        verified_at=observed_at,
+                    ).lineage_sha256,
+                    verified_at=observed_at,
+                )
+
+        if not accepted:  # pragma: no cover - deadline sources return inside the transaction
+            raise AssertionError("unreachable terminal source branch")
+        lineage = self.load_verified_qualification_run_lineage(
+            execution_id=execution_id,
+            attempt_id=attempt_id,
+            observed_at=observed_at,
+        )
+        if lineage is None:
+            raise AdmissionConflict("accepted terminal source lacks verified run lineage")
+        if lineage.terminal_acceptance_sha256 != item.terminal_authority_sha256:
+            raise AdmissionConflict(
+                "accepted terminal source differs from verified terminal acceptance"
+            )
+        return VerifiedQualificationTerminalSource(
+            execution_id=execution_id,
+            attempt_id=attempt_id,
+            intent_sha256=lineage.intent_sha256,
+            qualification_bundle_sha256=lineage.qualification_bundle_sha256,
+            qualification_grant_sha256=lineage.qualification_grant_sha256,
+            qualification_admission_sha256=lineage.qualification_admission_sha256,
+            qualification_admitted_at=lineage.qualification_admitted_at,
+            resource_reservation_sha256=lineage.resource_reservation_sha256,
+            resource_reserved_at=lineage.resource_reserved_at,
+            runtime_launch_sha256=lineage.runtime_launch_sha256,
+            runtime_launched_at=lineage.runtime_launched_at,
+            accepted_runtime_termination_sha256=(lineage.accepted_runtime_termination_sha256),
+            outbox_id=item.outbox_id,
+            terminal_authority_kind=item.terminal_authority_kind,
+            terminal_authority_sha256=item.terminal_authority_sha256,
+            payload_sha256=item.payload_sha256,
+            outbox_created_at=item.created_at,
+            lineage_evidence_sha256=lineage.lineage_sha256,
+            verified_at=observed_at,
+        )
 
     def load_qualification_terminal_outbox_in_session(
         self,
@@ -2799,7 +3123,7 @@ class PostgreSQLExecutionAllocator:
             or node_authority.manifest.manifest_sha256 != node_manifest_sha256
         ):
             raise AdmissionConflict("assignment pull differs from deployment-pinned node identity")
-        issuer = self._require_runtime_control_issuer()
+        runtime_authority = self._require_runtime_control_authority()
         with self._sessions() as session:
             now = _database_time(session)
             launch_candidate = session.execute(
@@ -2876,14 +3200,14 @@ class PostgreSQLExecutionAllocator:
                     )
                     verify_historical_runtime_recovery_grant(
                         grant=recovery_grant,
-                        authority=issuer.authority_verifier,
+                        authority=runtime_authority.authority_verifier,
                         observed_at=now,
                     )
                 except (TypeError, ValueError, QualificationVerificationError) as exc:
                     raise AdmissionConflict(
                         "stored historical runtime recovery authority is invalid"
                     ) from exc
-                runtime_pin = issuer.authority_pin
+                runtime_pin = runtime_authority.authority_pin
                 if (
                     recovery_row.recovery_grant_sha256 != recovery_grant.recovery_grant_sha256
                     or recovery_row.recovery_payload_sha256 != recovery_grant.recovery_grant_sha256
@@ -5990,23 +6314,34 @@ class PostgreSQLExecutionAllocator:
     ) -> None:
         if receipt.artifact_manifest is None:
             raise LeaseAuthorityError("terminal receipt has no exact artifact manifest")
-        resolved_manifest = self._artifact_resolver.resolve_artifact_manifest(
-            manifest_sha256=receipt.artifact_manifest.manifest_sha256,
+        self._reverify_artifact_manifest_and_receipts(
+            manifest=receipt.artifact_manifest,
+            receipts=receipt.artifact_verified_receipts,
             observed_at=observed_at,
         )
-        if resolved_manifest != receipt.artifact_manifest:
+
+    def _reverify_artifact_manifest_and_receipts(
+        self,
+        *,
+        manifest: ArtifactManifest,
+        receipts: tuple[ArtifactVerifiedReceipt, ...],
+        observed_at: datetime,
+    ) -> None:
+        resolved_manifest = self._artifact_resolver.resolve_artifact_manifest(
+            manifest_sha256=manifest.manifest_sha256,
+            observed_at=observed_at,
+        )
+        if resolved_manifest != manifest:
             raise LeaseAuthorityError(
                 "terminal artifact manifest is absent from fresh pinned custody"
             )
-        manifest_keys = tuple(item.artifact_key for item in receipt.artifact_manifest.entries)
-        verified_keys = tuple(
-            item.artifact.artifact_key for item in receipt.artifact_verified_receipts
-        )
+        manifest_keys = tuple(item.artifact_key for item in manifest.entries)
+        verified_keys = tuple(item.artifact.artifact_key for item in receipts)
         if verified_keys != manifest_keys:
             raise LeaseAuthorityError(
                 "every terminal manifest entry requires one exact canonical verified receipt"
             )
-        for expected in receipt.artifact_verified_receipts:
+        for expected in receipts:
             resolution = self._artifact_resolver.resolve_verified_input_artifact(
                 verified_receipt_sha256=expected.verified_receipt_sha256,
                 observed_at=observed_at,
@@ -6014,7 +6349,7 @@ class PostgreSQLExecutionAllocator:
             if (
                 resolution is None
                 or resolution.verified_receipt != expected
-                or resolution.artifact_manifest != receipt.artifact_manifest
+                or resolution.artifact_manifest != manifest
                 or resolution.content_rehash_sha256 != expected.artifact.content_sha256
                 or resolution.content_bytes != expected.artifact.bytes
                 or resolution.resolved_at != observed_at
@@ -6494,13 +6829,21 @@ class PostgreSQLExecutionAllocator:
             )
         return issuer
 
+    def _require_runtime_control_authority(self) -> RuntimeControlVerificationPort:
+        authority = self._runtime_control_authority
+        if authority is None:
+            raise LeaseAuthorityError(
+                "runtime-v2 history is disabled without pinned runtime-control verification"
+            )
+        return authority
+
     def _validated_launch_authority_record(
         self,
         record: _ExecutionRuntimeLaunchAuthorizationRecord,
         *,
         preparation: RuntimePreparation,
     ) -> tuple[RuntimeLaunchAuthorizationRequest, RuntimeLaunchAuthorization]:
-        issuer = self._require_runtime_control_issuer()
+        runtime_authority = self._require_runtime_control_authority()
         try:
             request = RuntimeLaunchAuthorizationRequest.model_validate(record.request_json)
             authorization = RuntimeLaunchAuthorization.model_validate(record.authorization_json)
@@ -6508,11 +6851,11 @@ class PostgreSQLExecutionAllocator:
                 authorization=authorization,
                 authorization_request=request,
                 preparation=preparation,
-                authority=issuer.authority_verifier,
+                authority=runtime_authority.authority_verifier,
             )
         except (TypeError, ValueError, QualificationVerificationError) as exc:
             raise LeaseAuthorityError("stored runtime launch authority is invalid") from exc
-        pin = issuer.authority_pin
+        pin = runtime_authority.authority_pin
         if (
             record.preparation_sha256 != preparation.preparation_sha256
             or record.request_sha256 != request.request_sha256
@@ -6578,9 +6921,9 @@ class PostgreSQLExecutionAllocator:
         self,
         grant: HistoricalRuntimeRecoveryGrant,
     ) -> None:
-        issuer = self._require_runtime_control_issuer()
+        runtime_authority = self._require_runtime_control_authority()
         grant = HistoricalRuntimeRecoveryGrant.model_validate(grant.model_dump(mode="python"))
-        issuer.authority_verifier.verify_historical(
+        runtime_authority.authority_verifier.verify_historical(
             kind="historical_runtime_recovery_grant",
             payload=grant.signature_payload,
             signature_ed25519_hex=grant.signature_ed25519_hex,
@@ -6605,9 +6948,9 @@ class PostgreSQLExecutionAllocator:
         signed_at: datetime,
     ) -> None:
         del model
-        issuer = self._require_runtime_control_issuer()
+        runtime_authority = self._require_runtime_control_authority()
         try:
-            issuer.authority_verifier.verify_historical(
+            runtime_authority.authority_verifier.verify_historical(
                 kind=kind,
                 payload=payload,
                 signature_ed25519_hex=signature_ed25519_hex,
@@ -6631,7 +6974,7 @@ class PostgreSQLExecutionAllocator:
         RuntimeLaunchAuthorization,
         NodeRuntimeLaunchReceipt,
     ]:
-        issuer = self._require_runtime_control_issuer()
+        runtime_authority = self._require_runtime_control_authority()
         preparation, request, authorization = self._load_current_runtime_authorization(
             session, attempt
         )
@@ -6652,7 +6995,7 @@ class PostgreSQLExecutionAllocator:
                 launch_authorization_request=request,
                 launch_authorization=authorization,
                 authority=node_authority,
-                runtime_authority=issuer.authority_verifier,
+                runtime_authority=runtime_authority.authority_verifier,
             )
             self._verify_historical_recovery_record(recovery)
         except (TypeError, ValueError, QualificationVerificationError) as exc:
@@ -6671,8 +7014,9 @@ class PostgreSQLExecutionAllocator:
             or record.recovery_grant_json != _model_json(recovery)
             or record.recovery_expires_at != recovery.recovery_expires_at
             or recovery.accepted_runtime_termination_sha256 is not None
-            or record.runtime_control_pin_sha256 != canonical_sha256(issuer.authority_pin)
-            or record.runtime_control_pin_json != _model_json(issuer.authority_pin)
+            or record.runtime_control_pin_sha256
+            != canonical_sha256(runtime_authority.authority_pin)
+            or record.runtime_control_pin_json != _model_json(runtime_authority.authority_pin)
             or attempt.runtime_identity_sha256 != record.runtime_identity_sha256
         ):
             raise LeaseAuthorityError("stored runtime launch lineage is rebound")
@@ -6694,7 +7038,7 @@ class PostgreSQLExecutionAllocator:
         AcceptedRuntimeTermination,
         _ExecutionRuntimeTerminationAcceptanceRecord,
     ]:
-        issuer = self._require_runtime_control_issuer()
+        runtime_authority = self._require_runtime_control_authority()
         preparation, request, authorization, launch_receipt = self._load_runtime_launch_lineage(
             session,
             attempt,
@@ -6741,7 +7085,7 @@ class PostgreSQLExecutionAllocator:
                 launch_authorization_request=request,
                 launch_authorization=authorization,
                 node_authority=node_authority,
-                runtime_authority=issuer.authority_verifier,
+                runtime_authority=runtime_authority.authority_verifier,
             )
             self._verify_historical_recovery_record(recovery)
             verify_qualification_terminal_deadline_expiration(
@@ -6757,11 +7101,11 @@ class PostgreSQLExecutionAllocator:
                 expected_node_inventory_sha256=attempt.node_inventory_sha256,
                 expected_resource_lease_sha256=resource.lease_sha256,
                 node_authority=node_authority,
-                runtime_authority=issuer.authority_verifier,
+                runtime_authority=runtime_authority.authority_verifier,
             )
         except (TypeError, ValueError, QualificationVerificationError) as exc:
             raise LeaseAuthorityError("stored accepted runtime termination is invalid") from exc
-        runtime_pin = issuer.authority_pin
+        runtime_pin = runtime_authority.authority_pin
         if (
             challenge_record.attempt_id != attempt.attempt_id
             or challenge_record.challenge_sha256 != challenge.challenge_sha256
@@ -6820,7 +7164,7 @@ class PostgreSQLExecutionAllocator:
         record: _ExecutionQualificationTerminalAcceptanceRecord,
         node_authority: WorkerNodeAuthorityVerifier,
     ) -> AcceptedQualificationTerminalSubmission:
-        issuer = self._require_runtime_control_issuer()
+        runtime_authority = self._require_runtime_control_authority()
         (
             preparation,
             request,
@@ -6878,13 +7222,13 @@ class PostgreSQLExecutionAllocator:
                 expected_node_inventory_sha256=attempt.node_inventory_sha256,
                 expected_resource_lease_sha256=resource.lease_sha256,
                 node_authority=node_authority,
-                runtime_authority=issuer.authority_verifier,
+                runtime_authority=runtime_authority.authority_verifier,
             )
         except QualificationVerificationError as exc:
             raise LeaseAuthorityError(
                 "stored qualification terminal acceptance authority is invalid"
             ) from exc
-        runtime_pin = issuer.authority_pin
+        runtime_pin = runtime_authority.authority_pin
         receipt_hashes = list(terminal_acceptance.artifact_verified_receipt_sha256s)
         if (
             record.attempt_id != attempt.attempt_id

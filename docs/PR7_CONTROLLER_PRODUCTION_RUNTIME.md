@@ -1,8 +1,8 @@
 # PR-7 controller production runtime process boundary
 
-- Status: kernel-dispatcher and delivery-reconciler process composition complete; terminal and
-  scientific-step composition uncommissioned
-- Date: 2026-08-25
+- Status: kernel-dispatcher, delivery-reconciler, and verified terminal-dispatcher source
+  composition complete; scientific-step composition and target-host commissioning pending
+- Date: 2026-08-26
 - Scope: turn PR-5's callable controller components into independently supervised, byte-pinned
   process roles without enlarging scientific authority
 
@@ -54,6 +54,14 @@ rebind fails before the process loop starts.
 ready rows for registered Quests and compare-and-set one exact row to `published` inside the
 dispatch transaction. It has no trust root, policy, CAS archive, command commit, or replay/audit
 method. Operational delivery therefore no longer requires loading scientific signing authority.
+
+PR-7c adds a separate `aletheia.research_controller_terminal_runtime` factory. It loads only
+public qualification/runtime/node/terminal authority pins, reconstructs a complete verified PR-4
+terminal source, and re-reads the exact immutable outbox in the delivery transaction. It neither
+loads a runtime-control private key nor exposes allocator mutations to the dispatcher port. Its
+artifact CAS must be pre-created and is opened through a mutation-refusing read-only facade. See the
+[PR-7c guide](PR7C_VERIFIED_TERMINAL_DISPATCHER.md) for its configuration and remaining host
+ACL/custody gates.
 
 ## Deployment inputs
 
@@ -109,11 +117,10 @@ the transaction boundary; this slice supplies the missing invocation loop, not a
 
 ## Remaining gates
 
-This is not the complete PR-5 production composition. Two roles intentionally have no checked-in
-generic factory:
+This is not the complete PR-5 production composition. The terminal role now has a checked-in,
+public-key-only verified source factory, but the worker intentionally has no checked-in complete
+factory:
 
-- `terminal_dispatcher` must be built with the exact PR-4 node/runtime/terminal authority and may
-  not trust an unverified ORM row;
 - `worker` must bind every `ControllerStep` to its dedicated proposal, signing, compiler,
   qualification, validation, admission, or continuation adapter. A catch-all model callback is
   forbidden.
@@ -124,11 +131,17 @@ key custody, independent F9-v2 validator service, systemd units, health/alert po
 multi-process PostgreSQL kill/restart campaign remain open. No host is called deployable, and no
 scientific claim follows from these process receipts.
 
-PR-7b now closes the generic worker-callback boundary with an exhaustive, controller/worker-pinned
+PR-7b closes the generic worker-callback boundary with an exhaustive, controller/worker-pinned
 adapter set and exact recovery-projection forwarding. It deliberately does not provide the concrete
 step services listed above; see
 [the PR-7b guide](PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md).
 
-See [ADR 0052](architecture/0052-controller-production-runtime-process-boundary.md), the
+PR-7c closes the source-code terminal verification/composition gap. The read-only PostgreSQL ACL,
+filesystem/key custody, supervisor invocation, and live process-kill behavior must still be proven
+on the exact deployment host; see
+[the PR-7c guide](PR7C_VERIFIED_TERMINAL_DISPATCHER.md).
+
+See [ADR 0052](architecture/0052-controller-production-runtime-process-boundary.md),
+[ADR 0054](architecture/0054-verified-qualification-terminal-dispatcher.md), the
 [PR-5 guide](PR5_DURABLE_SCIENTIFIC_CONTROLLER.md), and the
 [end-to-end architecture](END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md).
