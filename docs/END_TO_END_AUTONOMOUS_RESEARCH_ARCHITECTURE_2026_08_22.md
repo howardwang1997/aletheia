@@ -1733,8 +1733,9 @@ execution service。**PR-7b** 已冻结 exhaustive step-specific worker routing�
 binding 与 authority separation，但 production active adapters 仍未 commissioned。**PR-7c** 已增加
 public-key-only verified terminal source 与 checked-in terminal composition；其 target-host ACL/custody/restart
 仍待 deployment campaign。PR-6 production step handler/candidate image 与原子 execution registration 已有
-源码和本地测试；下一项 load-bearing 工作是冻结/qualification 真实 image/host、PR-5 deployment-owned
-validator/admission composition 与 process-kill PostgreSQL campaign，
+源码和本地测试；PR-5 graph-scoped F9-v2 validator 也已有不依赖 legacy F9-v1 的签名、write-once/fresh-rehash
+源码切片，但尚未部署其 RPC、生产 assessor 或 key custody。下一项 load-bearing 工作是冻结/qualification
+真实 image/host、完成 validator/admission 外部进程 composition 与 process-kill PostgreSQL campaign，
 而不是扩张 controller authority。checkpoint 与 external reconciliation 仍需独立 typed contracts，
 不能由 generic retry 猜测。
 

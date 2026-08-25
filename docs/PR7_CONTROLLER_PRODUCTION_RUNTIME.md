@@ -125,9 +125,9 @@ factory:
   qualification, validation, admission, or continuation adapter. A catch-all model callback is
   forbidden.
 
-PR-6's legacy-evaluation leaf likewise still needs a qualified image and a real worker step handler
-that enters through PR-4 execution custody. The target-host installer/observer/campaign, deployment
-key custody, independent F9-v2 validator service, systemd units, health/alert policy, and live
+PR-6's legacy-evaluation leaf has a launch-gated worker handler and candidate image source, but the
+image and host remain unqualified. The target-host installer/observer/campaign, deployment key and
+RPC custody for the new F9-v2 validator source slice, systemd units, health/alert policy, and live
 multi-process PostgreSQL kill/restart campaign remain open. No host is called deployable, and no
 scientific claim follows from these process receipts.
 

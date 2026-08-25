@@ -1794,6 +1794,39 @@ def _verify_raw_run_for_observation_validation(
         ) from exc
 
 
+def verify_raw_run_for_independent_validation(
+    *,
+    raw_run: RawRunEnvelope,
+    qualification_authority: QualificationAuthorityVerifier,
+    action_authority: ResearchActionAuthorityVerificationPort,
+    qualification_custody: EngineeringQualificationCustodyVerificationPort,
+    raw_run_custody: RawRunCustodyVerificationPort,
+    execution_authority_pin: ScientificBridgeAuthorityPin,
+    validator_authority_pin: ScientificBridgeAuthorityPin,
+    admission_authority_pin: ScientificBridgeAuthorityPin,
+    observed_at: datetime,
+) -> RawRunEnvelope:
+    """Verify the complete historical authority/custody chain before external analysis.
+
+    This public seam deliberately grants no validation or admission authority.  It lets an
+    independently deployed validator reject untrusted raw material before spending analysis work
+    or signing a campaign; validation-receipt issuance repeats the same checks at DB challenge
+    time.
+    """
+
+    return _verify_raw_run_for_observation_validation(
+        raw_run=raw_run,
+        qualification_authority=qualification_authority,
+        action_authority=action_authority,
+        qualification_custody=qualification_custody,
+        raw_run_custody=raw_run_custody,
+        execution_authority_pin=execution_authority_pin,
+        validator_authority_pin=validator_authority_pin,
+        admission_authority_pin=admission_authority_pin,
+        observed_at=observed_at,
+    )
+
+
 def _resolve_validation_campaign_projection(
     *,
     campaign_sha256: str,
@@ -3513,6 +3546,7 @@ __all__ = [
     "verify_committed_observation_validation_receipt",
     "verify_observation_admission_decision",
     "verify_observation_validation_receipt",
+    "verify_raw_run_for_independent_validation",
     "verify_scientific_execution_authorization",
     "verify_scientific_execution_authorization_historical",
     "verify_validation_issuance_challenge",

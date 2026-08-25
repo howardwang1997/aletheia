@@ -58,8 +58,10 @@ controller imports legacy F9, events, memory, programs, or `ExperimentDriver`.
 The frozen F9-v1 campaign bridge is now explicitly isolated at
 `aletheia.migration.f9_v1_observation_compatibility`. It fresh-rehashes legacy campaign bytes and
 writes one immutable graph/raw-run binding CAS, but it is not a PR-5 validation/admission authority
-and is never imported by the observation/controller authority graphs. A deployment-owned F9-v2
-validation adapter remains a production gate.
+and is never imported by the observation/controller authority graphs. The graph-scoped F9-v2
+source slice now independently verifies raw custody before analysis, signs an exact v2
+world-model/prediction campaign, and publishes one fresh-rehashed write-once binding per raw run.
+Its RPC process, production assessor, and deployment key custody remain production gates.
 
 Existing PR-4 v1 quote and artifact-receipt schemas do not carry independent signer-key signatures.
 Those two edges therefore remain trusted-local, deployment-pinned evidence; the bridge must not
@@ -155,9 +157,8 @@ The local vertical fixture is synthetic and uses reviewed deterministic capabili
 PR-5 source/test slice separately exercises the concrete PostgreSQL/CAS custody adapters and the
 atomic coordinator contract, but it is not a live multi-process PostgreSQL kill/restart campaign.
 A production launch additionally needs deployment composition for the remaining controller step
-handlers, external signing-key custody, terminal-dispatcher/worker processes, an independent
-graph-scoped F9-v2 campaign validator service, monitoring, and process-kill PostgreSQL fault
-campaigns. PR-7a now supplies
+handlers, external signing-key custody/RPC boundaries, terminal-dispatcher/worker processes, a
+production F9-v2 assessor, monitoring, and process-kill PostgreSQL fault campaigns. PR-7a now supplies
 byte-pinned process loops and concrete authority-minimal PostgreSQL composition for Kernel dispatch
 and periodic delivery reconciliation. PR-7c supplies a public-key-only terminal source composition
 that replays exact PR-4 lineage, but not its target-host ACL/custody/restart evidence. Neither slice
@@ -165,11 +166,13 @@ supplies scientific-step authority.
 PR-7b supplies the exhaustive step-specific routing/authority manifest boundary and forwards the
 exact audited recovery projection. Three active step adapters now have production-boundary source
 slices, but the complete external service composition remains uncommissioned.
-The F9-v1 migration adapter does not satisfy that production gate.
+The F9-v1 migration adapter does not satisfy that production gate; the new F9-v2 source slice does
+not by itself prove that a deployed validator process or its signing key is isolated.
 Remote/GPU execution, external-effect actions,
 checkpointing, autonomous spending, claim admission, and publication remain closed.
 
 PR-6's explicitly limited legacy-evaluation compatibility source/test slice is now complete; see
-[the PR-6 guide](PR6_LEGACY_EVALUATION_COMPATIBILITY.md). Its production step handler and qualified
-image remain deployment work. No remote canary should run until both the PR-4 target-host campaign
-and the PR-5 production composition are independently accepted.
+[the PR-6 guide](PR6_LEGACY_EVALUATION_COMPATIBILITY.md). Its fixed-path handler and candidate image
+source exist, while the built image and exact host remain unqualified. No remote canary should run
+until both the PR-4 target-host campaign and the PR-5 production composition are independently
+accepted.
