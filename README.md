@@ -150,11 +150,14 @@ and controller need no materials/MAE/MatBench/RAG special case; RAG and the full
 handler or host. PR-7a now adds the byte-pinned, one-role-per-process runtime boundary and concrete
 authority-minimal PostgreSQL composition for Kernel dispatch and delivery reconciliation. It
 executes already-hashed factory bytes, binds the queue principal, recovers worker leases at startup,
-and emits non-scientific operational receipts; terminal dispatch and scientific step execution
-remain uncommissioned. PR-7b now removes the generic worker callback: it forwards the exact audited
-recovery projection through an exhaustive set of eight step-specific, controller/worker-pinned
+and emits non-scientific operational receipts. PR-7b removes the generic worker callback: it
+forwards the exact audited recovery projection through an exhaustive set of eight step-specific,
+controller/worker-pinned
 authority manifests, keeps passive waits local, and rejects authority/key overlap or runtime
-rebinding. The concrete production step services and verified terminal adapter remain
+rebinding. PR-7c adds a public-key-only terminal factory that reconstructs exact PR-4 qualification,
+reservation, launch, termination, artifact/deadline, and outbox custody before delivery, then
+re-reads the source inside the delivery transaction. The concrete production worker step services,
+terminal target-host ACL/custody campaign, and independent validator deployment remain
 uncommissioned. The PR-2 store also still has one immutable policy epoch and
 `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
 the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
@@ -164,7 +167,8 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-5 controller guide](docs/PR5_DURABLE_SCIENTIFIC_CONTROLLER.md), plus the
 [PR-6 compatibility guide](docs/PR6_LEGACY_EVALUATION_COMPATIBILITY.md), and the
 [PR-7 runtime guide](docs/PR7_CONTROLLER_PRODUCTION_RUNTIME.md), plus the
-[PR-7b step-authority guide](docs/PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md).
+[PR-7b step-authority guide](docs/PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md), and the
+[PR-7c verified-terminal guide](docs/PR7C_VERIFIED_TERMINAL_DISPATCHER.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,

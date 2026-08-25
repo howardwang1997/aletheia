@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 
 from aletheia.db import session_scope
 from aletheia.durable_tasks.ports import DurableTaskQueuePort, TaskConcurrencyConflict
+from aletheia.execution.allocator import VerifiedQualificationTerminalSource
 from aletheia.observations.store import (
     ControllerDeliveryAttemptWrite,
     ControllerDeliveryWrite,
@@ -46,7 +47,14 @@ class ResearchKernelOutboxPort(Protocol):
 
 
 class QualificationTerminalOutboxPort(Protocol):
-    """Narrow public execution projection; no private execution ORM escapes here."""
+    """Verified PR-4 source plus exact in-transaction outbox re-read."""
+
+    def load_verified_qualification_terminal_source(
+        self,
+        *,
+        execution_id: str,
+        attempt_id: str,
+    ) -> VerifiedQualificationTerminalSource | None: ...
 
     def load_qualification_terminal_outbox_in_session(
         self,
@@ -200,14 +208,51 @@ class ExecutionTerminalOutboxDispatcher:
                     "controller registration differs from the deployment-pinned manifest"
                 )
             try:
+                source = self._terminal_outbox.load_verified_qualification_terminal_source(
+                    execution_id=authorization.execution_id,
+                    attempt_id=authorization.attempt_id,
+                )
+                if source is not None:
+                    source = VerifiedQualificationTerminalSource.model_validate(
+                        source.model_dump(mode="python")
+                    )
+                    if (
+                        source.execution_id != authorization.execution_id
+                        or source.attempt_id != authorization.attempt_id
+                        or source.qualification_bundle_sha256
+                        != authorization.qualification_bundle_sha256
+                        or source.qualification_grant_sha256
+                        != authorization.qualification_grant_sha256
+                        or authorization.registered_at >= source.qualification_admitted_at
+                    ):
+                        raise ValueError(
+                            "verified execution terminal source differs from its preregistered "
+                            "scientific authorization"
+                        )
                 with session_scope() as session:
                     item = self._terminal_outbox.load_qualification_terminal_outbox_in_session(
                         session,
                         execution_id=authorization.execution_id,
                         attempt_id=authorization.attempt_id,
                     )
-                    if item is None:
+                    if source is None:
+                        if item is not None:
+                            raise ValueError(
+                                "execution terminal outbox lacks verified PR-4 lineage"
+                            )
                         continue
+                    if item is None or (
+                        item.execution_id != source.execution_id
+                        or item.attempt_id != source.attempt_id
+                        or item.outbox_id != source.outbox_id
+                        or item.terminal_authority_kind != source.terminal_authority_kind
+                        or item.terminal_authority_sha256 != source.terminal_authority_sha256
+                        or item.payload_sha256 != source.payload_sha256
+                        or item.created_at != source.outbox_created_at
+                    ):
+                        raise ValueError(
+                            "verified execution terminal source changed before delivery"
+                        )
                     if (
                         item.execution_id != authorization.execution_id
                         or item.attempt_id != authorization.attempt_id

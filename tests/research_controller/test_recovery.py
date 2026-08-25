@@ -7,7 +7,10 @@ import sys
 
 import pytest
 
-from aletheia.execution.allocator import QualificationTerminalOutboxItem
+from aletheia.execution.allocator import (
+    QualificationTerminalOutboxItem,
+    VerifiedQualificationTerminalSource,
+)
 from aletheia.jobs.contracts import RetryPolicy
 from aletheia.observations.store import (
     ContinuationReceiptWrite,
@@ -265,13 +268,48 @@ class _Kernel:
 
 
 class _Terminal:
+    def load_verified_qualification_terminal_source(self, *, execution_id, attempt_id):
+        raise AssertionError((execution_id, attempt_id))
+
     def load_qualification_terminal_outbox_in_session(self, _session, *, execution_id, attempt_id):
         raise AssertionError((execution_id, attempt_id))
 
 
 class _TerminalItem:
-    def __init__(self, item: QualificationTerminalOutboxItem) -> None:
+    def __init__(
+        self,
+        item: QualificationTerminalOutboxItem,
+        authorization: ScientificExecutionAuthorizationWrite,
+    ) -> None:
         self.item = item
+        self.authorization = authorization
+
+    def load_verified_qualification_terminal_source(self, *, execution_id, attempt_id):
+        assert (execution_id, attempt_id) == (
+            self.item.execution_id,
+            self.item.attempt_id,
+        )
+        return VerifiedQualificationTerminalSource(
+            execution_id=execution_id,
+            attempt_id=attempt_id,
+            intent_sha256="1" * 64,
+            qualification_bundle_sha256=self.authorization.qualification_bundle_sha256,
+            qualification_grant_sha256=self.authorization.qualification_grant_sha256,
+            qualification_admission_sha256="4" * 64,
+            qualification_admitted_at=self.item.created_at,
+            resource_reservation_sha256="5" * 64,
+            resource_reserved_at=self.item.created_at,
+            runtime_launch_sha256="6" * 64,
+            runtime_launched_at=self.item.created_at,
+            accepted_runtime_termination_sha256="7" * 64,
+            outbox_id=self.item.outbox_id,
+            terminal_authority_kind=self.item.terminal_authority_kind,
+            terminal_authority_sha256=self.item.terminal_authority_sha256,
+            payload_sha256=self.item.payload_sha256,
+            outbox_created_at=self.item.created_at,
+            lineage_evidence_sha256="8" * 64,
+            verified_at=self.item.created_at,
+        )
 
     def load_qualification_terminal_outbox_in_session(self, _session, *, execution_id, attempt_id):
         assert (execution_id, attempt_id) == (
@@ -692,7 +730,7 @@ def test_terminal_wakeup_recovers_its_exact_action_not_a_newer_ledger_action(
 
     projection = PostgreSQLControllerRecoveryAdapter(
         kernel_store=_Kernel(audit),
-        terminal_outbox=_TerminalItem(terminal),
+        terminal_outbox=_TerminalItem(terminal, authorization),
         manifest=_manifest(),
     ).load(wakeup)
 
@@ -829,7 +867,7 @@ def test_nonconfirmation_validation_blocks_instead_of_looping_admission(
 
     projection = PostgreSQLControllerRecoveryAdapter(
         kernel_store=_Kernel(audit),
-        terminal_outbox=_TerminalItem(terminal),
+        terminal_outbox=_TerminalItem(terminal, authorization),
         manifest=_manifest(),
     ).load(wakeup)
 
@@ -1046,12 +1084,12 @@ def test_restart_rebuilds_complete_admitted_continuation_chain(
 
     first = PostgreSQLControllerRecoveryAdapter(
         kernel_store=_Kernel(audit),
-        terminal_outbox=_TerminalItem(terminal),
+        terminal_outbox=_TerminalItem(terminal, authorization),
         manifest=_manifest(),
     ).load(wakeup)
     restarted = PostgreSQLControllerRecoveryAdapter(
         kernel_store=_Kernel(audit),
-        terminal_outbox=_TerminalItem(terminal),
+        terminal_outbox=_TerminalItem(terminal, authorization),
         manifest=_manifest(),
     ).load(wakeup)
 

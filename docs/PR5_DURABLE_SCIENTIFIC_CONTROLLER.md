@@ -152,7 +152,9 @@ A production launch additionally needs deployment composition for the controller
 signing-key custody, terminal-dispatcher/worker processes, an independent F9-v2 validator
 adapter/service, monitoring, and process-kill PostgreSQL fault campaigns. PR-7a now supplies
 byte-pinned process loops and concrete authority-minimal PostgreSQL composition for Kernel dispatch
-and periodic delivery reconciliation; it does not supply terminal or scientific-step authority.
+and periodic delivery reconciliation. PR-7c supplies a public-key-only terminal source composition
+that replays exact PR-4 lineage, but not its target-host ACL/custody/restart evidence. Neither slice
+supplies scientific-step authority.
 PR-7b supplies the exhaustive step-specific routing/authority manifest boundary and forwards the
 exact audited recovery projection, but the concrete active step services remain uncommissioned.
 The F9-v1 migration adapter does not satisfy that production gate.

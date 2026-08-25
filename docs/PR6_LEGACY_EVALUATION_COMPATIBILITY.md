@@ -96,15 +96,17 @@ leaf can run unattended, a deployment still needs:
 - durable raw-result/validation receipt registration and the existing PR-5 scientific bridge for
   any later observation admission;
 - deployment-owned validator key custody and an independent validator service;
-- terminal dispatcher, worker, monitoring, and PostgreSQL/process-kill campaigns;
+- terminal target-host commissioning, worker, monitoring, and PostgreSQL/process-kill campaigns;
 - the exact Linux/root/systemd/loop/ext4/rootful-Docker qualification campaign.
 
 RAG and other full legacy control flows remain legacy. Expanding them requires separate, atomic,
 typed capabilities and must not add domain branches to the Kernel or controller.
 
 PR-7a now provides the pinned process boundary plus concrete Kernel-dispatcher and
-delivery-reconciler composition. The PR-6 worker handler, terminal dispatcher, independent
-validator deployment, monitoring, and live process-kill campaign in the list above remain open.
+delivery-reconciler composition. PR-7c provides the verified public-key-only terminal source
+factory, while its host ACL/custody/restart campaign remains open. The PR-6 worker handler,
+independent validator deployment, monitoring, and live process-kill campaign in the list above
+remain open.
 
 See [ADR 0051](architecture/0051-legacy-evaluation-compatibility-leaf.md) and the
 [end-to-end architecture](END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md).

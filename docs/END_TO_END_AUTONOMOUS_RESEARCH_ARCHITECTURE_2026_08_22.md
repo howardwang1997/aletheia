@@ -1638,9 +1638,30 @@ validation/admission/continuation adapter；target-host supervision 与 live pro
 worker 可部署。详见 `PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md` 与
 `architecture/0053-controller-step-authority-boundary.md`。
 
-PR-5 的本地 vertical cut 已完成；现在仍须完成 PR-4 target-host campaign 与 PR-5 production
-controller/validator/terminal-dispatcher/worker composition，之后才依据 fresh inventory 选择远程 canary。PR-6 可以在
-这些部署工作并行时推进。这样远程基础设施不会反过来固化一个错误的 `SSH + design dict` 接口。
+### PR-7c：Verified qualification-terminal dispatcher
+
+- terminal dispatcher 不再把 bare qualification-terminal outbox row 当作充分来源；
+- accepted terminal 必须重放完整 PR-4 qualification/reservation/launch/runtime termination 与
+  artifact custody，deadline terminal 必须重放 pre-signed expiration 与 PostgreSQL-time activation；
+- verified projection 生成后，delivery transaction 内再次读取 exact immutable outbox；缺 proof、换
+  execution/attempt/source 或 transaction 前后 rebind 均 fail closed；
+- terminal proof 必须绑定 preregistered SEA 的 exact qualification bundle/grant，且 SEA registration
+  严格早于 verified qualification admission；
+- runtime-control historical verification 与 issuance 分离，checked-in terminal factory 只装载 public pins，
+  dispatcher port 不暴露 allocator mutation；
+- exact-byte guarded-loader 入口保持最小，重型 typed composition 留在 `aletheia.execution`，外层 operational
+  factory 继续受 legacy AST freeze 治理。
+
+该切片关闭 terminal source-code composition 缺口，但没有证明 target-host read-only PostgreSQL ACL、
+filesystem/registry custody、private-key absence、supervisor/alert 或 live process-kill restart。terminal wakeup
+始终只是 operational evidence，不是 observation admission 或 scientific claim。详见
+`PR7C_VERIFIED_TERMINAL_DISPATCHER.md` 与
+`architecture/0054-verified-qualification-terminal-dispatcher.md`。
+
+PR-5 的本地 vertical cut 已完成；现在仍须完成 PR-4 target-host campaign、PR-5 production
+controller/validator/worker composition 与 terminal target-host commissioning，之后才依据 fresh inventory
+选择远程 canary。PR-6 可以在这些部署工作并行时推进。这样远程基础设施不会反过来固化一个错误的
+`SSH + design dict` 接口。
 
 ## 18. 风险与反制
 
@@ -1704,9 +1725,10 @@ durable controller local vertical**，以及 **PR-6：legacy evaluation compatib
 PostgreSQL Kernel-outbox dispatcher 与 delivery reconciler composition。PR-4b 的 exact target-host
 Linux/root/systemd/loop/ext4/rootful-Docker campaign 仍是部署前硬门；通过前不把它描述为 production local
 execution service。**PR-7b** 已冻结 exhaustive step-specific worker routing、实际 controller/worker deployment
-binding 与 authority separation，但 production active adapters 仍未 commissioned。下一项 load-bearing 工作是
-PR-6 production step handler/image qualification、PR-5
-deployment-owned terminal dispatcher/worker signing/validator composition 与 process-kill PostgreSQL campaign，
+binding 与 authority separation，但 production active adapters 仍未 commissioned。**PR-7c** 已增加
+public-key-only verified terminal source 与 checked-in terminal composition；其 target-host ACL/custody/restart
+仍待 deployment campaign。下一项 load-bearing 工作是 PR-6 production step handler/image qualification、
+PR-5 deployment-owned worker signing/validator/admission composition 与 process-kill PostgreSQL campaign，
 而不是扩张 controller authority。checkpoint 与 external reconciliation 仍需独立 typed contracts，
 不能由 generic retry 猜测。
 

@@ -3364,14 +3364,33 @@ def verify_accepted_qualification_terminal_submission(
     return verified
 
 
-class RuntimeControlIssuancePort(Protocol):
-    """Narrow key-custody boundary; allocator code never receives a raw private key."""
+class RuntimeControlVerificationPort(Protocol):
+    """Public-key-only runtime-control boundary used by historical readers."""
 
     @property
     def authority_pin(self) -> RuntimeControlAuthorityPin: ...
 
     @property
     def authority_verifier(self) -> RuntimeControlAuthorityVerifier: ...
+
+
+class PinnedRuntimeControlVerificationAuthority:
+    """Concrete verifier that deliberately has no issuance or private-key surface."""
+
+    def __init__(self, pin: RuntimeControlAuthorityPin) -> None:
+        self._verifier = RuntimeControlAuthorityVerifier(pin)
+
+    @property
+    def authority_pin(self) -> RuntimeControlAuthorityPin:
+        return self._verifier.pin
+
+    @property
+    def authority_verifier(self) -> RuntimeControlAuthorityVerifier:
+        return self._verifier
+
+
+class RuntimeControlIssuancePort(RuntimeControlVerificationPort, Protocol):
+    """Narrow key-custody boundary; allocator code never receives a raw private key."""
 
     def issue_launch_authorization(
         self,
@@ -3495,7 +3514,9 @@ __all__ = [
     "RuntimeInspectionEvidence",
     "RuntimeControlAuthorityPin",
     "RuntimeControlAuthorityVerifier",
+    "PinnedRuntimeControlVerificationAuthority",
     "RuntimeControlIssuancePort",
+    "RuntimeControlVerificationPort",
     "RuntimeLaunchAuthorization",
     "RuntimeLaunchAuthorizationRequest",
     "RuntimeLaunchEvidence",

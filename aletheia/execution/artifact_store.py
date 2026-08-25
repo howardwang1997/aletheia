@@ -94,6 +94,7 @@ class LocalArtifactStore:
         verifier_principal_id: str = "execution-artifact-verifier",
         object_store_id: str = "local-artifact-cas",
         max_object_bytes: int = 64 * 1024**3,
+        read_only: bool = False,
     ) -> None:
         if max_object_bytes < 1 or max_object_bytes > 1024**4:
             raise ValueError("artifact object limit must be between 1 byte and 1 TiB")
@@ -102,13 +103,18 @@ class LocalArtifactStore:
         candidate = Path(root)
         if candidate.is_symlink():
             raise ArtifactStoreError("artifact store root cannot be a symlink")
-        candidate.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if read_only:
+            if not candidate.exists():
+                raise ArtifactStoreError("read-only artifact store root must already exist")
+        else:
+            candidate.mkdir(parents=True, exist_ok=True, mode=0o700)
         if candidate.is_symlink() or not candidate.is_dir():
             raise ArtifactStoreError("artifact store root must be a regular directory")
         self.root = candidate.resolve(strict=True)
         self.verifier_principal_id = verifier_principal_id
         self.object_store_id = object_store_id
         self.max_object_bytes = max_object_bytes
+        self._read_only = read_only
         root_descriptor = self._open_root()
         try:
             for components in (
@@ -120,11 +126,23 @@ class LocalArtifactStore:
                 ("receipts", "sha256"),
             ):
                 child = self._open_directory_from(
-                    root_descriptor, components=components, create=True
+                    root_descriptor,
+                    components=components,
+                    create=not read_only,
                 )
                 os.close(child)
         finally:
             os.close(root_descriptor)
+
+    @property
+    def read_only(self) -> bool:
+        """Whether this facade refuses every artifact-store mutation."""
+
+        return self._read_only
+
+    def _require_writable(self, *, error_type: type[ArtifactStoreError]) -> None:
+        if self._read_only:
+            raise error_type("read-only artifact custody cannot publish or verify outputs")
 
     def _open_root(self) -> int:
         flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -631,6 +649,8 @@ class LocalArtifactStore:
         declaration, filesystem-safety, or quota checks.
         """
 
+        self._require_writable(error_type=ArtifactQuarantineError)
+
         try:
             intent = ExecutionIntent.model_validate(
                 intent.model_dump(mode="python", warnings="none")
@@ -997,6 +1017,8 @@ class LocalArtifactStore:
         manifest: ArtifactManifest,
     ) -> tuple[ArtifactVerifiedReceipt, ...]:
         """Centrally rehash every quarantined entry and promote it to write-once CAS."""
+
+        self._require_writable(error_type=ArtifactVerificationError)
 
         try:
             intent = ExecutionIntent.model_validate(

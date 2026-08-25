@@ -11,6 +11,7 @@ import pytest
 import aletheia.execution.artifact_store as artifact_store_module
 from aletheia.execution.artifact_store import (
     ArtifactQuarantineError,
+    ArtifactStoreError,
     ArtifactStoreCorruption,
     ArtifactVerificationError,
     LocalArtifactStore,
@@ -138,6 +139,36 @@ def _cas_path(store: LocalArtifactStore, digest: str) -> Path:
 def _quarantine_path(store: LocalArtifactStore, qid: str) -> Path:
     digest = qid.removeprefix("qtn_")
     return store.root / "quarantine" / "objects" / digest[:2] / qid
+
+
+def test_read_only_store_requires_frozen_layout_and_blocks_mutation(tmp_path: Path) -> None:
+    with pytest.raises(ArtifactStoreError, match="must already exist"):
+        LocalArtifactStore(tmp_path / "missing", read_only=True)
+
+    writer = _store(tmp_path)
+    intent = _intent()
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "result.bin").write_bytes(b"retained")
+    manifest = _quarantine(writer, intent, output)
+    receipts = writer.verify_manifest(intent=intent, manifest=manifest)
+    reader = LocalArtifactStore(
+        writer.root,
+        verifier_principal_id=writer.verifier_principal_id,
+        object_store_id=writer.object_store_id,
+        read_only=True,
+    )
+
+    assert reader.read_only is True
+    assert reader.load_manifest(manifest_sha256=manifest.manifest_sha256) == manifest
+    assert (
+        reader.load_verified_receipt(verified_receipt_sha256=receipts[0].verified_receipt_sha256)
+        == receipts[0]
+    )
+    with pytest.raises(ArtifactQuarantineError, match="read-only artifact custody"):
+        _quarantine(reader, intent, output)
+    with pytest.raises(ArtifactVerificationError, match="read-only artifact custody"):
+        reader.verify_manifest(intent=intent, manifest=manifest)
 
 
 def test_zero_byte_roundtrip_is_opaque_content_addressed_and_reverified(tmp_path: Path) -> None:
