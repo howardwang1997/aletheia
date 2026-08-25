@@ -258,6 +258,53 @@ def _verification_only_allocator(
     )
 
 
+def test_public_key_only_allocator_can_admit_but_cannot_issue_runtime_controls(
+    monkeypatch,
+) -> None:
+    prepared = _prepared(
+        monkeypatch,
+        artifact_quota_bytes=MINIMUM_LOOP_OUTPUT_FILESYSTEM_BYTES,
+    )
+    node_authority = _worker_authority(
+        prepared.manifest,
+        observed_at=prepared.observed_at,
+    )
+    issuer = _RuntimeControlIssuer(observed_at=prepared.observed_at)
+    quote = prepared.bundle.cost_quote
+    signing_allocator = PostgreSQLExecutionAllocator(
+        authority=QualificationAuthorityVerifier(prepared.case.pin),
+        artifact_resolver=prepared.artifacts,
+        execution_authority_resolver=_AuthorityResolver(prepared.bundle),
+        pricing_authority=LocalPricingAuthorityPin(
+            quote_principal_ids=frozenset({quote.quoted_by_principal_id}),
+            rate_card_sha256s=frozenset({quote.rate_card_sha256}),
+            pricing_policy_sha256s=frozenset({quote.pricing_policy_sha256}),
+            currency_codes=frozenset({quote.currency_code}),
+        ),
+        node_authorities=(node_authority,),
+        node_assignment_transport_pins=(prepared.transport_pin,),
+        terminal_verification_authority=TerminalVerificationAuthorityVerifier(
+            prepared.terminal_pin
+        ),
+        allocator_principal_id="principal:allocator",
+        runtime_control_issuer=issuer,
+    )
+    signing_allocator.register_node(prepared.manifest.node_id)
+    signing_allocator.append_inventory(prepared.inventory)
+    verification_only = _verification_only_allocator(signing_allocator)
+
+    claim = verification_only.admit_and_reserve(
+        bundle=prepared.bundle,
+        grant=prepared.grant,
+    )
+
+    assert claim.created is True
+    assert verification_only.runtime_control_verification_enabled is True
+    assert verification_only.runtime_control_issuance_enabled is False
+    with pytest.raises(LeaseAuthorityError, match="without pinned runtime-control custody"):
+        verification_only._require_runtime_control_issuer()
+
+
 def _assert_raw_runtime_v2_mutation_rejected(
     *,
     table: str,

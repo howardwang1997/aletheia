@@ -23,8 +23,8 @@
       "aletheia/research_kernel": "new_authority",
       "aletheia/research_store": "new_authority_adapter"
     },
-    "legacy_source_ast_file_count": 292,
-    "legacy_source_ast_graph_sha256": "c743e07b17d92e97babbec5d1b34fb1a800f9619e7530bdfdff85270412e36b3",
+    "legacy_source_ast_file_count": 294,
+    "legacy_source_ast_graph_sha256": "be68c561eee41834dcc9c574b71502706e403864f46fae8355905dee3a14904f",
     "legacy_source_ast_review_limit": "This normalized-AST backstop freezes every parseable Python file in the declared legacy production roots after explicitly removing new-authority and migration-tooling roots. It catches added, removed or semantically changed legacy Python source even when a specialized sink scanner does not recognize the syntax; comments, formatting, generated runtime code, non-Python launchers and the explicitly excluded roots are outside this digest.",
     "migration_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "migration_source_ast_roots": ["aletheia/migration", "migrations"],
@@ -43,8 +43,8 @@
       "frontend/node_modules/**",
       "docker/**/*.py"
     ],
-    "non_python_invocation_source_file_count": 29,
-    "non_python_invocation_source_graph_sha256": "eb302743df1a9edd4062d5ae93a3434f1365259545db3fc9bf9a17fdca8af7cc",
+    "non_python_invocation_source_file_count": 30,
+    "non_python_invocation_source_graph_sha256": "a548ae3fed9d39142dec5a356a6a89e73a6949636659b9fec31e2b9c7c4bb1e7",
     "non_python_invocation_source_review_limit": "Every Git-indexed frontend source/configuration file, recursive shell launcher, non-Python docker launcher and root docker-compose YAML is frozen by exact relative path, regular-file Git mode and byte SHA. Symlinks and non-regular Git modes fail closed. Generated frontend/.next, frontend/node_modules and docker Python already covered by the production AST graph are excluded. The byte freeze catches otherwise-unrecognized syntax but does not infer runtime behavior of generated or third-party code.",
     "frontend_http_mutation_methods": ["DELETE", "PATCH", "POST", "PUT"],
     "non_python_invocation_authority_profiles": {
@@ -76,8 +76,8 @@
     "service_mutator_call_graph_sha256": "13e491fdfcf7637e3ee2652a465eb9e119126e1360f379985cf628bf38138f5f",
     "service_boundary_limit": "This mechanically freezes statically declared aletheia.memory.service imports and imported-name uses across aletheia and operational scripts in module and nested lexical scopes. It does not claim to discover arbitrary dynamic imports or direct ORM, SQL, filesystem or external-system mutations; those are handled by separate reviewed surface baselines.",
     "writer_surface_usage_scheme": "ast_all_scope_import_alias_instance_scope_v2",
-    "writer_surface_usage_count": 371,
-    "writer_surface_call_graph_sha256": "7dd17adbc20f63f29c61755676943fb4250564ebff688df1fb09cf84cf3e2af5",
+    "writer_surface_usage_count": 375,
+    "writer_surface_call_graph_sha256": "84fc9a09a34ef5911c7151506f10c8050b1ac8d5046d1bb3cd80965847d47e2f",
     "allowed_legacy_caller_scope": "Every current aletheia-package caller must be covered by allowed_legacy_callers. Operational scripts are fully frozen in call_sites and may be omitted from the post-cutover application allowlist.",
     "shared_generic_writer_implementations": {
       "aletheia.observations.store._append_exact": {
@@ -341,7 +341,7 @@
     "direct_orm_mutation_scheme": "ast_import_bound_orm_mutation_v2",
     "direct_orm_mutation_scope_count": 273,
     "direct_orm_mutation_call_count": 435,
-    "direct_orm_mutation_graph_sha256": "a79f71887100a0c933d15fcf4c88447c596db98ebecde71717e637dc6d441b94",
+    "direct_orm_mutation_graph_sha256": "a3033d490067451e4b530e035e3b60db12d7d11e0f64828817969dece12ebfce",
     "direct_orm_authority_source": "Every resolved table is classified by the postgres storage_target/storage_targets records in this inventory; non-constructor mutation scopes must match a declared legacy_entrypoint or additional_writers symbol.",
     "direct_orm_review_limit": "This static AST baseline resolves explicit imports/re-exports and aliases for every declared SQLAlchemy model; ORM class self/cls bindings; model construction; query/get/select/scalar result flows; attribute, setattr and relationship mutation; explicit aliases of recognized setattr/session/query/table/SQLAlchemy mutation callables; session add/delete/merge/bulk APIs; SQLAlchemy/table/query insert/update/delete; literal mutating SQL; and fail-closed f-string/binary SQL edges. It does not claim to resolve dynamic imports, reflection-generated models, runtime monkeypatching, helper-returned model instances, dynamically selected mutator callables, or dynamic SQL hidden behind an untyped variable; any semantic change in legacy Python remains guarded by the separate normalized-AST source freeze.",
     "protected_orm_reference_scheme": "ast_explicit_import_and_reference_scope_v1",
@@ -2906,6 +2906,14 @@
       "additional_writers": [
         {
           "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.admit_and_reserve_in_session"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._admit_and_reserve"
+        },
+        {
+          "module": "aletheia.execution.allocator",
           "symbol": "PostgreSQLExecutionAllocator.register_node"
         },
         {
@@ -3016,6 +3024,10 @@
       "call_sites": [
         {
           "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._admit_and_reserve"
+        },
+        {
+          "module": "aletheia.execution.allocator",
           "symbol": "PostgreSQLExecutionAllocator._reconcile_expired_attempt"
         },
         {
@@ -3029,6 +3041,10 @@
         {
           "module": "aletheia.execution.allocator",
           "symbol": "PostgreSQLExecutionAllocator.admit_and_reserve"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.admit_and_reserve_in_session"
         },
         {
           "module": "aletheia.execution.allocator",
@@ -3137,6 +3153,10 @@
         {
           "module": "aletheia.execution.postgresql_node_adapter",
           "symbol": "QualificationExecutionWorker._settle"
+        },
+        {
+          "module": "aletheia.observations.execution_registration",
+          "symbol": "PostgreSQLAtomicScientificExecutionRegistrar.register_and_reserve"
         }
       ],
       "storage_target": "postgres.execution_persistence.execution_nodes",
@@ -3178,6 +3198,10 @@
       "allowed_legacy_callers": [
         {
           "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._admit_and_reserve"
+        },
+        {
+          "module": "aletheia.execution.allocator",
           "symbol": "PostgreSQLExecutionAllocator._reconcile_expired_attempt"
         },
         {
@@ -3191,6 +3215,10 @@
         {
           "module": "aletheia.execution.allocator",
           "symbol": "PostgreSQLExecutionAllocator.admit_and_reserve"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator.admit_and_reserve_in_session"
         },
         {
           "module": "aletheia.execution.allocator",
@@ -3299,6 +3327,10 @@
         {
           "module": "aletheia.execution.postgresql_node_adapter",
           "symbol": "QualificationExecutionWorker._settle"
+        },
+        {
+          "module": "aletheia.observations.execution_registration",
+          "symbol": "PostgreSQLAtomicScientificExecutionRegistrar.register_and_reserve"
         }
       ],
       "dual_write_policy": "none",
@@ -3577,6 +3609,10 @@
       },
       "call_sites": [
         {
+          "module": "aletheia.observations.execution_registration",
+          "symbol": "PostgreSQLAtomicScientificExecutionRegistrar.register_and_reserve"
+        },
+        {
           "module": "aletheia.observations.service",
           "symbol": "PostgreSQLScientificBridgeService.register_execution_authorization"
         }
@@ -3586,11 +3622,15 @@
       "scientific_semantics": "Pre-registers one independently signed action, protocol, qualification, execution, artifact, and scientific-slot binding before PR-4 admission or process start. It establishes execution eligibility but cannot admit an observation or mutate the Kernel.",
       "authority_class": "scientific_state",
       "current_owner": "aletheia.observations.store.register_scientific_execution_authorization",
-      "current_commit_boundary": "one PostgreSQLScientificBridgeService registration transaction after historical and live authority verification",
+      "current_commit_boundary": "one caller-owned PostgreSQL append transaction after historical/live authority verification; the production registrar shares that transaction with PR-4 qualification admission and resource reservation",
       "target_owner": "aletheia.observations.store.register_scientific_execution_authorization",
       "target_command_or_object": "ScientificExecutionAuthorizationWrite",
       "migration_mode": "retain_signed_pre_execution_authority",
       "allowed_legacy_callers": [
+        {
+          "module": "aletheia.observations.execution_registration",
+          "symbol": "PostgreSQLAtomicScientificExecutionRegistrar.register_and_reserve"
+        },
         {
           "module": "aletheia.observations.service",
           "symbol": "PostgreSQLScientificBridgeService.register_execution_authorization"
@@ -3601,7 +3641,7 @@
       "golden_fixture": "tests/observations/test_service.py",
       "status": "authoritative_new_owner",
       "post_cutover_legacy_mode": "not_applicable_new_authority",
-      "blocker": "Production execution-authority signing custody and controller step composition remain unimplemented.",
+      "blocker": "The atomic production registrar and controller step adapter are implemented, but deployment-owned execution-authority signing custody and target-host commissioning remain unimplemented.",
       "exception_expiry": null
     },
     {

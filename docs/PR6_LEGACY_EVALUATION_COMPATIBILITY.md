@@ -1,7 +1,8 @@
 # PR-6 legacy evaluation compatibility leaf
 
-- Status: local source/test compatibility slice complete; production runtime unqualified
-- Date: 2026-08-25
+- Status: launch-gated handler/image source and atomic registration slice complete; target-host
+  runtime unqualified
+- Date: 2026-08-26
 - Scope: isolate the reusable evaluation half of `DomainPlugin` without importing the legacy
   research control loop into the new authority graph
 
@@ -20,6 +21,15 @@ resolver, featurizer, compatibility contracts, and adapter. The Conda/container 
 separate `CapabilityManifestV2` runtime pin; changing either source bytes or environment requires
 new qualification evidence. The committed JSON is a harness freeze, not a claim that a production
 container or target host has already qualified.
+
+The reviewed source closure now also contains the fixed-path container handler and the PR-4
+`PinnedLaunchSpec` factory. The candidate Dockerfile uses a digest-pinned Python base, a complete
+application-dependency version constraint set observed on the Linux/arm64 candidate, immutable
+image-layer source/config, and the existing in-container qualification launch gate. The handler
+accepts no argv or environment-selected paths: it reads the
+exact staged invocation/table, fresh-rehashes the complete harness closure, and writes only the
+declared output tree. The Dockerfile remains source evidence until a deployment freezes its
+resulting OCI manifest/config and executable digests and runs the target-host campaign.
 
 Plugins that override `DomainPlugin.run_experiment` are rejected mechanically. This keeps the RAG
 retrieve/answer/score loop and any other self-controlled domain path on the legacy `/runs` surface.
@@ -80,6 +90,13 @@ independent validation. The test installs an `ExperimentDriver._optimize` sentin
 zero calls. This is local control-path evidence, not a PostgreSQL process-kill test or a deployed
 controller step-handler service.
 
+The production `REGISTER_EXECUTION` slice is now concrete. An external execution-authority port
+returns an already signed SEA for the exact audited controller action. A public-key-only worker
+then verifies the SEA and commits its append-only preregistration in the same PostgreSQL transaction
+as PR-4 qualification admission and resource reservation. The returned receipt contains no lease
+token and grants neither launch nor observation-admission authority. Injected failure after SEA
+append rolls back both sides; the allocator's caller-owned transaction seam is independently tested.
+
 The old `/runs` and `/sessions` APIs remain additive-compatible and now return
 `execution_surface=legacy_protocol_executor`; the dashboard renders that label next to dry/real
 mode. The label is intentionally explicit: those endpoints still launch the legacy protocol
@@ -87,12 +104,12 @@ executor, not the Research Kernel controller.
 
 ## Remaining gates
 
-PR-6 does not close the PR-4 target-host campaign or PR-5 production composition gates. Before this
-leaf can run unattended, a deployment still needs:
+PR-6 does not close the PR-4 target-host campaign or all PR-5 production composition gates. Before
+this leaf can run unattended, a deployment still needs:
 
-- a real environment/image digest and independently issued capability audit receipts;
-- a production step handler that materializes the exact invocation/table receipts and invokes the
-  adapter inside the qualified PR-4 runtime;
+- a built OCI manifest/config/executable digest, independently issued capability audit receipts,
+  and exact PR-4 target-host qualification evidence for those bytes;
+- a deployment-owned external SEA issuer service and pinned `REGISTER_EXECUTION` adapter manifest;
 - durable raw-result/validation receipt registration and the existing PR-5 scientific bridge for
   any later observation admission;
 - deployment-owned validator key custody and an independent validator service;
@@ -104,9 +121,10 @@ typed capabilities and must not add domain branches to the Kernel or controller.
 
 PR-7a now provides the pinned process boundary plus concrete Kernel-dispatcher and
 delivery-reconciler composition. PR-7c provides the verified public-key-only terminal source
-factory, while its host ACL/custody/restart campaign remains open. The PR-6 worker handler,
-independent validator deployment, monitoring, and live process-kill campaign in the list above
-remain open.
+factory, while its host ACL/custody/restart campaign remains open. The PR-6 handler and candidate
+image source are now present, but image/host qualification, external issuer/validator deployment,
+monitoring, and the live process-kill campaign in the list above remain open.
 
-See [ADR 0051](architecture/0051-legacy-evaluation-compatibility-leaf.md) and the
+See [ADR 0051](architecture/0051-legacy-evaluation-compatibility-leaf.md),
+[ADR 0055](architecture/0055-qualified-evaluation-runtime-and-registration.md), and the
 [end-to-end architecture](END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md).

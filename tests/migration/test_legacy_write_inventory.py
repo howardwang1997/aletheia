@@ -1907,6 +1907,7 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
     } == {
         "PostgreSQLExecutionAllocator._append_budget_event",
         "PostgreSQLExecutionAllocator._append_inventory_devices",
+        "PostgreSQLExecutionAllocator._admit_and_reserve",
         "PostgreSQLExecutionAllocator._reconcile_expired_attempt",
         "PostgreSQLExecutionAllocator._reconcile_locked",
         "PostgreSQLExecutionAllocator._release_never_started_holds",
@@ -1917,6 +1918,7 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
         "PostgreSQLExecutionAllocator.accept_terminal_artifacts",
         "PostgreSQLExecutionAllocator.adjudicate_expired_qualification_terminal",
         "PostgreSQLExecutionAllocator.admit_and_reserve",
+        "PostgreSQLExecutionAllocator.admit_and_reserve_in_session",
         "PostgreSQLExecutionAllocator.adopt_attempt",
         "PostgreSQLExecutionAllocator.adopt_runtime_attempt",
         "PostgreSQLExecutionAllocator.append_inventory",
@@ -1935,6 +1937,7 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
         "PostgreSQLExecutionAllocator.start_attempt",
     }
     expected_allocator_callers = {
+        "PostgreSQLExecutionAllocator._admit_and_reserve",
         "PostgreSQLExecutionAllocator._reconcile_expired_attempt",
         "PostgreSQLExecutionAllocator._reconcile_locked",
         "PostgreSQLExecutionAllocator._release_never_started_holds",
@@ -1943,6 +1946,7 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
         "PostgreSQLExecutionAllocator.accept_runtime_launch",
         "PostgreSQLExecutionAllocator.accept_runtime_termination",
         "PostgreSQLExecutionAllocator.admit_and_reserve",
+        "PostgreSQLExecutionAllocator.admit_and_reserve_in_session",
         "PostgreSQLExecutionAllocator.adopt_attempt",
         "PostgreSQLExecutionAllocator.adopt_runtime_attempt",
         "PostgreSQLExecutionAllocator.append_inventory",
@@ -1969,12 +1973,19 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
         "QualificationExecutionWorker._adjudicate_expired_terminal",
         "QualificationExecutionWorker._settle",
     }
-    expected_callers = {
-        ("aletheia.execution.allocator", symbol) for symbol in expected_allocator_callers
-    } | {
-        ("aletheia.execution.postgresql_node_adapter", symbol)
-        for symbol in expected_adapter_callers
-    }
+    expected_callers = (
+        {("aletheia.execution.allocator", symbol) for symbol in expected_allocator_callers}
+        | {
+            ("aletheia.execution.postgresql_node_adapter", symbol)
+            for symbol in expected_adapter_callers
+        }
+        | {
+            (
+                "aletheia.observations.execution_registration",
+                "PostgreSQLAtomicScientificExecutionRegistrar.register_and_reserve",
+            )
+        }
+    )
     assert {
         (item["module"], item["symbol"]) for item in authority["call_sites"]
     } == expected_callers
