@@ -55,14 +55,21 @@ qualified execution image, live process restart, target-host deployment, or scie
 
 ## Remaining gates
 
+The repository now has production-boundary adapters for atomic signed execution registration,
+independent validation, and atomic admission/Kernel incorporation. The observation adapters
+reconstruct raw runs from SEA plus verified PR-4 terminal material and reload committed validation
+from canonical PostgreSQL bytes. Their signer/database/Kernel services remain externally injected,
+so this source slice does not commission or colocate those authorities.
+
 The repository still needs concrete, deployment-owned implementations for proposal materialization,
-protocol compilation persistence, signed execution authorization, independent F9-v2 validation,
-atomic observation admission, Kernel command submission, and continuation custody. The terminal
+protocol compilation persistence, an independent graph-scoped F9-v2 validation campaign service,
+external signer/RPC composition, and continuation custody. The terminal
 dispatcher now consumes a mechanically verified PR-4 terminal lineage through PR-7c's
 public-key-only factory; its target-host read-only ACL, filesystem/key custody, and live restart
-campaign remain open. The PR-6 evaluation leaf still needs a qualified handler/image that runs
-through PR-4 custody. No complete worker factory will be checked in until those exact services can
-be composed without loading their signing private keys into the worker.
+campaign remain open. The PR-6 evaluation leaf now has its fixed-path handler, candidate image, and
+atomic SEA/PR-4 registration source slice; the built image and exact host remain unqualified. No
+complete worker factory will be checked in until the remaining exact services can be composed
+without loading their signing private keys into the worker.
 
 The PR-4 Linux/root/systemd/loop/ext4/rootful-Docker campaign, multi-process PostgreSQL kill/restart
 campaign, supervision/monitoring, and independent signer/validator deployment remain release gates.
@@ -70,4 +77,5 @@ campaign, supervision/monitoring, and independent signer/validator deployment re
 See [ADR 0053](architecture/0053-controller-step-authority-boundary.md), the
 [PR-7a runtime guide](PR7_CONTROLLER_PRODUCTION_RUNTIME.md), the
 [PR-7c terminal guide](PR7C_VERIFIED_TERMINAL_DISPATCHER.md), and the
-[end-to-end architecture](END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md).
+[end-to-end architecture](END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md). See also
+[ADR 0056](architecture/0056-independent-observation-controller-steps.md).

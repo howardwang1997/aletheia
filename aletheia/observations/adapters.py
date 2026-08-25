@@ -7,14 +7,20 @@ by the observation or controller authority graphs.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Protocol
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from aletheia.execution.allocator import VerifiedQualificationRunLineage
+from aletheia.execution.allocator import (
+    VerifiedQualificationRawRunMaterial,
+    VerifiedQualificationRunLineage,
+)
 from aletheia.execution.artifact_store import LocalArtifactStore
 from aletheia.observations.scientific_bridge import (
+    CommittedObservationValidationReceipt,
     RawRunEnvelope,
     ScientificActionProtocolBinding,
     ScientificExecutionAuthorization,
@@ -24,8 +30,11 @@ from aletheia.observations.scientific_bridge import (
     validate_raw_run_structure,
 )
 from aletheia.observations.store import (
+    ObservationValidationReceiptWrite,
     ScientificExecutionAuthorizationWrite,
+    get_observation_validation_receipt_by_slot,
     get_scientific_execution_authorization_by_attempt,
+    get_scientific_execution_authorization_by_slot,
 )
 from aletheia.research_kernel.reducer import ActionLifecycle
 from aletheia.research_kernel.schemas import (
@@ -53,6 +62,189 @@ class QualificationRunLineageArchive(Protocol):
         attempt_id: str,
         observed_at: datetime,
     ) -> VerifiedQualificationRunLineage | None: ...
+
+
+class QualificationRawRunMaterialArchive(Protocol):
+    """Public PR-4 read seam returning only verified immutable terminal contracts."""
+
+    def load_verified_qualification_raw_run_material(
+        self,
+        *,
+        execution_id: str,
+        attempt_id: str,
+        observed_at: datetime,
+    ) -> VerifiedQualificationRawRunMaterial | None: ...
+
+
+DatabaseClock = Callable[[Session], datetime]
+
+
+def _database_time(session: Session) -> datetime:
+    observed = session.scalar(select(func.clock_timestamp()))
+    if not isinstance(observed, datetime):  # pragma: no cover - PostgreSQL production path
+        raise ObservationAdapterVerificationError(
+            "PostgreSQL did not provide the raw-run linearization time"
+        )
+    _require_utc(observed, label="raw-run database time")
+    return observed
+
+
+class PostgreSQLRawRunEnvelopeSourceAdapter:
+    """Deterministically assemble a raw envelope from SEA and verified PR-4 terminal material."""
+
+    def __init__(
+        self,
+        *,
+        execution_material: QualificationRawRunMaterialArchive,
+        sea_sessions: sessionmaker[Session],
+        database_clock: DatabaseClock = _database_time,
+    ) -> None:
+        if not callable(
+            getattr(
+                execution_material,
+                "load_verified_qualification_raw_run_material",
+                None,
+            )
+        ):
+            raise TypeError("raw-run source requires the public PR-4 material archive")
+        if not callable(sea_sessions) or not callable(database_clock):
+            raise TypeError("raw-run source requires sessions and a database clock")
+        self._execution_material = execution_material
+        self._sea_sessions = sea_sessions
+        self._database_clock = database_clock
+
+    def load_raw_run(
+        self,
+        *,
+        quest_id: str,
+        action_sha256: str,
+        scientific_slot_id: str,
+    ) -> RawRunEnvelope:
+        try:
+            with self._sea_sessions() as session:
+                observed_at = self._database_clock(session)
+                registration = get_scientific_execution_authorization_by_slot(
+                    session,
+                    quest_id=quest_id,
+                    scientific_slot_id=scientific_slot_id,
+                )
+            if registration is None or registration.action_sha256 != action_sha256:
+                raise ObservationAdapterVerificationError(
+                    "raw-run source lacks the exact preregistered action and slot"
+                )
+            authorization = ScientificExecutionAuthorization.model_validate(
+                registration.authorization_json
+            )
+            message = authorization.message
+            intent = message.qualification_bundle.intent
+            expected_registration = ScientificExecutionAuthorizationWrite.from_contract(
+                authorization,
+                registered_at=registration.registered_at,
+            )
+            if registration != expected_registration:
+                raise ObservationAdapterVerificationError(
+                    "raw-run source SEA row differs from its canonical authorization"
+                )
+            material_candidate = (
+                self._execution_material.load_verified_qualification_raw_run_material(
+                    execution_id=intent.execution_id,
+                    attempt_id=intent.infrastructure_attempt.infrastructure_attempt_id,
+                    observed_at=observed_at,
+                )
+            )
+            if material_candidate is None:
+                raise ObservationAdapterVerificationError(
+                    "raw-run source has no verified PR-4 terminal material"
+                )
+            material = VerifiedQualificationRawRunMaterial.model_validate(
+                material_candidate.model_dump(mode="python")
+            )
+            if (
+                material.execution_id != intent.execution_id
+                or material.attempt_id != intent.infrastructure_attempt.infrastructure_attempt_id
+                or material.intent_sha256 != intent.intent_sha256
+                or material.qualification_bundle_sha256
+                != message.qualification_bundle.bundle_sha256
+                or material.qualification_grant_sha256 != message.qualification_grant.grant_sha256
+                or material.verified_at != observed_at
+            ):
+                raise ObservationAdapterVerificationError(
+                    "verified PR-4 material was rebound from the preregistered SEA"
+                )
+            assembled_at = max(
+                material.accepted_terminal_submission.accepted_at,
+                *(item.verified_at for item in material.artifact_verified_receipts),
+            )
+            if assembled_at > observed_at:
+                raise ObservationAdapterVerificationError(
+                    "raw-run material was verified before its durable terminal artifacts"
+                )
+            return validate_raw_run_structure(
+                RawRunEnvelope(
+                    scientific_authorization=authorization,
+                    qualification_admission_sha256=(material.qualification_admission_sha256),
+                    accepted_runtime_termination=material.accepted_runtime_termination,
+                    terminal_submission=material.terminal_submission,
+                    accepted_terminal_submission=material.accepted_terminal_submission,
+                    artifact_manifest=material.artifact_manifest,
+                    artifact_verified_receipts=material.artifact_verified_receipts,
+                    assembled_at=assembled_at,
+                )
+            )
+        except ObservationAdapterVerificationError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - fail closed across independent DB authorities
+            raise ObservationAdapterVerificationError(
+                "raw-run source could not assemble the exact durable execution"
+            ) from exc
+
+
+class PostgreSQLCommittedObservationValidationSource:
+    """Read and reproject the exact immutable committed validation for a controller step."""
+
+    def __init__(self, *, sessions: sessionmaker[Session]) -> None:
+        if not callable(sessions):
+            raise TypeError("committed validation source requires a session factory")
+        self._sessions = sessions
+
+    def load_committed_validation(
+        self,
+        *,
+        quest_id: str,
+        action_sha256: str,
+        scientific_slot_id: str,
+    ) -> CommittedObservationValidationReceipt:
+        try:
+            with self._sessions() as session:
+                write = get_observation_validation_receipt_by_slot(
+                    session,
+                    quest_id=quest_id,
+                    scientific_slot_id=scientific_slot_id,
+                )
+            if write is None:
+                raise ObservationAdapterVerificationError(
+                    "controller admission source has no committed validation"
+                )
+            committed = CommittedObservationValidationReceipt.model_validate(
+                write.committed_receipt_json
+            )
+            message = committed.message.receipt.message
+            binding = message.raw_run.scientific_authorization.message.action_protocol_binding
+            expected = ObservationValidationReceiptWrite.from_contract(
+                committed,
+                quest_id=quest_id,
+            )
+            if write != expected or binding.action.object_sha256 != action_sha256:
+                raise ObservationAdapterVerificationError(
+                    "committed validation row was rebound from its action or canonical bytes"
+                )
+            return committed
+        except ObservationAdapterVerificationError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - fail closed at the observation database boundary
+            raise ObservationAdapterVerificationError(
+                "committed validation source failed closed"
+            ) from exc
 
 
 class PostgreSQLRawRunCustodyVerificationAdapter:
@@ -551,7 +743,10 @@ def _require_utc(value: datetime, *, label: str) -> None:
 
 __all__ = [
     "ObservationAdapterVerificationError",
+    "PostgreSQLCommittedObservationValidationSource",
+    "PostgreSQLRawRunEnvelopeSourceAdapter",
     "PostgreSQLRawRunCustodyVerificationAdapter",
     "PostgreSQLResearchActionAuthorityAdapter",
+    "QualificationRawRunMaterialArchive",
     "QualificationRunLineageArchive",
 ]

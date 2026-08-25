@@ -526,6 +526,72 @@ class VerifiedQualificationRunLineage(ExecutionModel):
         return canonical_sha256(self)
 
 
+class VerifiedQualificationRawRunMaterial(ExecutionModel):
+    """Public typed terminal material returned only after full PR-4 lineage verification.
+
+    This projection intentionally omits a scientific execution authorization.  The observation
+    boundary must load that authorization from its independent preregistration table and bind it
+    to these immutable execution contracts before constructing a ``RawRunEnvelope``.
+    """
+
+    schema_name: Literal["aletheia.verified_qualification_raw_run_material"] = (
+        "aletheia.verified_qualification_raw_run_material"
+    )
+    schema_version: Literal[1] = 1
+    execution_id: str = Field(pattern=_EXECUTION_ID_PATTERN)
+    attempt_id: str = Field(pattern=_ATTEMPT_ID_PATTERN)
+    intent_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_bundle_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_grant_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_admission_sha256: str = Field(pattern=_SHA256_PATTERN)
+    accepted_runtime_termination: AcceptedRuntimeTermination
+    terminal_submission: QualificationTerminalSubmission
+    accepted_terminal_submission: AcceptedQualificationTerminalSubmission
+    artifact_manifest: ArtifactManifest
+    artifact_verified_receipts: tuple[ArtifactVerifiedReceipt, ...]
+    verified_at: AwareDatetime
+    custody_reverified: Literal[True] = True
+    qualification_only: Literal[True] = True
+    scientific_admission_allowed: Literal[False] = False
+
+    @model_validator(mode="after")
+    def _material_is_exact(self) -> "VerifiedQualificationRawRunMaterial":
+        accepted = self.accepted_runtime_termination
+        submission = self.terminal_submission
+        terminal = self.accepted_terminal_submission
+        manifest = self.artifact_manifest
+        receipt_hashes = tuple(
+            sorted(item.verified_receipt_sha256 for item in self.artifact_verified_receipts)
+        )
+        if (
+            accepted.attempt_id != self.attempt_id
+            or submission.execution_id != self.execution_id
+            or submission.attempt_id != self.attempt_id
+            or submission.intent_sha256 != self.intent_sha256
+            or submission.accepted_runtime_termination_sha256
+            != accepted.accepted_termination_sha256
+            or terminal.attempt_id != self.attempt_id
+            or terminal.terminal_submission_sha256 != submission.terminal_submission_sha256
+            or terminal.accepted_runtime_termination_sha256 != accepted.accepted_termination_sha256
+            or manifest.execution_id != self.execution_id
+            or manifest.infrastructure_attempt_id != self.attempt_id
+            or manifest.intent_sha256 != self.intent_sha256
+            or submission.artifact_manifest_sha256 != manifest.manifest_sha256
+            or terminal.artifact_manifest_sha256 != manifest.manifest_sha256
+            or submission.artifact_verified_receipt_sha256s != receipt_hashes
+            or terminal.artifact_verified_receipt_sha256s != receipt_hashes
+            or tuple(item.artifact for item in self.artifact_verified_receipts) != manifest.entries
+            or submission.disposition != terminal.disposition
+            or terminal.accepted_at > self.verified_at
+        ):
+            raise ValueError("verified qualification raw-run material is rebound")
+        return self
+
+    @property
+    def material_sha256(self) -> str:
+        return canonical_sha256(self)
+
+
 class VerifiedQualificationTerminalSource(ExecutionModel):
     """Read-only proof used before a controller may consume one terminal outbox source.
 
@@ -2682,6 +2748,107 @@ class PostgreSQLExecutionAllocator:
                 artifact_verified_receipt_sha256s=(
                     terminal_acceptance.artifact_verified_receipt_sha256s
                 ),
+                artifact_manifest=manifest,
+                artifact_verified_receipts=receipts,
+                verified_at=observed_at,
+            )
+
+    def load_verified_qualification_raw_run_material(
+        self,
+        *,
+        execution_id: str,
+        attempt_id: str,
+        observed_at: datetime,
+    ) -> VerifiedQualificationRawRunMaterial | None:
+        """Return exact public terminal contracts after replaying the complete run lineage.
+
+        The lineage verifier owns the security decision.  This second append-only read exports the
+        already verified typed contracts without exposing private ORM rows to the observation
+        boundary, and rechecks every exported identity against that lineage.
+        """
+
+        lineage = self.load_verified_qualification_run_lineage(
+            execution_id=execution_id,
+            attempt_id=attempt_id,
+            observed_at=observed_at,
+        )
+        if lineage is None:
+            return None
+        with self._sessions() as session:
+            attempt = session.get(_ExecutionAttemptRecord, attempt_id)
+            terminal_record = session.execute(
+                select(_ExecutionQualificationTerminalAcceptanceRecord).where(
+                    _ExecutionQualificationTerminalAcceptanceRecord.attempt_id == attempt_id
+                )
+            ).scalar_one_or_none()
+            node = None if attempt is None else session.get(_ExecutionNodeRecord, attempt.node_id)
+            if attempt is None or terminal_record is None or node is None:
+                raise AdmissionConflict("qualification raw-run material became incomplete")
+            try:
+                preliminary_terminal = AcceptedQualificationTerminalSubmission.model_validate(
+                    terminal_record.accepted_terminal_submission_json
+                )
+                submission = QualificationTerminalSubmission.model_validate(
+                    terminal_record.terminal_submission_json
+                )
+                manifest = ArtifactManifest.model_validate(terminal_record.artifact_manifest_json)
+                receipts = tuple(
+                    ArtifactVerifiedReceipt.model_validate(item)
+                    for item in terminal_record.artifact_verified_receipts_json
+                )
+                node_authority = self._locked_node_authority(
+                    node,
+                    observed_at=preliminary_terminal.accepted_at,
+                    error_type=AdmissionConflict,
+                )
+                terminal = self._validated_qualification_terminal_acceptance_record(
+                    session,
+                    attempt=attempt,
+                    record=terminal_record,
+                    node_authority=node_authority,
+                )
+                (
+                    _preparation,
+                    _launch_request,
+                    _launch_authorization,
+                    _launch_receipt,
+                    _termination_challenge,
+                    _node_termination_receipt,
+                    accepted_termination,
+                    _termination_record,
+                ) = self._load_accepted_runtime_termination_lineage(
+                    session,
+                    attempt,
+                    node_authority=node_authority,
+                )
+            except (LeaseAuthorityError, TypeError, ValueError) as exc:
+                raise AdmissionConflict(
+                    "qualification raw-run contracts failed historical verification"
+                ) from exc
+            if (
+                terminal != preliminary_terminal
+                or attempt.execution_id != execution_id
+                or lineage.accepted_runtime_termination_sha256
+                != accepted_termination.accepted_termination_sha256
+                or lineage.terminal_submission_sha256 != submission.terminal_submission_sha256
+                or lineage.terminal_acceptance_sha256
+                != terminal.accepted_terminal_submission_sha256
+                or lineage.artifact_manifest != manifest
+                or lineage.artifact_verified_receipts != receipts
+            ):
+                raise AdmissionConflict(
+                    "qualification raw-run export differs from verified lineage"
+                )
+            return VerifiedQualificationRawRunMaterial(
+                execution_id=execution_id,
+                attempt_id=attempt_id,
+                intent_sha256=lineage.intent_sha256,
+                qualification_bundle_sha256=lineage.qualification_bundle_sha256,
+                qualification_grant_sha256=lineage.qualification_grant_sha256,
+                qualification_admission_sha256=lineage.qualification_admission_sha256,
+                accepted_runtime_termination=accepted_termination,
+                terminal_submission=submission,
+                accepted_terminal_submission=terminal,
                 artifact_manifest=manifest,
                 artifact_verified_receipts=receipts,
                 verified_at=observed_at,

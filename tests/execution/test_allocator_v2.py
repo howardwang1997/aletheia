@@ -392,6 +392,17 @@ def test_runtime_v2_terminal_acceptance_recovery_and_outbox_are_atomic(
         assert lineage.terminal_acceptance_sha256 == (
             terminal_acceptance.accepted_terminal_submission_sha256
         )
+        raw_material = allocator.load_verified_qualification_raw_run_material(
+            execution_id=claim.snapshot.execution_id,
+            attempt_id=claim.snapshot.attempt_id,
+            observed_at=terminal_acceptance.accepted_at,
+        )
+        assert raw_material is not None
+        assert raw_material.qualification_admission_sha256 == claim.snapshot.admission_sha256
+        assert raw_material.accepted_runtime_termination == result.accepted_runtime_termination
+        assert raw_material.accepted_terminal_submission == terminal_acceptance
+        assert raw_material.artifact_manifest == lineage.artifact_manifest
+        assert raw_material.artifact_verified_receipts == lineage.artifact_verified_receipts
         assert (
             session.scalar(select(func.count()).select_from(_ExecutionTerminalReceiptRecord)) == 0
         )
