@@ -31,7 +31,7 @@ A syntactically canonical row therefore was not sufficient production-source evi
   source; a canonical-looking database row alone is no longer sufficient.
 - The process cannot create validation or scientific evidence and carries no database, validator,
   admitter, execution or Kernel private key.
-- PR-7o subsequently closes independent admission. Atomic admission/Kernel incorporation is the
-  one remaining concrete factory.
+- PR-7o subsequently closes independent admission, and PR-7p closes atomic admission/Kernel
+  incorporation, the final concrete factory at source level.
 - Target-host PostgreSQL ACLs, filesystem custody, supervision and live crash/restart evidence remain
   release gates.

@@ -48,4 +48,4 @@ linearization point.
 - PR-7k subsequently closes the exact public `LOAD_RAW_RUN` source, PR-7l closes database
   observation attestation, and PR-7m closes independent F9-v2 validation. Three concrete RPC
   factories remain at that checkpoint; PR-7n subsequently closes the committed-validation source,
-  and PR-7o closes independent admission, leaving only atomic Kernel incorporation.
+  PR-7o closes independent admission, and PR-7p closes atomic Kernel incorporation.

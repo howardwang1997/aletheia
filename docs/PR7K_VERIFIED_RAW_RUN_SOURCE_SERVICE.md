@@ -52,8 +52,8 @@ validation receipts while loading no validator, admitter, execution, or Kernel p
 then closes the independent F9-v2 validator factory. Three PR-7e concrete factories remain:
 committed-validation source, independent admission, and atomic admission/Kernel incorporation. The
 PR-7n subsequently closes the committed-validation source. The next ordered source slice is
-independent admission at that checkpoint; PR-7o now closes it, leaving one atomic-incorporation
-factory.
+independent admission at that checkpoint; PR-7o now closes it, and PR-7p closes the final
+atomic-incorporation factory.
 
 No target host is commissioned. Read-only PostgreSQL/CAS/registry ACLs, Linux account/socket
 ownership, systemd supervision, alerts, and fresh multi-process PostgreSQL kill/restart tests remain

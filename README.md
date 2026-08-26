@@ -168,7 +168,8 @@ campaign binding per raw run without importing legacy F9-v1. PR-7m now gives it 
 two-operation RPC factory with an isolated validator key, public-only Kernel/PR-4 custody, a
 conservative exact-content assessment catalog and a writable campaign archive. General domain
 assessment and the terminal target-host ACL/custody campaign remain uncommissioned; PR-7o later
-closes the isolated admitter composition, while atomic database/Kernel incorporation remains.
+closes the isolated admitter composition, and PR-7p closes atomic database/Kernel incorporation at
+source level.
 PR-7d now supplies the complete checked-in worker factory: it composes all eight active adapters
 through eleven operation-closed Unix RPC clients, verifies service receipts with public Ed25519
 keys and Linux peer pins, and uses read-only Kernel CAS and terminal-lineage recovery. The three
@@ -239,9 +240,10 @@ deterministic action-proposal provider. It selects only audited targets and requ
 reconstructs every stored draft on retry, emits explicit unknown/unassessed cost/risk identities,
 and exposes one source-pinned RPC operation over an inode/ACL-pinned private spool. It has no model
 callback, signing key, budget/risk approval, execution port, or direct Kernel mutation. Target-host
-commissioning is still pending. Knowledge-grounded proposal/protocol intelligence, the independent
-Kernel signer, the final atomic-incorporation service factory, socket/PostgreSQL ACL commissioning,
-and the live multi-process campaign remain incomplete. The PR-2 store also
+commissioning is still pending. PR-7p now closes the exact observation-only Kernel signer and final
+atomic-incorporation service factory at source level. Knowledge-grounded proposal/protocol
+intelligence, a general independent Kernel signer, socket/PostgreSQL ACL commissioning, and the live
+multi-process campaign remain incomplete. The PR-2 store also
 still has one immutable policy epoch and
 `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
 the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
@@ -265,6 +267,7 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-7m independent F9-v2 validation guide](docs/PR7M_INDEPENDENT_F9_V2_VALIDATION_SERVICE.md), plus
 [PR-7n committed-validation source guide](docs/PR7N_COMMITTED_VALIDATION_SOURCE_SERVICE.md), plus
 [PR-7o independent-admission guide](docs/PR7O_INDEPENDENT_ADMISSION_SERVICE.md), plus
+[PR-7p atomic-admission guide](docs/PR7P_ATOMIC_ADMISSION_SERVICE.md), plus
 [ADR 0056](docs/architecture/0056-independent-observation-controller-steps.md) and
 [ADR 0057](docs/architecture/0057-graph-scoped-f9-v2-validation-campaign.md), plus
 [ADR 0058](docs/architecture/0058-durable-powerless-action-proposal-steps.md), and
@@ -281,7 +284,8 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [ADR 0069](docs/architecture/0069-database-observation-rpc-service.md), and
 [ADR 0070](docs/architecture/0070-independent-f9-v2-validation-rpc-service.md), and
 [ADR 0071](docs/architecture/0071-committed-validation-source-rpc-service.md), and
-[ADR 0072](docs/architecture/0072-independent-admission-rpc-service.md).
+[ADR 0072](docs/architecture/0072-independent-admission-rpc-service.md), and
+[ADR 0073](docs/architecture/0073-atomic-admission-rpc-service.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,

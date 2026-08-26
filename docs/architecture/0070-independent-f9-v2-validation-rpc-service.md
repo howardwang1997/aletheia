@@ -37,5 +37,5 @@ production process boundary.
 - The exact-content catalog is not general scientific interpretation. Domain validators, target-host
   ACLs, supervision and live crash evidence remain commissioning gates.
 - PR-7n subsequently closes the committed-validation source. Two concrete operation factories
-  remained at that checkpoint; PR-7o closes independent admission, leaving only atomic
+  remained at that checkpoint; PR-7o closes independent admission, and PR-7p closes atomic
   admission/Kernel incorporation.

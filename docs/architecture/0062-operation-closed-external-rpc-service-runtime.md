@@ -41,9 +41,9 @@ no in-memory idempotency cache and no second authority ledger.
   boundary that can be supervised and targeted by later kill/restart campaigns.
 - A worker process never receives the transport private key or a domain private key. Separate
   service UIDs and a shared socket GID are mechanically required by the manifest.
-- A byte-pinned composition factory must still construct each concrete proposal, compiler,
-  execution, database, validator, admission, atomic-commit, or continuation handler. This decision
-  does not commission those factories, keys, PostgreSQL roles, or provider credentials.
+- PR-7f through PR-7p subsequently provide byte-pinned composition factories for all eleven
+  operation families. This decision and those source slices do not commission their keys,
+  PostgreSQL roles, service accounts, ACLs, or provider credentials.
 - Darwin tests exercise request/response, signature, loader, and fail-closed contracts only. A real
   Linux target must still prove socket ACLs/peer credentials, systemd restart, PostgreSQL recovery,
   and process-kill behavior.

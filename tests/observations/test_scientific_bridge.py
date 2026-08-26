@@ -1056,7 +1056,10 @@ def _issue_admission_decision(
 def _commit_admission(
     case: BridgeCase,
     decision: ObservationAdmissionDecision,
+    *,
+    commit_clock=None,
 ) -> CommittedObservationAdmission:
+    commit_clock = commit_clock or (lambda: decision.message.decided_at + timedelta(seconds=2))
     return commit_observation_admission(
         decision=decision,
         qualification_authority=case.qualification_authority,
@@ -1070,7 +1073,7 @@ def _commit_admission(
         database_authority_pin=case.database_pin,
         private_key=DATABASE_PRIVATE_KEY,
         registered_at=decision.message.decided_at + timedelta(seconds=1),
-        committed_at=decision.message.decided_at + timedelta(seconds=2),
+        commit_clock=commit_clock,
     )
 
 
@@ -1712,6 +1715,25 @@ def test_only_atomic_database_commit_confers_scientific_admission_authority() ->
         )
         == committed_admission
     )
+
+
+def test_admission_commit_clock_cannot_rollback_or_cross_challenge_expiry() -> None:
+    case = _bridge_case()
+    decision, _committed_validation = _issue_admission_decision(
+        case,
+        receipt=_validated_receipt(case, outcome_bin_id="outcome.negative"),
+        disposition=ObservationAdmissionDisposition.ADMITTED,
+        reason_codes=(),
+    )
+    started_at = decision.message.decided_at + timedelta(seconds=3)
+    rollback = iter((started_at, started_at - timedelta(seconds=1)))
+    with pytest.raises(ScientificBridgeVerificationError, match="moved backwards"):
+        _commit_admission(case, decision, commit_clock=lambda: next(rollback))
+
+    expires_at = decision.message.issuance_challenge.message.expires_at
+    expired = iter((started_at, expires_at))
+    with pytest.raises(ValidationError, match="half-open DB challenge window"):
+        _commit_admission(case, decision, commit_clock=lambda: next(expired))
 
 
 def test_scientifically_rejected_campaign_never_projects_an_observation_outcome() -> None:
