@@ -1755,6 +1755,24 @@ ACL/supervisor 与 live process-kill campaign 仍待完成。详见
 `PR7H_FROZEN_PROTOCOL_COMPILATION_SERVICE.md` 与
 `architecture/0065-frozen-protocol-compilation-rpc-service.md`。
 
+### PR-7i：Scientific execution-authorization RPC service
+
+- exact-action catalog 冻结 action/event、accepted compilation/WorkOrder、PR-4 bundle/grant、scientific
+  artifact binding、validator/admission policy 与完整授权时间窗；无 unlisted/dynamic fallback；
+- 签名前后都重放当前 Kernel/CAS 与 append-only compilation row，并以 public immutable registries 和 fresh
+  artifact rehash 重算 engineering qualification；
+- exact frozen message 让 Ed25519 crash retry 返回 byte-identical SEA，不增加第二份 mutable scientific ledger；
+- 单 operation factory 只加载 execution-authorization domain key；该 `0400` key 与 RPC receipt key 分离，
+  qualification/pricing/budget/terminal/validation/admission 仅加载 public pin；
+- pre-admission custody 无 allocator write API，也不能声称未来 qualification admission 已存在；注册 SEA、
+  reservation、launch、validation、admission 与 Kernel mutation 均留在独立服务。
+
+该切片关闭 safe exact-template SEA signer/factory，不等于 general execution planning 或 target-host
+commissioning evidence；其余七项 registration/raw-run/validation/admission/Kernel-incorporation service
+factory、ACL/supervisor 与 live process-kill campaign 仍待完成。下一项顺序工作是独立
+`REGISTER_EXECUTION` concrete service。详见 `PR7I_EXECUTION_AUTHORIZATION_SERVICE.md` 与
+`architecture/0066-scientific-execution-authorization-rpc-service.md`。
+
 PR-5 的本地 vertical cut 已完成；现在仍须完成 PR-4 target-host campaign、PR-5 production
 controller/validator/signer process commissioning 与 terminal target-host commissioning，之后才依据 fresh inventory
 选择远程 canary。PR-6 可以在这些部署工作并行时推进。这样远程基础设施不会反过来固化一个错误的
@@ -1842,10 +1860,11 @@ Unix RPC port 组合，response 使用独立 Ed25519 transport receipt 验证，
 lineage 与 read-only Kernel CAS；worker 不加载科学签名私钥。**PR-7e** 已补齐 common external RPC server
 runtime：closed payload/result、双向 Linux peer identity、socket parent/inode、service-owned `0400` transport
 key 与 byte-pinned factory 均 fail closed；这仍不是十一项 concrete authority service commissioning。
-**PR-7f**、**PR-7g** 与 **PR-7h** 分别完成 deterministic continuation、conservative action-proposal 和
-frozen protocol-compilation 的 concrete source factory；其余 authorization/validation/admission/Kernel signer
-factory 与 ACL 仍待完成。下一项顺序工作是 execution-authorization concrete service factory，随后继续其余
-external authority process composition，再进入真实 image/host qualification 与
+**PR-7f**、**PR-7g**、**PR-7h** 与 **PR-7i** 分别完成 deterministic continuation、conservative
+action-proposal、frozen protocol-compilation 与 exact-template scientific execution-authorization concrete
+service factory；其余 registration/validation/admission/Kernel signer factory 与 ACL 仍待完成。下一项顺序工作
+是 `REGISTER_EXECUTION` concrete service factory，随后继续其余 external authority process composition，再进入
+真实 image/host qualification 与
 process-kill PostgreSQL campaign，而不是扩张
 controller authority。checkpoint 与 external reconciliation
 仍需独立 typed contracts，不能由 generic retry 猜测。

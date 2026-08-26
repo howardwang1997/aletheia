@@ -146,12 +146,15 @@ target-host commissioning; knowledge-grounded proposal intelligence and the inde
 command authority remain open. The protocol compiler now has a two-audit, policy-pinned,
 append-only step service; PR-7h adds its exact-action frozen-template provider, restart verifier,
 and checked-in RPC factory. General protocol authoring plus receipt custody, ACL and external
-process commissioning remain open. Continuation now
+process commissioning remain open. PR-7i adds a deterministic exact-template execution-authorizer
+whose separate `0400` domain key signs only after fresh Kernel, compilation-registry and PR-4
+public-custody verification; SEA registration/reservation remains a separate process. Continuation now
 has its own two-audit service, mechanically reconstructed observation identity, pinned assessor
 policy, and durable provenance; its production service, assessment-artifact byte custody and ACL
 remain open. See [ADR 0058](architecture/0058-durable-powerless-action-proposal-steps.md),
 [ADR 0059](architecture/0059-durable-protocol-compilation-step.md), and
-[ADR 0060](architecture/0060-durable-continuation-assessment-step.md).
+[ADR 0060](architecture/0060-durable-continuation-assessment-step.md), plus
+[ADR 0066](architecture/0066-scientific-execution-authorization-rpc-service.md).
 
 PR-7c closes the source-code terminal verification/composition gap. The read-only PostgreSQL ACL,
 filesystem/key custody, supervisor invocation, and live process-kill behavior must still be proven
