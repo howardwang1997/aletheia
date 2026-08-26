@@ -15,8 +15,10 @@ repository now contains a portable desired-state contract, deterministic systemd
 rendering, five guarded one-role runner entrypoints, and a derived manifest/preflight contract over
 an externally pinned observer signature. The runners verify an out-of-band manifest digest before
 loading a byte-pinned factory, but no production role factory is supplied by that process-boundary
-slice. The repository still contains no target-host installer, concrete Linux observer, frozen
-manifest instance, or campaign runner, and the target-host campaign has not run. A host is
+slice. PR-8b adds an opt-in crash-replayable installer for only the exact manifest and five disabled
+unit files. It cannot create principals, apply the PostgreSQL ACL, enable/start units or qualify a
+host. The repository still contains no complete target-host commissioning workflow, concrete Linux
+observer, frozen manifest instance, or campaign runner, and the target-host campaign has not run. A host is
 deployable only after its exact
 Linux, rootful Docker, systemd, loop/ext4, mount-namespace, cgroup-v2 and Docker
 systemd-cgroup-driver layout, seccomp, AppArmor, image-layout, UID/GID, filesystem,
@@ -37,10 +39,12 @@ PostgreSQL-role, and clock configuration has passed the opt-in production campai
 | Artifact and terminal path | `LocalArtifactStore`, `QualificationNodeAgent`, `PostgreSQLExecutionAllocator`, and `QualificationExecutionWorker` | Quarantine/CAS rehash, termination challenge/receipt, independently accepted runtime termination, bounded artifact grace, terminal acceptance or pre-signed deadline expiration, and one transactional v2 outbox row. Outbox dispatch remains external. |
 | Deployment evidence | `QualificationDeploymentSpecV1`, `render_systemd_units`, `render_postgresql_acl`, `SignedQualificationLinuxDeploymentObservation`, `QualificationInstalledDeploymentManifestV1`, and `verify_installed_manifest` | Portable desired state closes reviewed code/Python/native-dependency trees, service identities, exact PostgreSQL objects/ACL closure, host/runtime pins, and an external observer key. Only a real Linux observation may be frozen; revalidation returns eligibility for a later opt-in campaign, never a deployment or scientific verdict. Installation, observer implementation, and campaign execution remain external. |
 | Service process boundary | `QualificationServiceDeploymentManifestV1`, `QualificationServiceRuntime`, and five thin `scripts/run-*.py` entrypoints | Each process exposes one role/operation, verifies canonical manifest/source/config bytes and live Linux UID/GID, and emits only non-authoritative operational diagnostics. Production factories and their credentials are deliberately not supplied; the target installer must bind this manifest back to the exact portable spec before mutation. |
+| Disabled file installation | `QualificationInstallationRequestV1`, `LinuxQualificationInstallationHost`, and `scripts/install-qualification-deployment.py` | Dry-run by default; explicit root/Linux opt-in atomically publishes the exact manifest and five units with append-only crash recovery, invokes only pinned daemon-reload, and proves every unit remains disabled/inactive. Principals, configs/keys, PostgreSQL ACLs, activation, observer and campaign stay external. |
 
-There is no production composition factory set or target-host installer that installs the systemd units,
-provisions identities and registry files, creates PostgreSQL roles, configures mount propagation,
-or starts/supervises the worker. There is a closed schema for deriving a manifest from signed live
+There is no production composition factory set or complete target-host commissioning workflow that
+provisions identities and registry files, creates/restricts PostgreSQL roles, configures mount
+propagation, or starts/supervises the worker. PR-8b can install only the manifest/disabled unit file
+subset. There is a closed schema for deriving a manifest from signed live
 evidence, but no target-host manifest instance has been frozen.
 `QualificationExecutionWorker` closes the database/node/terminal application path and
 `LocalQualificationOCIRuntime` accepts the concrete gate/quota/watchdog controllers, but the whole
@@ -231,9 +235,10 @@ foreign-node rejection, two concurrent workers producing one exact outbox row, a
 post-hard-deadline prelaunch cleanup with zero workload launch. They do not exercise a real root
 quota/watchdog service or target-host Docker mount namespace.
 
-Five guarded source runner entrypoints now exist, and every rendered `ExecStart` carries the exact
-deployment-manifest SHA-256. No production factory set, target-host installer, concrete observer,
-frozen manifest instance, or campaign runner exists at
+Five guarded source runner entrypoints now exist, every rendered `ExecStart` carries the exact
+deployment-manifest SHA-256, and an explicit installer can publish only those disabled files. No
+production factory set, complete target-host commissioning workflow, concrete observer, frozen
+manifest instance, or campaign runner exists at
 this checkpoint. `QualificationInstalledDeploymentManifestV1` is a derived schema, not evidence
 that any installation was observed. Until an opt-in campaign runs as root on the exact target Linux host with its real systemd units,
 rootful Docker daemon, shared mount visibility, loop/ext4 tools, cgroup-v2 hierarchy, pinned OCI

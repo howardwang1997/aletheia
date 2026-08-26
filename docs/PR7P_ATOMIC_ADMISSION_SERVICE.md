@@ -50,8 +50,10 @@ rebind, key-mode drift, writable-CAS replacement and factory-byte drift.
 
 All eleven external operation-family factories now exist at source level. PR-8a additionally adds
 the five guarded qualification service runner entrypoints and pins their manifest bytes in every
-rendered systemd `ExecStart`; it deliberately supplies no production service factories. No target
-host is commissioned. The next gate must instantiate and freeze Linux accounts, socket and PostgreSQL ACLs,
+rendered systemd `ExecStart`; it deliberately supplies no production service factories. PR-8b can
+now install the exact manifest/unit files while leaving them disabled and inactive, but it does not
+provision principals/configs/keys or apply PostgreSQL ACLs. No target host is commissioned. The
+next gate must instantiate and freeze Linux accounts, socket and PostgreSQL ACLs,
 key custody, systemd units, health/alert policy and the exact deployment manifest, then run a fresh
 multi-process PostgreSQL campaign covering concurrent empty-slot admission, injected rollback,
 service kill/restart, dispatcher/reconciler recovery and a complete second scientific slot.

@@ -36,6 +36,10 @@ mechanically prove that the manifest deployment ID, service UID/GID, node poll i
 paths and source digests agree with the exact portable deployment spec and its exhaustive reviewed
 code tree before installing anything.
 
+PR-8b now supplies that narrowly scoped, explicit installer for the manifest and disabled unit
+files. It still does not supply the factories, principals/configs/keys, PostgreSQL ACL mutation,
+service activation, observer or campaign.
+
 There is still no concrete independent Linux observer, frozen target-host manifest instance, or
 root/systemd/loop/ext4/rootful-Docker/PostgreSQL campaign. Source tests on Darwin or a mocked Linux
 identity are not deployment evidence and do not make PR-4b deployable.

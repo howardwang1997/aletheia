@@ -1544,8 +1544,9 @@ Docker 使用 pathname bind 而非 open fd，因此同 UID host peer、host root
 或 Docker daemon 都在防御范围外，属于明确 TCB。
 
 冻结源码/测试 checkpoint 的 security review 为 A=0，但这只关闭已审 source threat model，不构成 host
-认证：PR-8a 已补五个 one-role runner 及 systemd `ExecStart` 的 exact manifest SHA pin，但尚无 production
-service factory set、target-host installer、concrete observer、frozen manifest instance 或 campaign runner，
+认证：PR-8a 已补五个 one-role runner 及 systemd `ExecStart` 的 exact manifest SHA pin；PR-8b 仅能以
+explicit opt-in、append-only crash journal 安装 exact manifest/disabled units 并执行 pinned daemon-reload。
+仍无 production service factory set、完整 target-host commissioning、concrete observer、frozen manifest instance 或 campaign runner，
 exact campaign 也从未跑过，因此当前明确 nondeployable。代码中的 installed-manifest 类型只是从签名 live
 observation 派生 evidence 的 schema，不是已部署事实。`OutputQuotaProvisioningReceipt` 是 privileged local root service 的 trusted-local
 evidence，不是独立 remote attestation；watchdog 是 single-threaded inspect loop，
@@ -2009,8 +2010,10 @@ attestation、independent F9-v2 validation、committed-validation source 以及 
 以及 atomic admission/Kernel incorporation concrete service factory；十一项 operation-family source
 composition 已闭合，ACL 与 target-host commissioning 仍待完成。
 **PR-8a** 已补齐 PR-4b systemd 所引用的五个 guarded runner，并在导入 factory 前验证 canonical manifest、
-源码/配置 custody 和 live Linux UID/GID；它不提供 production factory、安装或启动权限。下一项顺序工作是
-实现 opt-in、crash-safe target-host installer，再进入真实 image/host qualification 与
+源码/配置 custody 和 live Linux UID/GID。**PR-8b** 已实现 opt-in、crash-replayable disabled-file
+installer，关闭 manifest/unit 的 partial-write 与意外 activation 风险，但不创建 principal、不应用
+PostgreSQL ACL、也不 enable/start。下一项顺序工作是补 production qualification factories（含 terminal
+outbox）及 pinned principal/config/key/ACL commissioning，再进入真实 image/host qualification 与
 process-kill PostgreSQL campaign，而不是扩张
 controller authority。checkpoint 与 external reconciliation
 仍需独立 typed contracts，不能由 generic retry 猜测。
