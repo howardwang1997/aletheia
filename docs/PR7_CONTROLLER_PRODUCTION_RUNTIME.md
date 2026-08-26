@@ -117,13 +117,12 @@ the transaction boundary; this slice supplies the missing invocation loop, not a
 
 ## Remaining gates
 
-This is not the complete PR-5 production composition. The terminal role now has a checked-in,
-public-key-only verified source factory, but the worker intentionally has no checked-in complete
-factory:
+This is not a commissioned PR-5 deployment. The terminal role has a checked-in, public-key-only
+verified source factory, and PR-7d now supplies the checked-in complete worker factory:
 
-- `worker` must bind every `ControllerStep` to its dedicated proposal, signing, compiler,
-  qualification, validation, admission, or continuation adapter. A catch-all model callback is
-  forbidden.
+- `worker` binds every active `ControllerStep` to its dedicated proposal, compiler, qualification,
+  validation, admission, or continuation adapter. A catch-all model callback remains forbidden;
+  signing and independent decision services stay behind receipt-authenticated Unix RPC ports.
 
 PR-6's legacy-evaluation leaf has a launch-gated worker handler and candidate image source, but the
 image and host remain unqualified. The target-host installer/observer/campaign, deployment key and
@@ -132,18 +131,19 @@ multi-process PostgreSQL kill/restart campaign remain open. No host is called de
 scientific claim follows from these process receipts.
 
 PR-7b closes the generic worker-callback boundary with an exhaustive, controller/worker-pinned
-adapter set and exact recovery-projection forwarding. It deliberately does not provide the concrete
-step services listed above; see
-[the PR-7b guide](PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md).
+adapter set and exact recovery-projection forwarding. PR-7d composes the subsequent concrete source
+slices without importing their private keys; see
+[the PR-7b guide](PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md) and the
+[PR-7d guide](PR7D_COMPLETE_CONTROLLER_WORKER.md).
 
 The three proposal steps now have a proposal-only source implementation with exact Kernel/receipt
 re-audit, bounded provider drafts, and write-once unsigned-command custody. They still need a
 commissioned provider endpoint and an independent Kernel command authority. The protocol compiler
 now has a two-audit, policy-pinned, append-only step service, but its production provider/RPC,
-receipt custody, ACL, recovery-policy composition, and worker factory remain open. Continuation now
+receipt custody, ACL and external process commissioning remain open. Continuation now
 has its own two-audit service, mechanically reconstructed observation identity, pinned assessor
-policy, and durable provenance; its production RPC, assessment-artifact byte custody, ACL and worker
-composition remain open. See [ADR 0058](architecture/0058-durable-powerless-action-proposal-steps.md),
+policy, and durable provenance; its production service, assessment-artifact byte custody and ACL
+remain open. See [ADR 0058](architecture/0058-durable-powerless-action-proposal-steps.md),
 [ADR 0059](architecture/0059-durable-protocol-compilation-step.md), and
 [ADR 0060](architecture/0060-durable-continuation-assessment-step.md).
 

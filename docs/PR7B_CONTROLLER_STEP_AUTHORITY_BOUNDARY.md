@@ -62,17 +62,18 @@ from canonical PostgreSQL bytes. Their signer/database/Kernel services remain ex
 so this source slice does not commission or colocate those authorities.
 
 The repository now has source-slice implementations for proposal materialization, protocol
-compilation persistence, and continuation custody. It still needs their deployment-owned provider
-RPCs, artifact/receipt byte custody, ACL/policy composition, the external Kernel signer, and the
-complete worker factory. A
+compilation persistence, and continuation custody. PR-7d composes them into the complete checked-in
+worker through operation-closed, receipt-authenticated Unix RPC clients. It still needs the actual
+deployment-owned service processes, artifact/receipt byte custody, ACL/policy commissioning, and
+the external Kernel signer deployment. A
 graph-scoped F9-v2 campaign service and write-once archive now exist as a source/test slice, but its
 production assessor, process isolation, and key custody are not commissioned. The terminal
 dispatcher now consumes a mechanically verified PR-4 terminal lineage through PR-7c's
 public-key-only factory; its target-host read-only ACL, filesystem/key custody, and live restart
 campaign remain open. The PR-6 evaluation leaf now has its fixed-path handler, candidate image, and
-atomic SEA/PR-4 registration source slice; the built image and exact host remain unqualified. No
-complete worker factory will be checked in until the remaining exact services can be composed
-without loading their signing private keys into the worker.
+atomic SEA/PR-4 registration source slice; the built image and exact host remain unqualified. The
+checked-in factory does not commission those endpoints or prove that signing private keys are
+absent from worker memory on a target host.
 
 The PR-4 Linux/root/systemd/loop/ext4/rootful-Docker campaign, multi-process PostgreSQL kill/restart
 campaign, supervision/monitoring, and independent signer/validator deployment remain release gates.
@@ -80,5 +81,6 @@ campaign, supervision/monitoring, and independent signer/validator deployment re
 See [ADR 0053](architecture/0053-controller-step-authority-boundary.md), the
 [PR-7a runtime guide](PR7_CONTROLLER_PRODUCTION_RUNTIME.md), the
 [PR-7c terminal guide](PR7C_VERIFIED_TERMINAL_DISPATCHER.md), and the
+[PR-7d worker guide](PR7D_COMPLETE_CONTROLLER_WORKER.md), and the
 [end-to-end architecture](END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md). See also
 [ADR 0056](architecture/0056-independent-observation-controller-steps.md).

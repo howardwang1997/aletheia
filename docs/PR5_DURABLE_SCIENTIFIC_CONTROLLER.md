@@ -172,12 +172,13 @@ slices: the three proposal steps plus protocol compilation, execution registrati
 admission, and continuation assessment. The compiler slice performs two exact Kernel/CAS audits,
 applies frozen
 author/category/catalog/compiler policy, canonically recompiles the provider request, and retains
-accepted or blocked results with contiguous revision lineage. It still lacks a commissioned
-provider/RPC/receipt boundary, database ACL, and worker composition. Continuation now reconstructs
+accepted or blocked results with contiguous revision lineage. PR-7d now composes this adapter into
+the checked-in keyless worker; the commissioned provider/RPC server/receipt boundary and database
+ACL remain absent. Continuation now reconstructs
 the observation identity from signed validation/incorporation, pins assessor identity and fit rules,
 persists provenance, and rederives the receipt during recovery. Its production assessor RPC,
-assessment-artifact byte custody, ACL and worker composition remain open. The independent Kernel
-command authority and complete external service/runtime composition remain uncommissioned. See
+assessment-artifact byte custody, ACL and external assessor process remain open. The independent
+Kernel command authority and complete external service/runtime commissioning remain incomplete. See
 [ADR 0058](architecture/0058-durable-powerless-action-proposal-steps.md),
 [ADR 0059](architecture/0059-durable-protocol-compilation-step.md), and
 [ADR 0060](architecture/0060-durable-continuation-assessment-step.md).
