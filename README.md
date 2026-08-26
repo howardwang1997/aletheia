@@ -133,8 +133,11 @@ rendering, five one-role runner entrypoints with an out-of-band manifest SHA pin
 signed Linux observations, a derived installed-manifest schema, and read-only revalidation. The
 runners provide a guarded process boundary. PR-8c supplies the three privileged production
 factories: a replay-safe exact bind/shared workspace one-shot plus the existing loopback-quota and
-independent-watchdog daemons behind canonical process-bound configs. The node and terminal-outbox
-factories are still absent. A separate explicit PR-8b installer can atomically publish the exact
+independent-watchdog daemons behind canonical process-bound configs. PR-8d now supplies the
+non-root node factory with exact PostgreSQL role/revision checks, inode-pinned mutable roots,
+three independently pinned node/assignment/runtime-control keys, live boot identity, the full
+CPU-only OCI composition and root-mediated live quota verification. The terminal-outbox factory is
+still absent. A separate explicit PR-8b installer can atomically publish the exact
 manifest and five disabled unit files, journal crash recovery and invoke only pinned `systemctl
 daemon-reload`; it cannot create principals, apply the PostgreSQL ACL, enable/start services,
 qualify a host or admit science. This work still does not complete host commissioning, implement

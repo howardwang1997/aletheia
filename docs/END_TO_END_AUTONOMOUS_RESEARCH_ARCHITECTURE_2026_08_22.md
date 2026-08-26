@@ -2016,8 +2016,10 @@ installer，关闭 manifest/unit 的 partial-write 与意外 activation 风险�
 PostgreSQL ACL、也不 enable/start。**PR-8c** 已补 workspace、loopback quota 与 independent watchdog 三项
 root-side production factory；workspace one-shot 以 exact pre-bind custody、bind 后 mountinfo/inode 重验和
 `make-shared` crash replay 收敛，三个 canonical config 都通过无自引用的 process projection 绑定最终
-manifest。下一项顺序工作是补 node factory，再补 terminal outbox factory，随后完成 pinned
-principal/config/key/ACL commissioning，再进入真实 image/host qualification 与
+manifest。**PR-8d** 已补齐 non-root node factory：它绑定 live PostgreSQL role/revision、四个 node-owned
+inode roots、三把独立私钥、当前 boot identity、CPU-only OCI/image policy 以及 quota/watchdog clients；quota
+root daemon 也新增 exact live-verification operation。下一项顺序工作是补 terminal outbox factory，随后完成
+pinned principal/config/key/ACL commissioning，再进入真实 image/host qualification 与
 process-kill PostgreSQL campaign，而不是扩张
 controller authority。checkpoint 与 external reconciliation
 仍需独立 typed contracts，不能由 generic retry 猜测。

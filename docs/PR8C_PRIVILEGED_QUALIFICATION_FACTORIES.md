@@ -3,6 +3,9 @@
 - Status: root-side source composition complete; not commissioned on a target host
 - Date: 2026-08-27
 
+Subsequent PR-8d has now supplied the node factory described below; the terminal-outbox factory
+and target-host commissioning remain open.
+
 ## Closed source surface
 
 PR-8c supplies the checked-in factories named by the workspace, quota and watchdog entries in the

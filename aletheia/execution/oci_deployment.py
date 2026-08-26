@@ -2062,9 +2062,20 @@ class LoopbackOutputQuotaProvisioningService:
     same generation or fails closed; it never provisions a replacement for an expected receipt.
     """
 
-    def __init__(self, deployment: LoopbackQuotaProvisionerDeploymentPin) -> None:
+    def __init__(
+        self,
+        deployment: LoopbackQuotaProvisionerDeploymentPin,
+        *,
+        verification_policy: DeploymentPinnedOCIPolicy,
+        runtime_journal_root: Path,
+    ) -> None:
         self._deployment = LoopbackQuotaProvisionerDeploymentPin.model_validate(
             deployment.model_dump(mode="python")
+        )
+        self._verification_controller = LoopbackOutputQuotaController(
+            policy=verification_policy,
+            journal_root=Path(runtime_journal_root),
+            backing_root=Path(self._deployment.backing_root),
         )
         self._stop_event = threading.Event()
 
@@ -3005,15 +3016,55 @@ class LoopbackOutputQuotaProvisioningService:
             raise OCIOutputQuotaError("quota service client credentials differ from deployment")
         raw = self._receive_line(connection)
         request = json.loads(raw)
-        if not isinstance(request, dict) or request.pop("operation", None) != "ensure":
+        if not isinstance(request, dict) or canonical_json_bytes(request) != raw:
+            raise OCIOutputQuotaError("quota service request is not one canonical object")
+        operation = request.pop("operation", None)
+        if operation == "ensure":
+            if set(request) != {
+                "node_manifest_sha256",
+                "node_id",
+                "boot_id",
+                "execution_id",
+                "attempt_id",
+                "intent_sha256",
+                "output_root",
+                "output_quota_bytes",
+                "expected_receipt",
+            }:
+                raise OCIOutputQuotaError("quota ensure request fields are not exact")
+            receipt = self.ensure(request)
+            response = {
+                "schema": "aletheia.loopback_output_quota_response.v1",
+                "deployment_sha256": self._deployment.deployment_sha256,
+                "service_pid": os.getpid(),
+                "receipt": receipt.model_dump(mode="json"),
+            }
+        elif operation == "verify":
+            if set(request) != {
+                "output_root",
+                "output_quota_bytes",
+                "execution_id",
+                "infrastructure_attempt_id",
+                "runtime_id",
+                "expected_evidence_sha256",
+            }:
+                raise OCIOutputQuotaError("quota verification request fields are not exact")
+            evidence = self._verification_controller.verify_enforced_quota(
+                output_root=Path(self._required_text(request, "output_root")),
+                output_quota_bytes=self._required_int(request, "output_quota_bytes"),
+                execution_id=self._required_text(request, "execution_id"),
+                infrastructure_attempt_id=self._required_text(request, "infrastructure_attempt_id"),
+                runtime_id=self._required_text(request, "runtime_id"),
+                expected_evidence_sha256=self._required_text(request, "expected_evidence_sha256"),
+            )
+            response = {
+                "schema": "aletheia.loopback_output_quota_verification_response.v1",
+                "deployment_sha256": self._deployment.deployment_sha256,
+                "service_pid": os.getpid(),
+                "evidence_sha256": evidence,
+            }
+        else:
             raise OCIOutputQuotaError("quota service request operation is not allowed")
-        receipt = self.ensure(request)
-        response = {
-            "schema": "aletheia.loopback_output_quota_response.v1",
-            "deployment_sha256": self._deployment.deployment_sha256,
-            "service_pid": os.getpid(),
-            "receipt": receipt.model_dump(mode="json"),
-        }
         connection.sendall(canonical_json_bytes(response) + b"\n")
 
     @staticmethod
@@ -3172,7 +3223,8 @@ class LoopbackOutputQuotaProvisionerClient:
         }
         response, peer_pid = self._request(request)
         if (
-            response.get("schema") != "aletheia.loopback_output_quota_response.v1"
+            set(response) != {"schema", "deployment_sha256", "service_pid", "receipt"}
+            or response.get("schema") != "aletheia.loopback_output_quota_response.v1"
             or response.get("deployment_sha256") != self._deployment.deployment_sha256
             or response.get("service_pid") != peer_pid
         ):
@@ -3197,6 +3249,39 @@ class LoopbackOutputQuotaProvisionerClient:
         ):
             raise OCIOutputQuotaError("quota service receipt differs from exact node request")
         return receipt
+
+    def verify_enforced_quota(
+        self,
+        *,
+        output_root: Path,
+        output_quota_bytes: int,
+        execution_id: str,
+        infrastructure_attempt_id: str,
+        runtime_id: str,
+        expected_evidence_sha256: str,
+    ) -> str:
+        """Ask the same root service to freshly verify the live loop/mount generation."""
+
+        response, peer_pid = self._request(
+            {
+                "operation": "verify",
+                "output_root": str(output_root),
+                "output_quota_bytes": output_quota_bytes,
+                "execution_id": execution_id,
+                "infrastructure_attempt_id": infrastructure_attempt_id,
+                "runtime_id": runtime_id,
+                "expected_evidence_sha256": expected_evidence_sha256,
+            }
+        )
+        if (
+            set(response) != {"schema", "deployment_sha256", "service_pid", "evidence_sha256"}
+            or response.get("schema") != "aletheia.loopback_output_quota_verification_response.v1"
+            or response.get("deployment_sha256") != self._deployment.deployment_sha256
+            or response.get("service_pid") != peer_pid
+            or response.get("evidence_sha256") != expected_evidence_sha256
+        ):
+            raise OCIOutputQuotaError("quota verification response differs from exact request")
+        return expected_evidence_sha256
 
     def _request(self, request: Mapping[str, object]) -> tuple[dict[str, object], int]:
         payload = canonical_json_bytes(dict(request)) + b"\n"
@@ -3224,6 +3309,8 @@ class LoopbackOutputQuotaProvisionerClient:
             raise OCIOutputQuotaError("quota service response is not JSON") from exc
         if not isinstance(response, dict):
             raise OCIOutputQuotaError("quota service response is not one object")
+        if canonical_json_bytes(response) != raw:
+            raise OCIOutputQuotaError("quota service response is not canonical")
         return response, peer_pid
 
 

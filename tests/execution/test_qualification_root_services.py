@@ -96,7 +96,9 @@ def _configs(tmp_path: Path):
     workspace_process = _process(QualificationServiceRole.WORKSPACE)
     quota_process = _process(QualificationServiceRole.QUOTA)
     watchdog_process = _process(QualificationServiceRole.WATCHDOG)
-    policy = _oci_policy(tmp_path)
+    policy = _oci_policy(tmp_path).model_copy(
+        update={"workload_uid": spec.node_uid, "workload_gid": spec.node_gid}
+    )
     watchdog = observation.watchdog_deployment.model_copy(
         update={
             "policy_sha256": policy.policy_sha256,
@@ -114,11 +116,13 @@ def _configs(tmp_path: Path):
             workspace_deployment=_workspace_deployment(observation),
         ),
         quota_process,
-        root_services.QualificationQuotaServiceConfigV1(
+        root_services.QualificationQuotaServiceConfigV2(
             deployment_id=quota_process.deployment_id,
             process_config_binding_sha256=qualification_service_process_config_binding_sha256(
                 quota_process
             ),
+            oci_policy=policy,
+            runtime_journal_root=spec.runtime_journal_root,
             quota_deployment=observation.quota_deployment,
         ),
         watchdog_process,
