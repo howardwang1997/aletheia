@@ -35,10 +35,9 @@ duplicate/rebound configuration, source-byte drift and archive inode replacement
 
 ## Remaining release gates
 
-Two PR-7e concrete factories remain: independent admission and atomic admission/Kernel
-incorporation. The next ordered source slice is the independent admission-decision signer. It must
-own only the admission key, reverify the committed validation and DB admission challenge, and remain
-unable to fill a slot or mutate the Kernel.
+PR-7o subsequently closes the independent admission-decision signer with only the admission key,
+complete committed-validation/challenge replay and live PostgreSQL decision time. One PR-7e
+concrete factory remains: atomic admission/Kernel incorporation.
 
 No target host is commissioned. Exact PostgreSQL read ACLs, Linux accounts/socket ownership,
 systemd supervision, alerts and a fresh multi-process PostgreSQL kill/restart campaign remain
@@ -46,6 +45,7 @@ mandatory. This source and its tests are engineering evidence, not deployment pr
 result.
 
 See [ADR 0071](architecture/0071-committed-validation-source-rpc-service.md), the
+[PR-7o independent-admission guide](PR7O_INDEPENDENT_ADMISSION_SERVICE.md), the
 [PR-7m validator guide](PR7M_INDEPENDENT_F9_V2_VALIDATION_SERVICE.md), the
 [PR-7e server guide](PR7E_EXTERNAL_RPC_SERVICE_RUNTIME.md), and the
 [PR-5 controller guide](PR5_DURABLE_SCIENTIFIC_CONTROLLER.md).

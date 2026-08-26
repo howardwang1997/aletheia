@@ -1048,6 +1048,7 @@ def _issue_admission_decision(
         admission_authority_pin=case.admission_pin,
         database_authority_pin=case.database_pin,
         private_key=ADMISSION_PRIVATE_KEY,
+        decision_clock=lambda: issued_at,
     )
     return decision, committed_validation
 

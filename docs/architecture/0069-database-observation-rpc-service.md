@@ -43,4 +43,4 @@ publish validator evidence.
   custody, Linux supervision, and live crash/restart evidence remain release gates.
 - PR-7m subsequently closes independent F9-v2 validation. Three concrete factories remain; the
   next is the committed-validation source at that checkpoint. PR-7n subsequently closes that
-  source, leaving independent admission next and two factories.
+  source, and PR-7o closes independent admission, leaving only atomic Kernel incorporation.

@@ -53,6 +53,7 @@ full public-custody replay, a conservative exact-content assessor and write-once
 Three PR-7e concrete factories remain: committed-validation source, independent admission, and
 atomic admission/Kernel incorporation at that checkpoint. PR-7n subsequently closes the keyless
 committed-validation source, leaving independent admission as the next of two factories.
+PR-7o subsequently closes independent admission, leaving only atomic Kernel incorporation.
 
 No target host is commissioned. Exact PostgreSQL write/read ACLs, Linux account/socket and key
 ownership, systemd supervision, alerts, key rotation/revocation, and a fresh multi-process

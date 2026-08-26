@@ -1609,6 +1609,10 @@ def test_legacy_and_migration_python_source_ast_graphs_are_frozen() -> None:
         in legacy_paths
     )
     assert (
+        REPOSITORY_ROOT / "aletheia" / "research_controller_independent_admission_runtime.py"
+        in legacy_paths
+    )
+    assert (
         REPOSITORY_ROOT / "aletheia" / "research_controller_continuation_runtime.py" in legacy_paths
     )
     assert (

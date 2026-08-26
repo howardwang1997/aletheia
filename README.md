@@ -167,8 +167,8 @@ analysis, signs the exact v2 world-model/prediction assessment, and fresh-rehash
 campaign binding per raw run without importing legacy F9-v1. PR-7m now gives it a concrete
 two-operation RPC factory with an isolated validator key, public-only Kernel/PR-4 custody, a
 conservative exact-content assessment catalog and a writable campaign archive. General domain
-assessment, admitter/Kernel-signer deployments, and the terminal target-host ACL/custody campaign
-remain uncommissioned.
+assessment and the terminal target-host ACL/custody campaign remain uncommissioned; PR-7o later
+closes the isolated admitter composition, while atomic database/Kernel incorporation remains.
 PR-7d now supplies the complete checked-in worker factory: it composes all eight active adapters
 through eleven operation-closed Unix RPC clients, verifies service receipts with public Ed25519
 keys and Linux peer pins, and uses read-only Kernel CAS and terminal-lineage recovery. The three
@@ -213,7 +213,13 @@ it is never promoted to scientific evidence.
 PR-7n closes the committed-validation read boundary: a keyless single-operation source resolves the
 exact durable slot row and re-verifies its DB signature, independent validation, F9-v2 campaign,
 Kernel action, PR-4 lineage and artifact bytes before returning it. Caller material cannot replace
-the stored receipt. Two concrete service factories remain.
+the stored receipt.
+PR-7o closes the independent-admission boundary: one isolated process owns only the admitter key,
+re-verifies the complete committed-validation and live DB-challenge chain, and mechanically signs
+either an admitted confirmation or a rejection carrying the validation blockers. Decision time is
+sampled from PostgreSQL inside the challenge's half-open window, preventing expired challenge
+replay. The proposal cannot fill the slot or mutate the Kernel. One concrete service factory
+remains: atomic admission/Kernel incorporation.
 The
 continuation step now reconstructs the only allowed observation projection from signed validation
 and Kernel incorporation, replays the exact compiler/admission chain twice, pins assessor
@@ -234,7 +240,7 @@ reconstructs every stored draft on retry, emits explicit unknown/unassessed cost
 and exposes one source-pinned RPC operation over an inode/ACL-pinned private spool. It has no model
 callback, signing key, budget/risk approval, execution port, or direct Kernel mutation. Target-host
 commissioning is still pending. Knowledge-grounded proposal/protocol intelligence, the independent
-Kernel signer, the other two concrete service factories, socket/PostgreSQL ACL commissioning,
+Kernel signer, the final atomic-incorporation service factory, socket/PostgreSQL ACL commissioning,
 and the live multi-process campaign remain incomplete. The PR-2 store also
 still has one immutable policy epoch and
 `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
@@ -258,6 +264,7 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-7l database-observation guide](docs/PR7L_DATABASE_OBSERVATION_SERVICE.md), plus
 [PR-7m independent F9-v2 validation guide](docs/PR7M_INDEPENDENT_F9_V2_VALIDATION_SERVICE.md), plus
 [PR-7n committed-validation source guide](docs/PR7N_COMMITTED_VALIDATION_SOURCE_SERVICE.md), plus
+[PR-7o independent-admission guide](docs/PR7O_INDEPENDENT_ADMISSION_SERVICE.md), plus
 [ADR 0056](docs/architecture/0056-independent-observation-controller-steps.md) and
 [ADR 0057](docs/architecture/0057-graph-scoped-f9-v2-validation-campaign.md), plus
 [ADR 0058](docs/architecture/0058-durable-powerless-action-proposal-steps.md), and
@@ -273,7 +280,8 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [ADR 0068](docs/architecture/0068-verified-raw-run-source-rpc-service.md), and
 [ADR 0069](docs/architecture/0069-database-observation-rpc-service.md), and
 [ADR 0070](docs/architecture/0070-independent-f9-v2-validation-rpc-service.md), and
-[ADR 0071](docs/architecture/0071-committed-validation-source-rpc-service.md).
+[ADR 0071](docs/architecture/0071-committed-validation-source-rpc-service.md), and
+[ADR 0072](docs/architecture/0072-independent-admission-rpc-service.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,

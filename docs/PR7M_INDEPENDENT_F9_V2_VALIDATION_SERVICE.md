@@ -50,8 +50,8 @@ identity and guarded factory loading.
 
 PR-7n subsequently closes the keyless committed-validation source with full DB, validator, F9-v2,
 Kernel and PR-4 historical verification. Two PR-7e concrete factories remain: independent
-admission and atomic admission/Kernel incorporation. The next ordered source slice is the
-independent admission-decision signer.
+admission and atomic admission/Kernel incorporation at that checkpoint. PR-7o subsequently closes
+the independent admission-decision signer, leaving only atomic incorporation.
 
 No target host is commissioned. Exact PostgreSQL read ACLs, Linux accounts/socket/key ownership,
 systemd supervision, alerts, key rotation/revocation, a general reviewed assessor and a fresh
