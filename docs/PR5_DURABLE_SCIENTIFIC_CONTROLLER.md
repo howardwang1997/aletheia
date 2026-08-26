@@ -143,8 +143,11 @@ there is intentionally no catch-all model callback and no legacy `ExperimentDriv
 The `REGISTER_EXECUTION`, `COMMIT_VALIDATION`, and `COMMIT_ADMISSION` production-boundary adapters
 are now checked in. Validation reconstructs a deterministic raw envelope from the SEA row and a
 full verified PR-4 terminal-material projection, while admission reloads the exact canonical
-committed-validation row. Both steps require separately bound external services; only the atomic
-admission coordinator may report simultaneous observation and Kernel authority.
+committed-validation row. The three proposal steps now also have a shared proposal-only source
+slice: it re-audits Kernel/CAS and compilation or continuation receipts, bounds provider choices,
+and write-once materializes an unsigned command proposal. It can only return `awaiting_authority`.
+These steps require separately bound external services; only the atomic admission coordinator may
+report simultaneous observation and Kernel authority.
 
 ## Remaining gates
 
@@ -164,8 +167,11 @@ and periodic delivery reconciliation. PR-7c supplies a public-key-only terminal 
 that replays exact PR-4 lineage, but not its target-host ACL/custody/restart evidence. Neither slice
 supplies scientific-step authority.
 PR-7b supplies the exhaustive step-specific routing/authority manifest boundary and forwards the
-exact audited recovery projection. Three active step adapters now have production-boundary source
-slices, but the complete external service composition remains uncommissioned.
+exact audited recovery projection. Six active steps now have production-boundary source slices:
+the three proposal steps plus execution registration, validation, and admission. The compiler and
+continuation step services, the independent Kernel command authority, and the complete external
+service/runtime composition remain uncommissioned. See
+[ADR 0058](architecture/0058-durable-powerless-action-proposal-steps.md).
 The F9-v1 migration adapter does not satisfy that production gate; the new F9-v2 source slice does
 not by itself prove that a deployed validator process or its signing key is isolated.
 Remote/GPU execution, external-effect actions,

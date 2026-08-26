@@ -114,9 +114,9 @@
       "research_store.transactional_outbox": "The authority-minimal PostgreSQLResearchKernelOutbox caller-owned publication surface is composed by the controller dispatcher; the full-store transaction-owning mark_outbox_published wrapper remains an explicit uncalled compatibility surface."
     },
     "direct_file_sink_scheme": "ast_reviewed_direct_file_sink_v1",
-    "direct_file_sink_scope_count": 179,
-    "direct_file_sink_call_count": 201,
-    "direct_file_sink_graph_sha256": "ef8597bba11444e2425fbf4a29c676b476dd357635d684bdd33a8cdd854712a2",
+    "direct_file_sink_scope_count": 180,
+    "direct_file_sink_call_count": 202,
+    "direct_file_sink_graph_sha256": "a7e4b31543240246ca59b72e7b217caaad9a83c1ef06e16dc8b7f3c3439350ce",
     "direct_file_sink_review_limit": "The baseline covers direct Path/open/os.write, archive-open modes, atomic replace, serializer, dataframe and plotting file sinks across the declared aletheia, deployed docker-worker and recursive operational-script roots. Indirect library-internal writes, arbitrary dynamic dispatch and external systems remain separate reviewed boundaries.",
     "direct_file_sink_profiles": {
       "scientific_artifact": {
@@ -165,6 +165,14 @@
         "target_owner": "aletheia.execution.node_agent",
         "migration_mode": "operational_rehome",
         "cutover_pr": "PR-4",
+        "dual_write_policy": "none"
+      },
+      "controller_proposal_custody": {
+        "authority_class": "operational_state",
+        "current_owner_rule": "sink_module",
+        "target_owner": "aletheia.research_controller.action_proposal_service.WriteOnceActionProposalSpool",
+        "migration_mode": "retain_powerless_write_once_proposal_custody",
+        "cutover_pr": "PR-7",
         "dual_write_policy": "none"
       },
       "qualification_artifact_custody": {
@@ -271,6 +279,7 @@
       "aletheia.observations.f9_v2_validation": "scientific_observation",
       "aletheia.orchestrator.": "operational_workspace",
       "aletheia.programs.": "scientific_program",
+      "aletheia.research_controller.action_proposal_service": "controller_proposal_custody",
       "aletheia.reproducibility.": "scientific_artifact",
       "aletheia.research_store.cas": "research_kernel_cas",
       "aletheia.scheduler.driver": "scientific_artifact",
