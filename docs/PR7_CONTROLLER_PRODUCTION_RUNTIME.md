@@ -136,6 +136,12 @@ adapter set and exact recovery-projection forwarding. It deliberately does not p
 step services listed above; see
 [the PR-7b guide](PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md).
 
+The three proposal steps now have a proposal-only source implementation with exact Kernel/receipt
+re-audit, bounded provider drafts, and write-once unsigned-command custody. They still need a
+commissioned provider endpoint and an independent Kernel command authority; compiler and
+continuation step services also remain open. See
+[ADR 0058](architecture/0058-durable-powerless-action-proposal-steps.md).
+
 PR-7c closes the source-code terminal verification/composition gap. The read-only PostgreSQL ACL,
 filesystem/key custody, supervisor invocation, and live process-kill behavior must still be proven
 on the exact deployment host; see
