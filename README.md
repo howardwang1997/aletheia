@@ -193,9 +193,14 @@ keyless assessor maps only recognized same/different bins to support/out-of-supp
 ambiguous, or missing predictions request redesign instead of fabricating a fork. Every fit has a
 service-owned write-once artifact that is fresh-rehashed on restart, and the single-operation RPC
 factory pins its source bytes, read-only Kernel CAS, database revision, authority policy and
-artifact-root inode/ACL. Target-host commissioning is still pending. The production proposal
-provider, independent Kernel signer, other ten concrete service factories, socket/PostgreSQL ACL
-commissioning, and live multi-process campaign remain incomplete. The PR-2 store also
+artifact-root inode/ACL. PR-7g closes the next concrete composition with a conservative
+deterministic action-proposal provider. It selects only audited targets and required kinds,
+reconstructs every stored draft on retry, emits explicit unknown/unassessed cost/risk identities,
+and exposes one source-pinned RPC operation over an inode/ACL-pinned private spool. It has no model
+callback, signing key, budget/risk approval, execution port, or direct Kernel mutation. Target-host
+commissioning is still pending. Knowledge-grounded proposal intelligence, the independent Kernel
+signer, the other nine concrete service factories, socket/PostgreSQL ACL commissioning, and the
+live multi-process campaign remain incomplete. The PR-2 store also
 still has one immutable policy epoch and
 `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
 the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
@@ -210,6 +215,7 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-7d worker-factory guide](docs/PR7D_COMPLETE_CONTROLLER_WORKER.md), plus
 [PR-7e external-service guide](docs/PR7E_EXTERNAL_RPC_SERVICE_RUNTIME.md), plus
 [PR-7f continuation-service guide](docs/PR7F_DETERMINISTIC_CONTINUATION_SERVICE.md), plus
+[PR-7g action-proposal guide](docs/PR7G_DETERMINISTIC_ACTION_PROPOSAL_SERVICE.md), plus
 [ADR 0056](docs/architecture/0056-independent-observation-controller-steps.md) and
 [ADR 0057](docs/architecture/0057-graph-scoped-f9-v2-validation-campaign.md), plus
 [ADR 0058](docs/architecture/0058-durable-powerless-action-proposal-steps.md), and
@@ -217,7 +223,8 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [ADR 0060](docs/architecture/0060-durable-continuation-assessment-step.md), and
 [ADR 0061](docs/architecture/0061-keyless-controller-worker-composition.md), and
 [ADR 0062](docs/architecture/0062-operation-closed-external-rpc-service-runtime.md), and
-[ADR 0063](docs/architecture/0063-deterministic-continuation-rpc-service.md).
+[ADR 0063](docs/architecture/0063-deterministic-continuation-rpc-service.md), and
+[ADR 0064](docs/architecture/0064-deterministic-action-proposal-rpc-service.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,

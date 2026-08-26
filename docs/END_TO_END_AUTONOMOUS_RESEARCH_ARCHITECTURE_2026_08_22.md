@@ -1717,9 +1717,27 @@ filesystem/registry custody、private-key absence、supervisor/alert 或 live pr
   callback。
 
 该切片关闭 continuation provider/factory 和 source-level assessment artifact custody，仍不是 target-host
-commissioning evidence；其余十项 external service factory、socket/PostgreSQL/filesystem ACL、supervisor 与
-live process-kill campaign 仍待完成。详见 `PR7F_DETERMINISTIC_CONTINUATION_SERVICE.md` 与
+commissioning evidence；在 PR-7f checkpoint 其余十项 external service factory、
+socket/PostgreSQL/filesystem ACL、supervisor 与 live process-kill campaign 仍待完成。详见
+`PR7F_DETERMINISTIC_CONTINUATION_SERVICE.md` 与
 `architecture/0063-deterministic-continuation-rpc-service.md`。
+
+### PR-7g：Deterministic action-proposal RPC service
+
+- checked-in conservative provider 只从 fresh audited request 的 exact target/allowed kind 选择；redesign 与
+  follow-up 的 required kind 不可被 provider 改写；
+- action identity 由 request/target/kind/policy 内容导出，restart 对 durable winner 的全部 provider-owned
+  字段重新构造验证；
+- cost/risk receipt 明确分别是 unknown/unassessed，既不批准预算/安全，也不赋予 execution 或 Kernel 权限；
+- 单 operation RPC factory 冻结 database revision、read-only Kernel CAS、powerless authority/policy、provider
+  source bytes 与 private spool device/inode/UID/GID/mode；不加载 signing key、model callback 或 execution
+  port。
+
+该切片关闭一个安全 baseline provider/factory 与 source-level spool custody，不等于 knowledge-grounded
+proposal intelligence 或 target-host commissioning evidence；其余九项 external service factory、独立 Kernel
+command signer、ACL/supervisor 与 live process-kill campaign 仍待完成。详见
+`PR7G_DETERMINISTIC_ACTION_PROPOSAL_SERVICE.md` 与
+`architecture/0064-deterministic-action-proposal-rpc-service.md`。
 
 PR-5 的本地 vertical cut 已完成；现在仍须完成 PR-4 target-host campaign、PR-5 production
 controller/validator/signer process commissioning 与 terminal target-host commissioning，之后才依据 fresh inventory
@@ -1793,8 +1811,10 @@ public-key-only verified terminal source 与 checked-in terminal composition；�
 仍待 deployment campaign。PR-6 production step handler/candidate image 与原子 execution registration 已有
 源码和本地测试；PR-5 graph-scoped F9-v2 validator 也已有不依赖 legacy F9-v1 的签名、write-once/fresh-rehash
 源码切片，但尚未部署其 RPC、生产 assessor 或 key custody。三个 proposal step 也已有 re-audit、bounded
-draft、unsigned command materialization 与 write-once exact-retry 源码切片；仍缺生产 provider 与独立
-command signer 进程。protocol compilation step service/custody 源码切片现已完成：它双重锁定重放
+draft、unsigned command materialization 与 write-once exact-retry 源码切片；**PR-7g** 现已增加
+deterministic baseline provider、restart full-draft reconstruction 与单 operation RPC factory，但
+knowledge-grounded provider 和独立 command signer 进程仍缺。protocol compilation step service/custody
+源码切片现已完成：它双重锁定重放
 authorized Kernel/CAS context、固定 author/category/catalog/compiler policy、纯函数重编译，并把 accepted 或
 blocked result 与连续 revision lineage 写入 append-only registry；common RPC server 已由 PR-7e 提供，但
 production provider factory/receipt-key instance 与 ACL 尚未 commissioned。continuation step service/custody 源码切片
@@ -1805,8 +1825,10 @@ Unix RPC port 组合，response 使用独立 Ed25519 transport receipt 验证，
 lineage 与 read-only Kernel CAS；worker 不加载科学签名私钥。**PR-7e** 已补齐 common external RPC server
 runtime：closed payload/result、双向 Linux peer identity、socket parent/inode、service-owned `0400` transport
 key 与 byte-pinned factory 均 fail closed；这仍不是十一项 concrete authority service commissioning。
-production assessor/provider/signer factory、assessment artifact fresh-byte custody 与 ACL 仍待完成。下一项
-顺序工作是具体 external authority process composition，随后是真实 image/host qualification 与
+**PR-7f** 与 **PR-7g** 分别完成 deterministic continuation 和 conservative action-proposal 的 concrete
+source factory；其余 compiler/authorization/validation/admission/Kernel signer factory 与 ACL 仍待完成。
+下一项顺序工作是 protocol-compilation concrete provider/factory，随后继续其余 external authority process
+composition，再进入真实 image/host qualification 与
 process-kill PostgreSQL campaign，而不是扩张
 controller authority。checkpoint 与 external reconciliation
 仍需独立 typed contracts，不能由 generic retry 猜测。

@@ -43,7 +43,9 @@ Kernel commit.
 - A stale tick, rebound receipt, changed CAS action, unsafe spool path/mode, or noncanonical bytes
   fail closed before a worker receipt is emitted.
 - The controller worker still owns no Kernel signing key and has no direct Kernel mutation path.
-- This slice does not commission a production proposal model/provider, RPC, Kernel command signer,
-  worker runtime factory, target-host filesystem policy, or process-kill campaign. Later source
-  slices add compilation and continuation services, but their production providers, receipt/artifact
-  custody, ACL/policy composition, and worker wiring remain separate gates.
+- ADR 0064 subsequently supplies a conservative deterministic provider, complete stored-draft
+  reconstruction, pinned-spool custody, and the single-operation PR-7e RPC factory. It deliberately
+  does not claim knowledge-grounded proposal intelligence.
+- This slice does not commission the proposal service account, RPC socket/ACL, independent Kernel
+  command signer, target-host filesystem policy, or process-kill campaign. Those remain separate
+  deployment gates.

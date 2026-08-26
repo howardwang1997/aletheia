@@ -28,6 +28,7 @@ from aletheia.research_controller.action_proposals import (
     ActionProposalBlocked,
     ActionProposalContextSourcePort,
     ActionProposalDraftProviderPort,
+    ActionProposalDraftVerificationPort,
     ActionProposalError,
     ActionProposalSubmissionStorePort,
     ActionProposalTarget,
@@ -476,7 +477,17 @@ class PostgreSQLActionProposalContextSource(ActionProposalContextSourcePort):
 class WriteOnceActionProposalSpool(ActionProposalSubmissionStorePort):
     """Private write-once request index with first-writer-wins process-safe publication."""
 
-    def __init__(self, root: Path, *, authority_binding: ControllerStepAuthorityBinding) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        authority_binding: ControllerStepAuthorityBinding,
+        owner_uid: int | None = None,
+        owner_gid: int | None = None,
+        device_id: int | None = None,
+        inode: int | None = None,
+        directory_mode: int | None = None,
+    ) -> None:
         binding = ControllerStepAuthorityBinding.model_validate(
             authority_binding.model_dump(mode="python")
         )
@@ -485,6 +496,13 @@ class WriteOnceActionProposalSpool(ActionProposalSubmissionStorePort):
             or binding.key_id is not None
         ):
             raise ValueError("action proposal spool requires a powerless proposal authority")
+        custody_values = (owner_uid, owner_gid, device_id, inode, directory_mode)
+        if any(value is not None for value in custody_values) and any(
+            value is None for value in custody_values
+        ):
+            raise ValueError("action proposal spool custody pin must be complete")
+        if directory_mode not in (None, 0o700):
+            raise ValueError("action proposal spool custody requires mode 0700")
         candidate = Path(root)
         if candidate.is_symlink():
             raise ActionProposalError("action proposal spool root cannot be a symlink")
@@ -498,8 +516,39 @@ class WriteOnceActionProposalSpool(ActionProposalSubmissionStorePort):
             raise ActionProposalError("action proposal spool root must be a private directory")
         self.root = candidate.resolve(strict=True)
         self.authority_binding = binding
+        self._custody_pin = (
+            None if owner_uid is None else (owner_uid, owner_gid, device_id, inode, directory_mode)
+        )
+        self._verify_root()
+
+    def _verify_root(self) -> None:
+        try:
+            metadata = self.root.lstat()
+            resolved = self.root.resolve(strict=True)
+        except OSError as exc:
+            raise ActionProposalError("action proposal spool root is unavailable") from exc
+        if (
+            resolved != self.root
+            or self.root.is_symlink()
+            or not stat.S_ISDIR(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) != 0o700
+        ):
+            raise ActionProposalError("action proposal spool root changed custody")
+        if (
+            self._custody_pin is not None
+            and (
+                metadata.st_uid,
+                metadata.st_gid,
+                metadata.st_dev,
+                metadata.st_ino,
+                stat.S_IMODE(metadata.st_mode),
+            )
+            != self._custody_pin
+        ):
+            raise ActionProposalError("action proposal spool root differs from its custody pin")
 
     def load(self, *, request_sha256: str) -> SubmittedActionProposal | None:
+        self._verify_root()
         target = self._path(request_sha256)
         if not self._prepare_parent(target, create=False):
             return None
@@ -516,6 +565,7 @@ class WriteOnceActionProposalSpool(ActionProposalSubmissionStorePort):
         )
 
     def put_once(self, submission: SubmittedActionProposal) -> SubmittedActionProposal:
+        self._verify_root()
         submission = self._verify_archive_binding(submission)
         payload = canonical_json_bytes(submission)
         if len(payload) > _MAX_SUBMISSION_BYTES:
@@ -575,6 +625,7 @@ class WriteOnceActionProposalSpool(ActionProposalSubmissionStorePort):
         return target
 
     def _prepare_parent(self, target: Path, *, create: bool) -> bool:
+        self._verify_root()
         current = self.root
         for component in target.parent.relative_to(self.root).parts:
             current /= component
@@ -593,6 +644,10 @@ class WriteOnceActionProposalSpool(ActionProposalSubmissionStorePort):
                 current.is_symlink()
                 or not stat.S_ISDIR(metadata.st_mode)
                 or stat.S_IMODE(metadata.st_mode) != 0o700
+                or (
+                    self._custody_pin is not None
+                    and (metadata.st_uid, metadata.st_gid, metadata.st_dev) != self._custody_pin[:3]
+                )
             ):
                 raise ActionProposalError("action proposal spool parent chain became unsafe")
         return True
@@ -621,6 +676,10 @@ class WriteOnceActionProposalSpool(ActionProposalSubmissionStorePort):
                 not stat.S_ISREG(metadata.st_mode)
                 or metadata.st_nlink != 1
                 or stat.S_IMODE(metadata.st_mode) != 0o600
+                or (
+                    self._custody_pin is not None
+                    and (metadata.st_uid, metadata.st_gid, metadata.st_dev) != self._custody_pin[:3]
+                )
             ):
                 raise ActionProposalError("action proposal spool lock is not private regular data")
             fcntl.flock(descriptor, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
@@ -637,7 +696,15 @@ class WriteOnceActionProposalSpool(ActionProposalSubmissionStorePort):
             pending_metadata = pending.lstat()
         except FileNotFoundError:
             return
-        if pending.is_symlink() or not stat.S_ISREG(pending_metadata.st_mode):
+        if (
+            pending.is_symlink()
+            or not stat.S_ISREG(pending_metadata.st_mode)
+            or (
+                self._custody_pin is not None
+                and (pending_metadata.st_uid, pending_metadata.st_gid, pending_metadata.st_dev)
+                != self._custody_pin[:3]
+            )
+        ):
             raise ActionProposalError("action proposal pending publication is unsafe")
         try:
             target_metadata = target.lstat()
@@ -715,6 +782,10 @@ class WriteOnceActionProposalSpool(ActionProposalSubmissionStorePort):
                 not stat.S_ISREG(before.st_mode)
                 or before.st_nlink != 1
                 or stat.S_IMODE(before.st_mode) != 0o400
+                or (
+                    self._custody_pin is not None
+                    and (before.st_uid, before.st_gid, before.st_dev) != self._custody_pin[:3]
+                )
                 or before.st_size < 1
                 or before.st_size > _MAX_SUBMISSION_BYTES
             ):
@@ -762,12 +833,14 @@ class ActionProposalMaterializationService:
         *,
         context_source: ActionProposalContextSourcePort,
         provider: ActionProposalDraftProviderPort,
+        draft_verifier: ActionProposalDraftVerificationPort,
         submissions: ActionProposalSubmissionStorePort,
         clock: ServiceClock,
     ) -> None:
         if (
             not callable(getattr(context_source, "load_request", None))
             or not callable(getattr(provider, "propose_action", None))
+            or not callable(getattr(draft_verifier, "verify_action_proposal_draft", None))
             or not callable(getattr(submissions, "load", None))
             or not callable(getattr(submissions, "put_once", None))
             or not callable(clock)
@@ -784,6 +857,7 @@ class ActionProposalMaterializationService:
             raise ValueError("action proposal service requires a powerless proposal authority")
         self._context_source = context_source
         self._provider = provider
+        self._draft_verifier = draft_verifier
         self._submissions = submissions
         self._clock = clock
         self.authority_binding = binding
@@ -810,7 +884,10 @@ class ActionProposalMaterializationService:
                 raise ActionProposalError("action proposal context source changed the exact tick")
             existing = self._submissions.load(request_sha256=request.request_sha256)
             if existing is None:
-                draft = self._provider.propose_action(request)
+                draft = self._draft_verifier.verify_action_proposal_draft(
+                    request=request,
+                    draft=self._provider.propose_action(request),
+                )
                 candidate = materialize_action_proposal(
                     request=request,
                     draft=draft,
@@ -818,6 +895,14 @@ class ActionProposalMaterializationService:
                     submitted_at=self._clock(),
                 )
                 existing = self._submissions.put_once(candidate)
+            verified_draft = self._draft_verifier.verify_action_proposal_draft(
+                request=request,
+                draft=existing.draft,
+            )
+            if verified_draft != existing.draft:
+                raise ActionProposalError(
+                    "action proposal draft verifier changed the durable submission"
+                )
             return verify_submitted_action_proposal(
                 submission=existing,
                 wakeup=wakeup,
