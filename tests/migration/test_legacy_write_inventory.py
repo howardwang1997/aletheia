@@ -2209,10 +2209,16 @@ def test_pr5_controller_and_observation_tables_have_explicit_split_authority() -
     assert "same PostgreSQL transaction" in admission["current_commit_boundary"]
     assert "sole Kernel scientific authority" in admission["scientific_semantics"]
 
-    uncomposed = {
-        "observations.protocol_compilation",
-        "observations.continuation_receipt",
+    compilation_caller = {
+        "module": "aletheia.research_controller.protocol_compilation_step",
+        "symbol": "DurableProtocolCompilationService.compile_and_register",
     }
+    compilation = writes["observations.protocol_compilation"]
+    assert compilation["call_sites"] == [compilation_caller]
+    assert compilation["allowed_legacy_callers"] == [compilation_caller]
+    assert "worker runtime factory" in compilation["blocker"]
+
+    uncomposed = {"observations.continuation_receipt"}
     exceptions = inventory["policy"]["writer_surface_static_resolution_exceptions"]
     assert uncomposed <= exceptions.keys()
     for write_id in uncomposed:

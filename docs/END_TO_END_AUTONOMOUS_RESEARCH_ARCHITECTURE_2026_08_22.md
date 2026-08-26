@@ -1744,8 +1744,11 @@ public-key-only verified terminal source 与 checked-in terminal composition；�
 源码和本地测试；PR-5 graph-scoped F9-v2 validator 也已有不依赖 legacy F9-v1 的签名、write-once/fresh-rehash
 源码切片，但尚未部署其 RPC、生产 assessor 或 key custody。三个 proposal step 也已有 re-audit、bounded
 draft、unsigned command materialization 与 write-once exact-retry 源码切片；仍缺生产 provider、独立 command
-signer 和 worker composition。下一项顺序工作是完成 protocol compilation 与 continuation step service/custody，
-再冻结完整 worker factory；随后才进入真实 image/host qualification、外部 authority process composition 与
+signer 和 worker composition。protocol compilation step service/custody 源码切片现已完成：它双重锁定重放
+authorized Kernel/CAS context、固定 author/category/catalog/compiler policy、纯函数重编译，并把 accepted 或
+blocked result 与连续 revision lineage 写入 append-only registry；production provider/RPC/receipt、ACL、
+recovery-policy composition 和 worker factory 尚未 commissioned。下一项顺序工作是完成 continuation step
+service/custody，再冻结完整 worker factory；随后才进入真实 image/host qualification、外部 authority process composition 与
 process-kill PostgreSQL campaign，而不是扩张 controller authority。checkpoint 与 external reconciliation
 仍需独立 typed contracts，不能由 generic retry 猜测。
 

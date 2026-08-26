@@ -1033,6 +1033,25 @@ def get_protocol_compilation_by_action(
     return _write_projection(ProtocolCompilationWrite, row)
 
 
+def get_protocol_compilation_by_protocol_version(
+    session: Session,
+    *,
+    quest_id: str,
+    protocol_id: str,
+    protocol_version: int,
+) -> ProtocolCompilationWrite | None:
+    """Resolve one immutable protocol version for contiguous revision verification."""
+
+    row = session.scalar(
+        select(ResearchProtocolCompilationRecord).where(
+            ResearchProtocolCompilationRecord.quest_id == quest_id,
+            ResearchProtocolCompilationRecord.protocol_id == protocol_id,
+            ResearchProtocolCompilationRecord.protocol_version == protocol_version,
+        )
+    )
+    return _write_projection(ProtocolCompilationWrite, row)
+
+
 def get_scientific_execution_authorization_by_slot(
     session: Session, *, quest_id: str, scientific_slot_id: str
 ) -> ScientificExecutionAuthorizationWrite | None:
@@ -1469,6 +1488,7 @@ __all__ = [
     "get_observation_admission_by_decision",
     "get_observation_validation_receipt_by_slot",
     "get_protocol_compilation_by_action",
+    "get_protocol_compilation_by_protocol_version",
     "get_scientific_execution_authorization_by_slot",
     "get_scientific_execution_authorization_by_attempt",
     "list_controller_deliveries",

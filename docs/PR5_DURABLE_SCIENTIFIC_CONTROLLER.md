@@ -167,11 +167,15 @@ and periodic delivery reconciliation. PR-7c supplies a public-key-only terminal 
 that replays exact PR-4 lineage, but not its target-host ACL/custody/restart evidence. Neither slice
 supplies scientific-step authority.
 PR-7b supplies the exhaustive step-specific routing/authority manifest boundary and forwards the
-exact audited recovery projection. Six active steps now have production-boundary source slices:
-the three proposal steps plus execution registration, validation, and admission. The compiler and
-continuation step services, the independent Kernel command authority, and the complete external
-service/runtime composition remain uncommissioned. See
-[ADR 0058](architecture/0058-durable-powerless-action-proposal-steps.md).
+exact audited recovery projection. Seven active steps now have production-boundary source slices:
+the three proposal steps plus protocol compilation, execution registration, validation, and
+admission. The compiler slice performs two exact Kernel/CAS audits, applies frozen
+author/category/catalog/compiler policy, canonically recompiles the provider request, and retains
+accepted or blocked results with contiguous revision lineage. It still lacks a commissioned
+provider/RPC/receipt boundary, database ACL, and worker composition. The continuation step service,
+independent Kernel command authority, and complete external service/runtime composition remain
+uncommissioned. See [ADR 0058](architecture/0058-durable-powerless-action-proposal-steps.md) and
+[ADR 0059](architecture/0059-durable-protocol-compilation-step.md).
 The F9-v1 migration adapter does not satisfy that production gate; the new F9-v2 source slice does
 not by itself prove that a deployed validator process or its signing key is isolated.
 Remote/GPU execution, external-effect actions,
