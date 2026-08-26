@@ -48,7 +48,8 @@ action-proposal, frozen protocol-compilation, exact-template execution-authoriza
 registration factories; PR-7k subsequently supplies the verified raw-run source and PR-7l the
 database-observation attestation service. PR-7m subsequently supplies independent F9-v2
 validation, and PR-7n supplies committed-validation loading. The other two PR-7e service
-factories—independent admission and atomic Kernel incorporation—remain uncommissioned.
+factories were independent admission and atomic Kernel incorporation at that checkpoint; PR-7o
+subsequently closes the former, leaving only atomic Kernel incorporation uncommissioned.
 
 See [ADR 0063](architecture/0063-deterministic-continuation-rpc-service.md), the
 [PR-7e server guide](PR7E_EXTERNAL_RPC_SERVICE_RUNTIME.md), and the

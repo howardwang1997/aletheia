@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Literal, Protocol
+from typing import Callable, Literal, Protocol
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
@@ -1343,7 +1343,7 @@ class ObservationAdmissionDecisionMessage(ScientificBridgeModel):
             != self.committed_validation_receipt.message.validation_receipt_sha256
             or challenge.observation_admission_deadline
             != authorization.observation_admission_deadline
-            or self.decided_at != challenge.issued_at
+            or not challenge.issued_at <= self.decided_at < challenge.expires_at
         ):
             raise ValueError("admission decision differs from its DB issuance challenge")
         if (
@@ -1454,6 +1454,7 @@ class CommittedObservationAdmissionMessage(ScientificBridgeModel):
             raise ValueError("admission commit rebound decision, receipt, challenge, or DB row")
         if not (
             challenge_message.issued_at
+            <= decision_message.decided_at
             <= self.registered_at
             <= self.committed_at
             < challenge_message.expires_at
@@ -2814,11 +2815,15 @@ def issue_observation_admission_decision(
     admission_authority_pin: ScientificBridgeAuthorityPin,
     database_authority_pin: ObservationDatabaseAuthorityPin,
     private_key: bytes,
+    decision_clock: Callable[[], datetime],
 ) -> ObservationAdmissionDecision:
     """Sign an admission decision without claiming that its empty-slot CAS has committed."""
 
     _require_private_key(private_key, admission_authority_pin)
-    decided_at = issuance_challenge.message.issued_at
+    if not callable(decision_clock):
+        raise ScientificBridgeVerificationError("admission decision clock is unavailable")
+    verification_started_at = decision_clock()
+    _require_utc(verification_started_at, "admission decision verification time")
     verify_committed_observation_validation_receipt(
         committed_receipt=committed_validation_receipt,
         qualification_authority=qualification_authority,
@@ -2830,8 +2835,12 @@ def issue_observation_admission_decision(
         validator_authority_pin=validator_authority_pin,
         admission_authority_pin=admission_authority_pin,
         database_authority_pin=database_authority_pin,
-        observed_at=decided_at,
+        observed_at=verification_started_at,
     )
+    decided_at = decision_clock()
+    _require_utc(decided_at, "admission decision decided_at")
+    if decided_at < verification_started_at:
+        raise ScientificBridgeVerificationError("admission decision database time moved backwards")
     _verify_admission_issuance_challenge(
         challenge=issuance_challenge,
         committed_validation_receipt=committed_validation_receipt,

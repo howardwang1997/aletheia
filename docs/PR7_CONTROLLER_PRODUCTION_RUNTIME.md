@@ -159,7 +159,8 @@ PR-7m now supplies the independent F9-v2 validator process: it owns only the val
 replays public Kernel/PR-4/artifact custody, uses a source-pinned exact-content baseline and
 publishes one write-once campaign per raw run. PR-7n now supplies the keyless committed-validation
 source, which resolves the durable slot row and replays its complete DB/validator/F9/Kernel/PR-4
-custody. Two concrete operation factories remain.
+custody. PR-7o subsequently supplies the isolated live-challenge admission signer. One concrete
+operation factory—atomic admission/Kernel incorporation—remains.
 Continuation now
 has its own two-audit service, mechanically reconstructed observation identity, pinned assessor
 policy, and durable provenance; its production service, assessment-artifact byte custody and ACL

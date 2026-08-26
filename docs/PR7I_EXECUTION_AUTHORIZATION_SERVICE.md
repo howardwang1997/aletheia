@@ -55,7 +55,8 @@ and reserves the exact PR-4 attempt without loading the SEA private key. PR-7k s
 verified raw-run loading, and PR-7l adds database observation attestation. Independent F9-v2
 validation is subsequently closed by PR-7m. Committed-validation loading, independent admission,
 and atomic Kernel incorporation remain at that checkpoint; PR-7n subsequently closes
-committed-validation loading, leaving two PR-7e concrete service factories incomplete.
+committed-validation loading, and PR-7o closes independent admission. Only atomic Kernel
+incorporation remains incomplete.
 
 No target host is commissioned. Linux account/socket/PostgreSQL/CAS/registry/key ACLs,
 systemd supervision, alerts, key rotation/revocation, and a fresh multi-process kill/restart
