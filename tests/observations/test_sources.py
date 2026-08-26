@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from aletheia.execution.allocator import VerifiedQualificationRawRunMaterial
 from aletheia.observations import adapters as adapters_module
 from aletheia.observations.adapters import (
+    CommittedValidationSourceVerificationContext,
     ObservationAdapterVerificationError,
     PostgreSQLCommittedObservationValidationSource,
     PostgreSQLRawRunEnvelopeSourceAdapter,
@@ -72,6 +73,20 @@ def _verification(case) -> RawRunEnvelopeSourceVerificationContext:
         execution_authority_pin=case.execution_pin,
         validator_authority_pin=case.validator_pin,
         admission_authority_pin=case.admission_pin,
+    )
+
+
+def _committed_verification(case) -> CommittedValidationSourceVerificationContext:
+    return CommittedValidationSourceVerificationContext(
+        qualification_authority=case.qualification_authority,
+        action_authority=case.action_authority,
+        qualification_custody=case.qualification_custody,
+        raw_run_custody=case.raw_run_custody,
+        validation_campaign_custody=case.validation_campaign_custody,
+        execution_authority_pin=case.execution_pin,
+        validator_authority_pin=case.validator_pin,
+        admission_authority_pin=case.admission_pin,
+        database_authority_pin=case.database_pin,
     )
 
 
@@ -254,7 +269,11 @@ def test_committed_validation_source_rehashes_row_and_action(
         "get_observation_validation_receipt_by_slot",
         lambda *_args, **_kwargs: write,
     )
-    source = PostgreSQLCommittedObservationValidationSource(sessions=_sessions)
+    source = PostgreSQLCommittedObservationValidationSource(
+        sessions=_sessions,
+        verification=_committed_verification(case),
+        database_clock=lambda _session: committed.message.committed_at + timedelta(seconds=1),
+    )
 
     assert (
         source.load_committed_validation(
@@ -268,5 +287,34 @@ def test_committed_validation_source_rehashes_row_and_action(
         source.load_committed_validation(
             quest_id=binding.action.quest_id,
             action_sha256="f" * 64,
+            scientific_slot_id=case.authorization.message.scientific_slot_id,
+        )
+
+
+def test_committed_validation_source_rejects_unverified_raw_run_custody(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bridge_case()
+    committed = _commit_validation(case, _validated_receipt(case))
+    binding = case.authorization.message.action_protocol_binding
+    monkeypatch.setattr(
+        adapters_module,
+        "get_observation_validation_receipt_by_slot",
+        lambda *_args, **_kwargs: ObservationValidationReceiptWrite.from_contract(
+            committed,
+            quest_id=binding.action.quest_id,
+        ),
+    )
+    case.raw_run_custody.fail = True
+    source = PostgreSQLCommittedObservationValidationSource(
+        sessions=_sessions,
+        verification=_committed_verification(case),
+        database_clock=lambda _session: committed.message.committed_at + timedelta(seconds=1),
+    )
+
+    with pytest.raises(ObservationAdapterVerificationError, match="failed closed"):
+        source.load_committed_validation(
+            quest_id=binding.action.quest_id,
+            action_sha256=binding.action.object_sha256,
             scientific_slot_id=case.authorization.message.scientific_slot_id,
         )

@@ -51,8 +51,8 @@ gate.
 PR-7m subsequently closes the independent F9-v2 validation factory with an isolated validator key,
 full public-custody replay, a conservative exact-content assessor and write-once campaign archive.
 Three PR-7e concrete factories remain: committed-validation source, independent admission, and
-atomic admission/Kernel incorporation. The next ordered source slice is the keyless
-committed-validation source.
+atomic admission/Kernel incorporation at that checkpoint. PR-7n subsequently closes the keyless
+committed-validation source, leaving independent admission as the next of two factories.
 
 No target host is commissioned. Exact PostgreSQL write/read ACLs, Linux account/socket and key
 ownership, systemd supervision, alerts, key rotation/revocation, and a fresh multi-process

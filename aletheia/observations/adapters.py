@@ -28,7 +28,12 @@ from aletheia.execution.runtime_contracts import (
 )
 from aletheia.observations.scientific_bridge import (
     CommittedObservationValidationReceipt,
+    EngineeringQualificationCustodyVerificationPort,
+    ObservationDatabaseAuthorityPin,
+    ObservationValidationCampaignVerificationPort,
+    RawRunCustodyVerificationPort,
     RawRunEnvelope,
+    ResearchActionAuthorityVerificationPort,
     ScientificActionProtocolBinding,
     ScientificBridgeAuthorityPin,
     ScientificExecutionAuthorization,
@@ -37,6 +42,7 @@ from aletheia.observations.scientific_bridge import (
     VerifiedRawRunCustodyProjection,
     engineering_qualification_admission_sha256,
     validate_raw_run_structure,
+    verify_committed_observation_validation_receipt,
     verify_scientific_execution_authorization_historical,
 )
 from aletheia.observations.store import (
@@ -230,13 +236,36 @@ class PostgreSQLRawRunEnvelopeSourceAdapter:
             ) from exc
 
 
-class PostgreSQLCommittedObservationValidationSource:
-    """Read and reproject the exact immutable committed validation for a controller step."""
+@dataclass(frozen=True)
+class CommittedValidationSourceVerificationContext:
+    """Public authorities and custody ports available to the keyless validation source."""
 
-    def __init__(self, *, sessions: sessionmaker[Session]) -> None:
-        if not callable(sessions):
-            raise TypeError("committed validation source requires a session factory")
+    qualification_authority: QualificationAuthorityVerifier
+    action_authority: ResearchActionAuthorityVerificationPort
+    qualification_custody: EngineeringQualificationCustodyVerificationPort
+    raw_run_custody: RawRunCustodyVerificationPort
+    validation_campaign_custody: ObservationValidationCampaignVerificationPort
+    execution_authority_pin: ScientificBridgeAuthorityPin
+    validator_authority_pin: ScientificBridgeAuthorityPin
+    admission_authority_pin: ScientificBridgeAuthorityPin
+    database_authority_pin: ObservationDatabaseAuthorityPin
+
+
+class PostgreSQLCommittedObservationValidationSource:
+    """Read and fully reverify one exact immutable committed validation."""
+
+    def __init__(
+        self,
+        *,
+        sessions: sessionmaker[Session],
+        verification: CommittedValidationSourceVerificationContext,
+        database_clock: DatabaseClock = _database_time,
+    ) -> None:
+        if not callable(sessions) or not callable(database_clock):
+            raise TypeError("committed validation source requires sessions and a database clock")
         self._sessions = sessions
+        self._verification = verification
+        self._database_clock = database_clock
 
     def load_committed_validation(
         self,
@@ -247,6 +276,7 @@ class PostgreSQLCommittedObservationValidationSource:
     ) -> CommittedObservationValidationReceipt:
         try:
             with self._sessions() as session:
+                observed_at = self._database_clock(session)
                 write = get_observation_validation_receipt_by_slot(
                     session,
                     quest_id=quest_id,
@@ -269,6 +299,20 @@ class PostgreSQLCommittedObservationValidationSource:
                 raise ObservationAdapterVerificationError(
                     "committed validation row was rebound from its action or canonical bytes"
                 )
+            context = self._verification
+            verify_committed_observation_validation_receipt(
+                committed_receipt=committed,
+                qualification_authority=context.qualification_authority,
+                action_authority=context.action_authority,
+                qualification_custody=context.qualification_custody,
+                raw_run_custody=context.raw_run_custody,
+                validation_campaign_custody=context.validation_campaign_custody,
+                execution_authority_pin=context.execution_authority_pin,
+                validator_authority_pin=context.validator_authority_pin,
+                admission_authority_pin=context.admission_authority_pin,
+                database_authority_pin=context.database_authority_pin,
+                observed_at=observed_at,
+            )
             return committed
         except ObservationAdapterVerificationError:
             raise
@@ -915,6 +959,7 @@ def _require_utc(value: datetime, *, label: str) -> None:
 
 
 __all__ = [
+    "CommittedValidationSourceVerificationContext",
     "ObservationAdapterVerificationError",
     "PostgreSQLCommittedObservationValidationSource",
     "PostgreSQLRawRunEnvelopeSourceAdapter",
