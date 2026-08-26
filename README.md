@@ -170,8 +170,13 @@ composition remain uncommissioned. The three proposal steps now re-audit the exa
 blocked-compilation or incorporated-observation/continuation chain, restrict model output to a
 closed draft, and atomically retain one unsigned first-writer-wins proposal per audited request.
 They return only `awaiting_authority`; no controller proposal service holds a Kernel signing key or
-mutates the ledger. The compiler and continuation step services, production proposal provider,
-independent Kernel signer, and full worker factory remain uncommissioned. The PR-2 store also
+mutates the ledger. The protocol-compilation step now re-audits the exact authorized Kernel/CAS
+action, constrains a powerless provider with deployment-pinned author/category/catalog/compiler
+policy, canonically recompiles the request, and appends accepted or blocked results with exact
+revision lineage. Exact restart retries reload the durable winner without reinvoking the provider.
+Its production provider, RPC/receipt custody, ACL and worker composition remain uncommissioned. The
+continuation step service, production proposal provider, independent Kernel signer, and full worker
+factory remain uncommissioned. The PR-2 store also
 still has one immutable policy epoch and
 `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
 the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
@@ -185,7 +190,8 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-7c verified-terminal guide](docs/PR7C_VERIFIED_TERMINAL_DISPATCHER.md), plus
 [ADR 0056](docs/architecture/0056-independent-observation-controller-steps.md) and
 [ADR 0057](docs/architecture/0057-graph-scoped-f9-v2-validation-campaign.md), plus
-[ADR 0058](docs/architecture/0058-durable-powerless-action-proposal-steps.md).
+[ADR 0058](docs/architecture/0058-durable-powerless-action-proposal-steps.md), and
+[ADR 0059](docs/architecture/0059-durable-protocol-compilation-step.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,
