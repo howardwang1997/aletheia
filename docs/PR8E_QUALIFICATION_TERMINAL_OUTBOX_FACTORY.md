@@ -40,9 +40,10 @@ enable/start the unit, deliver files to an external consumer, or reconcile consu
 It also does not implement the concrete Linux observer or campaign runner and does not prove a
 real terminal row under process-kill.
 
-With PR-8c, PR-8d and PR-8e, all five manifest entries now have checked-in factories. The next
-ordered gate is target-host commissioning: freeze exact principals, directories, configs, key
-files and PostgreSQL ACLs while units remain disabled. Only after that may the real
+With PR-8c, PR-8d and PR-8e, all five manifest entries now have checked-in factories. PR-8f now
+supplies the first disabled commissioning stage for exact principals, empty directories and local
+PostgreSQL peer URLs, but it has not been run on a target host. Config/key publication and
+PostgreSQL role/ACL commissioning remain next while units stay disabled. Only after that may the real
 Linux/root/systemd/loop/ext4/rootful-Docker/PostgreSQL process-kill campaign enable the bounded
 services and produce deployment evidence.
 

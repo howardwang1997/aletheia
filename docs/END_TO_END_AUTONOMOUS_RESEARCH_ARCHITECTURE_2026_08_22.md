@@ -1546,8 +1546,9 @@ Docker 使用 pathname bind 而非 open fd，因此同 UID host peer、host root
 冻结源码/测试 checkpoint 的 security review 为 A=0，但这只关闭已审 source threat model，不构成 host
 认证：PR-8a 已补五个 one-role runner 及 systemd `ExecStart` 的 exact manifest SHA pin；PR-8b 仅能以
 explicit opt-in、append-only crash journal 安装 exact manifest/disabled units 并执行 pinned daemon-reload。
-PR-8c 已补三个 root-side factories，但 node/outbox 尚缺，因此仍无完整 production service factory set、
-完整 target-host commissioning、concrete observer、frozen manifest instance 或 campaign runner，
+PR-8c/8d/8e 已补齐三个 root-side 及 node/outbox 五项 factories；PR-8f 又补 disabled-only principal/root
+bootstrap 与 node/outbox 的 exact local PostgreSQL peer URL，但尚未在 target host 执行，且仍无 config/key/ACL
+commissioning、concrete observer、frozen manifest instance 或 campaign runner，
 exact campaign 也从未跑过，因此当前明确 nondeployable。代码中的 installed-manifest 类型只是从签名 live
 observation 派生 evidence 的 schema，不是已部署事实。`OutputQuotaProvisioningReceipt` 是 privileged local root service 的 trusted-local
 evidence，不是独立 remote attestation；watchdog 是 single-threaded inspect loop，
@@ -2021,7 +2022,10 @@ inode roots、三把独立私钥、当前 boot identity、CPU-only OCI/image pol
 root daemon 也新增 exact live-verification operation。**PR-8e** 已补齐 non-root terminal-outbox factory：
 它逐行验证 v1/v2 terminal authority，以 crash-replayable write-once spool 保留 canonical envelope，仅在
 文件 fsync 后 CAS 更新 legacy v1 published 状态，并保持 v2 immutable。五项 service factory 源码现已
-闭合；下一项顺序工作是完成 pinned principal/config/key/ACL commissioning，再进入真实 image/host qualification 与
+闭合。**PR-8f** 已实现第一阶段 disabled-only host bootstrap：固定两项 locked Linux/PostgreSQL peer
+identity、Docker group、`/run/postgresql` socket 与十五项 empty custody roots，并以 append-only journal
+收敛 crash retry；该代码尚未在 target host 执行，也不发布 config/key、不创建 PostgreSQL role/ACL、
+不安装或启动 unit。下一项顺序工作是完成 pinned config/key/ACL commissioning，再进入真实 image/host qualification 与
 process-kill PostgreSQL campaign，而不是扩张
 controller authority。checkpoint 与 external reconciliation
 仍需独立 typed contracts，不能由 generic retry 猜测。

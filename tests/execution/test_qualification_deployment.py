@@ -7,6 +7,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import ValidationError
+from sqlalchemy.engine import make_url
 
 import aletheia.execution.qualification_deployment as deployment
 from aletheia.execution.oci_deployment import (
@@ -1033,7 +1034,7 @@ def test_systemd_render_is_deterministic_and_preserves_required_service_boundari
         )
     )
     assert canonical_sha256(first) == (
-        "d94905cc5aaa55db94551b6658da67f608e039d1b0351d0d3c37eb5c8157584a"
+        "6d6777eff356692280c014ba13755ceffaf8ea0f324c27683985d206e4f6abed"
     )
 
     by_name = {item.unit_name: item.content for item in first}
@@ -1052,15 +1053,13 @@ def test_systemd_render_is_deterministic_and_preserves_required_service_boundari
     assert "CapabilityBoundingSet=\n" in node and "PrivateMounts=no" in node
     assert f"run --poll-milliseconds {spec.worker_poll_milliseconds}" in node
     assert all(
-        "--poll-milliseconds" not in content
-        for content in (workspace, quota, watchdog, outbox)
+        "--poll-milliseconds" not in content for content in (workspace, quota, watchdog, outbox)
     )
     assert f"User={spec.outbox_uid}" in outbox and "PrivateMounts=yes" in outbox
     assert "SupplementaryGroups=\n" in outbox
     assert all(" -S -s -P " in item.content for item in first)
     assert all(
-        f"--manifest-sha256 {spec.deployment_manifest_sha256}" in item.content
-        for item in first
+        f"--manifest-sha256 {spec.deployment_manifest_sha256}" in item.content for item in first
     )
     assert all(f"WorkingDirectory={spec.code_root}" in item.content for item in first)
     assert all(
@@ -1071,17 +1070,47 @@ def test_systemd_render_is_deterministic_and_preserves_required_service_boundari
         for item in first
     )
     assert all("/bin/sh" not in item.content for item in first)
-    assert all("DATABASE_URL" not in item.content for item in first)
+    node_url = deployment.qualification_postgresql_peer_database_url(
+        spec,
+        role_name=spec.postgresql_allocator_role,
+    )
+    outbox_url = deployment.qualification_postgresql_peer_database_url(
+        spec,
+        role_name=spec.postgresql_outbox_role,
+    )
+    assert f"Environment=ALETHEIA_DATABASE_URL={node_url}" in node
+    assert f"Environment=ALETHEIA_DATABASE_URL={outbox_url}" in outbox
+    assert "%" not in node_url
+    assert "%" not in outbox_url
+    assert all("ALETHEIA_DATABASE_URL" not in content for content in (workspace, quota, watchdog))
+    assert all("PGHOST" in item.content and "PGPASSWORD" in item.content for item in first)
+    for value, role in (
+        (node_url, spec.postgresql_allocator_role),
+        (outbox_url, spec.postgresql_outbox_role),
+    ):
+        parsed = make_url(value)
+        assert parsed.username == role
+        assert parsed.password is None
+        assert parsed.database == spec.postgresql_database
+        assert parsed.host is None
+        assert parsed.query == {"host": deployment.QUALIFICATION_POSTGRESQL_SOCKET_DIRECTORY}
     identities = deployment._expected_systemd_service_identities(spec)
-    assert {
-        identity.unit_name: identity.worker_poll_milliseconds for identity in identities
-    } == {
+    assert {identity.unit_name: identity.worker_poll_milliseconds for identity in identities} == {
         spec.node_unit_name: spec.worker_poll_milliseconds,
         spec.outbox_unit_name: None,
         spec.quota_unit_name: None,
         spec.watchdog_unit_name: None,
         spec.workspace_unit_name: None,
     }
+
+
+def test_postgresql_peer_url_rejects_foreign_roles() -> None:
+    spec = _spec()
+    with pytest.raises(ValueError, match="outside qualification"):
+        deployment.qualification_postgresql_peer_database_url(
+            spec,
+            role_name=spec.postgresql_owner_role,
+        )
 
 
 @pytest.mark.parametrize(
@@ -1093,9 +1122,7 @@ def test_systemd_render_is_deterministic_and_preserves_required_service_boundari
         lambda identity: {"loaded_fragment_sha256": _sha("stale-loaded-unit")},
         lambda identity: {"daemon_reload_generation_matches_fragment": False},
         lambda identity: {
-            "drop_in_paths": (
-                f"/etc/systemd/system/{identity.unit_name}.d/override.conf",
-            )
+            "drop_in_paths": (f"/etc/systemd/system/{identity.unit_name}.d/override.conf",)
         },
         lambda identity: {"exec_start_argvs": (("/bin/false",),)},
         lambda identity: {
@@ -1116,9 +1143,7 @@ def test_systemd_render_is_deterministic_and_preserves_required_service_boundari
         },
     ),
 )
-def test_effective_loaded_systemd_state_drift_fails_closed(
-    monkeypatch, identity_update
-) -> None:
+def test_effective_loaded_systemd_state_drift_fails_closed(monkeypatch, identity_update) -> None:
     spec = _spec()
     manifest, _observer, pin = _freeze(monkeypatch, spec=spec)
     current = _observation(spec, observed_at=NOW + timedelta(seconds=1))
@@ -1301,9 +1326,7 @@ def test_postgresql_grant_option_is_explicitly_rejected(monkeypatch) -> None:
         privilege_type="SELECT",
         is_grantable=True,
     )
-    changed = current.model_copy(
-        update={"postgresql_unexpected_grant_options": (grant_option,)}
-    )
+    changed = current.model_copy(update={"postgresql_unexpected_grant_options": (grant_option,)})
     report = _verify(
         monkeypatch,
         manifest,
@@ -1437,9 +1460,7 @@ def test_legitimate_reboot_and_new_shared_mount_namespace_can_remain_ready(monke
                     if root.purpose == "workspace_source"
                     else root.inode + 100
                 ),
-                "parent_chain_sha256": _sha(
-                    f"custody-parent-after-reboot:{root.purpose}"
-                ),
+                "parent_chain_sha256": _sha(f"custody-parent-after-reboot:{root.purpose}"),
             }
         )
         for root in current_boot.custody_roots
@@ -1479,9 +1500,7 @@ def test_legitimate_reboot_and_new_shared_mount_namespace_can_remain_ready(monke
 
 
 @pytest.mark.parametrize("field", ("device", "inode", "parent_chain_sha256"))
-def test_same_boot_custody_root_identity_drift_fails_closed(
-    monkeypatch, field: str
-) -> None:
+def test_same_boot_custody_root_identity_drift_fails_closed(monkeypatch, field: str) -> None:
     spec = _spec()
     manifest, _observer, pin = _freeze(monkeypatch, spec=spec)
     current = _observation(spec, observed_at=NOW + timedelta(seconds=1))
@@ -1535,17 +1554,13 @@ def test_same_boot_dynamic_identity_changes_fail_closed(
     elif mutation == "quota_socket":
         updates = {
             "quota_deployment": current.quota_deployment.model_copy(
-                update={
-                    "socket_parent_inode": current.quota_deployment.socket_parent_inode + 1
-                }
+                update={"socket_parent_inode": current.quota_deployment.socket_parent_inode + 1}
             )
         }
     else:
         updates = {
             "watchdog_deployment": current.watchdog_deployment.model_copy(
-                update={
-                    "socket_parent_inode": current.watchdog_deployment.socket_parent_inode + 1
-                }
+                update={"socket_parent_inode": current.watchdog_deployment.socket_parent_inode + 1}
             )
         }
     changed = current.model_copy(update=updates)
@@ -1724,9 +1739,7 @@ def test_seccomp_profile_drift_cannot_be_frozen(monkeypatch, field: str) -> None
     observed = _observation(spec)
     value = _sha("unreviewed-seccomp") if field == "sha256" else 0o400
     changed = observed.model_copy(
-        update={
-            "seccomp_profile": observed.seccomp_profile.model_copy(update={field: value})
-        }
+        update={"seccomp_profile": observed.seccomp_profile.model_copy(update={field: value})}
     )
     pin = _observer_pin()
     monkeypatch.setattr(deployment.sys, "platform", "linux")
@@ -1784,9 +1797,7 @@ def test_seccomp_live_inode_drift_fails_reverification(monkeypatch) -> None:
         },
         lambda closure: {"executable_needed_sonames": ("libm.so.6",)},
         lambda closure: {
-            "external_native_dependency_paths": (
-                "/usr/local/lib/unreviewed-native.so",
-            )
+            "external_native_dependency_paths": ("/usr/local/lib/unreviewed-native.so",)
         },
     ),
 )
@@ -1797,9 +1808,7 @@ def test_privileged_tool_native_dependency_drift_cannot_be_frozen(
     observed = _observation(spec)
     closures = list(observed.privileged_tool_native_closures)
     closures[0] = closures[0].model_copy(update=closure_update(closures[0]))
-    changed = observed.model_copy(
-        update={"privileged_tool_native_closures": tuple(closures)}
-    )
+    changed = observed.model_copy(update={"privileged_tool_native_closures": tuple(closures)})
     pin = _observer_pin()
     monkeypatch.setattr(deployment.sys, "platform", "linux")
     monkeypatch.setattr(deployment, "_monitored_utc_now", lambda: NOW)
@@ -2119,9 +2128,7 @@ def test_drifted_observation_cannot_be_frozen(monkeypatch) -> None:
             "oci:image-layout-or-loaded-image-drift",
         ),
         (
-            lambda observed: observed.model_copy(
-                update={"apparmor_profile_enforcing": False}
-            ),
+            lambda observed: observed.model_copy(update={"apparmor_profile_enforcing": False}),
             "oci:image-layout-or-loaded-image-drift",
         ),
         (

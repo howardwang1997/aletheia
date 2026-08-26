@@ -2562,6 +2562,7 @@ def test_every_direct_file_sink_has_a_frozen_reviewed_authority_profile() -> Non
     assert prefix_profiles["scripts.capability_"] == "versioned_capability_registry"
     assert any(row["module"].startswith("scripts.capability_") for row in graph)
     assert prefix_profiles["aletheia.qualification_installer"] == "qualification_installation_state"
+    assert prefix_profiles["aletheia.qualification_bootstrap"] == "qualification_bootstrap_state"
     assert {
         (
             "aletheia.qualification_installer",
@@ -2571,6 +2572,18 @@ def test_every_direct_file_sink_has_a_frozen_reviewed_authority_profile() -> Non
         (
             "aletheia.qualification_installer",
             "LinuxQualificationInstallationHost._publish_exact",
+            "write",
+        ),
+    } <= {(row["module"], row["symbol"], row["sink"]) for row in graph}
+    assert {
+        (
+            "aletheia.qualification_bootstrap",
+            "LinuxQualificationBootstrapHost.write_journal_once",
+            "replace",
+        ),
+        (
+            "aletheia.qualification_bootstrap",
+            "LinuxQualificationBootstrapHost.write_journal_once",
             "write",
         ),
     } <= {(row["module"], row["symbol"], row["sink"]) for row in graph}
@@ -2873,6 +2886,7 @@ def test_direct_external_sinks_are_frozen_classified_and_event_callers_declared(
         ("aletheia.orchestrator.openai_runtime", "provider.model_create"),
         ("aletheia.compute.local", "process.Popen"),
         ("aletheia.qualification_installer", "process.run"),
+        ("aletheia.qualification_bootstrap", "process.run"),
     }
     observed = {(row["module"], row["sink"]) for row in graph}
     assert required_outbound_sinks <= observed

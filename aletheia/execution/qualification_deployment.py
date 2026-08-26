@@ -52,6 +52,7 @@ _UNIT_PATTERNS: Mapping[str, re.Pattern[str]] = {
 _MOUNT_NAMESPACE = re.compile(r"^mnt:\[[1-9][0-9]*\]$")
 _LINUX_BOOT_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _OBSERVER_SIGNATURE_DOMAIN = b"aletheia.qualification-deployment-observation.v1\x00"
+QUALIFICATION_POSTGRESQL_SOCKET_DIRECTORY = "/run/postgresql"
 
 _CUSTODY_ROOT_PURPOSES = (
     "artifact_store",
@@ -366,9 +367,7 @@ class ReviewedNativeDependencyClosure(ExecutionModel):
     def _closure_is_exhaustive(self) -> "ReviewedNativeDependencyClosure":
         if not self.elf_interpreter.executable_required:
             raise ValueError("reviewed ELF interpreter must be executable")
-        if self.executable_needed_sonames != tuple(
-            sorted(set(self.executable_needed_sonames))
-        ):
+        if self.executable_needed_sonames != tuple(sorted(set(self.executable_needed_sonames))):
             raise ValueError("reviewed executable DT_NEEDED edges must be canonical")
         sonames = tuple(dependency.soname for dependency in self.dependencies)
         if sonames != tuple(sorted(set(sonames))):
@@ -701,9 +700,9 @@ class QualificationDeploymentSpecV1(ExecutionModel):
     expected_losetup_executable: QualificationExpectedRootExecutable
     expected_mkfs_ext4_executable: QualificationExpectedRootExecutable
     expected_mount_executable: QualificationExpectedRootExecutable
-    reviewed_privileged_tool_native_closures: tuple[
-        ReviewedNativeDependencyClosure, ...
-    ] = Field(min_length=3, max_length=3)
+    reviewed_privileged_tool_native_closures: tuple[ReviewedNativeDependencyClosure, ...] = Field(
+        min_length=3, max_length=3
+    )
     systemd_unit_root: str = "/etc/systemd/system"
     workspace_unit_name: str
     quota_unit_name: str
@@ -716,9 +715,7 @@ class QualificationDeploymentSpecV1(ExecutionModel):
     postgresql_owner_role: str
     postgresql_allocator_role: str
     postgresql_outbox_role: str
-    postgresql_execution_routine_name_prefix: Literal["aletheia_execution_"] = (
-        "aletheia_execution_"
-    )
+    postgresql_execution_routine_name_prefix: Literal["aletheia_execution_"] = "aletheia_execution_"
     expected_postgresql_routines: tuple[PostgreSQLExpectedRoutine, ...] = Field(min_length=1)
     expected_postgresql_triggers: tuple[PostgreSQLExpectedTrigger, ...] = Field(min_length=1)
     expected_postgresql_sequences: tuple[PostgreSQLExpectedSequenceConfiguration, ...] = Field(
@@ -1144,8 +1141,29 @@ def _exec_start_argv(
     return argv
 
 
-def _python_environment_assignments(spec: QualificationDeploymentSpecV1) -> tuple[str, ...]:
-    return (
+def qualification_postgresql_peer_database_url(
+    spec: QualificationDeploymentSpecV1,
+    *,
+    role_name: str,
+) -> str:
+    """Derive one passwordless, explicit local-socket URL for a qualification process."""
+
+    if role_name not in {spec.postgresql_allocator_role, spec.postgresql_outbox_role}:
+        raise ValueError("PostgreSQL peer URL role is outside qualification application roles")
+    _quoted_identifier(role_name)
+    socket = _absolute_path(
+        QUALIFICATION_POSTGRESQL_SOCKET_DIRECTORY,
+        label="PostgreSQL socket directory",
+    )
+    return f"postgresql+psycopg://{role_name}@/{spec.postgresql_database}?host={socket}"
+
+
+def _python_environment_assignments(
+    spec: QualificationDeploymentSpecV1,
+    *,
+    database_role: str | None = None,
+) -> tuple[str, ...]:
+    values = (
         f"PYTHONHOME={spec.reviewed_python_environment.root_path}",
         f"PYTHONPATH={spec.code_root}",
         "PYTHONNOUSERSITE=1",
@@ -1153,11 +1171,27 @@ def _python_environment_assignments(spec: QualificationDeploymentSpecV1) -> tupl
         "PYTHONDONTWRITEBYTECODE=1",
         "PYTHONHASHSEED=0",
     )
+    if database_role is None:
+        return values
+    return (
+        *values,
+        "ALETHEIA_DATABASE_URL="
+        + qualification_postgresql_peer_database_url(spec, role_name=database_role),
+    )
 
 
 _PYTHON_UNSET_ENVIRONMENT_NAMES = (
     "LD_LIBRARY_PATH",
     "LD_PRELOAD",
+    "PGDATABASE",
+    "PGHOST",
+    "PGHOSTADDR",
+    "PGPASSWORD",
+    "PGPORT",
+    "PGSERVICE",
+    "PGSERVICEFILE",
+    "PGSSLMODE",
+    "PGUSER",
     "PYTHONBREAKPOINT",
     "PYTHONINSPECT",
     "PYTHONSTARTUP",
@@ -1165,12 +1199,22 @@ _PYTHON_UNSET_ENVIRONMENT_NAMES = (
 )
 
 
-def _python_service_environment(spec: QualificationDeploymentSpecV1) -> tuple[str, ...]:
+def _python_service_environment(
+    spec: QualificationDeploymentSpecV1,
+    *,
+    database_role: str | None = None,
+) -> tuple[str, ...]:
     """Close Python imports over reviewed code and runtime trees."""
 
     return (
         f"WorkingDirectory={spec.code_root}",
-        *(f"Environment={value}" for value in _python_environment_assignments(spec)),
+        *(
+            f"Environment={value}"
+            for value in _python_environment_assignments(
+                spec,
+                database_role=database_role,
+            )
+        ),
         "UnsetEnvironment=" + " ".join(_PYTHON_UNSET_ENVIRONMENT_NAMES),
     )
 
@@ -1189,6 +1233,14 @@ def render_systemd_units(
         "RestrictAddressFamilies=AF_UNIX",
     )
     python_environment = _python_service_environment(spec)
+    node_python_environment = _python_service_environment(
+        spec,
+        database_role=spec.postgresql_allocator_role,
+    )
+    outbox_python_environment = _python_service_environment(
+        spec,
+        database_role=spec.postgresql_outbox_role,
+    )
     workspace = _systemd_unit(
         spec,
         spec.workspace_unit_name,
@@ -1295,7 +1347,7 @@ def render_systemd_units(
             f"User={spec.node_uid}",
             f"Group={spec.node_gid}",
             f"SupplementaryGroups={spec.docker_gid}",
-            *python_environment,
+            *node_python_environment,
             "UMask=0077",
             "NoNewPrivileges=yes",
             "PrivateMounts=no",
@@ -1326,7 +1378,7 @@ def render_systemd_units(
             f"User={spec.outbox_uid}",
             f"Group={spec.outbox_gid}",
             "SupplementaryGroups=",
-            *python_environment,
+            *outbox_python_environment,
             "UMask=0077",
             "NoNewPrivileges=yes",
             "PrivateMounts=yes",
@@ -2024,20 +2076,16 @@ class QualificationSystemdServiceIdentityObservation(ExecutionModel):
         ):
             raise ValueError("effective systemd Exec argv is incomplete")
         environment_names = tuple(value.partition("=")[0] for value in self.effective_environment)
-        if (
-            any(
-                not separator
-                or re.fullmatch(r"[A-Z][A-Z0-9_]*", name) is None
-                or any(character in payload for character in ("\x00", "\n", "\r"))
-                for value in self.effective_environment
-                for name, separator, payload in (value.partition("="),)
-            )
-            or len(set(environment_names)) != len(environment_names)
-        ):
+        if any(
+            not separator
+            or re.fullmatch(r"[A-Z][A-Z0-9_]*", name) is None
+            or any(character in payload for character in ("\x00", "\n", "\r"))
+            for value in self.effective_environment
+            for name, separator, payload in (value.partition("="),)
+        ) or len(set(environment_names)) != len(environment_names):
             raise ValueError("effective systemd environment must contain unique exact assignments")
         if self.unset_environment_names != tuple(sorted(set(self.unset_environment_names))) or any(
-            re.fullmatch(r"[A-Z][A-Z0-9_]*", name) is None
-            for name in self.unset_environment_names
+            re.fullmatch(r"[A-Z][A-Z0-9_]*", name) is None for name in self.unset_environment_names
         ):
             raise ValueError("effective systemd unset environment names must be canonical")
         if self.supplementary_gids != tuple(sorted(set(self.supplementary_gids))):
@@ -2056,9 +2104,7 @@ class QualificationSystemdServiceIdentityObservation(ExecutionModel):
             _absolute_path(value, label=label)
         is_node_service = _UNIT_PATTERNS["node"].fullmatch(self.unit_name) is not None
         if is_node_service != (self.worker_poll_milliseconds is not None):
-            raise ValueError(
-                "only the node service may carry one explicit worker poll interval"
-            )
+            raise ValueError("only the node service may carry one explicit worker poll interval")
         return self
 
 
@@ -2091,9 +2137,7 @@ class ObservedNativeDependencyClosure(ExecutionModel):
 
     @model_validator(mode="after")
     def _closure_is_canonical(self) -> "ObservedNativeDependencyClosure":
-        if self.executable_needed_sonames != tuple(
-            sorted(set(self.executable_needed_sonames))
-        ):
+        if self.executable_needed_sonames != tuple(sorted(set(self.executable_needed_sonames))):
             raise ValueError("observed executable DT_NEEDED edges must be canonical")
         sonames = tuple(dependency.soname for dependency in self.dependencies)
         if sonames != tuple(sorted(set(sonames))):
@@ -2150,9 +2194,7 @@ class QualificationLinuxDeploymentObservation(ExecutionModel):
     systemd_service_identities: tuple[QualificationSystemdServiceIdentityObservation, ...]
     seccomp_profile: PinnedRootFile
     apparmor_profile: PinnedRootFile
-    loaded_apparmor_profile_name: str = Field(
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
-    )
+    loaded_apparmor_profile_name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
     apparmor_profile_enforcing: bool
     agent_implementation_sha256: str = Field(pattern=_SHA256_PATTERN)
     authority_bundle_sha256: str = Field(pattern=_SHA256_PATTERN)
@@ -2221,9 +2263,7 @@ class QualificationLinuxDeploymentObservation(ExecutionModel):
             raise ValueError("observed Python import paths must be unique and ordered")
         custody_purposes = tuple(item.purpose for item in self.custody_roots)
         if custody_purposes != _CUSTODY_ROOT_PURPOSES:
-            raise ValueError(
-                "observed custody roots must be exhaustive and canonically ordered"
-            )
+            raise ValueError("observed custody roots must be exhaustive and canonically ordered")
         for value in self.python_import_paths:
             _absolute_path(value, label="observed Python import path")
         external_native_paths = tuple(
@@ -2666,7 +2706,13 @@ def _expected_systemd_service_identities(
 ) -> tuple[QualificationSystemdServiceIdentityObservation, ...]:
     rendered_units = {unit.unit_name: unit for unit in render_systemd_units(spec)}
 
-    def loaded_state(unit_name: str, runner: str, operation: str) -> dict[str, object]:
+    def loaded_state(
+        unit_name: str,
+        runner: str,
+        operation: str,
+        *,
+        database_role: str | None = None,
+    ) -> dict[str, object]:
         unit = rendered_units[unit_name]
         return {
             "fragment_path": unit.path,
@@ -2676,7 +2722,10 @@ def _expected_systemd_service_identities(
             "exec_start_argvs": (_exec_start_argv(spec, runner, operation),),
             "exec_start_pre_argvs": (),
             "exec_start_post_argvs": (),
-            "effective_environment": _python_environment_assignments(spec),
+            "effective_environment": _python_environment_assignments(
+                spec,
+                database_role=database_role,
+            ),
             "unset_environment_names": _PYTHON_UNSET_ENVIRONMENT_NAMES,
         }
 
@@ -2743,7 +2792,12 @@ def _expected_systemd_service_identities(
                     effective_capabilities=(),
                     private_mounts=False,
                     worker_poll_milliseconds=spec.worker_poll_milliseconds,
-                    **loaded_state(spec.node_unit_name, spec.node_runner_path, "run"),
+                    **loaded_state(
+                        spec.node_unit_name,
+                        spec.node_runner_path,
+                        "run",
+                        database_role=spec.postgresql_allocator_role,
+                    ),
                     **common,
                 ),
                 QualificationSystemdServiceIdentityObservation(
@@ -2753,7 +2807,12 @@ def _expected_systemd_service_identities(
                     supplementary_gids=(),
                     effective_capabilities=(),
                     private_mounts=True,
-                    **loaded_state(spec.outbox_unit_name, spec.outbox_runner_path, "run"),
+                    **loaded_state(
+                        spec.outbox_unit_name,
+                        spec.outbox_runner_path,
+                        "run",
+                        database_role=spec.postgresql_outbox_role,
+                    ),
                     **common,
                 ),
             ),
@@ -2804,9 +2863,7 @@ def _native_dependency_closure_matches(
         and set(observed_dependencies) == set(expected_dependencies)
         and all(
             observed_dependencies[soname].needed_sonames == dependency.needed_sonames
-            and _installed_native_file_matches(
-                dependency.file, observed_dependencies[soname].file
-            )
+            and _installed_native_file_matches(dependency.file, observed_dependencies[soname].file)
             for soname, dependency in expected_dependencies.items()
         )
         and observed.exhaustive
@@ -2867,8 +2924,7 @@ def _same_boot_quota_socket_parent_matches(
     return (
         current.socket_parent_device == baseline.socket_parent_device
         and current.socket_parent_inode == baseline.socket_parent_inode
-        and current.socket_parent_parent_chain_sha256
-        == baseline.socket_parent_parent_chain_sha256
+        and current.socket_parent_parent_chain_sha256 == baseline.socket_parent_parent_chain_sha256
     )
 
 
@@ -2883,8 +2939,7 @@ def _same_boot_watchdog_socket_parent_matches(
     return (
         current.socket_parent_device == baseline.socket_parent_device
         and current.socket_parent_inode == baseline.socket_parent_inode
-        and current.socket_parent_parent_chain_sha256
-        == baseline.socket_parent_parent_chain_sha256
+        and current.socket_parent_parent_chain_sha256 == baseline.socket_parent_parent_chain_sha256
     )
 
 
@@ -2988,9 +3043,7 @@ def _observation_blockers(
     native_closures_ok = (
         set(observed_native_closures) == set(expected_native_closures)
         and all(
-            _native_dependency_closure_matches(
-                expected, observed_native_closures[path]
-            )
+            _native_dependency_closure_matches(expected, observed_native_closures[path])
             for path, expected in expected_native_closures.items()
         )
         and (
@@ -3199,9 +3252,7 @@ def _observation_blockers(
         and quota.backing_root_mode == 0o700
         and quota.state_root_mode == 0o700
         and quota.socket_parent_mode == 0o755
-        and _same_boot_quota_socket_parent_matches(
-            quota, installed_baseline, observation.boot_id
-        )
+        and _same_boot_quota_socket_parent_matches(quota, installed_baseline, observation.boot_id)
         and (
             installed_baseline is None
             or _quota_persistent_projection(quota)
@@ -3333,10 +3384,7 @@ def _observation_time_is_valid(
         <= timedelta(seconds=spec.maximum_observation_duration_seconds)
         and signed.expires_at <= signed.signed_at + timedelta(seconds=spec.observation_ttl_seconds)
         and observer_pin.active_at(checked_at)
-        and (
-            strictly_after is None
-            or signed.observation.observation_started_at > strictly_after
-        )
+        and (strictly_after is None or signed.observation.observation_started_at > strictly_after)
     )
 
 
@@ -3615,6 +3663,8 @@ __all__ = [
     "SignedQualificationLinuxDeploymentObservation",
     "freeze_installed_manifest",
     "qualification_agent_implementation_sha256",
+    "qualification_postgresql_peer_database_url",
+    "QUALIFICATION_POSTGRESQL_SOCKET_DIRECTORY",
     "postgresql_role_privileges_sha256",
     "render_postgresql_acl",
     "render_systemd_units",

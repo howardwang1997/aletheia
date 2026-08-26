@@ -34,12 +34,13 @@ marker does not invoke reload again. The final receipt remains
 
 ## Explicit non-capabilities
 
-This slice does not create Linux users/groups or custody roots, install code/Python/native tools,
+This installer does not create Linux users/groups or custody roots, install code/Python/native tools,
 write composition configs or keys, apply the rendered PostgreSQL ACL, enable/start a unit, observe
 the host independently, freeze `QualificationInstalledDeploymentManifestV1`, or execute the
 qualification campaign. All factory/config inputs and target parents must already exist with exact
 custody. PR-8c/PR-8d/PR-8e have since closed the root, node and terminal-outbox
-source-composition gates. Principal/config/key/ACL commissioning remains open.
+source-composition gates. PR-8f now supplies a separate disabled-only principal/root bootstrap,
+but no target host has run it; config/key/ACL commissioning remains open.
 
 The Darwin unit/fault tests exercise the pure state machine and a non-root atomic-file primitive;
 they do not execute the concrete root/systemd adapter and are not target-host evidence.

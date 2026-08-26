@@ -238,9 +238,10 @@ quota/watchdog service or target-host Docker mount namespace.
 
 Five guarded source runner entrypoints now exist, every rendered `ExecStart` carries the exact
 deployment-manifest SHA-256, and an explicit installer can publish only those disabled files.
-All five processes now have checked-in factories. No target-host commissioning workflow,
-concrete observer, frozen manifest instance, or campaign runner exists at
-this checkpoint. `QualificationInstalledDeploymentManifestV1` is a derived schema, not evidence
+All five processes now have checked-in factories. PR-8f adds the first disabled-only commissioning
+stage for exact Linux principals, PostgreSQL peer URLs and empty custody roots, but that stage has
+not run. The complete config/key/ACL workflow, concrete observer, frozen manifest instance and
+campaign runner still do not exist at this checkpoint. `QualificationInstalledDeploymentManifestV1` is a derived schema, not evidence
 that any installation was observed. Until an opt-in campaign runs as root on the exact target Linux host with its real systemd units,
 rootful Docker daemon, shared mount visibility, loop/ext4 tools, cgroup-v2 hierarchy, pinned OCI
 layout/image, Docker's pinned systemd cgroup layout, seccomp/AppArmor profiles, dedicated UID/GID,
