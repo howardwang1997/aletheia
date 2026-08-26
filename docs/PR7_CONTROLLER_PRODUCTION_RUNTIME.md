@@ -155,6 +155,9 @@ pre-admission chronology, complete PR-4 terminal lineage, and freshly rehashed a
 returning a deterministic envelope. PR-7l now supplies the isolated database-attestation process:
 it serializes each preregistered slot, issues DB-time challenges, commits only validation tied to an
 exact stored challenge, and loads no validator, admitter, execution, or Kernel private key.
+PR-7m now supplies the independent F9-v2 validator process: it owns only the validator domain key,
+replays public Kernel/PR-4/artifact custody, uses a source-pinned exact-content baseline and
+publishes one write-once campaign per raw run. Three concrete operation factories remain.
 Continuation now
 has its own two-audit service, mechanically reconstructed observation identity, pinned assessor
 policy, and durable provenance; its production service, assessment-artifact byte custody and ACL
@@ -164,7 +167,8 @@ remain open. See [ADR 0058](architecture/0058-durable-powerless-action-proposal-
 [ADR 0066](architecture/0066-scientific-execution-authorization-rpc-service.md), and
 [ADR 0067](architecture/0067-atomic-execution-registration-rpc-service.md), and
 [ADR 0068](architecture/0068-verified-raw-run-source-rpc-service.md), and
-[ADR 0069](architecture/0069-database-observation-rpc-service.md).
+[ADR 0069](architecture/0069-database-observation-rpc-service.md), and
+[ADR 0070](architecture/0070-independent-f9-v2-validation-rpc-service.md).
 
 PR-7c closes the source-code terminal verification/composition gap. The read-only PostgreSQL ACL,
 filesystem/key custody, supervisor invocation, and live process-kill behavior must still be proven

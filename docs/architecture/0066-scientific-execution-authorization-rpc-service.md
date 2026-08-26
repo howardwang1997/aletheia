@@ -39,5 +39,5 @@ principals, signing keys, and policies are role-separated.
   couples its append-only preregistration to PR-4 admission/reservation without loading this key.
 - PR-7k subsequently adds the verified, keyless raw-run source, and PR-7l adds database observation
   attestation.
-- Four concrete factories plus target-host ACL,
+- PR-7m subsequently closes independent F9-v2 validation. Three concrete factories plus target-host ACL,
   supervision, restart, and campaign evidence remain.

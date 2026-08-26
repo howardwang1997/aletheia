@@ -53,8 +53,9 @@ This is a safe exact-template signer, not general execution planning or host qua
 subsequently adds the separate `REGISTER_EXECUTION` service, which atomically preregisters this SEA
 and reserves the exact PR-4 attempt without loading the SEA private key. PR-7k subsequently adds
 verified raw-run loading, and PR-7l adds database observation attestation. Independent F9-v2
-validation, committed-validation loading, independent admission, and atomic Kernel incorporation
-remain; four PR-7e concrete service factories are therefore still incomplete.
+validation is subsequently closed by PR-7m. Committed-validation loading, independent admission,
+and atomic Kernel incorporation remain; three PR-7e concrete service factories are therefore still
+incomplete.
 
 No target host is commissioned. Linux account/socket/PostgreSQL/CAS/registry/key ACLs,
 systemd supervision, alerts, key rotation/revocation, and a fresh multi-process kill/restart

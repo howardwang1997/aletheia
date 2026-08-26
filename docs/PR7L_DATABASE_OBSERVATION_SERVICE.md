@@ -48,10 +48,11 @@ gate.
 
 ## Remaining release gates
 
-Four PR-7e concrete factories remain: independent F9-v2 validation, committed-validation source,
-independent admission, and atomic admission/Kernel incorporation. The next ordered source slice is
-the independent F9-v2 validation service; it must own only the validator key and publish the exact
-campaign/receipt without loading the database, admitter, execution, or Kernel private keys.
+PR-7m subsequently closes the independent F9-v2 validation factory with an isolated validator key,
+full public-custody replay, a conservative exact-content assessor and write-once campaign archive.
+Three PR-7e concrete factories remain: committed-validation source, independent admission, and
+atomic admission/Kernel incorporation. The next ordered source slice is the keyless
+committed-validation source.
 
 No target host is commissioned. Exact PostgreSQL write/read ACLs, Linux account/socket and key
 ownership, systemd supervision, alerts, key rotation/revocation, and a fresh multi-process
@@ -59,6 +60,7 @@ PostgreSQL kill/restart campaign remain mandatory. These source and test receipt
 evidence, not deployment proof or a scientific result.
 
 See [ADR 0069](architecture/0069-database-observation-rpc-service.md), the
+[PR-7m independent-validation guide](PR7M_INDEPENDENT_F9_V2_VALIDATION_SERVICE.md), the
 [PR-7k raw-run source guide](PR7K_VERIFIED_RAW_RUN_SOURCE_SERVICE.md), the
 [PR-7e server guide](PR7E_EXTERNAL_RPC_SERVICE_RUNTIME.md), and the
 [PR-5 controller guide](PR5_DURABLE_SCIENTIFIC_CONTROLLER.md).

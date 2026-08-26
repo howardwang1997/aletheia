@@ -31,5 +31,5 @@ projection, so it could not itself prove preregistration.
   fabricate or admit a scientific outcome.
 - The source process has no signing key and exposes no execution mutation method. Read-only database
   grants and live host evidence remain required because Python operation closure is not an ACL.
-- PR-7l subsequently closes database observation attestation. Four concrete factories remain; the
-  next is independent F9-v2 validation.
+- PR-7l subsequently closes database observation attestation and PR-7m closes independent F9-v2
+  validation. Three concrete factories remain; the next is the committed-validation source.
