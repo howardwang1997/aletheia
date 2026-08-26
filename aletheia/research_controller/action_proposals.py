@@ -299,6 +299,17 @@ class ActionProposalDraftProviderPort(Protocol):
     def propose_action(self, request: ControllerActionProposalRequest) -> ActionProposalDraft: ...
 
 
+class ActionProposalDraftVerificationPort(Protocol):
+    """Deployment-pinned verifier used for new drafts and exact restarted submissions."""
+
+    def verify_action_proposal_draft(
+        self,
+        *,
+        request: ControllerActionProposalRequest,
+        draft: ActionProposalDraft,
+    ) -> ActionProposalDraft: ...
+
+
 class ActionProposalContextSourcePort(Protocol):
     """Rebuild proposal context from authoritative receipts for the exact controller tick."""
 
@@ -549,6 +560,7 @@ __all__ = [
     "ActionProposalContextSourcePort",
     "ActionProposalDraft",
     "ActionProposalDraftProviderPort",
+    "ActionProposalDraftVerificationPort",
     "ActionProposalError",
     "ActionProposalMaterializationPort",
     "ActionProposalSubmissionStorePort",

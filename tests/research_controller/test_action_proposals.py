@@ -223,6 +223,17 @@ class _Provider:
         return _draft(request, action_id=self.action_id)
 
 
+class _DraftVerifier:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def verify_action_proposal_draft(self, *, request, draft):
+        self.calls += 1
+        frozen = ActionProposalDraft.model_validate(draft.model_dump(mode="python"))
+        assert frozen.request_sha256 == request.request_sha256
+        return frozen
+
+
 def _service(tmp_path, step: ControllerStep, provider=None):
     request = _request(step)
     context = _Context(request)
@@ -231,10 +242,37 @@ def _service(tmp_path, step: ControllerStep, provider=None):
     service = ActionProposalMaterializationService(
         context_source=context,
         provider=provider,
+        draft_verifier=_DraftVerifier(),
         submissions=spool,
         clock=lambda: NOW + timedelta(seconds=2),
     )
     return service, context, provider, spool
+
+
+def test_production_spool_custody_pin_is_complete_and_rechecked(tmp_path) -> None:
+    root = tmp_path / "pinned-spool"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    metadata = root.stat()
+    with pytest.raises(ValueError, match="must be complete"):
+        WriteOnceActionProposalSpool(
+            root,
+            authority_binding=_binding(),
+            owner_uid=metadata.st_uid,
+        )
+    spool = WriteOnceActionProposalSpool(
+        root,
+        authority_binding=_binding(),
+        owner_uid=metadata.st_uid,
+        owner_gid=metadata.st_gid,
+        device_id=metadata.st_dev,
+        inode=metadata.st_ino,
+        directory_mode=0o700,
+    )
+
+    root.chmod(0o750)
+    with pytest.raises(ActionProposalError, match="root"):
+        spool.load(request_sha256=_sha("unpublished-request"))
 
 
 @pytest.mark.parametrize(
@@ -292,6 +330,7 @@ def test_exact_retry_freshly_reloads_spool_without_reinvoking_provider(tmp_path)
     restarted = ActionProposalMaterializationService(
         context_source=context,
         provider=provider,
+        draft_verifier=_DraftVerifier(),
         submissions=WriteOnceActionProposalSpool(
             spool.root,
             authority_binding=_binding(),
@@ -326,6 +365,7 @@ def test_concurrent_variant_providers_converge_on_one_first_winner(tmp_path) -> 
             service = ActionProposalMaterializationService(
                 context_source=_Context(request),
                 provider=Provider(suffix),
+                draft_verifier=_DraftVerifier(),
                 submissions=spool,
                 clock=lambda: NOW + timedelta(seconds=2),
             )

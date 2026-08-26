@@ -43,8 +43,9 @@ vertical cut.
 
 This is checked-in source composition, not host evidence. A provisioned Linux service account must
 still demonstrate exact socket, PostgreSQL, CAS, artifact-root, supervisor, and alert custody in the
-PR-4/PR-5 campaign. The other ten PR-7e service factories, including proposal/compiler providers
-and every signer/admitter, remain uncommissioned.
+PR-4/PR-5 campaign. PR-7g subsequently supplies the conservative action-proposal source factory;
+the other nine PR-7e service factories, including the compiler provider and every signer/admitter,
+remain uncommissioned.
 
 See [ADR 0063](architecture/0063-deterministic-continuation-rpc-service.md), the
 [PR-7e server guide](PR7E_EXTERNAL_RPC_SERVICE_RUNTIME.md), and the

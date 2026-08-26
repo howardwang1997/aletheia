@@ -140,8 +140,10 @@ slices without importing their private keys; see
 [PR-7e guide](PR7E_EXTERNAL_RPC_SERVICE_RUNTIME.md).
 
 The three proposal steps now have a proposal-only source implementation with exact Kernel/receipt
-re-audit, bounded provider drafts, and write-once unsigned-command custody. They still need a
-commissioned provider endpoint and an independent Kernel command authority. The protocol compiler
+re-audit, bounded provider drafts, and write-once unsigned-command custody. PR-7g adds the
+conservative deterministic provider and checked-in single-operation endpoint, but it still needs
+target-host commissioning; knowledge-grounded proposal intelligence and the independent Kernel
+command authority remain open. The protocol compiler
 now has a two-audit, policy-pinned, append-only step service, but its production provider/RPC,
 receipt custody, ACL and external process commissioning remain open. Continuation now
 has its own two-audit service, mechanically reconstructed observation identity, pinned assessor
