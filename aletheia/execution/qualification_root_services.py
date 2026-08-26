@@ -9,7 +9,9 @@ private signing keys, or scientific-admission authority.
 from __future__ import annotations
 
 import json
+import os
 from collections import Counter
+from pathlib import Path
 from typing import Literal, TypeVar
 
 from pydantic import Field, model_validator
@@ -60,24 +62,37 @@ class QualificationWorkspaceServiceConfigV1(ExecutionModel):
         return self
 
 
-class QualificationQuotaServiceConfigV1(ExecutionModel):
+class QualificationQuotaServiceConfigV2(ExecutionModel):
     """Canonical factory config for the loopback quota daemon."""
 
     schema_name: Literal["aletheia.qualification_quota_service_config"] = (
         "aletheia.qualification_quota_service_config"
     )
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     deployment_id: str = Field(pattern=_SYMBOLIC_ID_PATTERN)
     process_config_binding_sha256: str = Field(pattern=_SHA256_PATTERN)
+    oci_policy: DeploymentPinnedOCIPolicy
+    runtime_journal_root: str
     quota_deployment: LoopbackQuotaProvisionerDeploymentPin
     private_signing_keys_loaded: Literal[False] = False
     database_credentials_loaded: Literal[False] = False
     scientific_admission_allowed: Literal[False] = False
 
     @model_validator(mode="after")
-    def _quota_is_scoped(self) -> "QualificationQuotaServiceConfigV1":
-        if self.quota_deployment.deployment_id != f"{self.deployment_id}:quota":
+    def _quota_is_scoped(self) -> "QualificationQuotaServiceConfigV2":
+        if (
+            self.quota_deployment.deployment_id != f"{self.deployment_id}:quota"
+            or self.oci_policy.workload_uid != self.quota_deployment.allowed_client_uid
+            or self.oci_policy.workload_gid != self.quota_deployment.allowed_client_gid
+        ):
             raise ValueError("quota service config belongs to another deployment")
+        candidate = Path(self.runtime_journal_root)
+        if (
+            not candidate.is_absolute()
+            or str(candidate) != os.path.normpath(self.runtime_journal_root)
+            or self.runtime_journal_root == "/"
+        ):
+            raise ValueError("quota runtime journal root must be canonical and absolute")
         return self
 
 
@@ -109,7 +124,7 @@ class QualificationWatchdogServiceConfigV1(ExecutionModel):
 _ConfigT = TypeVar(
     "_ConfigT",
     QualificationWorkspaceServiceConfigV1,
-    QualificationQuotaServiceConfigV1,
+    QualificationQuotaServiceConfigV2,
     QualificationWatchdogServiceConfigV1,
 )
 
@@ -211,14 +226,18 @@ def compose_quota_service(
 ) -> QualificationServiceHandlerSet:
     """Compose the existing root-only loopback quota daemon."""
 
-    config = _load_config(configuration_bytes, QualificationQuotaServiceConfigV1)
+    config = _load_config(configuration_bytes, QualificationQuotaServiceConfigV2)
     process = _bind_process(
         deployment,
         role=QualificationServiceRole.QUOTA,
         config_deployment_id=config.deployment_id,
         process_config_binding_sha256=config.process_config_binding_sha256,
     )
-    service = LoopbackOutputQuotaProvisioningService(config.quota_deployment)
+    service = LoopbackOutputQuotaProvisioningService(
+        config.quota_deployment,
+        verification_policy=config.oci_policy,
+        runtime_journal_root=Path(config.runtime_journal_root),
+    )
     return _handler_set(process=process, operation=service.serve_forever)
 
 
@@ -244,7 +263,7 @@ def compose_watchdog_service(
 
 
 __all__ = [
-    "QualificationQuotaServiceConfigV1",
+    "QualificationQuotaServiceConfigV2",
     "QualificationRootServiceCompositionError",
     "QualificationWatchdogServiceConfigV1",
     "QualificationWorkspaceServiceConfigV1",
