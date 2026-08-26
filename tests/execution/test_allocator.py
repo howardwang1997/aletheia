@@ -555,8 +555,27 @@ def _register_and_inventory(prepared: _Prepared) -> None:
 def test_atomic_admission_is_exactly_idempotent_and_token_is_one_time(monkeypatch) -> None:
     prepared = _prepared(monkeypatch)
     _register_and_inventory(prepared)
+    sessions = session_factory()
+    with sessions() as session, session.begin():
+        assert (
+            prepared.allocator.load_exact_qualification_reservation_in_session(
+                session,
+                bundle=prepared.bundle,
+                grant=prepared.grant,
+            )
+            is None
+        )
 
     first = prepared.allocator.admit_and_reserve(bundle=prepared.bundle, grant=prepared.grant)
+    with sessions() as session, session.begin():
+        assert (
+            prepared.allocator.load_exact_qualification_reservation_in_session(
+                session,
+                bundle=prepared.bundle,
+                grant=prepared.grant,
+            )
+            == first.snapshot
+        )
     monkeypatch.setattr(
         allocator_module,
         "_database_time",
@@ -631,6 +650,12 @@ def test_caller_owned_admission_requires_an_active_transaction(monkeypatch) -> N
     with session_factory()() as session:
         with pytest.raises(ValueError, match="active Session transaction"):
             prepared.allocator.admit_and_reserve_in_session(
+                session,
+                bundle=prepared.bundle,
+                grant=prepared.grant,
+            )
+        with pytest.raises(ValueError, match="active Session transaction"):
+            prepared.allocator.load_exact_qualification_reservation_in_session(
                 session,
                 bundle=prepared.bundle,
                 grant=prepared.grant,

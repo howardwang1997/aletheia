@@ -1768,10 +1768,34 @@ ACL/supervisor 与 live process-kill campaign 仍待完成。详见
   reservation、launch、validation、admission 与 Kernel mutation 均留在独立服务。
 
 该切片关闭 safe exact-template SEA signer/factory，不等于 general execution planning 或 target-host
-commissioning evidence；其余七项 registration/raw-run/validation/admission/Kernel-incorporation service
-factory、ACL/supervisor 与 live process-kill campaign 仍待完成。下一项顺序工作是独立
-`REGISTER_EXECUTION` concrete service。详见 `PR7I_EXECUTION_AUTHORIZATION_SERVICE.md` 与
+commissioning evidence；PR-7j 随后关闭 atomic registration/reservation factory，其余六项
+raw-run/validation/admission/Kernel-incorporation service factory、ACL/supervisor 与 live process-kill
+campaign 仍待完成。详见 `PR7I_EXECUTION_AUTHORIZATION_SERVICE.md` 与
 `architecture/0066-scientific-execution-authorization-rpc-service.md`。
+
+### PR-7j：Atomic execution-registration RPC service
+
+- 单 operation factory 只接受 signed SEA；不加载 SEA、runtime-control、node、validation、admission、
+  terminal 或 Kernel domain private key；
+- 首次 scientific slot 注册先取得 slot advisory lock，再在同一 caller-owned PostgreSQL transaction 内
+  `audit_in_session` 锁住 Quest stream，要求 adjacent authorization event/snapshot 仍是当前
+  `AUTHORIZED` head；
+- 同一事务随后 append exact SEA registration，并调用 PR-4 `admit_and_reserve_in_session`；任何验证、
+  registry、artifact、allocator 或数据库失败都同时回滚 registration 与 reservation；
+- allocator 返回后在仍持有 Quest lock 时重新采样 DB time，并重验 SEA liveness/custody，lock wait 不能让
+  已过期 authorization 越过 reservation linearization；
+- exact retry 只从完整 durable SEA/reservation pair 重建稳定 committed-state receipt，不再把首次 `created`
+  状态写进 response hash；已成功的历史 retry 可在 action/attempt 后续推进后重放，单边历史状态直接拒绝，
+  原 observation service 的 SEA-only writer 已删除；
+- config 冻结 database/schema、read-only Kernel CAS、registrar bytes、immutable artifact/authority roots、
+  canonical enrolled nodes/rate cards/currencies 与完整 public authority separation；RPC receipt public key
+  不得复用任何 Ed25519/X25519 domain key。
+
+该切片关闭 atomic SEA/PR-4 registration source composition，不等于 PostgreSQL ACL 或 host/process-kill
+evidence；其余六项 raw-run/database-observation/independent-validation/committed-validation/
+independent-admission/atomic-incorporation factory 仍待完成。下一项顺序工作是 `LOAD_RAW_RUN` concrete
+service。详见 `PR7J_ATOMIC_EXECUTION_REGISTRATION_SERVICE.md` 与
+`architecture/0067-atomic-execution-registration-rpc-service.md`。
 
 PR-5 的本地 vertical cut 已完成；现在仍须完成 PR-4 target-host campaign、PR-5 production
 controller/validator/signer process commissioning 与 terminal target-host commissioning，之后才依据 fresh inventory
@@ -1860,10 +1884,11 @@ Unix RPC port 组合，response 使用独立 Ed25519 transport receipt 验证，
 lineage 与 read-only Kernel CAS；worker 不加载科学签名私钥。**PR-7e** 已补齐 common external RPC server
 runtime：closed payload/result、双向 Linux peer identity、socket parent/inode、service-owned `0400` transport
 key 与 byte-pinned factory 均 fail closed；这仍不是十一项 concrete authority service commissioning。
-**PR-7f**、**PR-7g**、**PR-7h** 与 **PR-7i** 分别完成 deterministic continuation、conservative
-action-proposal、frozen protocol-compilation 与 exact-template scientific execution-authorization concrete
-service factory；其余 registration/validation/admission/Kernel signer factory 与 ACL 仍待完成。下一项顺序工作
-是 `REGISTER_EXECUTION` concrete service factory，随后继续其余 external authority process composition，再进入
+**PR-7f**、**PR-7g**、**PR-7h**、**PR-7i** 与 **PR-7j** 分别完成 deterministic continuation、
+conservative action-proposal、frozen protocol-compilation、exact-template scientific
+execution-authorization 与 atomic execution-registration concrete service factory；其余
+raw-run/validation/admission/Kernel signer factory 与 ACL 仍待完成。下一项顺序工作是 `LOAD_RAW_RUN`
+concrete service factory，随后继续其余 external authority process composition，再进入
 真实 image/host qualification 与
 process-kill PostgreSQL campaign，而不是扩张
 controller authority。checkpoint 与 external reconciliation

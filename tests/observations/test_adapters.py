@@ -74,6 +74,16 @@ class _AuditStore:
         self.calls.append((quest_id, expected_scope_binding))
         return self.result
 
+    def audit_in_session(
+        self,
+        _session,
+        quest_id: str,
+        *,
+        expected_scope_binding=None,
+    ) -> ResearchReplayAudit:
+        self.calls.append((quest_id, expected_scope_binding))
+        return self.result
+
 
 def _action_audit(case: BridgeCase) -> ResearchReplayAudit:
     binding = case.binding
@@ -143,6 +153,49 @@ def test_postgresql_action_adapter_consumes_exact_audited_authority(
             case.binding.compilation_request.protocol.graph_scope.scope_binding,
         )
     ]
+
+
+def test_postgresql_action_adapter_locks_exact_current_authorized_head(
+    action_bridge_case: BridgeCase,
+) -> None:
+    case = action_bridge_case
+    store = _AuditStore(_action_audit(case))
+    adapter = PostgreSQLResearchActionAuthorityAdapter(store)  # type: ignore[arg-type]
+    observed_at = case.binding.bound_at + timedelta(minutes=1)
+
+    with Session() as session, session.begin():
+        assert (
+            adapter.verify_current_action_protocol_binding_in_session(
+                session,
+                binding=case.binding,
+                observed_at=observed_at,
+            )
+            == case.binding.binding_sha256
+        )
+        assert session.in_transaction()
+
+    filler = case.binding.action_authorized_event.model_copy(
+        update={"command_sha256": _digest("adapter-later-kernel-head")}
+    )
+    stale = store.result.model_copy(
+        update={
+            "events": (*store.result.events, filler),
+            "verified_snapshot_sha256s": (
+                *store.result.verified_snapshot_sha256s,
+                _digest("adapter-later-kernel-snapshot"),
+            ),
+        }
+    )
+    adapter = PostgreSQLResearchActionAuthorityAdapter(  # type: ignore[arg-type]
+        _AuditStore(stale)
+    )
+    with Session() as session, session.begin():
+        with pytest.raises(ObservationAdapterVerificationError, match="current authorized head"):
+            adapter.verify_current_action_protocol_binding_in_session(
+                session,
+                binding=case.binding,
+                observed_at=observed_at,
+            )
 
 
 @pytest.mark.parametrize("fault", ["nonadjacent", "snapshot", "action", "future"])

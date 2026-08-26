@@ -44,8 +44,9 @@ behind the same closed request, verifier, receipt, and unsigned-command boundary
 deployed Kernel command authority must still decide and sign any accepted command.
 
 The exact Linux service account must still prove socket, PostgreSQL, CAS, spool, supervisor, alert,
-and process-restart custody in the PR-4/PR-5 campaign. PR-7h and PR-7i subsequently supply the frozen
-protocol-compilation and exact-template execution-authorization factories; seven other PR-7e
+and process-restart custody in the PR-4/PR-5 campaign. PR-7h, PR-7i and PR-7j subsequently supply
+the frozen protocol-compilation, exact-template execution-authorization, and atomic registration
+factories; six other PR-7e
 service factories and their domain-key/ACL
 commissioning remain incomplete.
 

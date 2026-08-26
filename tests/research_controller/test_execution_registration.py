@@ -117,8 +117,6 @@ class _Registrar:
             qualification_admission_sha256="a" * 64,
             resource_reservation_sha256="b" * 64,
             reserved_at=registered_at + timedelta(seconds=1),
-            authorization_registration_created=True,
-            qualification_reservation_created=True,
         )
         self.calls = []
 

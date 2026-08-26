@@ -68,13 +68,6 @@ def _install_memory_store(monkeypatch: pytest.MonkeyPatch):
         item = authorizations.get(scientific_slot_id)
         return item if item is not None and item.quest_id == quest_id else None
 
-    def register_authorization(_session, write):
-        existing = authorizations.get(write.scientific_slot_id)
-        if existing is not None:
-            return AppendReceipt(identity_sha256=write.authorization_sha256, created=False)
-        authorizations[write.scientific_slot_id] = write
-        return AppendReceipt(identity_sha256=write.authorization_sha256, created=True)
-
     def get_live_challenge(
         _session,
         *,
@@ -112,9 +105,6 @@ def _install_memory_store(monkeypatch: pytest.MonkeyPatch):
         service_module, "get_scientific_execution_authorization_by_slot", get_authorization
     )
     monkeypatch.setattr(
-        service_module, "register_scientific_execution_authorization", register_authorization
-    )
-    monkeypatch.setattr(
         service_module, "get_live_observation_issuance_challenge", get_live_challenge
     )
     monkeypatch.setattr(service_module, "record_observation_issuance_challenge", record_challenge)
@@ -125,26 +115,18 @@ def _install_memory_store(monkeypatch: pytest.MonkeyPatch):
     return authorizations, challenges, validations
 
 
-def test_sea_registration_and_live_validation_challenge_resume_exactly(
+def test_atomically_preregistered_sea_and_live_validation_challenge_resume_exactly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     case = _bridge_case()
     authorizations, challenges, _validations = _install_memory_store(monkeypatch)
     registered_at = case.authorization.message.authorized_at + timedelta(seconds=1)
-    registration_service = PostgreSQLScientificBridgeService(
-        verification=_verification(case),
-        session_scope_factory=_session_scope,
-        database_clock=_Clock(registered_at, registered_at + timedelta(seconds=1)),
-        nonce_factory=lambda: _digest("validation-service-nonce"),
+    authorizations[case.authorization.message.scientific_slot_id] = (
+        ScientificExecutionAuthorizationWrite.from_contract(
+            case.authorization,
+            registered_at=registered_at,
+        )
     )
-
-    created = registration_service.register_execution_authorization(case.authorization)
-    replayed = registration_service.register_execution_authorization(case.authorization)
-
-    assert created.created is True
-    assert replayed.created is False
-    assert replayed.registered_at == created.registered_at
-    assert len(authorizations) == 1
 
     raw_run = _raw_run(case)
     issued_at = raw_run.assembled_at + timedelta(minutes=1)
