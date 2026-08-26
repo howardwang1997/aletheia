@@ -37,6 +37,13 @@ def _observation(*, outcome: ScientificObservationOutcome = ScientificObservatio
         observable_spec_sha256=prediction.observable_spec_sha256,
         measurement_protocol_sha256=prediction.measurement_protocol_sha256,
         outcome_space_sha256=prediction.outcome_space_sha256,
+        observed_outcome_bin_id="outcome.negative",
+        admissible_outcome_bin_ids=(
+            "outcome.inconclusive",
+            "outcome.negative",
+            "outcome.positive",
+        ),
+        admission_policy_sha256="a" * 64,
         observed_outcome_sha256="4" * 64,
     )
 

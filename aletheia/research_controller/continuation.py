@@ -9,6 +9,7 @@ entire frozen hypothesis set.
 
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import Literal
 
@@ -29,11 +30,19 @@ from aletheia.research_kernel.schemas import (
 
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
 _SCIENTIFIC_SLOT_PATTERN = r"^sos_[0-9a-f]{32}$"
+_OUTCOME_BIN_PATTERN = r"^[a-z][a-z0-9_.:/-]{1,127}$"
 OBSERVED_OUTCOME_IDENTITY_POLICY_SHA256 = canonical_sha256(
     {
         "schema_name": "aletheia.observed_scientific_outcome_identity_policy",
         "schema_version": 1,
         "source": "committed_f9_v2_validation_projection",
+    }
+)
+EXACT_OUTCOME_BIN_PREDICTION_POLICY_SHA256 = canonical_sha256(
+    {
+        "schema_name": "aletheia.exact_outcome_bin_prediction_identity_policy",
+        "schema_version": 1,
+        "source": "frozen_f9_v2_prediction_and_admission_outcome_bins",
     }
 )
 
@@ -60,7 +69,7 @@ class ScientificObservationProjection(ControllerModel):
     schema_name: Literal["aletheia.scientific_observation_projection"] = (
         "aletheia.scientific_observation_projection"
     )
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     scientific_slot_id: str = Field(pattern=_SCIENTIFIC_SLOT_PATTERN)
     committed_admission_sha256: str = Field(pattern=_SHA256_PATTERN)
     scientific_observation_sha256: str = Field(pattern=_SHA256_PATTERN)
@@ -69,7 +78,19 @@ class ScientificObservationProjection(ControllerModel):
     observable_spec_sha256: str = Field(pattern=_SHA256_PATTERN)
     measurement_protocol_sha256: str = Field(pattern=_SHA256_PATTERN)
     outcome_space_sha256: str = Field(pattern=_SHA256_PATTERN)
+    observed_outcome_bin_id: str = Field(pattern=_OUTCOME_BIN_PATTERN)
+    admissible_outcome_bin_ids: tuple[str, ...] = Field(min_length=1, max_length=128)
+    admission_policy_sha256: str = Field(pattern=_SHA256_PATTERN)
     observed_outcome_sha256: str = Field(pattern=_SHA256_PATTERN)
+
+    @model_validator(mode="after")
+    def _outcome_bins_are_canonical(self) -> "ScientificObservationProjection":
+        if (
+            self.admissible_outcome_bin_ids != tuple(sorted(set(self.admissible_outcome_bin_ids)))
+            or self.observed_outcome_bin_id not in self.admissible_outcome_bin_ids
+        ):
+            raise ValueError("scientific observation outcome bins must be unique and canonical")
+        return self
 
     @property
     def projection_sha256(self) -> str:
@@ -159,6 +180,41 @@ def continuation_to_action_kind(disposition: ContinuationDisposition) -> ActionK
         ContinuationDisposition.REDESIGN_OBSERVABLE: ActionKind.REFINE,
         ContinuationDisposition.HYPOTHESIS_SET_FORK_REQUIRED: ActionKind.FORK,
     }[disposition]
+
+
+def exact_outcome_bin_prediction_sha256(
+    *,
+    observable_spec_sha256: str,
+    measurement_protocol_sha256: str,
+    outcome_space_sha256: str,
+    outcome_bin_id: str,
+) -> str:
+    """Commit one exact admissible outcome bin under the F9-v2 measurement context."""
+
+    if (
+        any(
+            re.fullmatch(_SHA256_PATTERN, value) is None
+            for value in (
+                observable_spec_sha256,
+                measurement_protocol_sha256,
+                outcome_space_sha256,
+            )
+        )
+        or re.fullmatch(_OUTCOME_BIN_PATTERN, outcome_bin_id) is None
+    ):
+        raise ValueError("exact outcome-bin prediction inputs are invalid")
+
+    return canonical_sha256(
+        {
+            "schema_name": "aletheia.exact_outcome_bin_prediction_identity",
+            "schema_version": 1,
+            "identity_policy_sha256": EXACT_OUTCOME_BIN_PREDICTION_POLICY_SHA256,
+            "observable_spec_sha256": observable_spec_sha256,
+            "measurement_protocol_sha256": measurement_protocol_sha256,
+            "outcome_space_sha256": outcome_space_sha256,
+            "outcome_bin_id": outcome_bin_id,
+        }
+    )
 
 
 def continuation_assessment_source_sha256(
@@ -299,6 +355,10 @@ def project_admitted_scientific_observation(
         world_model = protocol.world_model
         campaign = message.validation_campaign_projection
         artifact_binding = authorization.scientific_observation_artifact_binding
+        admission_policy = authorization.admission_policy
+        admissible_outcome_bin_ids = tuple(
+            item.outcome_bin_id for item in admission_policy.outcome_bin_mappings
+        )
         if (
             message.disposition is not BridgeValidationDisposition.VALIDATED_CONFIRMATION
             or message.outcome is None
@@ -337,6 +397,9 @@ def project_admitted_scientific_observation(
             observable_spec_sha256=artifact_binding.observable.observable_sha256,
             measurement_protocol_sha256=protocol.method.method_contract_sha256,
             outcome_space_sha256=protocol.analysis_plan.outcome_space_sha256,
+            observed_outcome_bin_id=campaign.outcome_bin_id,
+            admissible_outcome_bin_ids=admissible_outcome_bin_ids,
+            admission_policy_sha256=admission_policy.policy_sha256,
             observed_outcome_sha256=observed_outcome_sha256,
         )
     except (TypeError, ValueError):
@@ -349,6 +412,7 @@ __all__ = [
     "ContinuationAssessmentProvenance",
     "ContinuationDisposition",
     "ContinuationReceipt",
+    "EXACT_OUTCOME_BIN_PREDICTION_POLICY_SHA256",
     "HypothesisPredictionAssessment",
     "OBSERVED_OUTCOME_IDENTITY_POLICY_SHA256",
     "PredictionFit",
@@ -356,5 +420,6 @@ __all__ = [
     "continuation_assessment_source_sha256",
     "continuation_to_action_kind",
     "derive_continuation_v2",
+    "exact_outcome_bin_prediction_sha256",
     "project_admitted_scientific_observation",
 ]

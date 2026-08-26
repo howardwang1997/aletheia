@@ -42,6 +42,7 @@ from aletheia.research_controller.continuation import (
     PredictionFit,
     ScientificObservationProjection,
     derive_continuation_v2,
+    exact_outcome_bin_prediction_sha256,
 )
 from aletheia.research_controller.contracts import (
     CompilationDisposition,
@@ -246,8 +247,15 @@ def _f9_enriched_grouped_fixture(
                     observable_spec_sha256=observable.observable_sha256,
                     measurement_protocol_sha256=method.method_contract_sha256,
                     outcome_space_sha256=analysis_plan.outcome_space_sha256,
-                    predicted_outcome_sha256=_digest(
-                        f"vertical-predicted-outcome:{hypothesis.hypothesis_id}"
+                    predicted_outcome_sha256=exact_outcome_bin_prediction_sha256(
+                        observable_spec_sha256=observable.observable_sha256,
+                        measurement_protocol_sha256=method.method_contract_sha256,
+                        outcome_space_sha256=analysis_plan.outcome_space_sha256,
+                        outcome_bin_id=(
+                            "outcome.positive",
+                            "outcome.inconclusive",
+                            "outcome.negative",
+                        )[index % 3],
                     ),
                     discriminates_from_hypothesis_sha256s=tuple(
                         sorted(item.hypothesis_sha256 for item in hypotheses if item != hypothesis)
@@ -256,7 +264,7 @@ def _f9_enriched_grouped_fixture(
                     authored_by_principal_id=protocol.authored_by_principal_id,
                     authored_at=protocol.authored_at,
                 )
-                for hypothesis in hypotheses
+                for index, hypothesis in enumerate(hypotheses)
             ),
             key=lambda item: (item.prediction_id, item.version, item.prediction_sha256),
         )
@@ -1109,6 +1117,12 @@ def test_restart_safe_measurement_redesign_negative_fork_vertical_cut(
         observable_spec_sha256=predictions[0].observable_spec_sha256,
         measurement_protocol_sha256=predictions[0].measurement_protocol_sha256,
         outcome_space_sha256=predictions[0].outcome_space_sha256,
+        observed_outcome_bin_id="outcome.negative",
+        admissible_outcome_bin_ids=tuple(
+            item.outcome_bin_id
+            for item in bridge.authorization.message.admission_policy.outcome_bin_mappings
+        ),
+        admission_policy_sha256=bridge.authorization.message.admission_policy.policy_sha256,
         observed_outcome_sha256=_digest("vertical-observed-all-model-miss"),
     )
     assessments = tuple(

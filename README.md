@@ -183,14 +183,19 @@ uncommissioned. The
 continuation step now reconstructs the only allowed observation projection from signed validation
 and Kernel incorporation, replays the exact compiler/admission chain twice, pins assessor
 principal/implementation/fit rules, and persists provenance with the deterministic disposition.
-Restart recovery rederives the same receipt. Its production assessor process, fresh
-assessment-artifact byte custody and ACL remain uncommissioned. PR-7e now supplies the server half
+Restart recovery rederives the same receipt. PR-7e now supplies the server half
 of the RPC boundary: one byte-pinned Linux process accepts only its closed operation set and typed
 payloads, verifies the worker's `SO_PEERCRED`, loads one service-owned `0400` transport key outside
 reviewed source, and emits bounded Ed25519 receipts. Invalid requests and unexpected service
-failures receive no signed interpretation. The production proposal provider, independent Kernel
-signer, eleven concrete service factories, socket/PostgreSQL ACL commissioning, and live
-multi-process campaign remain incomplete. The PR-2 store also
+failures receive no signed interpretation. PR-7f closes the first concrete service composition:
+continuation predictions may commit an exact admission-policy outcome bin, while a deterministic
+keyless assessor maps only recognized same/different bins to support/out-of-support. Opaque,
+ambiguous, or missing predictions request redesign instead of fabricating a fork. Every fit has a
+service-owned write-once artifact that is fresh-rehashed on restart, and the single-operation RPC
+factory pins its source bytes, read-only Kernel CAS, database revision, authority policy and
+artifact-root inode/ACL. Target-host commissioning is still pending. The production proposal
+provider, independent Kernel signer, other ten concrete service factories, socket/PostgreSQL ACL
+commissioning, and live multi-process campaign remain incomplete. The PR-2 store also
 still has one immutable policy epoch and
 `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
 the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
@@ -204,13 +209,15 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-7c verified-terminal guide](docs/PR7C_VERIFIED_TERMINAL_DISPATCHER.md), plus
 [PR-7d worker-factory guide](docs/PR7D_COMPLETE_CONTROLLER_WORKER.md), plus
 [PR-7e external-service guide](docs/PR7E_EXTERNAL_RPC_SERVICE_RUNTIME.md), plus
+[PR-7f continuation-service guide](docs/PR7F_DETERMINISTIC_CONTINUATION_SERVICE.md), plus
 [ADR 0056](docs/architecture/0056-independent-observation-controller-steps.md) and
 [ADR 0057](docs/architecture/0057-graph-scoped-f9-v2-validation-campaign.md), plus
 [ADR 0058](docs/architecture/0058-durable-powerless-action-proposal-steps.md), and
 [ADR 0059](docs/architecture/0059-durable-protocol-compilation-step.md), and
 [ADR 0060](docs/architecture/0060-durable-continuation-assessment-step.md), and
 [ADR 0061](docs/architecture/0061-keyless-controller-worker-composition.md), and
-[ADR 0062](docs/architecture/0062-operation-closed-external-rpc-service-runtime.md).
+[ADR 0062](docs/architecture/0062-operation-closed-external-rpc-service-runtime.md), and
+[ADR 0063](docs/architecture/0063-deterministic-continuation-rpc-service.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,

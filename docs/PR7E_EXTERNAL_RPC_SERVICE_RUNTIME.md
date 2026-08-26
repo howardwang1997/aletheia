@@ -47,9 +47,10 @@ control plane while retaining the outer process loader under the normalized-AST 
 
 ## Remaining release gates
 
-This PR does not supply eleven concrete production factories. In particular, provider selection,
+PR-7f now supplies the deterministic continuation factory and its fresh assessment-artifact
+custody. This PR still does not supply the other ten concrete production factories. In particular, provider selection,
 Kernel command signing, execution/allocator authority, database attestation, F9-v2 validation,
-admission, atomic Kernel incorporation, and continuation assessment still need service-specific
+admission and atomic Kernel incorporation still need service-specific
 configuration, key custody, PostgreSQL ACLs, and health/alert policy. A source-level handler or a
 test key is not commissioned authority.
 
