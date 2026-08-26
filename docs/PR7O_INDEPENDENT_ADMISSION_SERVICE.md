@@ -40,18 +40,19 @@ Focused tests cover admitted and rejected derivation, expired-challenge rejectio
 failure, wrong-key startup, direct typed RPC transport, operation/authority closure, guarded loading,
 duplicate configuration, key-mode drift, archive replacement and factory-byte drift.
 
-## Remaining release gates
+## Subsequent closure and remaining release gates
 
-One PR-7e concrete factory remains: atomic admission plus Research Kernel incorporation. It must
-hold the database-attestation and ordinary Kernel-command authorities required for one PostgreSQL
-transaction, reverify this independent proposal, enforce the empty-slot CAS, and commit the
-admission row together with the Kernel event/snapshot/outbox/head.
+PR-7p subsequently closes the final source-level factory: atomic admission plus Research Kernel
+incorporation. It holds the database-attestation and exact ordinary Kernel-command keys, reverifies
+this independent proposal, enforces the empty-slot CAS, and commits the admission row together with
+the Kernel event/snapshot/outbox/head in one PostgreSQL transaction.
 
 No target host is commissioned. Exact PostgreSQL ACLs, Linux accounts/socket ownership, systemd
 supervision, alerts and a fresh multi-process PostgreSQL kill/restart campaign remain mandatory.
 This service and its tests are engineering evidence, not deployment proof or a scientific result.
 
 See [ADR 0072](architecture/0072-independent-admission-rpc-service.md), the
+[PR-7p atomic-admission guide](PR7P_ATOMIC_ADMISSION_SERVICE.md), the
 [PR-7n committed-validation source guide](PR7N_COMMITTED_VALIDATION_SOURCE_SERVICE.md), the
 [PR-7e server guide](PR7E_EXTERNAL_RPC_SERVICE_RUNTIME.md), and the
 [PR-5 controller guide](PR5_DURABLE_SCIENTIFIC_CONTROLLER.md).

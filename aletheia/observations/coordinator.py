@@ -32,6 +32,7 @@ from aletheia.observations.scientific_bridge import (
     ScientificBridgeModel,
     ScientificBridgeVerificationError,
     commit_observation_admission,
+    verify_committed_observation_admission,
 )
 from aletheia.observations.store import (
     ObservationAdmissionWrite,
@@ -283,7 +284,6 @@ class PostgreSQLAtomicObservationAdmissionCoordinator:
                     )
 
                 registered_at = self._database_clock(session)
-                committed_at = self._database_clock(session)
                 context = self._verification
                 committed_admission = commit_observation_admission(
                     decision=decision,
@@ -298,8 +298,9 @@ class PostgreSQLAtomicObservationAdmissionCoordinator:
                     database_authority_pin=context.database_authority_pin,
                     private_key=context.database_private_key,
                     registered_at=registered_at,
-                    committed_at=committed_at,
+                    commit_clock=lambda: self._database_clock(session),
                 )
+                committed_at = committed_admission.message.committed_at
                 resolved_quest_id, payload = _admission_material(committed_admission)
                 if resolved_quest_id != quest_id:
                     raise AtomicObservationAdmissionError(
@@ -363,6 +364,15 @@ class PostgreSQLAtomicObservationAdmissionCoordinator:
                     raise AtomicObservationAdmissionError(
                         "new admission transaction unexpectedly replayed one of its authorities"
                     )
+                finished_at = self._database_clock(session)
+                challenge = decision.message.issuance_challenge.message
+                if not (
+                    committed_at <= finished_at < challenge.expires_at
+                    and context.database_authority_pin.active_at(finished_at)
+                ):
+                    raise AtomicObservationAdmissionError(
+                        "atomic admission crossed its database challenge or authority deadline"
+                    )
                 return AtomicObservationAdmissionReceipt(
                     committed_admission=committed_admission,
                     incorporation_payload=payload,
@@ -404,6 +414,31 @@ class PostgreSQLAtomicObservationAdmissionCoordinator:
                 "persisted observation admission differs from its exact retry"
             )
         quest_id, payload = _admission_material(committed)
+        expected_write = ObservationAdmissionWrite.from_contract(
+            committed,
+            quest_id=quest_id,
+            incorporated_event_sequence=existing.incorporated_event_sequence,
+            incorporated_event_sha256=existing.incorporated_event_sha256,
+            incorporated_event_type=existing.incorporated_event_type,
+        )
+        if expected_write != existing:
+            raise ObservationIdentityConflict(
+                "persisted observation admission row differs from its signed contract"
+            )
+        context = self._verification
+        verify_committed_observation_admission(
+            committed_admission=committed,
+            qualification_authority=context.qualification_authority,
+            action_authority=context.action_authority,
+            qualification_custody=context.qualification_custody,
+            raw_run_custody=context.raw_run_custody,
+            validation_campaign_custody=context.validation_campaign_custody,
+            execution_authority_pin=context.execution_authority_pin,
+            validator_authority_pin=context.validator_authority_pin,
+            admission_authority_pin=context.admission_authority_pin,
+            database_authority_pin=context.database_authority_pin,
+            observed_at=self._database_clock(session),
+        )
         kernel_receipt = self._kernel_store.load_command_receipt_for_event_in_session(
             session,
             quest_id=quest_id,
@@ -411,6 +446,7 @@ class PostgreSQLAtomicObservationAdmissionCoordinator:
         )
         if (
             kernel_receipt is None
+            or kernel_receipt.created
             or kernel_receipt.result_stream_version != existing.incorporated_event_sequence
         ):
             raise AtomicObservationAdmissionError(

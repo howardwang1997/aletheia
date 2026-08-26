@@ -32,5 +32,6 @@ time, which could not prove that signing occurred before challenge expiry.
 - A worker cannot choose disposition, reasons or signing time, and an expired challenge cannot be
   replayed into a newly signed proposal.
 - The signer cannot reserve or fill a slot, attest a database commit or issue a Kernel command.
-- Atomic admission/Kernel incorporation is the one remaining concrete PR-7e factory.
+- PR-7p subsequently closes atomic admission/Kernel incorporation, the final concrete PR-7e
+  factory at source level.
 - Target-host ACLs, process supervision and live crash/restart evidence remain release gates.

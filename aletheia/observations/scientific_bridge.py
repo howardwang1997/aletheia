@@ -2979,16 +2979,19 @@ def commit_observation_admission(
     database_authority_pin: ObservationDatabaseAuthorityPin,
     private_key: bytes,
     registered_at: datetime,
-    committed_at: datetime,
+    commit_clock: Callable[[], datetime],
 ) -> CommittedObservationAdmission:
     """DB-sign the atomic empty-slot commit of one exact admission proposal."""
 
     decision = validate_observation_admission_decision_structure(decision)
     _require_private_key(private_key, database_authority_pin)
-    if not database_authority_pin.active_at(committed_at):
-        raise ScientificBridgeVerificationError(
-            "admission commit is outside database key authority"
-        )
+    _require_utc(registered_at, "admission registered_at")
+    if not callable(commit_clock):
+        raise ScientificBridgeVerificationError("admission commit clock is unavailable")
+    verification_started_at = commit_clock()
+    _require_utc(verification_started_at, "admission commit verification time")
+    if verification_started_at < registered_at:
+        raise ScientificBridgeVerificationError("admission commit database time moved backwards")
     verify_observation_admission_decision(
         decision=decision,
         qualification_authority=qualification_authority,
@@ -3000,8 +3003,16 @@ def commit_observation_admission(
         validator_authority_pin=validator_authority_pin,
         admission_authority_pin=admission_authority_pin,
         database_authority_pin=database_authority_pin,
-        observed_at=committed_at,
+        observed_at=verification_started_at,
     )
+    committed_at = commit_clock()
+    _require_utc(committed_at, "admission committed_at")
+    if committed_at < verification_started_at:
+        raise ScientificBridgeVerificationError("admission commit database time moved backwards")
+    if not database_authority_pin.active_at(committed_at):
+        raise ScientificBridgeVerificationError(
+            "admission commit is outside database key authority"
+        )
     decision_message = decision.message
     challenge = decision_message.issuance_challenge
     committed_validation = decision_message.committed_validation_receipt

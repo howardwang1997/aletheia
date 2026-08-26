@@ -56,7 +56,7 @@ raw-run source; PR-7l adds the three-operation database-observation attestation 
 the isolated independent F9-v2 validator with conservative exact-content assessment; PR-7n adds the
 keyless, fully reverified committed-validation source. Two concrete production factories remain:
 independent admission and atomic Kernel incorporation at that checkpoint. PR-7o subsequently closes
-the independent signer, leaving only atomic Kernel incorporation. Separately,
+the independent signer, and PR-7p subsequently closes atomic Kernel incorporation. Separately,
 knowledge-grounded general provider authoring, independent Kernel command signing, and every
 service's target-host configuration, key custody, PostgreSQL ACLs, and health/alert policy remain
 open. A source-level handler or a test key is not commissioned authority.

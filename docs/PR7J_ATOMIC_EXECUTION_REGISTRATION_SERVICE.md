@@ -63,7 +63,7 @@ PR-7k subsequently closes the verified, keyless raw-run source, PR-7l closes dat
 attestation, and PR-7m closes independent F9-v2 validation. Three PR-7e concrete factories remain:
 committed-validation source, independent admission, and atomic admission/Kernel incorporation at
 that checkpoint; PR-7n subsequently closes the committed-validation source, leaving two.
-PR-7o subsequently closes independent admission, leaving only atomic Kernel incorporation.
+PR-7o subsequently closes independent admission, and PR-7p closes atomic Kernel incorporation.
 
 No target host is commissioned. Linux account/socket/PostgreSQL/CAS/registry ACLs, systemd
 supervision, alerts, receipt-key custody/rotation, and fresh PostgreSQL process-kill/restart tests

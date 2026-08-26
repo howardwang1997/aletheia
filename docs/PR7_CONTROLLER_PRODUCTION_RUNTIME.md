@@ -159,8 +159,11 @@ PR-7m now supplies the independent F9-v2 validator process: it owns only the val
 replays public Kernel/PR-4/artifact custody, uses a source-pinned exact-content baseline and
 publishes one write-once campaign per raw run. PR-7n now supplies the keyless committed-validation
 source, which resolves the durable slot row and replays its complete DB/validator/F9/Kernel/PR-4
-custody. PR-7o subsequently supplies the isolated live-challenge admission signer. One concrete
-operation factory—atomic admission/Kernel incorporation—remains.
+custody. PR-7o subsequently supplies the isolated live-challenge admission signer. PR-7p supplies
+the final concrete operation factory: it owns only the database-attestation and exact ordinary
+Kernel-command keys required to commit one independently decided admission and its Kernel
+event/snapshot/outbox/head in the same PostgreSQL transaction. All eleven operation-family
+factories therefore exist at source level; none is target-host commissioned by that fact.
 Continuation now
 has its own two-audit service, mechanically reconstructed observation identity, pinned assessor
 policy, and durable provenance; its production service, assessment-artifact byte custody and ACL
@@ -172,7 +175,8 @@ remain open. See [ADR 0058](architecture/0058-durable-powerless-action-proposal-
 [ADR 0068](architecture/0068-verified-raw-run-source-rpc-service.md), and
 [ADR 0069](architecture/0069-database-observation-rpc-service.md), and
 [ADR 0070](architecture/0070-independent-f9-v2-validation-rpc-service.md), and
-[ADR 0071](architecture/0071-committed-validation-source-rpc-service.md).
+[ADR 0071](architecture/0071-committed-validation-source-rpc-service.md), and
+[ADR 0073](architecture/0073-atomic-admission-rpc-service.md).
 
 PR-7c closes the source-code terminal verification/composition gap. The read-only PostgreSQL ACL,
 filesystem/key custody, supervisor invocation, and live process-kill behavior must still be proven

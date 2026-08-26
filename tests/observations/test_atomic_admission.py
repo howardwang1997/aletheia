@@ -16,7 +16,7 @@ from aletheia.observations.coordinator import (
 from aletheia.observations.scientific_bridge import (
     ObservationAdmissionDisposition,
 )
-from aletheia.observations.store import AppendReceipt
+from aletheia.observations.store import AppendReceipt, ObservationIdentityConflict
 from aletheia.research_kernel.commands import authorize_research_proposal
 from aletheia.research_kernel.policy import ResearchAuthorizationRole
 from aletheia.research_kernel.reducer import (
@@ -224,6 +224,9 @@ def test_admission_kernel_event_and_outbox_share_one_outer_transaction(
         (
             decision.message.decided_at + timedelta(seconds=1),
             decision.message.decided_at + timedelta(seconds=2),
+            decision.message.decided_at + timedelta(seconds=3),
+            decision.message.decided_at + timedelta(seconds=4),
+            decision.message.decided_at + timedelta(seconds=5),
         )
     )
     coordinator = PostgreSQLAtomicObservationAdmissionCoordinator(
@@ -263,6 +266,17 @@ def test_admission_kernel_event_and_outbox_share_one_outer_transaction(
     )
     assert len(kernel.commands) == 1
 
+    tampered = recorded[0].model_copy(
+        update={"registered_at": recorded[0].registered_at + timedelta(microseconds=1)}
+    )
+    monkeypatch.setattr(
+        coordinator_module,
+        "get_observation_admission_by_decision",
+        lambda *_args, **_kwargs: tampered,
+    )
+    with pytest.raises(ObservationIdentityConflict, match="signed contract"):
+        coordinator.commit_and_incorporate(decision)
+
 
 def test_failure_after_kernel_staging_rolls_back_the_outer_transaction(
     monkeypatch: pytest.MonkeyPatch,
@@ -289,6 +303,8 @@ def test_failure_after_kernel_staging_rolls_back_the_outer_transaction(
         (
             decision.message.decided_at + timedelta(seconds=1),
             decision.message.decided_at + timedelta(seconds=2),
+            decision.message.decided_at + timedelta(seconds=3),
+            decision.message.decided_at + timedelta(seconds=4),
         )
     )
     coordinator = PostgreSQLAtomicObservationAdmissionCoordinator(
@@ -304,5 +320,57 @@ def test_failure_after_kernel_staging_rolls_back_the_outer_transaction(
         coordinator.commit_and_incorporate(decision)
 
     assert len(kernel.commands) == 1
+    assert transaction.committed == 0
+    assert transaction.rolled_back == 1
+
+
+def test_admission_expiring_after_kernel_staging_rolls_back_everything(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bridge, decision, audit, verification = _case(monkeypatch)
+    transaction = _TransactionProbe()
+    kernel = _KernelStore(audit)
+    recorded = []
+    monkeypatch.setattr(
+        coordinator_module,
+        "get_observation_admission_by_decision",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        coordinator_module,
+        "get_observation_admission_by_slot",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        coordinator_module,
+        "record_observation_admission",
+        lambda _session, write: (
+            recorded.append(write)
+            or AppendReceipt(identity_sha256=write.committed_admission_sha256, created=True)
+        ),
+    )
+    challenge = decision.message.issuance_challenge.message
+    times = iter(
+        (
+            decision.message.decided_at + timedelta(seconds=1),
+            decision.message.decided_at + timedelta(seconds=2),
+            decision.message.decided_at + timedelta(seconds=3),
+            challenge.expires_at,
+        )
+    )
+    coordinator = PostgreSQLAtomicObservationAdmissionCoordinator(
+        kernel_store=kernel,
+        kernel_authority=_KernelAuthority(),
+        verification=verification,
+        controller_principal_id="controller:observation-admission",
+        session_scope_factory=transaction.scope,
+        database_clock=lambda _session: next(times),
+    )
+
+    with pytest.raises(AtomicObservationAdmissionError, match="crossed"):
+        coordinator.commit_and_incorporate(decision)
+
+    assert len(kernel.commands) == 1
+    assert len(recorded) == 1
     assert transaction.committed == 0
     assert transaction.rolled_back == 1
