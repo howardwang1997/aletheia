@@ -1673,6 +1673,35 @@ filesystem/registry custody、private-key absence、supervisor/alert 或 live pr
 `PR7C_VERIFIED_TERMINAL_DISPATCHER.md` 与
 `architecture/0054-verified-qualification-terminal-dispatcher.md`。
 
+### PR-7d：Complete keyless controller worker factory
+
+- 八个 active step 全部接入 checked-in worker factory，passive wait/block 保持本地；
+- 十一项 Unix RPC pin 对十四项 operation 做 exhaustive、无重叠分区；
+- worker 只持 transport/domain public verification material、read-only Kernel CAS 与 verified terminal reader；
+- RPC request 确定性绑定同一 recovery projection，response 绑定 service/policy/request/result 与 Ed25519
+  transport receipt；
+- worker 配置不存在 scientific/database/Kernel private key 或 generic callback。
+
+该切片完成 client/worker source composition，不代表外部服务已经部署。详见
+`PR7D_COMPLETE_CONTROLLER_WORKER.md` 与
+`architecture/0061-keyless-controller-worker-composition.md`。
+
+### PR-7e：Operation-closed external RPC service runtime
+
+- 每个外部服务由一个 independently supervised Linux process 承载，operation set 在 manifest 中冻结；
+- 十四项 operation 各有唯一 closed input/output model，未知字段、非 canonical JSON、跨
+  controller/worker/service rebind 与错误结果类型均在签响应前拒绝；
+- server 与 worker 双向使用 Linux `SO_PEERCRED`，service UID、worker UID、shared socket GID、socket parent
+  inode/mode 与 `0660` socket 都由 deployment pin；
+- transport Ed25519 private key 必须来自 source tree 外、service-owned、single-link `0400` 文件；
+- malformed request 与意外 handler/store failure 不得到 signed interpretation；transport receipt 永不替代
+  SEA/validation/admission/Kernel domain authority。
+
+该切片提供可监督、可由后续 process-kill campaign 操作的 common server/runtime 和 CLI，但尚未组合十一项
+具体 production authority factory，也未运行 target-host campaign。详见
+`PR7E_EXTERNAL_RPC_SERVICE_RUNTIME.md` 与
+`architecture/0062-operation-closed-external-rpc-service-runtime.md`。
+
 PR-5 的本地 vertical cut 已完成；现在仍须完成 PR-4 target-host campaign、PR-5 production
 controller/validator/signer process commissioning 与 terminal target-host commissioning，之后才依据 fresh inventory
 选择远程 canary。PR-6 可以在这些部署工作并行时推进。这样远程基础设施不会反过来固化一个错误的
@@ -1748,15 +1777,18 @@ public-key-only verified terminal source 与 checked-in terminal composition；�
 draft、unsigned command materialization 与 write-once exact-retry 源码切片；仍缺生产 provider 与独立
 command signer 进程。protocol compilation step service/custody 源码切片现已完成：它双重锁定重放
 authorized Kernel/CAS context、固定 author/category/catalog/compiler policy、纯函数重编译，并把 accepted 或
-blocked result 与连续 revision lineage 写入 append-only registry；production provider/RPC server/receipt 与
-ACL 尚未 commissioned。continuation step service/custody 源码切片
+blocked result 与连续 revision lineage 写入 append-only registry；common RPC server 已由 PR-7e 提供，但
+production provider factory/receipt-key instance 与 ACL 尚未 commissioned。continuation step service/custody 源码切片
 也已完成：它从 signed validation/admission 与 Kernel incorporation 唯一重建 observation identity，双重重放
 compiler/admission authority chain，固定 assessor principal/implementation/fit rule，并让 recovery 重推同一
 provenance-bound receipt。**PR-7d** 已冻结完整 worker factory：八个 active step 通过十一项 operation-closed
 Unix RPC port 组合，response 使用独立 Ed25519 transport receipt 验证，recovery 只读取 public-key terminal
-lineage 与 read-only Kernel CAS；worker 不加载科学签名私钥。production assessor/provider/signer/RPC server、
-assessment artifact fresh-byte custody 与 ACL 仍待 commissioning。下一项顺序工作是真实 image/host
-qualification、外部 authority process composition 与 process-kill PostgreSQL campaign，而不是扩张
+lineage 与 read-only Kernel CAS；worker 不加载科学签名私钥。**PR-7e** 已补齐 common external RPC server
+runtime：closed payload/result、双向 Linux peer identity、socket parent/inode、service-owned `0400` transport
+key 与 byte-pinned factory 均 fail closed；这仍不是十一项 concrete authority service commissioning。
+production assessor/provider/signer factory、assessment artifact fresh-byte custody 与 ACL 仍待完成。下一项
+顺序工作是具体 external authority process composition，随后是真实 image/host qualification 与
+process-kill PostgreSQL campaign，而不是扩张
 controller authority。checkpoint 与 external reconciliation
 仍需独立 typed contracts，不能由 generic retry 猜测。
 

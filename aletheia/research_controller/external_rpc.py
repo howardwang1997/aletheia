@@ -530,7 +530,9 @@ class RPCRawRunEnvelopeSource:
         )
 
 
-class _ValidationCampaignResult(ControllerModel):
+class ValidationCampaignResult(ControllerModel):
+    """Closed nullable result returned by the independent validation campaign service."""
+
     validation_campaign_sha256: str | None = Field(default=None, pattern=_SHA256_PATTERN)
 
 
@@ -543,7 +545,7 @@ class RPCIndependentObservationValidator:
         result = self._client.call(
             ControllerWorkerRPCOperation.PREPARE_VALIDATION_CAMPAIGN,
             payload={"raw_run": _json(raw_run)},
-            result_type=_ValidationCampaignResult,
+            result_type=ValidationCampaignResult,
         )
         return result.validation_campaign_sha256
 
@@ -708,5 +710,6 @@ __all__ = [
     "RPCRawRunEnvelopeSource",
     "RPCScientificExecutionAuthorizationIssuer",
     "RPCScientificExecutionRegistrar",
+    "ValidationCampaignResult",
     "controller_worker_rpc_key_id",
 ]
