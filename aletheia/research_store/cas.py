@@ -40,17 +40,28 @@ class ResearchArchiveCorruption(ResearchArchiveError):
 class FilesystemResearchArchive:
     """Bounded, write-once CAS using ``sha256/<prefix>/<digest>`` keys."""
 
-    def __init__(self, root: Path, *, max_object_bytes: int = 64 * 1024 * 1024) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        max_object_bytes: int = 64 * 1024 * 1024,
+        read_only: bool = False,
+    ) -> None:
         if max_object_bytes < 1 or max_object_bytes > 1024 * 1024 * 1024:
             raise ValueError("research archive limit must be between 1 byte and 1 GiB")
         candidate = Path(root)
         if candidate.is_symlink():
             raise ResearchArchiveError("research archive root cannot be a symlink")
-        candidate.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if read_only:
+            if not candidate.exists():
+                raise ResearchArchiveError("read-only research archive root must already exist")
+        else:
+            candidate.mkdir(parents=True, exist_ok=True, mode=0o700)
         if candidate.is_symlink() or not candidate.is_dir():
             raise ResearchArchiveError("research archive root must be a regular directory")
         self.root = candidate.resolve(strict=True)
         self.max_object_bytes = max_object_bytes
+        self.read_only = read_only
 
     @staticmethod
     def _storage_key(digest: str) -> str:
@@ -128,6 +139,8 @@ class FilesystemResearchArchive:
         return payload
 
     def _write_once(self, payload: bytes) -> str:
+        if self.read_only:
+            raise ResearchArchiveError("read-only research archive cannot stage new bytes")
         if not payload or len(payload) > self.max_object_bytes:
             raise ResearchArchiveError("research object is empty or exceeds the archive limit")
         digest = hashlib.sha256(payload).hexdigest()

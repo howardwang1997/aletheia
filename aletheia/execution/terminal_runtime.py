@@ -93,20 +93,15 @@ class TerminalNodeAuthorityConfig(BaseModel):
         return self
 
 
-class QualificationTerminalRuntimeConfig(BaseModel):
-    """Closed deployment configuration containing public verification material only."""
+class QualificationTerminalReaderConfig(BaseModel):
+    """Reusable public verification material for one read-only terminal lineage reader."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_name: Literal["aletheia.qualification_terminal_runtime_config"] = (
-        "aletheia.qualification_terminal_runtime_config"
+    schema_name: Literal["aletheia.qualification_terminal_reader_config"] = (
+        "aletheia.qualification_terminal_reader_config"
     )
     schema_version: Literal[1] = 1
-    role: Literal["terminal_dispatcher"]
-    process_principal_id: str = Field(pattern=_IDENTITY_PATTERN)
-    controller_manifest_sha256: str = Field(pattern=_SHA256_PATTERN)
-    database_url_sha256: str = Field(pattern=_SHA256_PATTERN)
-    schema_revision: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
     artifact_store_root: str
     artifact_verifier_principal_id: str = Field(pattern=_IDENTITY_PATTERN)
     artifact_object_store_id: str = Field(pattern=_IDENTITY_PATTERN)
@@ -131,7 +126,7 @@ class QualificationTerminalRuntimeConfig(BaseModel):
     direct_observation_admission_allowed: Literal[False] = False
 
     @model_validator(mode="after")
-    def _config_is_canonical_and_separated(self) -> "QualificationTerminalRuntimeConfig":
+    def _config_is_canonical_and_separated(self) -> "QualificationTerminalReaderConfig":
         artifact_root = _absolute_path(self.artifact_store_root, label="artifact store root")
         registry_root = _absolute_path(
             self.authority_registry_root,
@@ -156,7 +151,6 @@ class QualificationTerminalRuntimeConfig(BaseModel):
         if self.allowed_currency_codes != tuple(sorted(set(self.allowed_currency_codes))):
             raise ValueError("allowed currencies must be unique and canonical")
         principals = (
-            self.process_principal_id,
             self.artifact_verifier_principal_id,
             self.input_resolver_principal_id,
             self.pricing_authority_pin.principal_id,
@@ -190,6 +184,50 @@ class QualificationTerminalRuntimeConfig(BaseModel):
             raise ValueError(
                 "terminal runtime authorities must use distinct principals and keys: "
                 f"principals={duplicate_principals}, keys={duplicate_keys}"
+            )
+        return self
+
+    @property
+    def authority_principal_ids(self) -> tuple[str, ...]:
+        """Every deployment identity reachable by the public reader composition."""
+
+        return (
+            self.artifact_verifier_principal_id,
+            self.input_resolver_principal_id,
+            self.pricing_authority_pin.principal_id,
+            self.source_budget_authority_pin.principal_id,
+            self.qualification_authority_pin.principal_id,
+            self.terminal_verification_authority_pin.principal_id,
+            self.runtime_control_authority_pin.principal_id,
+            self.allocator_principal_id,
+            *(item.manifest.principal_id for item in self.node_authorities),
+            *(item.enrollment_authority_pin.principal_id for item in self.node_authorities),
+            *(
+                item.assignment_transport_pin.transport_principal_id
+                for item in self.node_authorities
+            ),
+        )
+
+
+class QualificationTerminalRuntimeConfig(QualificationTerminalReaderConfig):
+    """Closed terminal-dispatcher deployment configuration with public keys only."""
+
+    schema_name: Literal["aletheia.qualification_terminal_runtime_config"] = (
+        "aletheia.qualification_terminal_runtime_config"
+    )
+    schema_version: Literal[1] = 1
+    role: Literal["terminal_dispatcher"]
+    process_principal_id: str = Field(pattern=_IDENTITY_PATTERN)
+    controller_manifest_sha256: str = Field(pattern=_SHA256_PATTERN)
+    database_url_sha256: str = Field(pattern=_SHA256_PATTERN)
+    schema_revision: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
+    @model_validator(mode="after")
+    def _process_principal_is_separate(self) -> "QualificationTerminalRuntimeConfig":
+        if self.process_principal_id in self.authority_principal_ids:
+            raise ValueError(
+                "terminal runtime authorities must use distinct principals: "
+                f"principals={(self.process_principal_id,)}"
             )
         return self
 
@@ -229,6 +267,25 @@ def compose_verified_qualification_terminal_reader(
         or config.prepared_at != prepared_at
     ):
         raise ValueError("qualification terminal runtime config differs from deployment state")
+
+    return compose_qualification_terminal_reader(config)
+
+
+def compose_qualification_terminal_reader(
+    config: QualificationTerminalReaderConfig,
+) -> VerifiedQualificationTerminalOutboxReader:
+    """Compose the reusable public-key-only reader from an already pinned config."""
+
+    try:
+        payload = config.model_dump(
+            mode="python",
+            include=set(QualificationTerminalReaderConfig.model_fields),
+        )
+        payload["schema_name"] = "aletheia.qualification_terminal_reader_config"
+        payload["schema_version"] = 1
+        config = QualificationTerminalReaderConfig.model_validate(payload)
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError("qualification terminal reader config is invalid") from exc
 
     terminal_verifier = TerminalVerificationAuthorityVerifier(
         config.terminal_verification_authority_pin
@@ -297,7 +354,9 @@ def compose_verified_qualification_terminal_reader(
 
 
 __all__ = [
+    "QualificationTerminalReaderConfig",
     "QualificationTerminalRuntimeConfig",
     "TerminalNodeAuthorityConfig",
+    "compose_qualification_terminal_reader",
     "compose_verified_qualification_terminal_reader",
 ]

@@ -1594,6 +1594,7 @@ def test_legacy_and_migration_python_source_ast_graphs_are_frozen() -> None:
     assert legacy_paths | excluded_paths == set(_production_python_paths())
     assert REPOSITORY_ROOT / "aletheia" / "research_controller_runtime.py" in legacy_paths
     assert REPOSITORY_ROOT / "aletheia" / "research_controller_terminal_runtime.py" in legacy_paths
+    assert REPOSITORY_ROOT / "aletheia" / "research_controller_worker_runtime.py" in legacy_paths
     durable_contract_paths = {
         path
         for path in _production_python_paths()
@@ -2222,7 +2223,8 @@ def test_pr5_controller_and_observation_tables_have_explicit_split_authority() -
     for write_id, caller in composed.items():
         assert writes[write_id]["call_sites"] == [caller]
         assert writes[write_id]["allowed_legacy_callers"] == [caller]
-        assert "worker runtime factory" in writes[write_id]["blocker"]
+        assert "keyless worker factory composes this adapter" in writes[write_id]["blocker"]
+        assert "remain uncommissioned" in writes[write_id]["blocker"]
     exceptions = inventory["policy"]["writer_surface_static_resolution_exceptions"]
     assert not composed.keys() & exceptions.keys()
 

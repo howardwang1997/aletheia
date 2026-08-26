@@ -165,8 +165,11 @@ adapters. They deterministically recover raw terminal material and committed val
 PostgreSQL. A graph-scoped F9-v2 source slice now verifies the complete raw-run custody chain before
 analysis, signs the exact v2 world-model/prediction assessment, and fresh-rehashes one write-once
 campaign binding per raw run without importing legacy F9-v1. Its external RPC/key deployment, the
-admitter/signer deployments, terminal target-host ACL/custody campaign, and complete worker
-composition remain uncommissioned. The three proposal steps now re-audit the exact Kernel/CAS and
+admitter/signer deployments, and terminal target-host ACL/custody campaign remain uncommissioned.
+PR-7d now supplies the complete checked-in worker factory: it composes all eight active adapters
+through eleven operation-closed Unix RPC clients, verifies service receipts with public Ed25519
+keys and Linux peer pins, and uses read-only Kernel CAS and terminal-lineage recovery. The three
+proposal steps now re-audit the exact Kernel/CAS and
 blocked-compilation or incorporated-observation/continuation chain, restrict model output to a
 closed draft, and atomically retain one unsigned first-writer-wins proposal per audited request.
 They return only `awaiting_authority`; no controller proposal service holds a Kernel signing key or
@@ -174,13 +177,14 @@ mutates the ledger. The protocol-compilation step now re-audits the exact author
 action, constrains a powerless provider with deployment-pinned author/category/catalog/compiler
 policy, canonically recompiles the request, and appends accepted or blocked results with exact
 revision lineage. Exact restart retries reload the durable winner without reinvoking the provider.
-Its production provider, RPC/receipt custody, ACL and worker composition remain uncommissioned. The
+Its production provider process, RPC server, receipt custody and ACL remain uncommissioned. The
 continuation step now reconstructs the only allowed observation projection from signed validation
 and Kernel incorporation, replays the exact compiler/admission chain twice, pins assessor
 principal/implementation/fit rules, and persists provenance with the deterministic disposition.
-Restart recovery rederives the same receipt. Its production assessor RPC, fresh assessment-artifact
-byte custody, ACL and worker composition remain uncommissioned. The production proposal provider,
-independent Kernel signer, and full worker factory also remain uncommissioned. The PR-2 store also
+Restart recovery rederives the same receipt. Its production assessor process, fresh
+assessment-artifact byte custody and ACL remain uncommissioned. The production proposal provider,
+independent Kernel signer, exact external service processes, socket/PostgreSQL ACLs, and live
+multi-process commissioning also remain incomplete. The PR-2 store also
 still has one immutable policy epoch and
 `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
 the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
@@ -192,11 +196,13 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-7 runtime guide](docs/PR7_CONTROLLER_PRODUCTION_RUNTIME.md), plus the
 [PR-7b step-authority guide](docs/PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md), and the
 [PR-7c verified-terminal guide](docs/PR7C_VERIFIED_TERMINAL_DISPATCHER.md), plus
+[PR-7d worker-factory guide](docs/PR7D_COMPLETE_CONTROLLER_WORKER.md), plus
 [ADR 0056](docs/architecture/0056-independent-observation-controller-steps.md) and
 [ADR 0057](docs/architecture/0057-graph-scoped-f9-v2-validation-campaign.md), plus
 [ADR 0058](docs/architecture/0058-durable-powerless-action-proposal-steps.md), and
 [ADR 0059](docs/architecture/0059-durable-protocol-compilation-step.md), and
-[ADR 0060](docs/architecture/0060-durable-continuation-assessment-step.md).
+[ADR 0060](docs/architecture/0060-durable-continuation-assessment-step.md), and
+[ADR 0061](docs/architecture/0061-keyless-controller-worker-composition.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,

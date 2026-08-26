@@ -34,5 +34,5 @@ to those principal, key, policy, service-manifest, Quest, action, slot, and grap
 - A campaign result or signed decision alone does not confer scientific authority.
 - This slice supplies the controller adapters and durable read seams, not an independently
   deployed F9-v2 validator/admitter RPC service or its key-custody evidence.
-- Target-host qualification, multi-process kill/restart, and complete worker composition remain
-  deployment gates.
+- PR-7d later supplies the complete checked-in worker composition. Target-host qualification,
+  external service commissioning, and multi-process kill/restart remain deployment gates.

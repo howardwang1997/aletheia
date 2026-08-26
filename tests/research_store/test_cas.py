@@ -58,6 +58,21 @@ def test_object_roundtrip_and_exact_retry_are_content_addressed(tmp_path: Path) 
     assert target.stat().st_mode & 0o777 == 0o400
 
 
+def test_read_only_archive_requires_existing_root_and_refuses_staging(tmp_path: Path) -> None:
+    root = tmp_path / "cas"
+    writable = FilesystemResearchArchive(root)
+    charter = _charter()
+    writable.archive_object(charter)
+
+    reader = FilesystemResearchArchive(root, read_only=True)
+
+    assert reader.load_object(charter.object_ref).payload == charter
+    with pytest.raises(ResearchArchiveError, match="read-only"):
+        reader.archive_object(charter)
+    with pytest.raises(ResearchArchiveError, match="already exist"):
+        FilesystemResearchArchive(tmp_path / "missing", read_only=True)
+
+
 def test_object_load_rejects_corruption_and_cross_identity(tmp_path: Path) -> None:
     archive = FilesystemResearchArchive(tmp_path / "cas")
     charter = _charter()

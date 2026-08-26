@@ -1639,8 +1639,9 @@ validation/admission/continuation adapter；target-host supervision 与 live pro
   同一原子提交时才能完成；
 - worker 不持有 execution/validator/admission/database/Kernel signing private key，且不存在 catch-all callback。
 
-该切片关闭 generic callback 与运行时 authority rebind 风险，但不实现八个 production step service，也不使
-worker 可部署。详见 `PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md` 与
+该切片关闭 generic callback 与运行时 authority rebind 风险；PR-7d 后续把八个 adapter 组合进
+checked-in keyless worker factory，但未部署其外部 service process，仍不使 worker 可部署。详见
+`PR7D_COMPLETE_CONTROLLER_WORKER.md`、`PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md` 与
 `architecture/0053-controller-step-authority-boundary.md`。
 
 后续 proposal source slice 已实现 `PROPOSE_ACTION`、`PROPOSE_REDESIGN` 与 `PROPOSE_FOLLOWUP`：每次先
@@ -1648,7 +1649,8 @@ worker 可部署。详见 `PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md` 与
 物化为 unsigned `ResearchCommandProposal`，并以 request hash 做 process-safe first-writer-wins custody。
 compiler blocker 必须成为 objection；follow-up 必须同时保留 incorporated observation 与 typed continuation
 evidence。三个 step 只能返回 `awaiting_authority`，不能签名或提交 Kernel command。生产 proposal provider、
-独立 Kernel command authority、worker runtime factory 与 target-host/process-kill evidence 仍未完成。详见
+独立 Kernel command authority process 与 target-host/process-kill evidence 仍未完成；worker client
+composition 已由 PR-7d 冻结。详见
 `architecture/0058-durable-powerless-action-proposal-steps.md`。
 
 ### PR-7c：Verified qualification-terminal dispatcher
@@ -1672,7 +1674,7 @@ filesystem/registry custody、private-key absence、supervisor/alert 或 live pr
 `architecture/0054-verified-qualification-terminal-dispatcher.md`。
 
 PR-5 的本地 vertical cut 已完成；现在仍须完成 PR-4 target-host campaign、PR-5 production
-controller/validator/worker composition 与 terminal target-host commissioning，之后才依据 fresh inventory
+controller/validator/signer process commissioning 与 terminal target-host commissioning，之后才依据 fresh inventory
 选择远程 canary。PR-6 可以在这些部署工作并行时推进。这样远程基础设施不会反过来固化一个错误的
 `SSH + design dict` 接口。
 
@@ -1743,16 +1745,19 @@ public-key-only verified terminal source 与 checked-in terminal composition；�
 仍待 deployment campaign。PR-6 production step handler/candidate image 与原子 execution registration 已有
 源码和本地测试；PR-5 graph-scoped F9-v2 validator 也已有不依赖 legacy F9-v1 的签名、write-once/fresh-rehash
 源码切片，但尚未部署其 RPC、生产 assessor 或 key custody。三个 proposal step 也已有 re-audit、bounded
-draft、unsigned command materialization 与 write-once exact-retry 源码切片；仍缺生产 provider、独立 command
-signer 和 worker composition。protocol compilation step service/custody 源码切片现已完成：它双重锁定重放
+draft、unsigned command materialization 与 write-once exact-retry 源码切片；仍缺生产 provider 与独立
+command signer 进程。protocol compilation step service/custody 源码切片现已完成：它双重锁定重放
 authorized Kernel/CAS context、固定 author/category/catalog/compiler policy、纯函数重编译，并把 accepted 或
-blocked result 与连续 revision lineage 写入 append-only registry；production provider/RPC/receipt、ACL、
-recovery-policy composition 和 worker factory 尚未 commissioned。continuation step service/custody 源码切片
+blocked result 与连续 revision lineage 写入 append-only registry；production provider/RPC server/receipt 与
+ACL 尚未 commissioned。continuation step service/custody 源码切片
 也已完成：它从 signed validation/admission 与 Kernel incorporation 唯一重建 observation identity，双重重放
 compiler/admission authority chain，固定 assessor principal/implementation/fit rule，并让 recovery 重推同一
-provenance-bound receipt。production assessor RPC、assessment artifact fresh-byte custody、ACL 与 worker
-composition 仍待 commissioning。下一项顺序工作是冻结完整 worker factory；随后才进入真实 image/host qualification、外部 authority process composition 与
-process-kill PostgreSQL campaign，而不是扩张 controller authority。checkpoint 与 external reconciliation
+provenance-bound receipt。**PR-7d** 已冻结完整 worker factory：八个 active step 通过十一项 operation-closed
+Unix RPC port 组合，response 使用独立 Ed25519 transport receipt 验证，recovery 只读取 public-key terminal
+lineage 与 read-only Kernel CAS；worker 不加载科学签名私钥。production assessor/provider/signer/RPC server、
+assessment artifact fresh-byte custody 与 ACL 仍待 commissioning。下一项顺序工作是真实 image/host
+qualification、外部 authority process composition 与 process-kill PostgreSQL campaign，而不是扩张
+controller authority。checkpoint 与 external reconciliation
 仍需独立 typed contracts，不能由 generic retry 猜测。
 
 GPU node 的 deployment threat model 和 onboarding checklist 可以继续独立准备，但直到 PR-4b 的 target-host
