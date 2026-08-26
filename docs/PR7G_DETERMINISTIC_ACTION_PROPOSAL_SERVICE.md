@@ -44,8 +44,9 @@ behind the same closed request, verifier, receipt, and unsigned-command boundary
 deployed Kernel command authority must still decide and sign any accepted command.
 
 The exact Linux service account must still prove socket, PostgreSQL, CAS, spool, supervisor, alert,
-and process-restart custody in the PR-4/PR-5 campaign. Nine other PR-7e service factories and their
-domain-key/ACL commissioning remain incomplete.
+and process-restart custody in the PR-4/PR-5 campaign. PR-7h subsequently supplies the frozen
+protocol-compilation source factory; eight other PR-7e service factories and their domain-key/ACL
+commissioning remain incomplete.
 
 See [ADR 0064](architecture/0064-deterministic-action-proposal-rpc-service.md),
 [ADR 0058](architecture/0058-durable-powerless-action-proposal-steps.md), the

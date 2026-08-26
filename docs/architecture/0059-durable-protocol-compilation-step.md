@@ -37,7 +37,9 @@ result is a scientific-planning input for the next redesign tick; it is not an e
   command nor observation-admission authority flags.
 - The registry is a recoverable compilation projection, not a second scientific ledger and not an
   execution authorization.
-- This slice does not commission a production protocol provider, provider RPC/receipt custody,
-  database ACL, worker factory, independent Kernel signer, target-host deployment, or process-kill
-  campaign. Recovery-policy and controller-manifest pins must be composed with the same deployment
-  policy before the worker is production-ready.
+- ADR 0065 subsequently adds the exact-action frozen-template provider, a verifier applied to new
+  and restarted rows, and the checked-in single-operation PR-7e factory. This is a safe preauthored
+  baseline, not general or knowledge-grounded protocol generation.
+- This slice does not commission the provider service account, RPC/receipt custody, database ACL,
+  independent Kernel signer, target-host deployment, or process-kill campaign. Those deployment
+  gates remain before the worker is production-ready.

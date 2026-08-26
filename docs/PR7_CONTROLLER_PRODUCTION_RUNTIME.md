@@ -143,9 +143,10 @@ The three proposal steps now have a proposal-only source implementation with exa
 re-audit, bounded provider drafts, and write-once unsigned-command custody. PR-7g adds the
 conservative deterministic provider and checked-in single-operation endpoint, but it still needs
 target-host commissioning; knowledge-grounded proposal intelligence and the independent Kernel
-command authority remain open. The protocol compiler
-now has a two-audit, policy-pinned, append-only step service, but its production provider/RPC,
-receipt custody, ACL and external process commissioning remain open. Continuation now
+command authority remain open. The protocol compiler now has a two-audit, policy-pinned,
+append-only step service; PR-7h adds its exact-action frozen-template provider, restart verifier,
+and checked-in RPC factory. General protocol authoring plus receipt custody, ACL and external
+process commissioning remain open. Continuation now
 has its own two-audit service, mechanically reconstructed observation identity, pinned assessor
 policy, and durable provenance; its production service, assessment-artifact byte custody and ACL
 remain open. See [ADR 0058](architecture/0058-durable-powerless-action-proposal-steps.md),
