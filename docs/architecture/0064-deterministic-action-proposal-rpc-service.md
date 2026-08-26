@@ -47,5 +47,6 @@ authority, or model callback.
   authority may authorize, sign, and commit a proposal.
 - This closes action-proposal provider/factory and source-level spool-custody composition. It does
   not commission service accounts, socket/database/filesystem ACLs, the Kernel command signer,
-  supervisor/alerting, or a live Linux multi-process campaign. PR-7h subsequently closes the
-  frozen protocol-compilation source factory; eight other PR-7e factories remain.
+  supervisor/alerting, or a live Linux multi-process campaign. PR-7h and PR-7i subsequently close
+  the frozen protocol-compilation and exact-template execution-authorization factories; seven
+  other PR-7e factories remain.

@@ -182,7 +182,11 @@ PR-7h now adds its safe concrete baseline: a byte-pinned exact-action catalog su
 preauthored requests, missing actions typed-block, a separate verifier rebinds both new and restarted
 rows to the current template, and the single-operation RPC factory still runs the canonical
 compiler. This is not general protocol generation. The service account, receipt custody and ACL
-remain uncommissioned. The
+remain uncommissioned. PR-7i now adds the first concrete scientific execution-authorizer: an
+exact-action catalog freezes the action/compilation/qualification/artifact/policy/time closure,
+re-audits Kernel, compilation registry and PR-4 public custody before and after deterministic
+Ed25519 signing, and keeps its domain key in a separate pinned `0400` file from the RPC receipt key.
+It cannot register, reserve, launch, validate, admit or mutate the Kernel. The
 continuation step now reconstructs the only allowed observation projection from signed validation
 and Kernel incorporation, replays the exact compiler/admission chain twice, pins assessor
 principal/implementation/fit rules, and persists provenance with the deterministic disposition.
@@ -202,7 +206,7 @@ reconstructs every stored draft on retry, emits explicit unknown/unassessed cost
 and exposes one source-pinned RPC operation over an inode/ACL-pinned private spool. It has no model
 callback, signing key, budget/risk approval, execution port, or direct Kernel mutation. Target-host
 commissioning is still pending. Knowledge-grounded proposal/protocol intelligence, the independent
-Kernel signer, the other eight concrete service factories, socket/PostgreSQL ACL commissioning,
+Kernel signer, the other seven concrete service factories, socket/PostgreSQL ACL commissioning,
 and the live multi-process campaign remain incomplete. The PR-2 store also
 still has one immutable policy epoch and
 `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
@@ -220,6 +224,7 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-7f continuation-service guide](docs/PR7F_DETERMINISTIC_CONTINUATION_SERVICE.md), plus
 [PR-7g action-proposal guide](docs/PR7G_DETERMINISTIC_ACTION_PROPOSAL_SERVICE.md), plus
 [PR-7h protocol-compilation guide](docs/PR7H_FROZEN_PROTOCOL_COMPILATION_SERVICE.md), plus
+[PR-7i execution-authorization guide](docs/PR7I_EXECUTION_AUTHORIZATION_SERVICE.md), plus
 [ADR 0056](docs/architecture/0056-independent-observation-controller-steps.md) and
 [ADR 0057](docs/architecture/0057-graph-scoped-f9-v2-validation-campaign.md), plus
 [ADR 0058](docs/architecture/0058-durable-powerless-action-proposal-steps.md), and
@@ -229,7 +234,8 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [ADR 0062](docs/architecture/0062-operation-closed-external-rpc-service-runtime.md), and
 [ADR 0063](docs/architecture/0063-deterministic-continuation-rpc-service.md), and
 [ADR 0064](docs/architecture/0064-deterministic-action-proposal-rpc-service.md), and
-[ADR 0065](docs/architecture/0065-frozen-protocol-compilation-rpc-service.md).
+[ADR 0065](docs/architecture/0065-frozen-protocol-compilation-rpc-service.md), and
+[ADR 0066](docs/architecture/0066-scientific-execution-authorization-rpc-service.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,

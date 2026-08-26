@@ -43,8 +43,9 @@ config or compilation stops. A future authoring service may replace the catalog 
 same closed context, verifier, canonical compiler, and durable-registry boundary.
 
 No target host is commissioned. The exact Linux account must still prove socket, PostgreSQL, CAS,
-transport-key, supervisor, alert, and process-restart custody. Eight other PR-7e service factories,
-including all execution, validation, admission, and Kernel-signing authorities, remain incomplete.
+transport-key, supervisor, alert, and process-restart custody. PR-7i subsequently supplies the
+exact-template execution-authorization signer; seven other PR-7e service factories, including
+execution registration, validation, admission, and Kernel-signing authorities, remain incomplete.
 
 See [ADR 0065](architecture/0065-frozen-protocol-compilation-rpc-service.md),
 [ADR 0059](architecture/0059-durable-protocol-compilation-step.md), the
