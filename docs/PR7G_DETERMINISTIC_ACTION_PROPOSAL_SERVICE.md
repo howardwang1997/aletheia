@@ -48,6 +48,7 @@ and process-restart custody in the PR-4/PR-5 campaign. PR-7h, PR-7i and PR-7j su
 the frozen protocol-compilation, exact-template execution-authorization, and atomic registration
 factories; PR-7k subsequently supplies the verified raw-run source and PR-7l database observation
 attestation; PR-7m subsequently supplies independent F9-v2 validation. Three other PR-7e service
+factories remain at that checkpoint; PR-7n subsequently closes committed-validation loading, so two
 factories and their domain-key/ACL
 commissioning remain incomplete.
 

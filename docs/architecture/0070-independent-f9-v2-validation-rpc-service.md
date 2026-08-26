@@ -36,5 +36,5 @@ production process boundary.
 - Exact known-answer campaigns have a runnable, deterministic and fail-closed assessment baseline.
 - The exact-content catalog is not general scientific interpretation. Domain validators, target-host
   ACLs, supervision and live crash evidence remain commissioning gates.
-- Three concrete operation factories remain. The committed-validation source is next, followed by
-  independent admission and atomic admission/Kernel incorporation.
+- PR-7n subsequently closes the committed-validation source. Two concrete operation factories
+  remain; independent admission is next, followed by atomic admission/Kernel incorporation.

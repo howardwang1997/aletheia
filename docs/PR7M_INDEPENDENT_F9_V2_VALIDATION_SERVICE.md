@@ -48,10 +48,10 @@ identity and guarded factory loading.
 
 ## Remaining release gates
 
-Three PR-7e concrete factories remain: committed-validation source, independent admission, and
-atomic admission/Kernel incorporation. The next ordered source slice is the committed-validation
-source. It must be keyless and return only the fully reverified durable validation for the exact
-Quest/action/scientific slot.
+PR-7n subsequently closes the keyless committed-validation source with full DB, validator, F9-v2,
+Kernel and PR-4 historical verification. Two PR-7e concrete factories remain: independent
+admission and atomic admission/Kernel incorporation. The next ordered source slice is the
+independent admission-decision signer.
 
 No target host is commissioned. Exact PostgreSQL read ACLs, Linux accounts/socket/key ownership,
 systemd supervision, alerts, key rotation/revocation, a general reviewed assessor and a fresh
@@ -59,6 +59,7 @@ multi-process PostgreSQL kill/restart campaign remain mandatory. These source an
 engineering evidence, not deployment proof or a scientific result.
 
 See [ADR 0070](architecture/0070-independent-f9-v2-validation-rpc-service.md), the
+[PR-7n committed-validation guide](PR7N_COMMITTED_VALIDATION_SOURCE_SERVICE.md), the
 [PR-7l database-observation guide](PR7L_DATABASE_OBSERVATION_SERVICE.md), the
 [PR-7e server guide](PR7E_EXTERNAL_RPC_SERVICE_RUNTIME.md), and the
 [PR-5 controller guide](PR5_DURABLE_SCIENTIFIC_CONTROLLER.md).

@@ -33,3 +33,4 @@ projection, so it could not itself prove preregistration.
   grants and live host evidence remain required because Python operation closure is not an ACL.
 - PR-7l subsequently closes database observation attestation and PR-7m closes independent F9-v2
   validation. Three concrete factories remain; the next is the committed-validation source.
+  PR-7n subsequently closes that source, leaving independent admission next and two factories.

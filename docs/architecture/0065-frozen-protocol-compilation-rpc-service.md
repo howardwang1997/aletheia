@@ -41,4 +41,5 @@ port, mutable template registry, or model callback.
   PR-7j subsequently close the exact-template execution-authorization signer and atomic
   registration service; PR-7k subsequently closes verified raw-run loading and PR-7l database
   observation attestation, and PR-7m closes independent F9-v2 validation. Three other PR-7e service
-  factories remain.
+  factories remain at that checkpoint; PR-7n subsequently closes committed-validation loading,
+  leaving two.

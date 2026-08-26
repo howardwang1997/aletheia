@@ -51,7 +51,8 @@ PR-7l subsequently closes database observation attestation with DB-time challeng
 validation receipts while loading no validator, admitter, execution, or Kernel private key. PR-7m
 then closes the independent F9-v2 validator factory. Three PR-7e concrete factories remain:
 committed-validation source, independent admission, and atomic admission/Kernel incorporation. The
-next ordered source slice is the committed-validation source.
+PR-7n subsequently closes the committed-validation source. The next ordered source slice is
+independent admission, with two factories remaining.
 
 No target host is commissioned. Read-only PostgreSQL/CAS/registry ACLs, Linux account/socket
 ownership, systemd supervision, alerts, and fresh multi-process PostgreSQL kill/restart tests remain

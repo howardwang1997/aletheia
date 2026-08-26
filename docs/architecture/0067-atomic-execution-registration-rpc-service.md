@@ -47,4 +47,5 @@ linearization point.
   Target PostgreSQL ACLs and live process-kill tests remain required to prove the deployed boundary.
 - PR-7k subsequently closes the exact public `LOAD_RAW_RUN` source, PR-7l closes database
   observation attestation, and PR-7m closes independent F9-v2 validation. Three concrete RPC
-  factories remain; the next is the committed-validation source.
+  factories remain at that checkpoint; PR-7n subsequently closes the committed-validation source,
+  leaving independent admission next and two factories remaining.
