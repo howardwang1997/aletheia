@@ -23,8 +23,8 @@
       "aletheia/research_kernel": "new_authority",
       "aletheia/research_store": "new_authority_adapter"
     },
-    "legacy_source_ast_file_count": 308,
-    "legacy_source_ast_graph_sha256": "c5c6cb9c72228e7aea133467effbb762cab498ee2b97b9079de4cc4702d59109",
+    "legacy_source_ast_file_count": 314,
+    "legacy_source_ast_graph_sha256": "a060fcce12e9e7dc03622bf888cc299ef09f70488df2ea1fd20d13bfef385038",
     "legacy_source_ast_review_limit": "This normalized-AST backstop freezes every parseable Python file in the declared legacy production roots after explicitly removing new-authority and migration-tooling roots. It catches added, removed or semantically changed legacy Python source even when a specialized sink scanner does not recognize the syntax; comments, formatting, generated runtime code, non-Python launchers and the explicitly excluded roots are outside this digest.",
     "migration_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "migration_source_ast_roots": ["aletheia/migration", "migrations"],

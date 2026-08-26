@@ -1135,6 +1135,8 @@ def _exec_start_argv(
         runner,
         "--manifest",
         spec.deployment_manifest_path,
+        "--manifest-sha256",
+        spec.deployment_manifest_sha256,
         operation,
     )
     if runner == spec.node_runner_path and operation == "run":

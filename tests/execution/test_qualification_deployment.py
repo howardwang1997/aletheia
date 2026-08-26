@@ -1033,7 +1033,7 @@ def test_systemd_render_is_deterministic_and_preserves_required_service_boundari
         )
     )
     assert canonical_sha256(first) == (
-        "956f4d5f2d78cca5b4cdb8a6e3c38afae8e2ed8d4d5cea0ecd9b73f4e2e06edf"
+        "d94905cc5aaa55db94551b6658da67f608e039d1b0351d0d3c37eb5c8157584a"
     )
 
     by_name = {item.unit_name: item.content for item in first}
@@ -1058,6 +1058,10 @@ def test_systemd_render_is_deterministic_and_preserves_required_service_boundari
     assert f"User={spec.outbox_uid}" in outbox and "PrivateMounts=yes" in outbox
     assert "SupplementaryGroups=\n" in outbox
     assert all(" -S -s -P " in item.content for item in first)
+    assert all(
+        f"--manifest-sha256 {spec.deployment_manifest_sha256}" in item.content
+        for item in first
+    )
     assert all(f"WorkingDirectory={spec.code_root}" in item.content for item in first)
     assert all(
         f"Environment=PYTHONHOME={spec.reviewed_python_environment.root_path}" in item.content

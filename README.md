@@ -129,9 +129,11 @@ custody, reserve hardware or budget, authorize or run work, or admit evidence by
 still permanently `qualification_only=true` / `scientific_admission_allowed=false`, rejects device/
 GPU launch, and has no HTTP or Research Kernel launch authorization. Its deployment-evidence
 closure now provides a portable closed desired-state contract, deterministic systemd/PostgreSQL
-rendering, externally pinned signed Linux observations, a derived installed-manifest schema, and
-read-only revalidation. It deliberately does not install or repair a host, implement the concrete
-observer, or run the campaign. The exact Linux/rootful-Docker/systemd/loop/ext4/cgroup-v2/shared-
+rendering, five one-role runner entrypoints with an out-of-band manifest SHA pin, externally pinned
+signed Linux observations, a derived installed-manifest schema, and read-only revalidation. The
+runners provide a guarded process boundary but no production composition factories. This work
+deliberately does not install or repair a host, implement the concrete observer, or run the
+campaign. The exact Linux/rootful-Docker/systemd/loop/ext4/cgroup-v2/shared-
 mount campaign must pass before any host is called deployable. No target-host manifest instance has
 been frozen, that exact campaign has not run, and PR-4b is therefore nondeployable. PR-5 now adds
 the signed action-to-execution bridge, DB-time independent validation/admission, atomic
