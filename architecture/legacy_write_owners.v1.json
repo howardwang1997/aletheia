@@ -23,8 +23,8 @@
       "aletheia/research_kernel": "new_authority",
       "aletheia/research_store": "new_authority_adapter"
     },
-    "legacy_source_ast_file_count": 314,
-    "legacy_source_ast_graph_sha256": "a060fcce12e9e7dc03622bf888cc299ef09f70488df2ea1fd20d13bfef385038",
+    "legacy_source_ast_file_count": 316,
+    "legacy_source_ast_graph_sha256": "7043ba021f2381a0776110e887b33a4f45225bb153c7cbdc539ce443a12693f5",
     "legacy_source_ast_review_limit": "This normalized-AST backstop freezes every parseable Python file in the declared legacy production roots after explicitly removing new-authority and migration-tooling roots. It catches added, removed or semantically changed legacy Python source even when a specialized sink scanner does not recognize the syntax; comments, formatting, generated runtime code, non-Python launchers and the explicitly excluded roots are outside this digest.",
     "migration_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "migration_source_ast_roots": ["aletheia/migration", "migrations"],
@@ -112,9 +112,9 @@
       "research_store.transactional_outbox": "The authority-minimal PostgreSQLResearchKernelOutbox caller-owned publication surface is composed by the controller dispatcher; the full-store transaction-owning mark_outbox_published wrapper remains an explicit uncalled compatibility surface."
     },
     "direct_file_sink_scheme": "ast_reviewed_direct_file_sink_v1",
-    "direct_file_sink_scope_count": 181,
-    "direct_file_sink_call_count": 203,
-    "direct_file_sink_graph_sha256": "3d0e67fd95a2ce30541a42bd1f90cf6de352e38d50a6a2214d9507d22f624eb8",
+    "direct_file_sink_scope_count": 183,
+    "direct_file_sink_call_count": 205,
+    "direct_file_sink_graph_sha256": "f766059f7215a4c546d59e330b4f8e6fbba90ea1cfc8320bf9a8ff3677d6c87a",
     "direct_file_sink_review_limit": "The baseline covers direct Path/open/os.write, archive-open modes, atomic replace, serializer, dataframe and plotting file sinks across the declared aletheia, deployed docker-worker and recursive operational-script roots. Indirect library-internal writes, arbitrary dynamic dispatch and external systems remain separate reviewed boundaries.",
     "direct_file_sink_profiles": {
       "scientific_artifact": {
@@ -213,6 +213,14 @@
         "cutover_pr": "PR-4",
         "dual_write_policy": "none"
       },
+      "qualification_installation_state": {
+        "authority_class": "operational_state",
+        "current_owner_rule": "sink_module",
+        "target_owner": "aletheia.qualification_installer.LinuxQualificationInstallationHost",
+        "migration_mode": "retain_opt_in_disabled_file_installation",
+        "cutover_pr": "PR-8",
+        "dual_write_policy": "none"
+      },
       "qualification_oci_runtime_state": {
         "authority_class": "operational_state",
         "current_owner_rule": "sink_module",
@@ -285,6 +293,7 @@
       "aletheia.observations.f9_v2_validation": "scientific_observation",
       "aletheia.orchestrator.": "operational_workspace",
       "aletheia.programs.": "scientific_program",
+      "aletheia.qualification_installer": "qualification_installation_state",
       "aletheia.research_controller.action_proposal_service": "controller_proposal_custody",
       "aletheia.research_controller.continuation_assessor": "controller_assessment_custody",
       "aletheia.reproducibility.": "scientific_artifact",
@@ -309,9 +318,9 @@
       "scripts.typed_": "scientific_artifact"
     },
     "direct_external_sink_scheme": "ast_reviewed_event_provider_process_sink_v1",
-    "direct_external_sink_scope_count": 121,
-    "direct_external_sink_call_count": 206,
-    "direct_external_sink_graph_sha256": "cff4935408a9229adbdce884f0742767f241932daea07392eba89d056a357403",
+    "direct_external_sink_scope_count": 122,
+    "direct_external_sink_call_count": 207,
+    "direct_external_sink_graph_sha256": "6fc35d2c545d11451d7da80b5d1c4bc0fac4301a6f02240ff0980304a544be87",
     "direct_external_sink_review_limit": "The baseline covers AST-visible EventBus-style publish calls, outbound HTTP mutation calls, known model-provider and GitHub mutation methods, and subprocess launch calls across the declared aletheia, deployed docker-worker and recursive operational-script roots. It does not claim to discover dynamically dispatched SDK methods, hidden library network I/O, non-Python launchers, or runtime monkeypatching.",
     "direct_external_sink_profiles": {
       "event.": {
