@@ -136,8 +136,10 @@ factories: a replay-safe exact bind/shared workspace one-shot plus the existing 
 independent-watchdog daemons behind canonical process-bound configs. PR-8d now supplies the
 non-root node factory with exact PostgreSQL role/revision checks, inode-pinned mutable roots,
 three independently pinned node/assignment/runtime-control keys, live boot identity, the full
-CPU-only OCI composition and root-mediated live quota verification. The terminal-outbox factory is
-still absent. A separate explicit PR-8b installer can atomically publish the exact
+CPU-only OCI composition and root-mediated live quota verification. PR-8e now supplies the
+non-root terminal-outbox factory: it validates both terminal generations, retains canonical
+envelopes in an inode-pinned write-once spool, and marks legacy v1 published only after filesystem
+durability while leaving v2 immutable. A separate explicit PR-8b installer can atomically publish the exact
 manifest and five disabled unit files, journal crash recovery and invoke only pinned `systemctl
 daemon-reload`; it cannot create principals, apply the PostgreSQL ACL, enable/start services,
 qualify a host or admit science. This work still does not complete host commissioning, implement
@@ -279,8 +281,10 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-7o independent-admission guide](docs/PR7O_INDEPENDENT_ADMISSION_SERVICE.md), plus
 [PR-7p atomic-admission guide](docs/PR7P_ATOMIC_ADMISSION_SERVICE.md), plus
 [PR-8a qualification-runner guide](docs/PR8A_QUALIFICATION_SERVICE_RUNNERS.md),
-[PR-8b disabled-installer guide](docs/PR8B_DISABLED_QUALIFICATION_INSTALLER.md), and
-[PR-8c privileged-factory guide](docs/PR8C_PRIVILEGED_QUALIFICATION_FACTORIES.md), plus
+[PR-8b disabled-installer guide](docs/PR8B_DISABLED_QUALIFICATION_INSTALLER.md),
+[PR-8c privileged-factory guide](docs/PR8C_PRIVILEGED_QUALIFICATION_FACTORIES.md),
+[PR-8d node-factory guide](docs/PR8D_QUALIFICATION_NODE_FACTORY.md), and
+[PR-8e terminal-outbox guide](docs/PR8E_QUALIFICATION_TERMINAL_OUTBOX_FACTORY.md), plus
 [ADR 0056](docs/architecture/0056-independent-observation-controller-steps.md) and
 [ADR 0057](docs/architecture/0057-graph-scoped-f9-v2-validation-campaign.md), plus
 [ADR 0058](docs/architecture/0058-durable-powerless-action-proposal-steps.md), and
@@ -300,8 +304,10 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [ADR 0072](docs/architecture/0072-independent-admission-rpc-service.md), and
 [ADR 0073](docs/architecture/0073-atomic-admission-rpc-service.md), and
 [ADR 0074](docs/architecture/0074-guarded-qualification-service-runners.md), and
-[ADR 0075](docs/architecture/0075-disabled-qualification-file-installer.md), and
-[ADR 0076](docs/architecture/0076-privileged-qualification-factories.md).
+[ADR 0075](docs/architecture/0075-disabled-qualification-file-installer.md),
+[ADR 0076](docs/architecture/0076-privileged-qualification-factories.md),
+[ADR 0077](docs/architecture/0077-qualification-node-factory.md), and
+[ADR 0078](docs/architecture/0078-qualification-terminal-outbox-factory.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,

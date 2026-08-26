@@ -76,8 +76,8 @@
     "service_mutator_call_graph_sha256": "13e491fdfcf7637e3ee2652a465eb9e119126e1360f379985cf628bf38138f5f",
     "service_boundary_limit": "This mechanically freezes statically declared aletheia.memory.service imports and imported-name uses across aletheia and operational scripts in module and nested lexical scopes. It does not claim to discover arbitrary dynamic imports or direct ORM, SQL, filesystem or external-system mutations; those are handled by separate reviewed surface baselines.",
     "writer_surface_usage_scheme": "ast_all_scope_import_alias_instance_scope_v2",
-    "writer_surface_usage_count": 376,
-    "writer_surface_call_graph_sha256": "8b1bb0c118587e144efe2ac238bf73ca79344e1b4c91a7ceee22bd17bb1788c5",
+    "writer_surface_usage_count": 377,
+    "writer_surface_call_graph_sha256": "ec5509dcca5c719630d7993f04f05eaafc8a5e1603a22d44f710678ee8f59bc7",
     "allowed_legacy_caller_scope": "Every current aletheia-package caller must be covered by allowed_legacy_callers. Operational scripts are fully frozen in call_sites and may be omitted from the post-cutover application allowlist.",
     "shared_generic_writer_implementations": {
       "aletheia.observations.store._append_exact": {
@@ -108,13 +108,13 @@
       "decision.transition": "Two fault-harness transaction callbacks directly append transition decisions; their exact ORM mutation scopes are frozen by the direct-ORM audit.",
       "jobs.durable_queue": "PR-5 controller adapters receive the authority-neutral DurableTaskQueuePort, so their caller-owned enqueue_in_session uses cannot resolve to the legacy concrete queue class statically; the exact controller callers and concrete _enqueue ORM scopes remain frozen separately.",
       "execution.qualification_authority": "PR-4b composes the runtime-v2 allocator entrypoints through one node adapter, while deployment enrollment and compatibility-only entrypoints remain uncalled surfaces; all composed callers, private ORM bindings and direct ORM mutation scopes are frozen separately.",
-      "execution.transactional_outbox": "PR-4b composes the immutable runtime-v2 terminal intent writers but retains the uncalled v1 compatibility writer and has no dispatcher; exact callers and direct ORM mutation scopes are frozen separately.",
+      "execution.transactional_outbox": "PR-4b composes the immutable runtime-v2 terminal intent writers and PR-8e adds a column-restricted v1 publication/spool service, while the uncalled v1 compatibility source writer remains; exact callers and direct ORM mutation scopes are frozen separately.",
       "research_store.transactional_outbox": "The authority-minimal PostgreSQLResearchKernelOutbox caller-owned publication surface is composed by the controller dispatcher; the full-store transaction-owning mark_outbox_published wrapper remains an explicit uncalled compatibility surface."
     },
     "direct_file_sink_scheme": "ast_reviewed_direct_file_sink_v1",
-    "direct_file_sink_scope_count": 183,
-    "direct_file_sink_call_count": 205,
-    "direct_file_sink_graph_sha256": "f766059f7215a4c546d59e330b4f8e6fbba90ea1cfc8320bf9a8ff3677d6c87a",
+    "direct_file_sink_scope_count": 184,
+    "direct_file_sink_call_count": 206,
+    "direct_file_sink_graph_sha256": "7108c4a35302d0c233749010eaf052c660958cc0fb57804eb5a857586ceac3af",
     "direct_file_sink_review_limit": "The baseline covers direct Path/open/os.write, archive-open modes, atomic replace, serializer, dataframe and plotting file sinks across the declared aletheia, deployed docker-worker and recursive operational-script roots. Indirect library-internal writes, arbitrary dynamic dispatch and external systems remain separate reviewed boundaries.",
     "direct_file_sink_profiles": {
       "scientific_artifact": {
@@ -221,6 +221,14 @@
         "cutover_pr": "PR-8",
         "dual_write_policy": "none"
       },
+      "qualification_terminal_spool": {
+        "authority_class": "operational_state",
+        "current_owner_rule": "sink_module",
+        "target_owner": "aletheia.execution.qualification_outbox_service.QualificationTerminalOutboxSpool",
+        "migration_mode": "retain_write_once_terminal_handoff",
+        "cutover_pr": "PR-8",
+        "dual_write_policy": "none"
+      },
       "qualification_oci_runtime_state": {
         "authority_class": "operational_state",
         "current_owner_rule": "sink_module",
@@ -285,6 +293,7 @@
       "aletheia.execution.node_agent": "qualification_node_state",
       "aletheia.execution.oci_deployment": "qualification_host_control_state",
       "aletheia.execution.oci_runtime": "qualification_oci_runtime_state",
+      "aletheia.execution.qualification_outbox_service": "qualification_terminal_spool",
       "aletheia.knowledge.": "knowledge_archive",
       "aletheia.legacy_evaluation.capability": "qualification_workload_output",
       "aletheia.memory.transcript": "operational_workspace",
@@ -365,9 +374,9 @@
       "aletheia.notify.feishu|provider.http_post": ["feishu.notify"]
     },
     "direct_orm_mutation_scheme": "ast_import_bound_orm_mutation_v2",
-    "direct_orm_mutation_scope_count": 273,
-    "direct_orm_mutation_call_count": 435,
-    "direct_orm_mutation_graph_sha256": "a3033d490067451e4b530e035e3b60db12d7d11e0f64828817969dece12ebfce",
+    "direct_orm_mutation_scope_count": 274,
+    "direct_orm_mutation_call_count": 436,
+    "direct_orm_mutation_graph_sha256": "911973c545078dfbd0a16e391b9c6eed098b2c312b91a3693973f5334eaf61c5",
     "direct_orm_authority_source": "Every resolved table is classified by the postgres storage_target/storage_targets records in this inventory; non-constructor mutation scopes must match a declared legacy_entrypoint or additional_writers symbol.",
     "direct_orm_review_limit": "This static AST baseline resolves explicit imports/re-exports and aliases for every declared SQLAlchemy model; ORM class self/cls bindings; model construction; query/get/select/scalar result flows; attribute, setattr and relationship mutation; explicit aliases of recognized setattr/session/query/table/SQLAlchemy mutation callables; session add/delete/merge/bulk APIs; SQLAlchemy/table/query insert/update/delete; literal mutating SQL; and fail-closed f-string/binary SQL edges. It does not claim to resolve dynamic imports, reflection-generated models, runtime monkeypatching, helper-returned model instances, dynamically selected mutator callables, or dynamic SQL hidden behind an untyped variable; any semantic change in legacy Python remains guarded by the separate normalized-AST source freeze.",
     "protected_orm_reference_scheme": "ast_explicit_import_and_reference_scope_v1",
@@ -3380,6 +3389,10 @@
         {
           "module": "aletheia.execution.allocator",
           "symbol": "PostgreSQLExecutionAllocator.settle_qualification_terminal"
+        },
+        {
+          "module": "aletheia.execution.qualification_outbox_service",
+          "symbol": "QualificationTerminalOutboxService.tick"
         }
       ],
       "call_sites": [
@@ -3390,6 +3403,10 @@
         {
           "module": "aletheia.execution.postgresql_node_adapter",
           "symbol": "QualificationExecutionWorker._settle"
+        },
+        {
+          "module": "aletheia.execution.qualification_outbox_service",
+          "symbol": "QualificationTerminalOutboxService.run_forever"
         }
       ],
       "storage_target": "postgres.execution_persistence.execution_outbox",
@@ -3400,8 +3417,8 @@
       "mutation_kind": "transactional_qualification_terminal_delivery_intent",
       "scientific_semantics": "Stores the v1 engineering-terminal delivery intent plus its operational delivery bookkeeping, and the immutable runtime-v2 accepted-terminal-or-deadline delivery intent. Neither outbox transports scientific admission or can update Research Kernel state.",
       "authority_class": "operational_state",
-      "current_owner": "aletheia.execution.allocator.PostgreSQLExecutionAllocator",
-      "current_commit_boundary": "the same allocator transaction as the selected v1 receipt or runtime-v2 terminal/deadline authority and execution-head settlement",
+      "current_owner": "aletheia.execution.allocator.PostgreSQLExecutionAllocator plus the column-restricted aletheia.execution.qualification_outbox_service.QualificationTerminalOutboxService",
+      "current_commit_boundary": "source intent is committed with the selected receipt or runtime-v2 terminal/deadline authority; the outbox service separately updates only legacy v1 publication bookkeeping after durable spool retention",
       "target_owner": "aletheia.execution.allocator.PostgreSQLExecutionAllocator",
       "target_command_or_object": "TransactionalQualificationTerminalOutboxIntent",
       "migration_mode": "qualification_terminal_transport_only",
@@ -3413,13 +3430,17 @@
         {
           "module": "aletheia.execution.postgresql_node_adapter",
           "symbol": "QualificationExecutionWorker._settle"
+        },
+        {
+          "module": "aletheia.execution.qualification_outbox_service",
+          "symbol": "QualificationTerminalOutboxService.run_forever"
         }
       ],
       "dual_write_policy": "none",
       "cutover_pr": "PR-4",
       "golden_fixture": null,
       "status": "authoritative_new_owner",
-      "blocker": "No production outbox dispatcher or scientific observation bridge is part of PR-4b.",
+      "blocker": "The retained terminal spool and scientific observation bridge exist, but target-host principal/config/ACL commissioning and an acknowledged external spool consumer remain deployment gates.",
       "exception_expiry": null
     },
     {

@@ -35,6 +35,6 @@ evidence would also create false authority after a crash or pathname substitutio
 
 The installed manifest can now name real workspace, quota and watchdog factories, and the
 workspace operation can resume across the bind/propagation crash boundary without guessing. This
-does not prove those bytes, configs or Linux states exist on any host. Node and outbox factories,
-commissioned principals/config/key custody, PostgreSQL ACL application, the concrete observer and
-the full target-host campaign remain mandatory follow-on gates.
+does not prove those bytes, configs or Linux states exist on any host. PR-8d and PR-8e subsequently
+supplied the node and outbox factories; commissioned principals/config/key custody, PostgreSQL ACL
+application, the concrete observer and the full target-host campaign remain mandatory gates.

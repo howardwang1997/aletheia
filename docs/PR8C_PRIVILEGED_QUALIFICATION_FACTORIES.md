@@ -3,8 +3,8 @@
 - Status: root-side source composition complete; not commissioned on a target host
 - Date: 2026-08-27
 
-Subsequent PR-8d has now supplied the node factory described below; the terminal-outbox factory
-and target-host commissioning remain open.
+Subsequent PR-8d and PR-8e have now supplied the node and terminal-outbox factories described
+below; target-host commissioning remains open.
 
 ## Closed source surface
 
@@ -37,13 +37,12 @@ loads the exact checked-in factory source through the same runtime boundary used
 ## Explicit remaining gates
 
 This is source composition, not deployment evidence. It does not create directories or principals,
-write configs or keys, install/enable/start units, apply PostgreSQL ACLs, implement the non-root node
-worker factory, or implement the terminal-outbox service. No concrete observer or campaign runner is
+write configs or keys, install/enable/start units, or apply PostgreSQL ACLs. PR-8d and PR-8e later
+implemented the non-root node and terminal-outbox services. No concrete observer or campaign runner is
 added, and no Linux bind/shared, loop/ext4, Docker, systemd or process-kill campaign ran in this PR.
 
-The next source slice is the node service factory with deployment-pinned runtime-control and node
-keys. The terminal outbox factory follows it; commissioning must then pin the configs, principals,
-keys and ACL before any target-host campaign can produce a frozen installed manifest.
+Commissioning must now pin the configs, principals, keys and ACL before any target-host campaign
+can produce a frozen installed manifest.
 
 See [architecture decision 0076](architecture/0076-privileged-qualification-factories.md), the
 [PR-8b installer guide](PR8B_DISABLED_QUALIFICATION_INSTALLER.md), and the

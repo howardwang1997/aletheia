@@ -30,7 +30,8 @@ diagnostics with `qualification_only=true`, `scientific_admission_allowed=false`
 ## Deliberate boundary
 
 This slice did not supply the five production composition factories. PR-8c subsequently supplies
-the workspace, quota and watchdog factories; the node and outbox factories remain absent. It does not
+the workspace, quota and watchdog factories; PR-8d and PR-8e subsequently supplied the node and
+outbox factories. It does not
 invent an outbox publisher, load node or PostgreSQL credentials, install accounts or files, write
 systemd units, apply the PostgreSQL ACL, start a daemon, or observe a host. The next installer must
 mechanically prove that the manifest deployment ID, service UID/GID, node poll interval, factory

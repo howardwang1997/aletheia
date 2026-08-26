@@ -40,9 +40,8 @@ artifact-store credential, node key or host environment.
 
 This PR does not create the node principal, directories or keys; install configs; grant the
 PostgreSQL allocator role; register/refresh node inventory; enable or start systemd units; or prove
-one real Docker execution. It also does not implement the terminal-outbox factory. Those are
-commissioning and following-source-slice responsibilities, not evidence produced by a Python unit
-test.
+one real Docker execution. PR-8e later implemented the terminal-outbox source factory. The
+remaining commissioning work is not evidence produced by a Python unit test.
 
 The node factory currently admits exactly one CPU-only launch specification. GPU device discovery,
 host scheduler integration and signed live inventory remain outside this local qualification

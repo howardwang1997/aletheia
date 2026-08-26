@@ -2018,8 +2018,10 @@ root-side production factory；workspace one-shot 以 exact pre-bind custody、b
 `make-shared` crash replay 收敛，三个 canonical config 都通过无自引用的 process projection 绑定最终
 manifest。**PR-8d** 已补齐 non-root node factory：它绑定 live PostgreSQL role/revision、四个 node-owned
 inode roots、三把独立私钥、当前 boot identity、CPU-only OCI/image policy 以及 quota/watchdog clients；quota
-root daemon 也新增 exact live-verification operation。下一项顺序工作是补 terminal outbox factory，随后完成
-pinned principal/config/key/ACL commissioning，再进入真实 image/host qualification 与
+root daemon 也新增 exact live-verification operation。**PR-8e** 已补齐 non-root terminal-outbox factory：
+它逐行验证 v1/v2 terminal authority，以 crash-replayable write-once spool 保留 canonical envelope，仅在
+文件 fsync 后 CAS 更新 legacy v1 published 状态，并保持 v2 immutable。五项 service factory 源码现已
+闭合；下一项顺序工作是完成 pinned principal/config/key/ACL commissioning，再进入真实 image/host qualification 与
 process-kill PostgreSQL campaign，而不是扩张
 controller authority。checkpoint 与 external reconciliation
 仍需独立 typed contracts，不能由 generic retry 猜测。
