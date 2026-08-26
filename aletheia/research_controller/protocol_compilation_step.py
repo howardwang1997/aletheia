@@ -246,6 +246,17 @@ class ProtocolCompilationRequestProviderPort(Protocol):
     ) -> PreparedProtocolCompilation: ...
 
 
+class ProtocolCompilationPreparationVerificationPort(Protocol):
+    """Deployment-pinned verifier for fresh and durably recovered protocol requests."""
+
+    def verify_prepared_protocol(
+        self,
+        *,
+        context: AuthorizedProtocolCompilationContext,
+        prepared: PreparedProtocolCompilation,
+    ) -> PreparedProtocolCompilation: ...
+
+
 class ProtocolCompilationMaterializationPort(Protocol):
     authority_binding: ControllerStepAuthorityBinding
 
@@ -275,7 +286,7 @@ def _require_compile_tick(
         raise ProtocolCompilationStepError("protocol compilation received a stale controller tick")
 
 
-def _validate_preparation(
+def verify_prepared_protocol(
     *,
     context: AuthorizedProtocolCompilationContext,
     prepared: PreparedProtocolCompilation,
@@ -332,6 +343,7 @@ class DurableProtocolCompilationService:
         kernel_store: ResearchKernelStore,
         object_archive: ResearchObjectArchive,
         provider: ProtocolCompilationRequestProviderPort,
+        preparation_verifier: ProtocolCompilationPreparationVerificationPort,
         compilation_policy: ProtocolCompilationPolicyPin,
         authority_binding: ControllerStepAuthorityBinding,
         sessions: SessionScopeFactory = session_scope,
@@ -341,6 +353,7 @@ class DurableProtocolCompilationService:
             not callable(getattr(kernel_store, "audit_in_session", None))
             or not callable(getattr(object_archive, "load_object", None))
             or not callable(getattr(provider, "prepare_protocol", None))
+            or not callable(getattr(preparation_verifier, "verify_prepared_protocol", None))
             or not callable(sessions)
             or not callable(database_clock)
         ):
@@ -360,6 +373,7 @@ class DurableProtocolCompilationService:
         self._kernel_store = kernel_store
         self._object_archive = object_archive
         self._provider = provider
+        self._preparation_verifier = preparation_verifier
         self._policy = policy
         self._sessions = sessions
         self._database_clock = database_clock
@@ -389,10 +403,18 @@ class DurableProtocolCompilationService:
                 if existing is not None:
                     return self._verify_registered(session, context=context, write=existing)
 
-            prepared = _validate_preparation(
+            prepared = verify_prepared_protocol(
                 context=context,
                 prepared=self._provider.prepare_protocol(context),
             )
+            verified_prepared = self._preparation_verifier.verify_prepared_protocol(
+                context=context,
+                prepared=prepared,
+            )
+            if verified_prepared != prepared:
+                raise ProtocolCompilationStepError(
+                    "protocol preparation verifier changed provider output"
+                )
             result = compile_protocol(prepared.request)
             verify_compilation(prepared.request, result)
 
@@ -537,7 +559,13 @@ class DurableProtocolCompilationService:
                 prepared_by_principal_id=request.protocol.authored_by_principal_id,
                 prepared_at=request.protocol.authored_at,
             )
-            _validate_preparation(context=context, prepared=synthetic)
+            verify_prepared_protocol(context=context, prepared=synthetic)
+            verified = self._preparation_verifier.verify_prepared_protocol(
+                context=context,
+                prepared=synthetic,
+            )
+            if verified != synthetic:
+                raise ValueError("protocol preparation verifier changed durable request")
             self._verify_revision_parent(session, write)
             if write != expected or write.registered_at < request.protocol.authored_at:
                 raise ValueError("registered compilation differs from canonical persistence")
@@ -673,9 +701,11 @@ __all__ = [
     "PreparedProtocolCompilation",
     "ProtocolCompilationMaterializationPort",
     "ProtocolCompilationPolicyPin",
+    "ProtocolCompilationPreparationVerificationPort",
     "ProtocolCompilationRequestProviderPort",
     "ProtocolCompilationStepAdapter",
     "ProtocolCompilationStepError",
     "ProtocolCompilationUnavailable",
     "SessionScopeFactory",
+    "verify_prepared_protocol",
 ]

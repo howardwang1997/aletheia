@@ -178,8 +178,11 @@ mutates the ledger. The protocol-compilation step now re-audits the exact author
 action, constrains a powerless provider with deployment-pinned author/category/catalog/compiler
 policy, canonically recompiles the request, and appends accepted or blocked results with exact
 revision lineage. Exact restart retries reload the durable winner without reinvoking the provider.
-Its production provider process, concrete service factory, receipt custody and ACL remain
-uncommissioned. The
+PR-7h now adds its safe concrete baseline: a byte-pinned exact-action catalog supplies only complete
+preauthored requests, missing actions typed-block, a separate verifier rebinds both new and restarted
+rows to the current template, and the single-operation RPC factory still runs the canonical
+compiler. This is not general protocol generation. The service account, receipt custody and ACL
+remain uncommissioned. The
 continuation step now reconstructs the only allowed observation projection from signed validation
 and Kernel incorporation, replays the exact compiler/admission chain twice, pins assessor
 principal/implementation/fit rules, and persists provenance with the deterministic disposition.
@@ -198,9 +201,9 @@ deterministic action-proposal provider. It selects only audited targets and requ
 reconstructs every stored draft on retry, emits explicit unknown/unassessed cost/risk identities,
 and exposes one source-pinned RPC operation over an inode/ACL-pinned private spool. It has no model
 callback, signing key, budget/risk approval, execution port, or direct Kernel mutation. Target-host
-commissioning is still pending. Knowledge-grounded proposal intelligence, the independent Kernel
-signer, the other nine concrete service factories, socket/PostgreSQL ACL commissioning, and the
-live multi-process campaign remain incomplete. The PR-2 store also
+commissioning is still pending. Knowledge-grounded proposal/protocol intelligence, the independent
+Kernel signer, the other eight concrete service factories, socket/PostgreSQL ACL commissioning,
+and the live multi-process campaign remain incomplete. The PR-2 store also
 still has one immutable policy epoch and
 `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
 the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
@@ -216,6 +219,7 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-7e external-service guide](docs/PR7E_EXTERNAL_RPC_SERVICE_RUNTIME.md), plus
 [PR-7f continuation-service guide](docs/PR7F_DETERMINISTIC_CONTINUATION_SERVICE.md), plus
 [PR-7g action-proposal guide](docs/PR7G_DETERMINISTIC_ACTION_PROPOSAL_SERVICE.md), plus
+[PR-7h protocol-compilation guide](docs/PR7H_FROZEN_PROTOCOL_COMPILATION_SERVICE.md), plus
 [ADR 0056](docs/architecture/0056-independent-observation-controller-steps.md) and
 [ADR 0057](docs/architecture/0057-graph-scoped-f9-v2-validation-campaign.md), plus
 [ADR 0058](docs/architecture/0058-durable-powerless-action-proposal-steps.md), and
@@ -224,7 +228,8 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [ADR 0061](docs/architecture/0061-keyless-controller-worker-composition.md), and
 [ADR 0062](docs/architecture/0062-operation-closed-external-rpc-service-runtime.md), and
 [ADR 0063](docs/architecture/0063-deterministic-continuation-rpc-service.md), and
-[ADR 0064](docs/architecture/0064-deterministic-action-proposal-rpc-service.md).
+[ADR 0064](docs/architecture/0064-deterministic-action-proposal-rpc-service.md), and
+[ADR 0065](docs/architecture/0065-frozen-protocol-compilation-rpc-service.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,

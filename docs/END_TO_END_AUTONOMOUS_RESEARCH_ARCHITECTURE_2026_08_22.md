@@ -1734,10 +1734,26 @@ socket/PostgreSQL/filesystem ACL、supervisor 与 live process-kill campaign 仍
   port。
 
 该切片关闭一个安全 baseline provider/factory 与 source-level spool custody，不等于 knowledge-grounded
-proposal intelligence 或 target-host commissioning evidence；其余九项 external service factory、独立 Kernel
-command signer、ACL/supervisor 与 live process-kill campaign 仍待完成。详见
+proposal intelligence 或 target-host commissioning evidence；在 PR-7g checkpoint 其余九项 external
+service factory、独立 Kernel command signer、ACL/supervisor 与 live process-kill campaign 仍待完成。详见
 `PR7G_DETERMINISTIC_ACTION_PROPOSAL_SERVICE.md` 与
 `architecture/0064-deterministic-action-proposal-rpc-service.md`。
+
+### PR-7h：Frozen protocol-compilation RPC service
+
+- deployment config 以 action object hash/kind 枚举完整 canonical `ProtocolCompilationRequest`；未列 action
+  返回 typed blocker，不存在 generative/catch-all fallback；
+- provider 只能返回 exact preauthored graph scope、revision、world model、analysis、capability/resource catalogs
+  与 compiler pin，结果仍由 pure canonical compiler 生成；
+- 新 preparation verifier 在首次编译前和 restart durable-row 恢复时都重建 exact template binding；
+- 单 operation RPC factory 冻结 database revision、read-only Kernel CAS、authority/compiler/provider policy、
+  完整 template catalog 与 provider source bytes；不加载 signing key、execution port 或 model callback。
+
+该切片关闭 safe preauthored protocol baseline/factory，不等于 autonomous knowledge-grounded protocol design
+或 target-host commissioning evidence；其余八项 execution/validation/admission/Kernel-signing service factory、
+ACL/supervisor 与 live process-kill campaign 仍待完成。详见
+`PR7H_FROZEN_PROTOCOL_COMPILATION_SERVICE.md` 与
+`architecture/0065-frozen-protocol-compilation-rpc-service.md`。
 
 PR-5 的本地 vertical cut 已完成；现在仍须完成 PR-4 target-host campaign、PR-5 production
 controller/validator/signer process commissioning 与 terminal target-host commissioning，之后才依据 fresh inventory
@@ -1816,8 +1832,9 @@ deterministic baseline provider、restart full-draft reconstruction 与单 opera
 knowledge-grounded provider 和独立 command signer 进程仍缺。protocol compilation step service/custody
 源码切片现已完成：它双重锁定重放
 authorized Kernel/CAS context、固定 author/category/catalog/compiler policy、纯函数重编译，并把 accepted 或
-blocked result 与连续 revision lineage 写入 append-only registry；common RPC server 已由 PR-7e 提供，但
-production provider factory/receipt-key instance 与 ACL 尚未 commissioned。continuation step service/custody 源码切片
+blocked result 与连续 revision lineage 写入 append-only registry；**PR-7h** 现已增加 exact-action frozen
+template provider、restart verifier 与 single-operation factory，但 general protocol authoring、receipt-key
+instance 与 ACL 尚未 commissioned。continuation step service/custody 源码切片
 也已完成：它从 signed validation/admission 与 Kernel incorporation 唯一重建 observation identity，双重重放
 compiler/admission authority chain，固定 assessor principal/implementation/fit rule，并让 recovery 重推同一
 provenance-bound receipt。**PR-7d** 已冻结完整 worker factory：八个 active step 通过十一项 operation-closed
@@ -1825,10 +1842,10 @@ Unix RPC port 组合，response 使用独立 Ed25519 transport receipt 验证，
 lineage 与 read-only Kernel CAS；worker 不加载科学签名私钥。**PR-7e** 已补齐 common external RPC server
 runtime：closed payload/result、双向 Linux peer identity、socket parent/inode、service-owned `0400` transport
 key 与 byte-pinned factory 均 fail closed；这仍不是十一项 concrete authority service commissioning。
-**PR-7f** 与 **PR-7g** 分别完成 deterministic continuation 和 conservative action-proposal 的 concrete
-source factory；其余 compiler/authorization/validation/admission/Kernel signer factory 与 ACL 仍待完成。
-下一项顺序工作是 protocol-compilation concrete provider/factory，随后继续其余 external authority process
-composition，再进入真实 image/host qualification 与
+**PR-7f**、**PR-7g** 与 **PR-7h** 分别完成 deterministic continuation、conservative action-proposal 和
+frozen protocol-compilation 的 concrete source factory；其余 authorization/validation/admission/Kernel signer
+factory 与 ACL 仍待完成。下一项顺序工作是 execution-authorization concrete service factory，随后继续其余
+external authority process composition，再进入真实 image/host qualification 与
 process-kill PostgreSQL campaign，而不是扩张
 controller authority。checkpoint 与 external reconciliation
 仍需独立 typed contracts，不能由 generic retry 猜测。

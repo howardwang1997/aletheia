@@ -49,10 +49,11 @@ control plane while retaining the outer process loader under the normalized-AST 
 
 PR-7f supplies the deterministic continuation factory and its fresh assessment-artifact custody;
 PR-7g adds a conservative deterministic action-proposal factory with reconstructable powerless
-cost/risk receipts and pinned spool custody. This PR still does not supply the other nine concrete
-production factories. In particular, knowledge-grounded provider selection, Kernel command
-signing, execution/allocator authority, database attestation, F9-v2 validation, admission and
-atomic Kernel incorporation still need service-specific
+cost/risk receipts and pinned spool custody; PR-7h adds the exact-action frozen-template protocol
+provider and canonical compiler factory. This PR still does not supply the other eight concrete
+production factories. In particular, knowledge-grounded provider authoring, Kernel command signing,
+execution/allocator authority, database attestation, F9-v2 validation, admission and atomic Kernel
+incorporation still need service-specific
 configuration, key custody, PostgreSQL ACLs, and health/alert policy. A source-level handler or a
 test key is not commissioned authority.
 

@@ -1603,6 +1603,10 @@ def test_legacy_and_migration_python_source_ast_graphs_are_frozen() -> None:
         REPOSITORY_ROOT / "aletheia" / "research_controller_action_proposal_runtime.py"
         in legacy_paths
     )
+    assert (
+        REPOSITORY_ROOT / "aletheia" / "research_controller_protocol_compilation_runtime.py"
+        in legacy_paths
+    )
     assert REPOSITORY_ROOT / "scripts" / "run_research_controller_rpc_service.py" in legacy_paths
     durable_contract_paths = {
         path

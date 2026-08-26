@@ -197,6 +197,17 @@ class _FailProvider:
         raise AssertionError("exact retry must not reinvoke the protocol provider")
 
 
+class _Verifier:
+    def __init__(self, request: ProtocolCompilationRequest) -> None:
+        self.request = request
+
+    def verify_prepared_protocol(self, *, context, prepared):
+        frozen = PreparedProtocolCompilation.model_validate(prepared.model_dump(mode="python"))
+        if frozen.context_sha256 != context.context_sha256 or frozen.request != self.request:
+            raise ProtocolCompilationStepError("test verifier rejected protocol preparation")
+        return frozen
+
+
 @contextmanager
 def _transaction(engine):
     with Session(engine) as session:
@@ -231,6 +242,7 @@ def _service(case, action, request, engine, provider=None):
         kernel_store=_Kernel(case),
         object_archive=_Archive(case),
         provider=provider or _Provider(request),
+        preparation_verifier=_Verifier(request),
         compilation_policy=policy,
         authority_binding=_binding(policy),
         sessions=_sessions(engine),
@@ -254,6 +266,7 @@ def test_accepted_compilation_is_registered_and_restart_returns_exact_row() -> N
         kernel_store=_Kernel(case),
         object_archive=_Archive(case),
         provider=_FailProvider(),
+        preparation_verifier=_Verifier(request),
         compilation_policy=policy,
         authority_binding=_binding(policy),
         sessions=_sessions(engine),
@@ -352,6 +365,7 @@ def test_policy_or_graph_rebinding_is_rejected_before_registry_write(tamper: str
         kernel_store=_Kernel(case),
         object_archive=_Archive(case),
         provider=_Provider(request),
+        preparation_verifier=_Verifier(request),
         compilation_policy=policy,
         authority_binding=_binding(policy),
         sessions=_sessions(engine),
