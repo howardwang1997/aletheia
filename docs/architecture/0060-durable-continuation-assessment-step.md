@@ -42,3 +42,7 @@ unavailable assessor is an operational blocker rather than a fabricated scientif
 - This slice does not commission the production assessor RPC, fresh byte custody for referenced
   assessment artifacts, database ACL, controller/worker manifest policy composition, full worker
   factory, target-host deployment, or multi-process kill/restart campaign.
+
+ADR 0063 subsequently closes the deterministic assessor, exact-outcome-bin identity, fresh
+assessment-artifact custody, and checked-in RPC factory at source level. Target-host ACL,
+supervision, and process-kill evidence remain deployment gates.

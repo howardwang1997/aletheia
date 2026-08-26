@@ -269,6 +269,17 @@ class ContinuationAssessmentProviderPort(Protocol):
     ) -> PreparedContinuationAssessment: ...
 
 
+class ContinuationAssessmentArtifactCustodyPort(Protocol):
+    """Fresh-byte verifier for every artifact referenced by an assessment or durable retry."""
+
+    def verify_assessment_artifacts(
+        self,
+        *,
+        context: AuthorizedContinuationAssessmentContext,
+        assessments: tuple[HypothesisPredictionAssessment, ...],
+    ) -> None: ...
+
+
 class ContinuationMaterializationPort(Protocol):
     authority_binding: ControllerStepAuthorityBinding
 
@@ -359,6 +370,7 @@ class DurableContinuationAssessmentService:
         kernel_store: ResearchKernelStore,
         object_archive: ResearchObjectArchive,
         provider: ContinuationAssessmentProviderPort,
+        artifact_custody: ContinuationAssessmentArtifactCustodyPort,
         assessment_policy: ContinuationAssessmentPolicyPin,
         authority_binding: ControllerStepAuthorityBinding,
         sessions: SessionScopeFactory = session_scope,
@@ -368,6 +380,7 @@ class DurableContinuationAssessmentService:
             not callable(getattr(kernel_store, "audit_in_session", None))
             or not callable(getattr(object_archive, "load_object", None))
             or not callable(getattr(provider, "assess_continuation", None))
+            or not callable(getattr(artifact_custody, "verify_assessment_artifacts", None))
             or not callable(sessions)
             or not callable(database_clock)
         ):
@@ -387,6 +400,7 @@ class DurableContinuationAssessmentService:
         self._kernel_store = kernel_store
         self._object_archive = object_archive
         self._provider = provider
+        self._artifact_custody = artifact_custody
         self._policy = policy
         self._sessions = sessions
         self._database_clock = database_clock
@@ -419,6 +433,10 @@ class DurableContinuationAssessmentService:
             prepared = _validate_prepared_assessment(
                 context=context,
                 prepared=self._provider.assess_continuation(context),
+            )
+            self._verify_artifact_custody(
+                context=context,
+                assessments=prepared.assessments,
             )
             provenance = ContinuationAssessmentProvenance(
                 assessment_source_sha256=context.assessment_source_sha256,
@@ -740,8 +758,8 @@ class DurableContinuationAssessmentService:
             )
         return admission
 
-    @staticmethod
     def _verify_registered(
+        self,
         *,
         context: AuthorizedContinuationAssessmentContext,
         write: ContinuationReceiptWrite,
@@ -759,6 +777,10 @@ class DurableContinuationAssessmentService:
                 assessed_at=provenance.assessed_at,
             )
             _validate_prepared_assessment(context=context, prepared=prepared)
+            self._verify_artifact_custody(
+                context=context,
+                assessments=receipt.assessments,
+            )
             expected_receipt = derive_continuation_v2(
                 world_model=context.world_model,
                 observation=context.observation,
@@ -786,6 +808,24 @@ class DurableContinuationAssessmentService:
         except Exception as exc:  # noqa: BLE001 - persisted receipt fails closed
             raise ContinuationAssessmentStepError(
                 "registered continuation receipt verification failed closed"
+            ) from exc
+
+    def _verify_artifact_custody(
+        self,
+        *,
+        context: AuthorizedContinuationAssessmentContext,
+        assessments: tuple[HypothesisPredictionAssessment, ...],
+    ) -> None:
+        try:
+            self._artifact_custody.verify_assessment_artifacts(
+                context=context,
+                assessments=assessments,
+            )
+        except ContinuationAssessmentStepError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - external artifact verifier fails closed
+            raise ContinuationAssessmentStepError(
+                "continuation assessment artifact custody failed closed"
             ) from exc
 
 
@@ -873,6 +913,7 @@ class ContinuationAssessmentStepAdapter:
 
 __all__ = [
     "AuthorizedContinuationAssessmentContext",
+    "ContinuationAssessmentArtifactCustodyPort",
     "ContinuationAssessmentPolicyPin",
     "ContinuationAssessmentProviderPort",
     "ContinuationAssessmentStepAdapter",

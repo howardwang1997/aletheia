@@ -302,6 +302,16 @@ class _FailProvider:
         raise AssertionError("exact retry must not reinvoke the continuation assessor")
 
 
+class _ArtifactCustody:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def verify_assessment_artifacts(self, *, context, assessments) -> None:
+        self.calls += 1
+        assert context.context_sha256
+        assert all(item.assessment_artifact_sha256 for item in assessments)
+
+
 def _policy() -> ContinuationAssessmentPolicyPin:
     return ContinuationAssessmentPolicyPin(
         assessment_implementation_sha256=_sha("continuation-assessor-implementation"),
@@ -435,6 +445,7 @@ def _service(source, engine, provider=None):
         kernel_store=_Kernel(source.audit),
         object_archive=_Archive(source),
         provider=provider,
+        artifact_custody=_ArtifactCustody(),
         assessment_policy=policy,
         authority_binding=_binding(policy),
         sessions=_sessions(engine),
@@ -462,6 +473,7 @@ def test_continuation_is_durable_and_restart_reuses_exact_provenance(
         kernel_store=_Kernel(source.audit),
         object_archive=_Archive(source),
         provider=_FailProvider(),
+        artifact_custody=_ArtifactCustody(),
         assessment_policy=policy,
         authority_binding=_binding(policy),
         sessions=_sessions(engine),
@@ -587,6 +599,7 @@ def test_second_kernel_audit_rejects_source_drift_before_append(
         kernel_store=_DriftingKernel(source.audit),
         object_archive=_Archive(source),
         provider=provider,
+        artifact_custody=_ArtifactCustody(),
         assessment_policy=policy,
         authority_binding=_binding(policy),
         sessions=_sessions(engine),

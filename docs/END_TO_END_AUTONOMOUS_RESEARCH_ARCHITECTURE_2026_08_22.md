@@ -1702,6 +1702,25 @@ filesystem/registry custody、private-key absence、supervisor/alert 或 live pr
 `PR7E_EXTERNAL_RPC_SERVICE_RUNTIME.md` 与
 `architecture/0062-operation-closed-external-rpc-service-runtime.md`。
 
+### PR-7f：Deterministic continuation RPC service
+
+- admitted observation projection v2 从完整签名 validation/admission 链恢复 exact outcome bin、完整
+  admissible-bin 集合与 admission-policy hash；
+- `exact_outcome_bin_prediction_sha256` 把 prediction 绑定到同一 observable、measurement protocol、
+  outcome space 与一个已冻结 bin；
+- checked-in powerless assessor 只对可识别的唯一 prediction 判定同 bin support/不同 bin
+  out-of-support；opaque、ambiguous 或 missing prediction 一律进入 typed redesign，不能伪造 all-model miss；
+- 每个 assessment 都写入 service-owned content-addressed `0400` artifact，首次注册和 restart exact retry
+  都 fresh reopen/rehash 并重建语义；
+- 单 operation RPC factory 同时冻结 database revision、read-only Kernel CAS、完整 authority/policy、
+  assessor source bytes 与 artifact-root device/inode/UID/GID/mode，不加载任何 signing key 或 generic model
+  callback。
+
+该切片关闭 continuation provider/factory 和 source-level assessment artifact custody，仍不是 target-host
+commissioning evidence；其余十项 external service factory、socket/PostgreSQL/filesystem ACL、supervisor 与
+live process-kill campaign 仍待完成。详见 `PR7F_DETERMINISTIC_CONTINUATION_SERVICE.md` 与
+`architecture/0063-deterministic-continuation-rpc-service.md`。
+
 PR-5 的本地 vertical cut 已完成；现在仍须完成 PR-4 target-host campaign、PR-5 production
 controller/validator/signer process commissioning 与 terminal target-host commissioning，之后才依据 fresh inventory
 选择远程 canary。PR-6 可以在这些部署工作并行时推进。这样远程基础设施不会反过来固化一个错误的
