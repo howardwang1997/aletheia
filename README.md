@@ -131,12 +131,14 @@ GPU launch, and has no HTTP or Research Kernel launch authorization. Its deploym
 closure now provides a portable closed desired-state contract, deterministic systemd/PostgreSQL
 rendering, five one-role runner entrypoints with an out-of-band manifest SHA pin, externally pinned
 signed Linux observations, a derived installed-manifest schema, and read-only revalidation. The
-runners provide a guarded process boundary but no production composition factories. A separate
-explicit PR-8b installer can atomically publish the exact manifest and five disabled unit files,
-journal crash recovery and invoke only pinned `systemctl daemon-reload`; it cannot create
-principals, apply the PostgreSQL ACL, enable/start services, qualify a host or admit science. This
-work still does not complete host commissioning, implement the concrete observer, or run the
-campaign. The exact Linux/rootful-Docker/systemd/loop/ext4/cgroup-v2/shared-
+runners provide a guarded process boundary. PR-8c supplies the three privileged production
+factories: a replay-safe exact bind/shared workspace one-shot plus the existing loopback-quota and
+independent-watchdog daemons behind canonical process-bound configs. The node and terminal-outbox
+factories are still absent. A separate explicit PR-8b installer can atomically publish the exact
+manifest and five disabled unit files, journal crash recovery and invoke only pinned `systemctl
+daemon-reload`; it cannot create principals, apply the PostgreSQL ACL, enable/start services,
+qualify a host or admit science. This work still does not complete host commissioning, implement
+the concrete observer, or run the campaign. The exact Linux/rootful-Docker/systemd/loop/ext4/cgroup-v2/shared-
 mount campaign must pass before any host is called deployable. No target-host manifest instance has
 been frozen, that exact campaign has not run, and PR-4b is therefore nondeployable. PR-5 now adds
 the signed action-to-execution bridge, DB-time independent validation/admission, atomic
@@ -273,6 +275,9 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-7n committed-validation source guide](docs/PR7N_COMMITTED_VALIDATION_SOURCE_SERVICE.md), plus
 [PR-7o independent-admission guide](docs/PR7O_INDEPENDENT_ADMISSION_SERVICE.md), plus
 [PR-7p atomic-admission guide](docs/PR7P_ATOMIC_ADMISSION_SERVICE.md), plus
+[PR-8a qualification-runner guide](docs/PR8A_QUALIFICATION_SERVICE_RUNNERS.md),
+[PR-8b disabled-installer guide](docs/PR8B_DISABLED_QUALIFICATION_INSTALLER.md), and
+[PR-8c privileged-factory guide](docs/PR8C_PRIVILEGED_QUALIFICATION_FACTORIES.md), plus
 [ADR 0056](docs/architecture/0056-independent-observation-controller-steps.md) and
 [ADR 0057](docs/architecture/0057-graph-scoped-f9-v2-validation-campaign.md), plus
 [ADR 0058](docs/architecture/0058-durable-powerless-action-proposal-steps.md), and
@@ -290,7 +295,10 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [ADR 0070](docs/architecture/0070-independent-f9-v2-validation-rpc-service.md), and
 [ADR 0071](docs/architecture/0071-committed-validation-source-rpc-service.md), and
 [ADR 0072](docs/architecture/0072-independent-admission-rpc-service.md), and
-[ADR 0073](docs/architecture/0073-atomic-admission-rpc-service.md).
+[ADR 0073](docs/architecture/0073-atomic-admission-rpc-service.md), and
+[ADR 0074](docs/architecture/0074-guarded-qualification-service-runners.md), and
+[ADR 0075](docs/architecture/0075-disabled-qualification-file-installer.md), and
+[ADR 0076](docs/architecture/0076-privileged-qualification-factories.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,

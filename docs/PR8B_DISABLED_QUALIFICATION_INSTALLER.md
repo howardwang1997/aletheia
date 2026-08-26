@@ -38,8 +38,8 @@ This slice does not create Linux users/groups or custody roots, install code/Pyt
 write composition configs or keys, apply the rendered PostgreSQL ACL, enable/start a unit, observe
 the host independently, freeze `QualificationInstalledDeploymentManifestV1`, or execute the
 qualification campaign. All factory/config inputs and target parents must already exist with exact
-custody. The checked-in production factories—especially the terminal outbox implementation—remain
-the next source-composition gate.
+custody. PR-8c subsequently supplies the workspace, quota and watchdog factories; the node and
+terminal-outbox factories remain source-composition gates.
 
 The Darwin unit/fault tests exercise the pure state machine and a non-root atomic-file primitive;
 they do not execute the concrete root/systemd adapter and are not target-host evidence.

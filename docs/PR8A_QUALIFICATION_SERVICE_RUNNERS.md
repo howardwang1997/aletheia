@@ -29,7 +29,8 @@ diagnostics with `qualification_only=true`, `scientific_admission_allowed=false`
 
 ## Deliberate boundary
 
-This slice does not supply the five production composition factories. In particular it does not
+This slice did not supply the five production composition factories. PR-8c subsequently supplies
+the workspace, quota and watchdog factories; the node and outbox factories remain absent. It does not
 invent an outbox publisher, load node or PostgreSQL credentials, install accounts or files, write
 systemd units, apply the PostgreSQL ACL, start a daemon, or observe a host. The next installer must
 mechanically prove that the manifest deployment ID, service UID/GID, node poll interval, factory
@@ -37,7 +38,7 @@ paths and source digests agree with the exact portable deployment spec and its e
 code tree before installing anything.
 
 PR-8b now supplies that narrowly scoped, explicit installer for the manifest and disabled unit
-files. It still does not supply the factories, principals/configs/keys, PostgreSQL ACL mutation,
+files. It still does not supply all factories, principals/configs/keys, PostgreSQL ACL mutation,
 service activation, observer or campaign.
 
 There is still no concrete independent Linux observer, frozen target-host manifest instance, or

@@ -24,7 +24,7 @@
       "aletheia/research_store": "new_authority_adapter"
     },
     "legacy_source_ast_file_count": 316,
-    "legacy_source_ast_graph_sha256": "7043ba021f2381a0776110e887b33a4f45225bb153c7cbdc539ce443a12693f5",
+    "legacy_source_ast_graph_sha256": "8d2576643b454a25c85d2b6857f45f3031cd2982f8e50bbba0bf7af077738f53",
     "legacy_source_ast_review_limit": "This normalized-AST backstop freezes every parseable Python file in the declared legacy production roots after explicitly removing new-authority and migration-tooling roots. It catches added, removed or semantically changed legacy Python source even when a specialized sink scanner does not recognize the syntax; comments, formatting, generated runtime code, non-Python launchers and the explicitly excluded roots are outside this digest.",
     "migration_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "migration_source_ast_roots": ["aletheia/migration", "migrations"],
@@ -318,9 +318,9 @@
       "scripts.typed_": "scientific_artifact"
     },
     "direct_external_sink_scheme": "ast_reviewed_event_provider_process_sink_v1",
-    "direct_external_sink_scope_count": 122,
-    "direct_external_sink_call_count": 207,
-    "direct_external_sink_graph_sha256": "6fc35d2c545d11451d7da80b5d1c4bc0fac4301a6f02240ff0980304a544be87",
+    "direct_external_sink_scope_count": 123,
+    "direct_external_sink_call_count": 208,
+    "direct_external_sink_graph_sha256": "5988ef86ce2682d1cb036f59445a8f557333a3cdec7aecca850f1b8bcfe54f7c",
     "direct_external_sink_review_limit": "The baseline covers AST-visible EventBus-style publish calls, outbound HTTP mutation calls, known model-provider and GitHub mutation methods, and subprocess launch calls across the declared aletheia, deployed docker-worker and recursive operational-script roots. It does not claim to discover dynamically dispatched SDK methods, hidden library network I/O, non-Python launchers, or runtime monkeypatching.",
     "direct_external_sink_profiles": {
       "event.": {
