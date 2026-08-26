@@ -67,6 +67,9 @@ from aletheia.execution.schemas import ExecutionModel, canonical_json_bytes, can
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _CONTAINER_ID = re.compile(r"^[0-9a-f]{64}$")
 _SYSTEMD_UNIT = re.compile(r"^aletheia-qualification-oci-watchdog(?:-[a-z0-9_.-]+)?\.service$")
+_WORKSPACE_SYSTEMD_UNIT = re.compile(
+    r"^aletheia-qualification-workspace(?:-[a-z0-9_.-]+)?\.service$"
+)
 _MAX_CONTROL_BYTES = 1024 * 1024
 _MAX_GATE_BYTES = 32 * 1024 * 1024
 _SECTOR_BYTES = 512
@@ -96,6 +99,10 @@ class OCIImageAttestationError(OCIDeploymentDependencyError):
 
 class OCIOutputQuotaError(OCIDeploymentDependencyError):
     """The output bind lacks the exact kernel-enforced loop-device ceiling."""
+
+
+class OCISharedWorkspaceError(OCIDeploymentDependencyError):
+    """The shared output workspace mount differs from its deployment pins."""
 
 
 class OCIWatchdogError(OCIDeploymentDependencyError):
@@ -186,6 +193,10 @@ def _read_bounded_file(
 
 def _durable_publish_checkpoint(phase: str, path: Path) -> None:
     """Unit-test fault boundary for power-loss-sensitive durable phases."""
+
+
+def _shared_workspace_checkpoint(phase: str, path: Path) -> None:
+    """Unit-test fault boundary between the bind and propagation operations."""
 
 
 def _read_publish_candidate(
@@ -1547,6 +1558,318 @@ def _in_exact_systemd_unit(cgroup_payload: str, unit_name: str) -> bool:
         return False
     path = PurePosixPath(matches[0])
     return path.is_absolute() and path.name == unit_name and ".." not in path.parts
+
+
+class SharedOutputWorkspaceDeploymentPin(ExecutionModel):
+    """Exact pre-bind custody for the root-owned shared output workspace service."""
+
+    schema_name: Literal["aletheia.shared_output_workspace_deployment"] = (
+        "aletheia.shared_output_workspace_deployment"
+    )
+    schema_version: Literal[1] = 1
+    deployment_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$")
+    systemd_unit_name: str
+    systemd_unit: PinnedRootFile
+    service_executable: PinnedRootExecutable
+    mount: PinnedRootExecutable
+    service_module_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    service_module_device: int = Field(ge=0)
+    service_module_inode: int = Field(ge=1)
+    service_module_mode: Literal[0o400, 0o440, 0o444]
+    service_module_parent_chain_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_root: str = Field(min_length=2, max_length=4096)
+    source_root_device: int = Field(ge=0)
+    source_root_inode: int = Field(ge=1)
+    source_root_owner_gid: int = Field(ge=1, le=2**31 - 1)
+    source_root_mode: Literal[0o1730] = 0o1730
+    source_root_parent_chain_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    target_root: str = Field(min_length=2, max_length=4096)
+    target_underlay_device: int = Field(ge=0)
+    target_underlay_inode: int = Field(ge=1)
+    target_underlay_owner_uid: Literal[0] = 0
+    target_underlay_owner_gid: Literal[0] = 0
+    target_underlay_mode: Literal[0o755] = 0o755
+    target_parent_chain_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    target_must_be_empty_before_first_bind: Literal[True] = True
+    shared_mount_required: Literal[True] = True
+    automatic_root_creation: Literal[False] = False
+    qualification_only: Literal[True] = True
+
+    @model_validator(mode="after")
+    def _paths_and_unit_are_closed(self) -> "SharedOutputWorkspaceDeploymentPin":
+        if _WORKSPACE_SYSTEMD_UNIT.fullmatch(self.systemd_unit_name) is None:
+            raise ValueError("workspace systemd unit name is not deployment-scoped")
+        if Path(self.systemd_unit.path).name != self.systemd_unit_name:
+            raise ValueError("workspace unit file does not match its unit name")
+        source = _canonical_absolute_path(self.source_root, label="workspace source root")
+        target = _canonical_absolute_path(self.target_root, label="workspace target root")
+        if source == target or source in target.parents or target in source.parents:
+            raise ValueError("workspace source and target roots overlap")
+        return self
+
+    @property
+    def deployment_sha256(self) -> str:
+        return canonical_sha256(self)
+
+
+class SharedOutputWorkspaceService:
+    """Create or recover one exact bind mount and make that mount shared.
+
+    The service never creates either directory.  Before the first bind, the target must be the
+    exact empty root-owned underlay from the deployment config.  After a crash, the kernel mount
+    table and the source inode are sufficient to distinguish the one admissible partial state:
+    the exact bind exists but has not yet become shared.
+    """
+
+    def __init__(self, deployment: SharedOutputWorkspaceDeploymentPin) -> None:
+        self._deployment = SharedOutputWorkspaceDeploymentPin.model_validate(
+            deployment.model_dump(mode="python")
+        )
+
+    def ensure_shared_workspace(self) -> None:
+        self._require_root_systemd_service()
+        source = Path(self._deployment.source_root)
+        target = Path(self._deployment.target_root)
+        _verify_pinned_directory(
+            source,
+            owner_uid=0,
+            owner_gid=self._deployment.source_root_owner_gid,
+            mode=self._deployment.source_root_mode,
+            device=self._deployment.source_root_device,
+            inode=self._deployment.source_root_inode,
+            parent_chain_sha256=self._deployment.source_root_parent_chain_sha256,
+            label="workspace source root",
+            error_type=OCISharedWorkspaceError,
+        )
+        mount = self._find_target_mount(target)
+        if mount is None:
+            _verify_pinned_directory(
+                target,
+                owner_uid=self._deployment.target_underlay_owner_uid,
+                owner_gid=self._deployment.target_underlay_owner_gid,
+                mode=self._deployment.target_underlay_mode,
+                device=self._deployment.target_underlay_device,
+                inode=self._deployment.target_underlay_inode,
+                parent_chain_sha256=self._deployment.target_parent_chain_sha256,
+                label="workspace target underlay",
+                error_type=OCISharedWorkspaceError,
+            )
+            try:
+                with os.scandir(target) as entries:
+                    if next(entries, None) is not None:
+                        raise OCISharedWorkspaceError(
+                            "workspace target underlay must be empty before first bind"
+                        )
+            except OSError as exc:
+                raise OCISharedWorkspaceError(
+                    "workspace target underlay cannot be inspected"
+                ) from exc
+            self._run_mount(("--bind", str(source), str(target)))
+            _shared_workspace_checkpoint("bound-before-observation", target)
+            mount = self._find_target_mount(target)
+            if mount is None:
+                raise OCISharedWorkspaceError("workspace bind mount did not become observable")
+
+        self._verify_bound_target(source=source, target=target, mount=mount)
+        if not self._is_shared(mount):
+            self._run_mount(("--make-shared", str(target)))
+            _shared_workspace_checkpoint("shared-before-observation", target)
+            mount = self._find_target_mount(target)
+            if mount is None:
+                raise OCISharedWorkspaceError("shared workspace mount disappeared")
+            self._verify_bound_target(source=source, target=target, mount=mount)
+        if not self._is_shared(mount):
+            raise OCISharedWorkspaceError("workspace bind mount is not shared")
+
+    def _require_root_systemd_service(self) -> None:
+        if sys.platform != "linux" or os.geteuid() != 0 or os.getegid() != 0:
+            raise OCISharedWorkspaceError("workspace service must run as root on Linux")
+        try:
+            pid_one = Path("/proc/1/comm").read_text(encoding="ascii").strip()
+            cgroup = Path("/proc/self/cgroup").read_text(encoding="ascii")
+            status = Path("/proc/self/status").read_text(encoding="ascii")
+            module = Path(__file__).resolve(strict=True)
+            module_metadata = module.lstat()
+            module_sha256 = hashlib.sha256(module.read_bytes()).hexdigest()
+        except (OSError, UnicodeError) as exc:
+            raise OCISharedWorkspaceError(
+                "workspace service deployment identity is unavailable"
+            ) from exc
+        if (
+            pid_one != "systemd"
+            or re.fullmatch(r"[0-9a-f]{32}", os.environ.get("INVOCATION_ID", "")) is None
+            or not _in_exact_systemd_unit(cgroup, self._deployment.systemd_unit_name)
+            or re.search(r"^Uid:\s+0\s+0\s+0\s+0$", status, re.MULTILINE) is None
+            or re.search(r"^Gid:\s+0\s+0\s+0\s+0$", status, re.MULTILINE) is None
+            or module_metadata.st_uid != 0
+            or module_metadata.st_gid != 0
+            or module_metadata.st_dev != self._deployment.service_module_device
+            or module_metadata.st_ino != self._deployment.service_module_inode
+            or stat.S_IMODE(module_metadata.st_mode) != self._deployment.service_module_mode
+            or module_sha256 != self._deployment.service_module_sha256
+            or host_parent_chain_sha256(module)
+            != self._deployment.service_module_parent_chain_sha256
+        ):
+            raise OCISharedWorkspaceError(
+                "workspace service is not its root-owned systemd deployment"
+            )
+        _verify_root_file_pin(
+            self._deployment.systemd_unit,
+            label="workspace systemd unit file",
+            error_type=OCISharedWorkspaceError,
+        )
+        _verify_root_process_executable(
+            self._deployment.service_executable,
+            error_type=OCISharedWorkspaceError,
+        )
+        _verify_root_file_pin(
+            self._deployment.mount,
+            label="workspace mount executable",
+            error_type=OCISharedWorkspaceError,
+        )
+
+    def _run_mount(self, arguments: tuple[str, ...]) -> None:
+        pin = self._deployment.mount
+        path = Path(pin.path)
+        try:
+            descriptor = os.open(
+                path,
+                os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+            )
+        except OSError as exc:
+            raise OCISharedWorkspaceError("pinned mount executable is unavailable") from exc
+        try:
+            metadata = os.fstat(descriptor)
+            digest = hashlib.sha256()
+            while True:
+                chunk = os.read(descriptor, 1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_dev != pin.device
+                or metadata.st_ino != pin.inode
+                or metadata.st_uid != 0
+                or metadata.st_gid != 0
+                or stat.S_IMODE(metadata.st_mode) != pin.mode
+                or digest.hexdigest() != pin.sha256
+                or host_parent_chain_sha256(path) != pin.parent_chain_sha256
+            ):
+                raise OCISharedWorkspaceError("mount executable differs from deployment pin")
+            completed = subprocess.run(
+                (pin.path, *arguments),
+                executable=f"/proc/self/fd/{descriptor}",
+                pass_fds=(descriptor,),
+                check=False,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd="/",
+                env={},
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            raise OCISharedWorkspaceError("pinned workspace mount command failed") from exc
+        finally:
+            os.close(descriptor)
+        if (
+            completed.returncode != 0
+            or len(completed.stdout) > _MAX_CONTROL_BYTES
+            or len(completed.stderr) > _MAX_CONTROL_BYTES
+        ):
+            raise OCISharedWorkspaceError("pinned workspace mount command failed closed")
+
+    @staticmethod
+    def _parse_mountinfo(line: str) -> dict[str, object]:
+        left, separator, right = line.partition(" - ")
+        left_fields = left.split()
+        right_fields = right.split()
+        if not separator or len(left_fields) < 6 or len(right_fields) < 3:
+            raise OCISharedWorkspaceError("mountinfo contains an unparseable entry")
+        try:
+            major_text, minor_text = left_fields[2].split(":", 1)
+            result: dict[str, object] = {
+                "mount_id": int(left_fields[0]),
+                "mount_parent_id": int(left_fields[1]),
+                "major": int(major_text),
+                "minor": int(minor_text),
+                "mountpoint": LoopbackOutputQuotaController._unescape_mountinfo(left_fields[4]),
+                "mount_options": frozenset(left_fields[5].split(",")),
+                "optional_fields": tuple(left_fields[6:]),
+                "fstype": right_fields[0],
+                "source": LoopbackOutputQuotaController._unescape_mountinfo(right_fields[1]),
+                "super_options": frozenset(right_fields[2].split(",")),
+            }
+        except ValueError as exc:
+            raise OCISharedWorkspaceError("mountinfo contains an invalid identity") from exc
+        return result
+
+    @classmethod
+    def _find_target_mount(cls, target: Path) -> dict[str, object] | None:
+        try:
+            lines = Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError) as exc:
+            raise OCISharedWorkspaceError("mountinfo is unavailable to workspace service") from exc
+        matches = [
+            item
+            for line in lines
+            if (item := cls._parse_mountinfo(line))["mountpoint"] == str(target)
+        ]
+        if len(matches) > 1:
+            raise OCISharedWorkspaceError("workspace target has multiple mount identities")
+        return matches[0] if matches else None
+
+    @staticmethod
+    def _is_shared(mount: Mapping[str, object]) -> bool:
+        optional = mount.get("optional_fields")
+        return (
+            isinstance(optional, tuple)
+            and sum(
+                re.fullmatch(r"shared:[1-9][0-9]*", value) is not None
+                for value in optional
+                if isinstance(value, str)
+            )
+            == 1
+        )
+
+    def _verify_bound_target(
+        self,
+        *,
+        source: Path,
+        target: Path,
+        mount: Mapping[str, object],
+    ) -> None:
+        try:
+            source_metadata = source.lstat()
+            target_metadata = target.lstat()
+        except OSError as exc:
+            raise OCISharedWorkspaceError("workspace bind identity is unavailable") from exc
+        options = mount.get("mount_options")
+        if (
+            not stat.S_ISDIR(source_metadata.st_mode)
+            or source.is_symlink()
+            or source_metadata.st_dev != self._deployment.source_root_device
+            or source_metadata.st_ino != self._deployment.source_root_inode
+            or source_metadata.st_uid != 0
+            or source_metadata.st_gid != self._deployment.source_root_owner_gid
+            or stat.S_IMODE(source_metadata.st_mode) != self._deployment.source_root_mode
+            or host_parent_chain_sha256(source) != self._deployment.source_root_parent_chain_sha256
+            or not stat.S_ISDIR(target_metadata.st_mode)
+            or target.is_symlink()
+            or (target_metadata.st_dev, target_metadata.st_ino)
+            != (source_metadata.st_dev, source_metadata.st_ino)
+            or target_metadata.st_uid != 0
+            or target_metadata.st_gid != self._deployment.source_root_owner_gid
+            or stat.S_IMODE(target_metadata.st_mode) != self._deployment.source_root_mode
+            or mount.get("major") != os.major(source_metadata.st_dev)
+            or mount.get("minor") != os.minor(source_metadata.st_dev)
+            or mount.get("mountpoint") != str(target)
+            or not isinstance(options, frozenset)
+            or "rw" not in options
+            or host_parent_chain_sha256(target) != self._deployment.target_parent_chain_sha256
+        ):
+            raise OCISharedWorkspaceError("workspace target differs from exact source bind")
 
 
 class LoopbackQuotaProvisionerDeploymentPin(ExecutionModel):
@@ -4867,10 +5190,13 @@ __all__ = [
     "OCIDeploymentDependencyError",
     "OCIImageAttestationError",
     "OCIOutputQuotaError",
+    "OCISharedWorkspaceError",
     "OCIWatchdogError",
     "PinnedOCIImageLayout",
     "PinnedRootExecutable",
     "PinnedRootFile",
+    "SharedOutputWorkspaceDeploymentPin",
+    "SharedOutputWorkspaceService",
     "SystemdDeadlineWatchdogController",
     "SystemdWatchdogDeploymentPin",
 ]
