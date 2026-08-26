@@ -2081,6 +2081,7 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
         "PostgreSQLExecutionAllocator.commit_terminal_receipt",
         "PostgreSQLExecutionAllocator.adjudicate_expired_qualification_terminal",
         "PostgreSQLExecutionAllocator.settle_qualification_terminal",
+        "QualificationTerminalOutboxService.tick",
     }
     expected_outbox_callers = {
         (
@@ -2090,6 +2091,10 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
         (
             "aletheia.execution.postgresql_node_adapter",
             "QualificationExecutionWorker._settle",
+        ),
+        (
+            "aletheia.execution.qualification_outbox_service",
+            "QualificationTerminalOutboxService.run_forever",
         ),
     }
     assert {
@@ -2121,6 +2126,12 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
     assert (
         policy["direct_file_sink_profile_by_prefix"]["aletheia.execution.oci_runtime"]
         == "qualification_oci_runtime_state"
+    )
+    assert (
+        policy["direct_file_sink_profile_by_prefix"][
+            "aletheia.execution.qualification_outbox_service"
+        ]
+        == "qualification_terminal_spool"
     )
     assert (
         policy["direct_file_sink_profile_by_prefix"]["docker.qualification-smoke-workload"]

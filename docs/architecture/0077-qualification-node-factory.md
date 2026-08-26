@@ -42,6 +42,6 @@ qualification-only attempts without gaining scientific authority. The price is a
 narrow first deployment: one CPU launch spec, four pre-created mutable roots, three separately
 commissioned key files and a live PostgreSQL role/revision check are mandatory.
 
-This decision does not claim that a host has those objects. Principal creation, ACL application,
-node inventory publication, terminal-outbox composition and the target-host campaign remain
-separate gates.
+This decision does not claim that a host has those objects. PR-8e later supplied terminal-outbox
+composition; principal creation, ACL application, node inventory publication and the target-host
+campaign remain separate gates.

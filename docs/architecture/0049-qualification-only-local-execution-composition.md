@@ -79,8 +79,9 @@ requirements, not optional hardening.
 PostgreSQL constraints cannot verify Ed25519 signatures or recompute every application canonical
 hash. The owner/migrator credential must be kept offline; the allocator application role must have
 only reviewed `SELECT`/`INSERT`/`UPDATE` access and no ownership, DDL, `DELETE`, `TRUNCATE`, trigger or
-function mutation, interactive raw-SQL exposure, or workload access. Production also requires an
-external idempotent outbox dispatcher, worker/deadline scheduler, audited CAS GC, backup/restore
+function mutation, interactive raw-SQL exposure, or workload access. PR-8e subsequently supplied a
+source-level durable private-spool dispatcher. Production still requires a commissioned idempotent
+external spool consumer, worker/deadline/outbox supervision, audited CAS GC, backup/restore
 procedure, and database/host clock monitoring.
 
 ## Consequences

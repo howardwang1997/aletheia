@@ -36,12 +36,12 @@ PostgreSQL-role, and clock configuration has passed the opt-in production campai
 | Output quota | `LoopbackOutputQuotaProvisioningService` and `LoopbackOutputQuotaProvisionerClient` | A narrow root/systemd service provisions one crash-replayable ext4 loop filesystem before input materialization. The minimum requested size is 16 MiB; the exact sector-aligned block capacity is no larger than the request and is bound by `OutputQuotaProvisioningReceipt`. That receipt is trusted-local evidence emitted by the privileged root service, not independent remote attestation. There is no sparse-directory or best-effort quota fallback. |
 | Runtime and launch gate | `LocalQualificationOCIRuntime`, `ImmutableOCIImageLaunchGateVerifier`, and `aletheia.execution.qualification_launch_gate` | Digest-pinned Docker image/layout, direct exec, exact workload digest/argv, read-only root, network none, dropped capabilities, no-new-privileges, pinned seccomp/AppArmor, private cgroup namespace, exact CPU/memory/pids limits, read-only inputs, and the quota mount as the only writable workload mount. This PR-4b cut rejects every accelerator/device launch before engine mutation. |
 | Deadline enforcement | `DurableDeadlineWatchdogService` and `SystemdDeadlineWatchdogController` | Independently supervised root/systemd watchdog, exact durable job scope, pinned service/unit/module/binary, `cgroup.kill`, and empty-cgroup evidence. There is no in-process timer fallback. Its due-job recovery is a single-threaded inspect loop; `maximum_active_jobs` defaults to 4,096 and rejects a scan above the deployment-pinned value. Hard-real-time kill latency at 4,096 jobs has not been established. |
-| Artifact and terminal path | `LocalArtifactStore`, `QualificationNodeAgent`, `PostgreSQLExecutionAllocator`, and `QualificationExecutionWorker` | Quarantine/CAS rehash, termination challenge/receipt, independently accepted runtime termination, bounded artifact grace, terminal acceptance or pre-signed deadline expiration, and one transactional v2 outbox row. Outbox dispatch remains external. |
+| Artifact and terminal path | `LocalArtifactStore`, `QualificationNodeAgent`, `PostgreSQLExecutionAllocator`, `QualificationExecutionWorker`, and `QualificationTerminalOutboxService` | Quarantine/CAS rehash, termination challenge/receipt, independently accepted runtime termination, bounded artifact grace, terminal acceptance or pre-signed deadline expiration, and one transactional v2 outbox row. PR-8e retains exact v1/v2 envelopes in a private crash-replayable spool; external consumer delivery and acknowledgment remain separate. |
 | Deployment evidence | `QualificationDeploymentSpecV1`, `render_systemd_units`, `render_postgresql_acl`, `SignedQualificationLinuxDeploymentObservation`, `QualificationInstalledDeploymentManifestV1`, and `verify_installed_manifest` | Portable desired state closes reviewed code/Python/native-dependency trees, service identities, exact PostgreSQL objects/ACL closure, host/runtime pins, and an external observer key. Only a real Linux observation may be frozen; revalidation returns eligibility for a later opt-in campaign, never a deployment or scientific verdict. Installation, observer implementation, and campaign execution remain external. |
-| Service process boundary | `QualificationServiceDeploymentManifestV1`, `QualificationServiceRuntime`, and five thin `scripts/run-*.py` entrypoints | Each process exposes one role/operation, verifies canonical manifest/source/config bytes and live Linux UID/GID, and emits only non-authoritative operational diagnostics. PR-8c supplies the workspace/quota/watchdog factories; node/outbox factories and commissioned credentials remain absent. |
+| Service process boundary | `QualificationServiceDeploymentManifestV1`, `QualificationServiceRuntime`, and five thin `scripts/run-*.py` entrypoints | Each process exposes one role/operation, verifies canonical manifest/source/config bytes and live Linux UID/GID, and emits only non-authoritative operational diagnostics. PR-8c/PR-8d/PR-8e supply all five source factories; commissioned credentials remain absent. |
 | Disabled file installation | `QualificationInstallationRequestV1`, `LinuxQualificationInstallationHost`, and `scripts/install-qualification-deployment.py` | Dry-run by default; explicit root/Linux opt-in atomically publishes the exact manifest and five units with append-only crash recovery, invokes only pinned daemon-reload, and proves every unit remains disabled/inactive. Principals, configs/keys, PostgreSQL ACLs, activation, observer and campaign stay external. |
 
-There is no complete production composition factory set or target-host commissioning workflow that
+There is no complete commissioned target-host composition instance or workflow that
 provisions identities and registry files, creates/restricts PostgreSQL roles, configures mount
 propagation, or starts/supervises the worker. PR-8b can install only the manifest/disabled unit file
 subset. There is a closed schema for deriving a manifest from signed live
@@ -160,12 +160,13 @@ signatures or recompute every Python canonical hash. Deployment therefore must:
 - disable the allocator after restore until schema and authority rows have been independently
   revalidated. Never repair an authority row with ad-hoc SQL.
 
-The repository does not supply a production outbox dispatcher, worker scheduler/service manager,
-CAS/quarantine garbage collector, backup/restore verifier, or PostgreSQL/host clock monitor. Those
-are required deployment components. The dispatcher must use `delivery_key` idempotently; the
-scheduler must keep node/terminal-deadline ticks alive; GC must use an audited retention/reachability
-policy; and a backward or unhealthy PostgreSQL clock must pause authority commits rather than be
-papered over with host time.
+PR-8e now supplies the source-level private-spool dispatcher and PR-8d supplies the node loop, but
+there is still no commissioned external spool consumer, service manager, CAS/quarantine garbage
+collector, backup/restore verifier, or PostgreSQL/host clock monitor. Those are required deployment
+components. The external consumer must use `delivery_key` idempotently and must not delete retained
+spool authority; supervision must keep node/terminal-deadline/outbox ticks alive; GC must use an
+audited retention/reachability policy; and a backward or unhealthy PostgreSQL clock must pause
+authority commits rather than be papered over with host time.
 
 ## Deployment TCB and pathname-bind limit
 
@@ -237,9 +238,8 @@ quota/watchdog service or target-host Docker mount namespace.
 
 Five guarded source runner entrypoints now exist, every rendered `ExecStart` carries the exact
 deployment-manifest SHA-256, and an explicit installer can publish only those disabled files.
-Workspace/quota/watchdog now have checked-in factories, while node/outbox do not. No complete
-production factory set, target-host commissioning workflow, concrete observer, frozen
-manifest instance, or campaign runner exists at
+All five processes now have checked-in factories. No target-host commissioning workflow,
+concrete observer, frozen manifest instance, or campaign runner exists at
 this checkpoint. `QualificationInstalledDeploymentManifestV1` is a derived schema, not evidence
 that any installation was observed. Until an opt-in campaign runs as root on the exact target Linux host with its real systemd units,
 rootful Docker daemon, shared mount visibility, loop/ext4 tools, cgroup-v2 hierarchy, pinned OCI
