@@ -49,5 +49,5 @@ authority, or model callback.
   not commission service accounts, socket/database/filesystem ACLs, the Kernel command signer,
   supervisor/alerting, or a live Linux multi-process campaign. PR-7h, PR-7i and PR-7j subsequently
   close the frozen protocol-compilation, exact-template execution-authorization, and atomic
-  registration factories; PR-7k subsequently closes verified raw-run loading. Five other PR-7e
-  factories remain.
+  registration factories; PR-7k subsequently closes verified raw-run loading and PR-7l database
+  observation attestation. Four other PR-7e factories remain.

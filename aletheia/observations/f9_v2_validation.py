@@ -515,6 +515,7 @@ class WriteOnceF9V2ValidationCampaignArchive:
         *,
         validator_manifest_sha256: str,
         validator_authority_pin: ScientificBridgeAuthorityPin,
+        read_only: bool = False,
     ) -> None:
         if re.fullmatch(_SHA256_PATTERN, validator_manifest_sha256) is None:
             raise ValueError("F9-v2 archive validator manifest must be SHA-256")
@@ -523,7 +524,11 @@ class WriteOnceF9V2ValidationCampaignArchive:
         candidate = Path(root)
         if candidate.is_symlink():
             raise F9V2ValidationError("F9-v2 archive root cannot be a symlink")
-        candidate.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if read_only:
+            if not candidate.exists():
+                raise F9V2ValidationError("read-only F9-v2 archive root must already exist")
+        else:
+            candidate.mkdir(parents=True, exist_ok=True, mode=0o700)
         metadata = candidate.lstat()
         if candidate.is_symlink() or not stat.S_ISDIR(metadata.st_mode) or metadata.st_mode & 0o022:
             raise F9V2ValidationError("F9-v2 archive root must be a private directory")
@@ -532,6 +537,7 @@ class WriteOnceF9V2ValidationCampaignArchive:
         self.validator_authority_pin = ScientificBridgeAuthorityPin.model_validate(
             validator_authority_pin.model_dump(mode="python")
         )
+        self.read_only = bool(read_only)
 
     def publish_campaign(
         self,
@@ -542,6 +548,8 @@ class WriteOnceF9V2ValidationCampaignArchive:
     ) -> CommittedF9V2ValidationCampaign:
         """Publish one campaign; a concurrent existing raw-run winner is returned exactly."""
 
+        if self.read_only:
+            raise F9V2ValidationError("read-only F9-v2 archive cannot publish campaigns")
         _require_utc(committed_at, label="F9-v2 campaign commitment time")
         campaign = verify_f9_v2_validation_campaign(
             campaign=campaign,
@@ -588,8 +596,11 @@ class WriteOnceF9V2ValidationCampaignArchive:
             return None
         if target.is_symlink() or not stat.S_ISREG(target_metadata.st_mode):
             raise F9V2ValidationError("F9-v2 campaign binding target is unsafe")
-        with self._publication_lock(target, exclusive=False):
+        if self.read_only:
             payload = self._read_regular(target)
+        else:
+            with self._publication_lock(target, exclusive=False):
+                payload = self._read_regular(target)
         committed = self._parse_committed(
             payload,
             expected_raw_run_sha256=raw_run.raw_run_sha256,

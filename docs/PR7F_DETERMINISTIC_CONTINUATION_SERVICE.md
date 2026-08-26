@@ -45,10 +45,10 @@ This is checked-in source composition, not host evidence. A provisioned Linux se
 still demonstrate exact socket, PostgreSQL, CAS, artifact-root, supervisor, and alert custody in the
 PR-4/PR-5 campaign. PR-7g, PR-7h, PR-7i and PR-7j subsequently supply the conservative
 action-proposal, frozen protocol-compilation, exact-template execution-authorization, and atomic
-registration factories; PR-7k subsequently supplies the verified raw-run source. The other five
-PR-7e service factories—database observation attestation, independent F9-v2 validation,
-committed-validation loading, independent admission, and atomic Kernel incorporation—remain
-uncommissioned.
+registration factories; PR-7k subsequently supplies the verified raw-run source and PR-7l the
+database-observation attestation service. The other four PR-7e service factories—independent F9-v2
+validation, committed-validation loading, independent admission, and atomic Kernel
+incorporation—remain uncommissioned.
 
 See [ADR 0063](architecture/0063-deterministic-continuation-rpc-service.md), the
 [PR-7e server guide](PR7E_EXTERNAL_RPC_SERVICE_RUNTIME.md), and the

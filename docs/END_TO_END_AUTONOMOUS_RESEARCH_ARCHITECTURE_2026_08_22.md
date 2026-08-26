@@ -1769,7 +1769,8 @@ ACL/supervisor 与 live process-kill campaign 仍待完成。详见
 
 该切片关闭 safe exact-template SEA signer/factory，不等于 general execution planning 或 target-host
 commissioning evidence；PR-7j 随后关闭 atomic registration/reservation factory，PR-7k 随后关闭
-verified raw-run source；其余五项 database-observation/validation/admission/Kernel-incorporation
+verified raw-run source，PR-7l 随后关闭 database-observation attestation；其余四项
+independent-validation/committed-validation/independent-admission/atomic-incorporation
 service factory、ACL/supervisor 与 live process-kill campaign 仍待完成。详见
 `PR7I_EXECUTION_AUTHORIZATION_SERVICE.md` 与
 `architecture/0066-scientific-execution-authorization-rpc-service.md`。
@@ -1793,8 +1794,8 @@ service factory、ACL/supervisor 与 live process-kill campaign 仍待完成。�
   不得复用任何 Ed25519/X25519 domain key。
 
 该切片关闭 atomic SEA/PR-4 registration source composition，不等于 PostgreSQL ACL 或 host/process-kill
-evidence；PR-7k 随后关闭 verified raw-run source。其余五项 database-observation/
-independent-validation/committed-validation/independent-admission/atomic-incorporation factory
+evidence；PR-7k 随后关闭 verified raw-run source，PR-7l 随后关闭 database-observation attestation。
+其余四项 independent-validation/committed-validation/independent-admission/atomic-incorporation factory
 仍待完成。详见 `PR7J_ATOMIC_EXECUTION_REGISTRATION_SERVICE.md` 与
 `architecture/0067-atomic-execution-registration-rpc-service.md`。
 
@@ -1811,10 +1812,28 @@ independent-validation/committed-validation/independent-admission/atomic-incorpo
 - 服务不持有 execution mutation、database attestation、validation、admission、terminal 或 Kernel signing key。
 
 该切片关闭 verified raw-run source composition，不等于 read-only PostgreSQL/CAS ACL 或 live host evidence；
-其余五项 database-observation/independent-validation/committed-validation/independent-admission/
-atomic-incorporation factory 仍待完成。下一项顺序工作是 database-observation service。详见
+PR-7l 随后关闭 database-observation factory。其余四项 independent-validation/committed-validation/
+independent-admission/atomic-incorporation factory 仍待完成。详见
 `PR7K_VERIFIED_RAW_RUN_SOURCE_SERVICE.md` 与
 `architecture/0068-verified-raw-run-source-rpc-service.md`。
+
+### PR-7l：Database-observation attestation RPC service
+
+- 单 service 只暴露 validation challenge、validation commit 与 admission challenge 三项 operation，并且只
+  加载独立 database-attestation domain key；validator、admitter、execution 与 Kernel private key 均不存在；
+- 每项 operation 先 `FOR UPDATE` 锁定 exact preregistered SEA slot，再采样 PostgreSQL time；validation commit
+  必须引用数据库已 append 的 exact historical challenge，不能使用仅签名但未注册的 caller challenge；
+- 完整 PR-4/Kernel/raw-run/F9-v2/signature 验证结束后再次采样 DB time，过期 challenge 不得越过 commit
+  linearization；admission challenge 签发前重验 exact durable committed validation；
+- 三种 RPC receipt 都是 closed Pydantic contract，exact retry 不包含 transient `created` 状态；
+- guarded factory 冻结 database/schema、service/domain key、read-only Kernel CAS、完整 PR-4 lineage/artifact
+  custody、read-only F9-v2 campaign archive、authority separation 与 implementation bytes。
+
+该切片关闭 database-attestation source composition，不等于 PostgreSQL ACL、host key custody 或 live
+process-kill evidence；其余四项 independent F9-v2 validation、committed-validation source、independent
+admission 与 atomic admission/Kernel incorporation factory 仍待完成。下一项顺序工作是 independent F9-v2
+validation service。详见 `PR7L_DATABASE_OBSERVATION_SERVICE.md` 与
+`architecture/0069-database-observation-rpc-service.md`。
 
 PR-5 的本地 vertical cut 已完成；现在仍须完成 PR-4 target-host campaign、PR-5 production
 controller/validator/signer process commissioning 与 terminal target-host commissioning，之后才依据 fresh inventory
@@ -1903,11 +1922,12 @@ Unix RPC port 组合，response 使用独立 Ed25519 transport receipt 验证，
 lineage 与 read-only Kernel CAS；worker 不加载科学签名私钥。**PR-7e** 已补齐 common external RPC server
 runtime：closed payload/result、双向 Linux peer identity、socket parent/inode、service-owned `0400` transport
 key 与 byte-pinned factory 均 fail closed；这仍不是十一项 concrete authority service commissioning。
-**PR-7f**、**PR-7g**、**PR-7h**、**PR-7i**、**PR-7j** 与 **PR-7k** 分别完成 deterministic continuation、
+**PR-7f**、**PR-7g**、**PR-7h**、**PR-7i**、**PR-7j**、**PR-7k** 与 **PR-7l** 分别完成 deterministic continuation、
 conservative action-proposal、frozen protocol-compilation、exact-template scientific
-execution-authorization、atomic execution-registration 与 verified raw-run source concrete service
-factory；其余 database-observation/validation/admission/Kernel incorporation factory 与 ACL 仍待完成。
-下一项顺序工作是 database-observation concrete service factory，随后继续其余 external authority
+execution-authorization、atomic execution-registration、verified raw-run source 与 database-observation
+attestation concrete service factory；其余 independent validation/committed-validation source/
+independent admission/atomic Kernel incorporation factory 与 ACL 仍待完成。
+下一项顺序工作是 independent F9-v2 validation concrete service factory，随后继续其余 external authority
 process composition，再进入
 真实 image/host qualification 与
 process-kill PostgreSQL campaign，而不是扩张

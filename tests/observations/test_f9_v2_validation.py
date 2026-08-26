@@ -211,6 +211,20 @@ def test_f9_v2_service_signs_archives_and_bridges_exact_negative_observation(
     assert committed.campaign.message.request.prediction_sha256s
     assert assessor.calls == [raw_run.raw_run_sha256]
 
+    reader = WriteOnceF9V2ValidationCampaignArchive(
+        archive.root,
+        validator_manifest_sha256=case.authorization.message.validator_manifest_sha256,
+        validator_authority_pin=case.validator_pin,
+        read_only=True,
+    )
+    assert reader.load_committed_campaign(raw_run=raw_run, observed_at=challenge_at) == committed
+    with pytest.raises(F9V2ValidationError, match="read-only"):
+        reader.publish_campaign(
+            campaign=committed.campaign,
+            raw_run=raw_run,
+            committed_at=challenge_at,
+        )
+
 
 def test_f9_v2_campaign_retry_returns_first_write_once_winner(
     monkeypatch: pytest.MonkeyPatch,
@@ -340,6 +354,44 @@ def test_f9_v2_absent_lookup_does_not_create_archive_index(
         is None
     )
     assert not (archive.root / "raw-runs").exists()
+
+
+def test_read_only_f9_v2_archive_requires_preexisting_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    case = _f9_case(monkeypatch)
+
+    with pytest.raises(F9V2ValidationError, match="already exist"):
+        WriteOnceF9V2ValidationCampaignArchive(
+            tmp_path / "missing-read-only-archive",
+            validator_manifest_sha256=case.authorization.message.validator_manifest_sha256,
+            validator_authority_pin=case.validator_pin,
+            read_only=True,
+        )
+
+
+def test_read_only_f9_v2_archive_never_invokes_directory_creation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    case = _f9_case(monkeypatch)
+    root = tmp_path / "existing-read-only-archive"
+    root.mkdir(mode=0o500)
+    root.chmod(0o500)
+
+    def reject_mkdir(*_args, **_kwargs):
+        raise AssertionError("read-only archive attempted a filesystem mutation")
+
+    monkeypatch.setattr(Path, "mkdir", reject_mkdir)
+    archive = WriteOnceF9V2ValidationCampaignArchive(
+        root,
+        validator_manifest_sha256=case.authorization.message.validator_manifest_sha256,
+        validator_authority_pin=case.validator_pin,
+        read_only=True,
+    )
+
+    assert archive.root == root
 
 
 def test_f9_v2_archive_fresh_rehash_rejects_tampered_bytes(

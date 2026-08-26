@@ -89,6 +89,11 @@ def _install_memory_store(monkeypatch: pytest.MonkeyPatch):
         assert len(matches) <= 1
         return matches[0] if matches else None
 
+    def get_challenge(_session, *, challenge_sha256):
+        matches = tuple(item for item in challenges if item.challenge_sha256 == challenge_sha256)
+        assert len(matches) <= 1
+        return matches[0] if matches else None
+
     def record_challenge(_session, write):
         challenges.append(write)
         return AppendReceipt(identity_sha256=write.challenge_sha256, created=True)
@@ -102,10 +107,15 @@ def _install_memory_store(monkeypatch: pytest.MonkeyPatch):
         return AppendReceipt(identity_sha256=write.committed_receipt_sha256, created=True)
 
     monkeypatch.setattr(
-        service_module, "get_scientific_execution_authorization_by_slot", get_authorization
+        service_module, "lock_scientific_execution_authorization_by_slot", get_authorization
     )
     monkeypatch.setattr(
         service_module, "get_live_observation_issuance_challenge", get_live_challenge
+    )
+    monkeypatch.setattr(
+        service_module,
+        "get_observation_issuance_challenge_by_sha256",
+        get_challenge,
     )
     monkeypatch.setattr(service_module, "record_observation_issuance_challenge", record_challenge)
     monkeypatch.setattr(
@@ -151,9 +161,8 @@ def test_atomically_preregistered_sea_and_live_validation_challenge_resume_exact
         validation_campaign_sha256=campaign_sha256,
     )
 
-    assert first.created is True
-    assert recovered.created is False
-    assert recovered.challenge == first.challenge
+    assert recovered == first
+    assert first.durably_registered is True
     assert len(challenges) == 1
     assert (
         ValidationIssuanceChallenge.model_validate(challenges[0].challenge_json) == first.challenge
@@ -173,6 +182,16 @@ def test_validation_commit_and_admission_challenge_resume_from_durable_receipt(
         )
     )
     validation = _validated_receipt(case)
+    authorization = validation.message.raw_run.scientific_authorization
+    challenge = validation.message.issuance_challenge
+    challenges.append(
+        ObservationIssuanceChallengeWrite.from_contract(
+            challenge,
+            quest_id=authorization.message.action_protocol_binding.action.quest_id,
+            authorization_sha256=authorization.authorization_sha256,
+            recorded_at=challenge.message.issued_at,
+        )
+    )
     commit_at = validation.message.validated_at + timedelta(seconds=1)
     validation_service = PostgreSQLScientificBridgeService(
         verification=_verification(case),
@@ -181,6 +200,7 @@ def test_validation_commit_and_admission_challenge_resume_from_durable_receipt(
             commit_at,
             commit_at + timedelta(seconds=1),
             commit_at + timedelta(seconds=2),
+            commit_at + timedelta(seconds=3),
         ),
         nonce_factory=lambda: _digest("admission-service-nonce"),
     )
@@ -188,9 +208,8 @@ def test_validation_commit_and_admission_challenge_resume_from_durable_receipt(
     created = validation_service.commit_validation(validation)
     recovered = validation_service.commit_validation(validation)
 
-    assert created.created is True
-    assert recovered.created is False
-    assert recovered.committed_validation == created.committed_validation
+    assert recovered == created
+    assert created.durably_committed is True
     assert len(validations) == 1
 
     admission_issued_at = created.committed_validation.message.committed_at + timedelta(minutes=1)
@@ -207,10 +226,9 @@ def test_validation_commit_and_admission_challenge_resume_from_durable_receipt(
     first = admission_service.issue_admission_challenge(created.committed_validation)
     replayed = admission_service.issue_admission_challenge(created.committed_validation)
 
-    assert first.created is True
-    assert replayed.created is False
-    assert replayed.challenge == first.challenge
-    assert len(challenges) == 1
+    assert replayed == first
+    assert first.durably_registered is True
+    assert len(challenges) == 2
 
 
 def test_service_refuses_validation_without_preregistered_sea(
@@ -231,3 +249,106 @@ def test_service_refuses_validation_without_preregistered_sea(
             raw_run=raw_run,
             validation_campaign_sha256=_digest("unregistered-campaign"),
         )
+
+
+def test_validation_commit_requires_the_exact_durably_registered_challenge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bridge_case()
+    authorizations, _challenges, validations = _install_memory_store(monkeypatch)
+    authorization = case.authorization
+    authorizations[authorization.message.scientific_slot_id] = (
+        ScientificExecutionAuthorizationWrite.from_contract(
+            authorization,
+            registered_at=authorization.message.authorized_at + timedelta(seconds=1),
+        )
+    )
+    validation = _validated_receipt(case)
+    observed_at = validation.message.validated_at + timedelta(seconds=1)
+    service = PostgreSQLScientificBridgeService(
+        verification=_verification(case),
+        session_scope_factory=_session_scope,
+        database_clock=_Clock(observed_at),
+    )
+
+    with pytest.raises(RuntimeError, match="durably registered challenge"):
+        service.commit_validation(validation)
+
+    assert validations == {}
+
+
+def test_validation_commit_rechecks_database_time_after_expensive_verification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bridge_case()
+    authorizations, challenges, validations = _install_memory_store(monkeypatch)
+    authorization = case.authorization
+    authorizations[authorization.message.scientific_slot_id] = (
+        ScientificExecutionAuthorizationWrite.from_contract(
+            authorization,
+            registered_at=authorization.message.authorized_at + timedelta(seconds=1),
+        )
+    )
+    validation = _validated_receipt(case)
+    challenge = validation.message.issuance_challenge
+    challenges.append(
+        ObservationIssuanceChallengeWrite.from_contract(
+            challenge,
+            quest_id=authorization.message.action_protocol_binding.action.quest_id,
+            authorization_sha256=authorization.authorization_sha256,
+            recorded_at=challenge.message.issued_at,
+        )
+    )
+    observed_at = validation.message.validated_at + timedelta(seconds=1)
+    service = PostgreSQLScientificBridgeService(
+        verification=_verification(case),
+        session_scope_factory=_session_scope,
+        database_clock=_Clock(
+            observed_at,
+            observed_at + timedelta(seconds=1),
+            challenge.message.expires_at,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="lost its live database challenge window"):
+        service.commit_validation(validation)
+
+    assert validations == {}
+
+
+def test_database_rpc_receipts_have_stable_canonical_retry_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bridge_case()
+    authorizations, _challenges, _validations = _install_memory_store(monkeypatch)
+    authorization = case.authorization
+    authorizations[authorization.message.scientific_slot_id] = (
+        ScientificExecutionAuthorizationWrite.from_contract(
+            authorization,
+            registered_at=authorization.message.authorized_at + timedelta(seconds=1),
+        )
+    )
+    raw_run = _raw_run(case)
+    issued_at = raw_run.assembled_at + timedelta(minutes=1)
+    service = PostgreSQLScientificBridgeService(
+        verification=_verification(case),
+        session_scope_factory=_session_scope,
+        database_clock=_Clock(
+            issued_at,
+            issued_at + timedelta(seconds=1),
+            issued_at + timedelta(seconds=2),
+        ),
+        nonce_factory=lambda: _digest("stable-receipt-nonce"),
+    )
+
+    first = service.issue_validation_challenge(
+        raw_run=raw_run,
+        validation_campaign_sha256=_digest("stable-receipt-campaign"),
+    )
+    replayed = service.issue_validation_challenge(
+        raw_run=raw_run,
+        validation_campaign_sha256=_digest("stable-receipt-campaign"),
+    )
+
+    assert first.model_dump_json() == replayed.model_dump_json()
+    assert type(first).model_validate_json(first.model_dump_json()) == first

@@ -30,6 +30,7 @@ from aletheia.execution.runtime_contracts import (
 from aletheia.execution.runtime_v2_contracts import RuntimeControlAuthorityPin
 from aletheia.execution.terminal_source import (
     VerifiedQualificationRawRunMaterialReader,
+    VerifiedQualificationRunLineageReader,
     VerifiedQualificationTerminalOutboxReader,
 )
 from aletheia.research_controller.contracts import ResearchControllerManifest
@@ -37,6 +38,7 @@ from aletheia.execution.terminal_runtime import (
     QualificationTerminalRuntimeConfig,
     TerminalNodeAuthorityConfig,
     compose_qualification_raw_run_material_reader,
+    compose_qualification_run_lineage_reader,
 )
 from aletheia.research_controller_terminal_runtime import build_terminal_runtime
 from aletheia.research_controller_runtime import (
@@ -286,6 +288,13 @@ def test_raw_run_reader_exposes_only_verified_terminal_material(
     assert reader._allocator.runtime_control_issuance_enabled is False
     assert reader._allocator.runtime_control_verification_enabled is True
     assert reader._allocator._artifact_resolver._artifact_store.read_only is True
+
+    lineage_reader = compose_qualification_run_lineage_reader(config)
+    assert isinstance(lineage_reader, VerifiedQualificationRunLineageReader)
+    assert not hasattr(lineage_reader, "admit_and_reserve")
+    assert not hasattr(lineage_reader, "start_attempt")
+    assert lineage_reader._allocator.runtime_control_issuance_enabled is False
+    assert lineage_reader._allocator.runtime_control_verification_enabled is True
 
 
 def test_terminal_factory_requires_preexisting_read_only_artifact_layout(

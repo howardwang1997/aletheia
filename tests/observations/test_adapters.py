@@ -772,6 +772,11 @@ def _run_lineage(
     enrollment = case.worker_enrollment.message
     admitted_at = authorization.authorized_at + timedelta(seconds=30)
     launched_at = authorization.authorized_at + timedelta(minutes=2)
+    verified = case.qualification_custody._verified(
+        bundle=bundle,
+        grant=authorization.qualification_grant,
+        verified_at=admitted_at,
+    )
     return VerifiedQualificationRunLineage(
         execution_id=intent.execution_id,
         attempt_id=intent.infrastructure_attempt.infrastructure_attempt_id,
@@ -779,6 +784,7 @@ def _run_lineage(
         qualification_bundle_sha256=bundle.bundle_sha256,
         qualification_grant_sha256=authorization.qualification_grant.grant_sha256,
         qualification_admission_sha256=raw_run.qualification_admission_sha256,
+        verified_engineering_qualification=verified,
         qualification_admitted_at=admitted_at,
         resource_reservation_sha256=submission.resource_lease_sha256,
         resource_reserved_at=admitted_at,
@@ -897,6 +903,39 @@ def test_raw_run_custody_closes_registered_execution_and_fresh_cas(
     assert projection.fresh_artifacts[0].content_sha256 == (
         case.raw_run.artifact_manifest.entries[0].content_sha256
     )
+
+
+def test_raw_run_custody_resolves_exact_qualification_admission(
+    raw_custody_case: _RawCustodyCase,
+) -> None:
+    case = raw_custody_case
+    authorization = case.raw_run.scientific_authorization.message
+    adapter = _raw_custody_adapter(case)
+
+    admitted = adapter.verify_qualification_admission(
+        qualification_admission_sha256=case.raw_run.qualification_admission_sha256,
+        bundle=authorization.qualification_bundle,
+        grant=authorization.qualification_grant,
+        observed_at=case.observed_at,
+    )
+    refreshed = adapter.verify_engineering_qualification_custody(
+        bundle=authorization.qualification_bundle,
+        grant=authorization.qualification_grant,
+        observed_at=case.observed_at,
+    )
+
+    assert admitted == case.lineage.verified_engineering_qualification
+    assert refreshed.model_dump(exclude={"verified_at"}) == admitted.model_dump(
+        exclude={"verified_at"}
+    )
+    assert refreshed.verified_at == case.observed_at
+    with pytest.raises(ObservationAdapterVerificationError, match="rebound"):
+        adapter.verify_qualification_admission(
+            qualification_admission_sha256=_digest("wrong-qualification-admission"),
+            bundle=authorization.qualification_bundle,
+            grant=authorization.qualification_grant,
+            observed_at=case.observed_at,
+        )
 
 
 def test_raw_run_custody_rejects_late_sea_registration(

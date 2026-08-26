@@ -180,14 +180,12 @@ class _Database:
         return ValidationChallengeRegistrationReceipt(
             challenge=challenge,
             recorded_at=challenge.message.issued_at,
-            created=True,
         )
 
     def commit_validation(self, receipt):
         self.calls.append(("commit_validation", receipt))
         return ValidationCommitReceipt(
             committed_validation=self.committed_validation,
-            created=True,
         )
 
     def issue_admission_challenge(self, committed_validation):
@@ -196,7 +194,6 @@ class _Database:
         return AdmissionChallengeRegistrationReceipt(
             challenge=self.admission_challenge,
             recorded_at=self.admission_challenge.message.issued_at,
-            created=True,
         )
 
 

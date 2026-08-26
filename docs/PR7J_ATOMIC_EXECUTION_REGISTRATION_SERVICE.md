@@ -59,10 +59,9 @@ byte pins, and transport/domain key non-reuse.
 
 ## Remaining release gates
 
-PR-7k subsequently closes the verified, keyless raw-run source. Five PR-7e concrete factories
-remain: database observation attestation, independent F9-v2 validation, committed-validation
-source, independent admission, and atomic admission/Kernel incorporation. The next ordered source
-slice is the database-observation service.
+PR-7k subsequently closes the verified, keyless raw-run source, and PR-7l closes database
+observation attestation. Four PR-7e concrete factories remain: independent F9-v2 validation,
+committed-validation source, independent admission, and atomic admission/Kernel incorporation.
 
 No target host is commissioned. Linux account/socket/PostgreSQL/CAS/registry ACLs, systemd
 supervision, alerts, receipt-key custody/rotation, and fresh PostgreSQL process-kill/restart tests

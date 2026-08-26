@@ -20,7 +20,12 @@ from aletheia.execution.allocator import (
     VerifiedQualificationRunLineage,
 )
 from aletheia.execution.artifact_store import LocalArtifactStore
-from aletheia.execution.runtime_contracts import QualificationAuthorityVerifier
+from aletheia.execution.runtime_contracts import (
+    EngineeringQualificationBundle,
+    EngineeringQualificationGrant,
+    QualificationAuthorityVerifier,
+    VerifiedEngineeringQualification,
+)
 from aletheia.observations.scientific_bridge import (
     CommittedObservationValidationReceipt,
     RawRunEnvelope,
@@ -30,6 +35,7 @@ from aletheia.observations.scientific_bridge import (
     VerifiedArtifactCustodyProjection,
     VerifiedExecutionAuthorityProjection,
     VerifiedRawRunCustodyProjection,
+    engineering_qualification_admission_sha256,
     validate_raw_run_structure,
     verify_scientific_execution_authorization_historical,
 )
@@ -396,6 +402,90 @@ class PostgreSQLRawRunCustodyVerificationAdapter:
         except Exception as exc:  # noqa: BLE001 - fail closed across DB/signature/CAS boundaries
             raise ObservationAdapterVerificationError(
                 "raw-run custody could not prove the exact registered execution lineage"
+            ) from exc
+
+    def verify_engineering_qualification_custody(
+        self,
+        *,
+        bundle: EngineeringQualificationBundle,
+        grant: EngineeringQualificationGrant,
+        observed_at: datetime,
+    ) -> VerifiedEngineeringQualification:
+        """Freshly replay a completed run and return its exact stable qualification material."""
+
+        verified = self._verified_qualification(
+            bundle=bundle,
+            grant=grant,
+            observed_at=observed_at,
+            qualification_admission_sha256=None,
+        )
+        return verified.model_copy(update={"verified_at": observed_at})
+
+    def verify_qualification_admission(
+        self,
+        *,
+        qualification_admission_sha256: str,
+        bundle: EngineeringQualificationBundle,
+        grant: EngineeringQualificationGrant,
+        observed_at: datetime,
+    ) -> VerifiedEngineeringQualification:
+        """Resolve one stable admission hash from the complete immutable run lineage."""
+
+        return self._verified_qualification(
+            bundle=bundle,
+            grant=grant,
+            observed_at=observed_at,
+            qualification_admission_sha256=qualification_admission_sha256,
+        )
+
+    def _verified_qualification(
+        self,
+        *,
+        bundle: EngineeringQualificationBundle,
+        grant: EngineeringQualificationGrant,
+        observed_at: datetime,
+        qualification_admission_sha256: str | None,
+    ) -> VerifiedEngineeringQualification:
+        _require_utc(observed_at, label="qualification custody observation time")
+        try:
+            bundle = EngineeringQualificationBundle.model_validate(bundle.model_dump(mode="python"))
+            grant = EngineeringQualificationGrant.model_validate(grant.model_dump(mode="python"))
+            intent = bundle.intent
+            lineage = self._execution_lineage.load_verified_qualification_run_lineage(
+                execution_id=intent.execution_id,
+                attempt_id=intent.infrastructure_attempt.infrastructure_attempt_id,
+                observed_at=observed_at,
+            )
+            if lineage is None:
+                raise ObservationAdapterVerificationError(
+                    "qualification custody has no complete terminal lineage"
+                )
+            lineage = VerifiedQualificationRunLineage.model_validate(
+                lineage.model_dump(mode="python")
+            )
+            verified = VerifiedEngineeringQualification.model_validate(
+                lineage.verified_engineering_qualification.model_dump(mode="python")
+            )
+            if (
+                lineage.qualification_bundle_sha256 != bundle.bundle_sha256
+                or lineage.qualification_grant_sha256 != grant.grant_sha256
+                or lineage.intent_sha256 != intent.intent_sha256
+                or (
+                    qualification_admission_sha256 is not None
+                    and lineage.qualification_admission_sha256 != qualification_admission_sha256
+                )
+                or engineering_qualification_admission_sha256(verified)
+                != lineage.qualification_admission_sha256
+            ):
+                raise ObservationAdapterVerificationError(
+                    "qualification custody lineage was rebound from bundle, grant, or admission"
+                )
+            return verified
+        except ObservationAdapterVerificationError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - fail closed over the public lineage boundary
+            raise ObservationAdapterVerificationError(
+                "qualification custody could not replay the complete run lineage"
             ) from exc
 
     def _load_registration(

@@ -197,6 +197,12 @@ PR-7k closes the following read boundary: a single-operation, keyless raw-run so
 historical SEA, proves strict preregistration before PR-4 admission, replays the complete terminal
 lineage, and freshly rehashes every artifact before producing a deterministic envelope. It exposes
 no allocator mutation, validation, admission, or Kernel operation.
+PR-7l closes the database-attestation boundary: one isolated service owns only the database domain
+key and exposes exact validation-challenge, validation-commit, and admission-challenge operations.
+It locks the preregistered slot before sampling PostgreSQL time, requires the exact stored challenge,
+rechecks time after complete custody verification, and uses read-only Kernel, PR-4, artifact, and
+F9-v2 campaign inputs. Stable retries no longer encode first-attempt `created` state. It cannot
+validate independently, decide admission, or mutate the Kernel.
 The
 continuation step now reconstructs the only allowed observation projection from signed validation
 and Kernel incorporation, replays the exact compiler/admission chain twice, pins assessor
@@ -217,7 +223,7 @@ reconstructs every stored draft on retry, emits explicit unknown/unassessed cost
 and exposes one source-pinned RPC operation over an inode/ACL-pinned private spool. It has no model
 callback, signing key, budget/risk approval, execution port, or direct Kernel mutation. Target-host
 commissioning is still pending. Knowledge-grounded proposal/protocol intelligence, the independent
-Kernel signer, the other five concrete service factories, socket/PostgreSQL ACL commissioning,
+Kernel signer, the other four concrete service factories, socket/PostgreSQL ACL commissioning,
 and the live multi-process campaign remain incomplete. The PR-2 store also
 still has one immutable policy epoch and
 `O(N²)` lifecycle audits. See [ADR 0046](docs/adr/0046-root-certified-research-command-event-store.md),
@@ -238,6 +244,7 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-7i execution-authorization guide](docs/PR7I_EXECUTION_AUTHORIZATION_SERVICE.md), plus
 [PR-7j execution-registration guide](docs/PR7J_ATOMIC_EXECUTION_REGISTRATION_SERVICE.md), plus
 [PR-7k verified raw-run guide](docs/PR7K_VERIFIED_RAW_RUN_SOURCE_SERVICE.md), plus
+[PR-7l database-observation guide](docs/PR7L_DATABASE_OBSERVATION_SERVICE.md), plus
 [ADR 0056](docs/architecture/0056-independent-observation-controller-steps.md) and
 [ADR 0057](docs/architecture/0057-graph-scoped-f9-v2-validation-campaign.md), plus
 [ADR 0058](docs/architecture/0058-durable-powerless-action-proposal-steps.md), and
@@ -250,7 +257,8 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [ADR 0065](docs/architecture/0065-frozen-protocol-compilation-rpc-service.md), and
 [ADR 0066](docs/architecture/0066-scientific-execution-authorization-rpc-service.md), and
 [ADR 0067](docs/architecture/0067-atomic-execution-registration-rpc-service.md), and
-[ADR 0068](docs/architecture/0068-verified-raw-run-source-rpc-service.md).
+[ADR 0068](docs/architecture/0068-verified-raw-run-source-rpc-service.md), and
+[ADR 0069](docs/architecture/0069-database-observation-rpc-service.md).
 
 The remaining load-bearing work is knowledge-grounded novelty/SOTA validation, a richer repertoire
 of causal/mechanistic experiments, production provider receipt/reconciliation commissioning,

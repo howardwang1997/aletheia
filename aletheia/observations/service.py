@@ -6,9 +6,10 @@ import hashlib
 import secrets
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Literal
 
+from pydantic import AwareDatetime, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -20,6 +21,7 @@ from aletheia.observations.scientific_bridge import (
     ObservationValidationReceipt,
     RawRunEnvelope,
     ScientificExecutionAuthorization,
+    ScientificBridgeModel,
     ValidationIssuanceChallenge,
     commit_observation_validation_receipt,
     issue_admission_issuance_challenge,
@@ -34,8 +36,9 @@ from aletheia.observations.store import (
     ObservationValidationReceiptWrite,
     ScientificExecutionAuthorizationWrite,
     get_live_observation_issuance_challenge,
+    get_observation_issuance_challenge_by_sha256,
     get_observation_validation_receipt_by_slot,
-    get_scientific_execution_authorization_by_slot,
+    lock_scientific_execution_authorization_by_slot,
     record_observation_issuance_challenge,
     record_observation_validation_receipt,
 )
@@ -45,24 +48,53 @@ class ScientificBridgeServiceError(RuntimeError):
     """A durable scientific-bridge operation failed closed."""
 
 
-@dataclass(frozen=True)
-class ValidationChallengeRegistrationReceipt:
+class ValidationChallengeRegistrationReceipt(ScientificBridgeModel):
+    schema_name: Literal["aletheia.validation_challenge_registration_receipt"] = (
+        "aletheia.validation_challenge_registration_receipt"
+    )
+    schema_version: Literal[1] = 1
     challenge: ValidationIssuanceChallenge
-    recorded_at: datetime
-    created: bool
+    recorded_at: AwareDatetime
+    durably_registered: Literal[True] = True
+
+    @model_validator(mode="after")
+    def _registration_is_live(self) -> "ValidationChallengeRegistrationReceipt":
+        if (
+            not self.challenge.message.issued_at
+            <= self.recorded_at
+            < self.challenge.message.expires_at
+        ):
+            raise ValueError("validation challenge registration is outside its live window")
+        return self
 
 
-@dataclass(frozen=True)
-class AdmissionChallengeRegistrationReceipt:
+class AdmissionChallengeRegistrationReceipt(ScientificBridgeModel):
+    schema_name: Literal["aletheia.admission_challenge_registration_receipt"] = (
+        "aletheia.admission_challenge_registration_receipt"
+    )
+    schema_version: Literal[1] = 1
     challenge: AdmissionIssuanceChallenge
-    recorded_at: datetime
-    created: bool
+    recorded_at: AwareDatetime
+    durably_registered: Literal[True] = True
+
+    @model_validator(mode="after")
+    def _registration_is_live(self) -> "AdmissionChallengeRegistrationReceipt":
+        if (
+            not self.challenge.message.issued_at
+            <= self.recorded_at
+            < self.challenge.message.expires_at
+        ):
+            raise ValueError("admission challenge registration is outside its live window")
+        return self
 
 
-@dataclass(frozen=True)
-class ValidationCommitReceipt:
+class ValidationCommitReceipt(ScientificBridgeModel):
+    schema_name: Literal["aletheia.validation_commit_receipt"] = (
+        "aletheia.validation_commit_receipt"
+    )
+    schema_version: Literal[1] = 1
     committed_validation: CommittedObservationValidationReceipt
-    created: bool
+    durably_committed: Literal[True] = True
 
 
 SessionScopeFactory = Callable[[], AbstractContextManager[Session]]
@@ -125,11 +157,11 @@ class PostgreSQLScientificBridgeService:
         authorization = raw_run.scientific_authorization
         quest_id, scientific_slot_id, authorization_sha256 = _quest_and_authorization(authorization)
         with self._session_scope_factory() as session:
-            issued_at = self._database_clock(session)
             self._require_registered_authorization(
                 session=session,
                 authorization=authorization,
             )
+            issued_at = self._database_clock(session)
             existing = get_live_observation_issuance_challenge(
                 session,
                 purpose="validation",
@@ -167,7 +199,7 @@ class PostgreSQLScientificBridgeService:
                 recorded_at=recorded_at,
             )
             try:
-                append = record_observation_issuance_challenge(session, write)
+                record_observation_issuance_challenge(session, write)
             except ObservationIdentityConflict:
                 concurrent = get_live_observation_issuance_challenge(
                     session,
@@ -188,7 +220,6 @@ class PostgreSQLScientificBridgeService:
             return ValidationChallengeRegistrationReceipt(
                 challenge=challenge,
                 recorded_at=recorded_at,
-                created=append.created,
             )
 
     def commit_validation(
@@ -200,11 +231,11 @@ class PostgreSQLScientificBridgeService:
         authorization = raw_run.scientific_authorization
         quest_id, scientific_slot_id, _ = _quest_and_authorization(authorization)
         with self._session_scope_factory() as session:
-            observed_at = self._database_clock(session)
             self._require_registered_authorization(
                 session=session,
                 authorization=authorization,
             )
+            observed_at = self._database_clock(session)
             existing = get_observation_validation_receipt_by_slot(
                 session,
                 quest_id=quest_id,
@@ -233,7 +264,26 @@ class PostgreSQLScientificBridgeService:
                 )
                 return ValidationCommitReceipt(
                     committed_validation=committed,
-                    created=False,
+                )
+
+            challenge = receipt.message.issuance_challenge
+            persisted_challenge = get_observation_issuance_challenge_by_sha256(
+                session,
+                challenge_sha256=challenge.challenge_sha256,
+            )
+            expected_challenge = (
+                None
+                if persisted_challenge is None
+                else ObservationIssuanceChallengeWrite.from_contract(
+                    challenge,
+                    quest_id=quest_id,
+                    authorization_sha256=authorization.authorization_sha256,
+                    recorded_at=persisted_challenge.recorded_at,
+                )
+            )
+            if persisted_challenge is None or persisted_challenge != expected_challenge:
+                raise ScientificBridgeServiceError(
+                    "validation commit requires its exact durably registered challenge"
                 )
 
             registered_at = observed_at
@@ -253,7 +303,15 @@ class PostgreSQLScientificBridgeService:
                 registered_at=registered_at,
                 committed_at=committed_at,
             )
-            append = record_observation_validation_receipt(
+            finalized_at = self._database_clock(session)
+            if not (
+                committed_at <= finalized_at < challenge.message.expires_at
+                and self._verification.database_authority_pin.active_at(finalized_at)
+            ):
+                raise ScientificBridgeServiceError(
+                    "validation commitment lost its live database challenge window"
+                )
+            record_observation_validation_receipt(
                 session,
                 ObservationValidationReceiptWrite.from_contract(
                     committed,
@@ -262,7 +320,6 @@ class PostgreSQLScientificBridgeService:
             )
             return ValidationCommitReceipt(
                 committed_validation=committed,
-                created=append.created,
             )
 
     def issue_admission_challenge(
@@ -276,11 +333,11 @@ class PostgreSQLScientificBridgeService:
         authorization = receipt_message.raw_run.scientific_authorization
         quest_id, scientific_slot_id, authorization_sha256 = _quest_and_authorization(authorization)
         with self._session_scope_factory() as session:
-            issued_at = self._database_clock(session)
             self._require_registered_authorization(
                 session=session,
                 authorization=authorization,
             )
+            issued_at = self._database_clock(session)
             persisted = get_observation_validation_receipt_by_slot(
                 session,
                 quest_id=quest_id,
@@ -298,6 +355,19 @@ class PostgreSQLScientificBridgeService:
                 raise ScientificBridgeServiceError(
                     "admission challenge requires the exact durably committed validation"
                 )
+            verify_committed_observation_validation_receipt(
+                committed_receipt=committed_validation,
+                qualification_authority=self._verification.qualification_authority,
+                action_authority=self._verification.action_authority,
+                qualification_custody=self._verification.qualification_custody,
+                raw_run_custody=self._verification.raw_run_custody,
+                validation_campaign_custody=self._verification.validation_campaign_custody,
+                execution_authority_pin=self._verification.execution_authority_pin,
+                validator_authority_pin=self._verification.validator_authority_pin,
+                admission_authority_pin=self._verification.admission_authority_pin,
+                database_authority_pin=self._verification.database_authority_pin,
+                observed_at=issued_at,
+            )
             existing = get_live_observation_issuance_challenge(
                 session,
                 purpose="admission",
@@ -333,7 +403,7 @@ class PostgreSQLScientificBridgeService:
                 recorded_at=recorded_at,
             )
             try:
-                append = record_observation_issuance_challenge(session, write)
+                record_observation_issuance_challenge(session, write)
             except ObservationIdentityConflict:
                 concurrent = get_live_observation_issuance_challenge(
                     session,
@@ -353,7 +423,6 @@ class PostgreSQLScientificBridgeService:
             return AdmissionChallengeRegistrationReceipt(
                 challenge=challenge,
                 recorded_at=recorded_at,
-                created=append.created,
             )
 
     @staticmethod
@@ -363,7 +432,7 @@ class PostgreSQLScientificBridgeService:
         authorization: ScientificExecutionAuthorization,
     ) -> ScientificExecutionAuthorizationWrite:
         quest_id, scientific_slot_id, authorization_sha256 = _quest_and_authorization(authorization)
-        registered = get_scientific_execution_authorization_by_slot(
+        registered = lock_scientific_execution_authorization_by_slot(
             session,
             quest_id=quest_id,
             scientific_slot_id=scientific_slot_id,
@@ -405,7 +474,6 @@ class PostgreSQLScientificBridgeService:
         return ValidationChallengeRegistrationReceipt(
             challenge=challenge,
             recorded_at=write.recorded_at,
-            created=False,
         )
 
     def _recover_admission_challenge(
@@ -432,7 +500,6 @@ class PostgreSQLScientificBridgeService:
         return AdmissionChallengeRegistrationReceipt(
             challenge=challenge,
             recorded_at=write.recorded_at,
-            created=False,
         )
 
 

@@ -382,6 +382,13 @@ def test_runtime_v2_terminal_acceptance_recovery_and_outbox_are_atomic(
         )
         assert lineage is not None
         assert lineage.qualification_admission_sha256 == claim.snapshot.admission_sha256
+        assert (
+            lineage.verified_engineering_qualification.bundle_sha256
+            == prepared.bundle.bundle_sha256
+        )
+        assert (
+            lineage.verified_engineering_qualification.grant_sha256 == prepared.grant.grant_sha256
+        )
         assert lineage.resource_reservation_sha256 == claim.snapshot.resource_lease_sha256
         assert lineage.runtime_launch_sha256 == (
             result.accepted_runtime_termination.node_runtime_launch_receipt_sha256
