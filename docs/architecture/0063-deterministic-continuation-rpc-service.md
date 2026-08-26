@@ -45,4 +45,5 @@ signing key and exposes no generic callback.
   Linux multi-process campaign. PR-7g, PR-7h, PR-7i and PR-7j subsequently close the conservative
   action-proposal, frozen protocol-compilation, exact-template execution-authorization, and atomic
   registration factories; PR-7k subsequently closes verified raw-run loading and PR-7l database
-  observation attestation. Four other PR-7e service factories remain.
+  observation attestation, and PR-7m closes independent F9-v2 validation. Three other PR-7e service
+  factories remain.

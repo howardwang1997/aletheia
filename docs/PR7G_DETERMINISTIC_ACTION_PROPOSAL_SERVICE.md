@@ -47,7 +47,8 @@ The exact Linux service account must still prove socket, PostgreSQL, CAS, spool,
 and process-restart custody in the PR-4/PR-5 campaign. PR-7h, PR-7i and PR-7j subsequently supply
 the frozen protocol-compilation, exact-template execution-authorization, and atomic registration
 factories; PR-7k subsequently supplies the verified raw-run source and PR-7l database observation
-attestation. Four other PR-7e service factories and their domain-key/ACL
+attestation; PR-7m subsequently supplies independent F9-v2 validation. Three other PR-7e service
+factories and their domain-key/ACL
 commissioning remain incomplete.
 
 See [ADR 0064](architecture/0064-deterministic-action-proposal-rpc-service.md),

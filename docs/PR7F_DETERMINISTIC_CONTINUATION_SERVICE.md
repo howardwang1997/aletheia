@@ -46,9 +46,9 @@ still demonstrate exact socket, PostgreSQL, CAS, artifact-root, supervisor, and 
 PR-4/PR-5 campaign. PR-7g, PR-7h, PR-7i and PR-7j subsequently supply the conservative
 action-proposal, frozen protocol-compilation, exact-template execution-authorization, and atomic
 registration factories; PR-7k subsequently supplies the verified raw-run source and PR-7l the
-database-observation attestation service. The other four PR-7e service factories—independent F9-v2
-validation, committed-validation loading, independent admission, and atomic Kernel
-incorporation—remain uncommissioned.
+database-observation attestation service. PR-7m subsequently supplies independent F9-v2
+validation. The other three PR-7e service factories—committed-validation loading, independent
+admission, and atomic Kernel incorporation—remain uncommissioned.
 
 See [ADR 0063](architecture/0063-deterministic-continuation-rpc-service.md), the
 [PR-7e server guide](PR7E_EXTERNAL_RPC_SERVICE_RUNTIME.md), and the

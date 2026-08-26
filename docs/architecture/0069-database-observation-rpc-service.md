@@ -41,4 +41,5 @@ publish validator evidence.
   independent validation, decide admission, or mutate the Research Kernel.
 - Python operation closure is not a deployed ACL. Target PostgreSQL grants, source-external key
   custody, Linux supervision, and live crash/restart evidence remain release gates.
-- Four concrete factories remain; the next is independent F9-v2 validation.
+- PR-7m subsequently closes independent F9-v2 validation. Three concrete factories remain; the
+  next is the committed-validation source.
