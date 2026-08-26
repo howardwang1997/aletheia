@@ -53,15 +53,17 @@ ACLs are least privilege, or that the system survives real process/host failure.
 
 ## Remaining release gates
 
-Before deployment, freeze exact service manifests and start the eleven endpoints under reviewed OS
-principals; the config already requires distinct logical service identities, receipt keys, and
-socket paths, while the deployment review must decide and prove the stricter UID split. Then run the PR-4
+PR-7e now supplies the common byte-pinned Linux server runtime for these endpoints, including
+closed payload/result dispatch, service/worker `SO_PEERCRED`, distinct UIDs, shared socket GID, and
+service-owned receipt-key custody. Before deployment, compose and freeze the eleven concrete
+authority factories and start them under reviewed OS principals. Then run the PR-4
 Linux/rootful-Docker/systemd/loop/ext4/cgroup-v2 campaign and a fresh-PostgreSQL multi-process
 campaign covering dispatcher, worker, service, database, and reconciler kill points. The campaign
 must demonstrate exact retry, lease takeover, source redrive, one scientific-slot admission,
 read-only CAS/terminal access, socket peer/ACL enforcement, and recovery from authoritative bytes.
 
 See [ADR 0061](architecture/0061-keyless-controller-worker-composition.md), the
+[PR-7e external-service guide](PR7E_EXTERNAL_RPC_SERVICE_RUNTIME.md), the
 [PR-7 runtime guide](PR7_CONTROLLER_PRODUCTION_RUNTIME.md), the
 [PR-7b authority guide](PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md), and the
 [PR-7c terminal guide](PR7C_VERIFIED_TERMINAL_DISPATCHER.md).

@@ -125,8 +125,10 @@ verified source factory, and PR-7d now supplies the checked-in complete worker f
   signing and independent decision services stay behind receipt-authenticated Unix RPC ports.
 
 PR-6's legacy-evaluation leaf has a launch-gated worker handler and candidate image source, but the
-image and host remain unqualified. The target-host installer/observer/campaign, deployment key and
-RPC custody for the new F9-v2 validator source slice, systemd units, health/alert policy, and live
+image and host remain unqualified. PR-7e adds the common byte-pinned Linux RPC server/runtime,
+closed typed dispatch, peer/socket checks, and transport-key file custody; concrete F9-v2 and other
+authority factories are still uncommissioned. The target-host installer/observer/campaign,
+domain-key custody, systemd units, health/alert policy, and live
 multi-process PostgreSQL kill/restart campaign remain open. No host is called deployable, and no
 scientific claim follows from these process receipts.
 
@@ -134,7 +136,8 @@ PR-7b closes the generic worker-callback boundary with an exhaustive, controller
 adapter set and exact recovery-projection forwarding. PR-7d composes the subsequent concrete source
 slices without importing their private keys; see
 [the PR-7b guide](PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md) and the
-[PR-7d guide](PR7D_COMPLETE_CONTROLLER_WORKER.md).
+[PR-7d guide](PR7D_COMPLETE_CONTROLLER_WORKER.md), plus the
+[PR-7e guide](PR7E_EXTERNAL_RPC_SERVICE_RUNTIME.md).
 
 The three proposal steps now have a proposal-only source implementation with exact Kernel/receipt
 re-audit, bounded provider drafts, and write-once unsigned-command custody. They still need a
@@ -154,5 +157,6 @@ on the exact deployment host; see
 
 See [ADR 0052](architecture/0052-controller-production-runtime-process-boundary.md),
 [ADR 0054](architecture/0054-verified-qualification-terminal-dispatcher.md), the
+[ADR 0062](architecture/0062-operation-closed-external-rpc-service-runtime.md), the
 [PR-5 guide](PR5_DURABLE_SCIENTIFIC_CONTROLLER.md), and the
 [end-to-end architecture](END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md).
