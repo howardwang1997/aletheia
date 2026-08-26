@@ -1747,8 +1747,11 @@ draft、unsigned command materialization 与 write-once exact-retry 源码切片
 signer 和 worker composition。protocol compilation step service/custody 源码切片现已完成：它双重锁定重放
 authorized Kernel/CAS context、固定 author/category/catalog/compiler policy、纯函数重编译，并把 accepted 或
 blocked result 与连续 revision lineage 写入 append-only registry；production provider/RPC/receipt、ACL、
-recovery-policy composition 和 worker factory 尚未 commissioned。下一项顺序工作是完成 continuation step
-service/custody，再冻结完整 worker factory；随后才进入真实 image/host qualification、外部 authority process composition 与
+recovery-policy composition 和 worker factory 尚未 commissioned。continuation step service/custody 源码切片
+也已完成：它从 signed validation/admission 与 Kernel incorporation 唯一重建 observation identity，双重重放
+compiler/admission authority chain，固定 assessor principal/implementation/fit rule，并让 recovery 重推同一
+provenance-bound receipt。production assessor RPC、assessment artifact fresh-byte custody、ACL 与 worker
+composition 仍待 commissioning。下一项顺序工作是冻结完整 worker factory；随后才进入真实 image/host qualification、外部 authority process composition 与
 process-kill PostgreSQL campaign，而不是扩张 controller authority。checkpoint 与 external reconciliation
 仍需独立 typed contracts，不能由 generic retry 猜测。
 

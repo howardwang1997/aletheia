@@ -61,8 +61,10 @@ reconstruct raw runs from SEA plus verified PR-4 terminal material and reload co
 from canonical PostgreSQL bytes. Their signer/database/Kernel services remain externally injected,
 so this source slice does not commission or colocate those authorities.
 
-The repository still needs concrete, deployment-owned implementations for proposal materialization,
-protocol compilation persistence, external signer/RPC composition, and continuation custody. A
+The repository now has source-slice implementations for proposal materialization, protocol
+compilation persistence, and continuation custody. It still needs their deployment-owned provider
+RPCs, artifact/receipt byte custody, ACL/policy composition, the external Kernel signer, and the
+complete worker factory. A
 graph-scoped F9-v2 campaign service and write-once archive now exist as a source/test slice, but its
 production assessor, process isolation, and key custody are not commissioned. The terminal
 dispatcher now consumes a mechanically verified PR-4 terminal lineage through PR-7c's

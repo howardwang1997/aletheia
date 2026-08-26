@@ -44,5 +44,6 @@ Kernel commit.
   fail closed before a worker receipt is emitted.
 - The controller worker still owns no Kernel signing key and has no direct Kernel mutation path.
 - This slice does not commission a production proposal model/provider, RPC, Kernel command signer,
-  worker runtime factory, target-host filesystem policy, or process-kill campaign. The compilation
-  and continuation steps also still need their own production service/custody adapters.
+  worker runtime factory, target-host filesystem policy, or process-kill campaign. Later source
+  slices add compilation and continuation services, but their production providers, receipt/artifact
+  custody, ACL/policy composition, and worker wiring remain separate gates.

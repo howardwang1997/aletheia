@@ -2209,22 +2209,22 @@ def test_pr5_controller_and_observation_tables_have_explicit_split_authority() -
     assert "same PostgreSQL transaction" in admission["current_commit_boundary"]
     assert "sole Kernel scientific authority" in admission["scientific_semantics"]
 
-    compilation_caller = {
-        "module": "aletheia.research_controller.protocol_compilation_step",
-        "symbol": "DurableProtocolCompilationService.compile_and_register",
+    composed = {
+        "observations.protocol_compilation": {
+            "module": "aletheia.research_controller.protocol_compilation_step",
+            "symbol": "DurableProtocolCompilationService.compile_and_register",
+        },
+        "observations.continuation_receipt": {
+            "module": "aletheia.research_controller.continuation_step",
+            "symbol": "DurableContinuationAssessmentService.derive_and_register",
+        },
     }
-    compilation = writes["observations.protocol_compilation"]
-    assert compilation["call_sites"] == [compilation_caller]
-    assert compilation["allowed_legacy_callers"] == [compilation_caller]
-    assert "worker runtime factory" in compilation["blocker"]
-
-    uncomposed = {"observations.continuation_receipt"}
+    for write_id, caller in composed.items():
+        assert writes[write_id]["call_sites"] == [caller]
+        assert writes[write_id]["allowed_legacy_callers"] == [caller]
+        assert "worker runtime factory" in writes[write_id]["blocker"]
     exceptions = inventory["policy"]["writer_surface_static_resolution_exceptions"]
-    assert uncomposed <= exceptions.keys()
-    for write_id in uncomposed:
-        assert writes[write_id]["call_sites"] == []
-        assert writes[write_id]["allowed_legacy_callers"] == []
-        assert "production ControllerStepExecutionPort" in writes[write_id]["blocker"]
+    assert not composed.keys() & exceptions.keys()
 
     assert (
         inventory["policy"]["direct_file_sink_profile_by_prefix"][
