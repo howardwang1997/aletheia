@@ -37,6 +37,7 @@ port, mutable template registry, or model callback.
 - Blocked canonical compiler results remain valid planning evidence. An absent template is an
   operational provider blocker and must not be fabricated into a compiler result.
 - This closes the safe baseline provider/factory gap, not the service account, socket/PostgreSQL
-  ACLs, transport-key custody, supervisor/alerting, or live Linux multi-process campaign. PR-7i
-  subsequently closes the exact-template execution-authorization signer; seven other PR-7e
+  ACLs, transport-key custody, supervisor/alerting, or live Linux multi-process campaign. PR-7i and
+  PR-7j subsequently close the exact-template execution-authorization signer and atomic
+  registration service; six other PR-7e
   service factories remain.

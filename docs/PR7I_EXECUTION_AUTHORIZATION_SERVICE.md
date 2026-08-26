@@ -49,12 +49,12 @@ source pins.
 
 ## Remaining release gates
 
-This is a safe exact-template signer, not general execution planning or host qualification. The
-next ordered source slice is the separate `REGISTER_EXECUTION` service, which must atomically
-preregister this SEA and reserve the exact PR-4 attempt without loading the SEA private key.
-Raw-run loading, database attestation, independent F9-v2 validation, independent admission, and
-atomic Kernel incorporation factories also remain. Seven PR-7e concrete service factories are
-therefore still incomplete.
+This is a safe exact-template signer, not general execution planning or host qualification. PR-7j
+subsequently adds the separate `REGISTER_EXECUTION` service, which atomically preregisters this SEA
+and reserves the exact PR-4 attempt without loading the SEA private key. Raw-run loading, database
+attestation, independent F9-v2 validation, committed-validation loading, independent admission, and
+atomic Kernel incorporation factories remain. Six PR-7e concrete service factories are therefore
+still incomplete.
 
 No target host is commissioned. Linux account/socket/PostgreSQL/CAS/registry/key ACLs,
 systemd supervision, alerts, key rotation/revocation, and a fresh multi-process kill/restart
@@ -62,6 +62,7 @@ campaign remain mandatory. This source/test receipt is engineering evidence, not
 or a scientific result.
 
 See [ADR 0066](architecture/0066-scientific-execution-authorization-rpc-service.md), the
+[PR-7j registration guide](PR7J_ATOMIC_EXECUTION_REGISTRATION_SERVICE.md), the
 [PR-7e server guide](PR7E_EXTERNAL_RPC_SERVICE_RUNTIME.md), the
 [PR-7h compiler guide](PR7H_FROZEN_PROTOCOL_COMPILATION_SERVICE.md), and the
 [PR-5 controller guide](PR5_DURABLE_SCIENTIFIC_CONTROLLER.md).

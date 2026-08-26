@@ -26,8 +26,6 @@ from aletheia.observations.scientific_bridge import (
     issue_validation_issuance_challenge,
     verify_admission_issuance_challenge,
     verify_committed_observation_validation_receipt,
-    verify_scientific_execution_authorization,
-    verify_scientific_execution_authorization_historical,
     verify_validation_issuance_challenge,
 )
 from aletheia.observations.store import (
@@ -40,19 +38,11 @@ from aletheia.observations.store import (
     get_scientific_execution_authorization_by_slot,
     record_observation_issuance_challenge,
     record_observation_validation_receipt,
-    register_scientific_execution_authorization,
 )
 
 
 class ScientificBridgeServiceError(RuntimeError):
     """A durable scientific-bridge operation failed closed."""
-
-
-@dataclass(frozen=True)
-class ScientificExecutionRegistrationReceipt:
-    authorization: ScientificExecutionAuthorization
-    registered_at: datetime
-    created: bool
 
 
 @dataclass(frozen=True)
@@ -107,7 +97,7 @@ def _quest_and_authorization(
 
 
 class PostgreSQLScientificBridgeService:
-    """Register SEA and DB-signed challenge/validation proofs with crash recovery."""
+    """Issue DB-signed challenge/validation proofs for an atomically registered SEA."""
 
     def __init__(
         self,
@@ -125,66 +115,6 @@ class PostgreSQLScientificBridgeService:
         self._session_scope_factory = session_scope_factory
         self._database_clock = database_clock
         self._nonce_factory = nonce_factory
-
-    def register_execution_authorization(
-        self,
-        authorization: ScientificExecutionAuthorization,
-    ) -> ScientificExecutionRegistrationReceipt:
-        authorization = ScientificExecutionAuthorization.model_validate(
-            authorization.model_dump(mode="python")
-        )
-        quest_id, scientific_slot_id, _ = _quest_and_authorization(authorization)
-        with self._session_scope_factory() as session:
-            observed_at = self._database_clock(session)
-            existing = get_scientific_execution_authorization_by_slot(
-                session,
-                quest_id=quest_id,
-                scientific_slot_id=scientific_slot_id,
-            )
-            if existing is not None:
-                persisted = ScientificExecutionAuthorization.model_validate(
-                    existing.authorization_json
-                )
-                if persisted != authorization:
-                    raise ObservationIdentityConflict(
-                        "scientific slot is registered to another execution authorization"
-                    )
-                verify_scientific_execution_authorization_historical(
-                    authorization=persisted,
-                    qualification_authority=self._verification.qualification_authority,
-                    execution_authority_pin=self._verification.execution_authority_pin,
-                    validator_authority_pin=self._verification.validator_authority_pin,
-                    admission_authority_pin=self._verification.admission_authority_pin,
-                    observed_at=observed_at,
-                )
-                return ScientificExecutionRegistrationReceipt(
-                    authorization=persisted,
-                    registered_at=existing.registered_at,
-                    created=False,
-                )
-
-            verify_scientific_execution_authorization(
-                authorization=authorization,
-                qualification_authority=self._verification.qualification_authority,
-                action_authority=self._verification.action_authority,
-                qualification_custody=self._verification.qualification_custody,
-                execution_authority_pin=self._verification.execution_authority_pin,
-                validator_authority_pin=self._verification.validator_authority_pin,
-                admission_authority_pin=self._verification.admission_authority_pin,
-                observed_at=observed_at,
-            )
-            append = register_scientific_execution_authorization(
-                session,
-                ScientificExecutionAuthorizationWrite.from_contract(
-                    authorization,
-                    registered_at=observed_at,
-                ),
-            )
-            return ScientificExecutionRegistrationReceipt(
-                authorization=authorization,
-                registered_at=observed_at,
-                created=append.created,
-            )
 
     def issue_validation_challenge(
         self,
@@ -510,7 +440,6 @@ __all__ = [
     "AdmissionChallengeRegistrationReceipt",
     "PostgreSQLScientificBridgeService",
     "ScientificBridgeServiceError",
-    "ScientificExecutionRegistrationReceipt",
     "ValidationChallengeRegistrationReceipt",
     "ValidationCommitReceipt",
 ]

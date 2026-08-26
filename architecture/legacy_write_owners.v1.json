@@ -23,8 +23,8 @@
       "aletheia/research_kernel": "new_authority",
       "aletheia/research_store": "new_authority_adapter"
     },
-    "legacy_source_ast_file_count": 301,
-    "legacy_source_ast_graph_sha256": "913a0da0e6b97f08f79c1097df9ad6a3b907e73fa81b147fe3f1531bb8b8c44c",
+    "legacy_source_ast_file_count": 302,
+    "legacy_source_ast_graph_sha256": "9ffd6ba25e981518af5df8a9a49de6f66d0cd016d980ba6d461676a0c2a07e74",
     "legacy_source_ast_review_limit": "This normalized-AST backstop freezes every parseable Python file in the declared legacy production roots after explicitly removing new-authority and migration-tooling roots. It catches added, removed or semantically changed legacy Python source even when a specialized sink scanner does not recognize the syntax; comments, formatting, generated runtime code, non-Python launchers and the explicitly excluded roots are outside this digest.",
     "migration_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "migration_source_ast_roots": ["aletheia/migration", "migrations"],
@@ -76,8 +76,8 @@
     "service_mutator_call_graph_sha256": "13e491fdfcf7637e3ee2652a465eb9e119126e1360f379985cf628bf38138f5f",
     "service_boundary_limit": "This mechanically freezes statically declared aletheia.memory.service imports and imported-name uses across aletheia and operational scripts in module and nested lexical scopes. It does not claim to discover arbitrary dynamic imports or direct ORM, SQL, filesystem or external-system mutations; those are handled by separate reviewed surface baselines.",
     "writer_surface_usage_scheme": "ast_all_scope_import_alias_instance_scope_v2",
-    "writer_surface_usage_count": 377,
-    "writer_surface_call_graph_sha256": "1340fa71408daa116bcd3252ea5527e903bca57ee69f23852e53f97ee124068c",
+    "writer_surface_usage_count": 376,
+    "writer_surface_call_graph_sha256": "8b1bb0c118587e144efe2ac238bf73ca79344e1b4c91a7ceee22bd17bb1788c5",
     "allowed_legacy_caller_scope": "Every current aletheia-package caller must be covered by allowed_legacy_callers. Operational scripts are fully frozen in call_sites and may be omitted from the post-cutover application allowlist.",
     "shared_generic_writer_implementations": {
       "aletheia.observations.store._append_exact": {
@@ -3638,10 +3638,6 @@
         {
           "module": "aletheia.observations.execution_registration",
           "symbol": "PostgreSQLAtomicScientificExecutionRegistrar.register_and_reserve"
-        },
-        {
-          "module": "aletheia.observations.service",
-          "symbol": "PostgreSQLScientificBridgeService.register_execution_authorization"
         }
       ],
       "storage_target": "postgres.observations_persistence.research_scientific_execution_authorizations",
@@ -3649,7 +3645,7 @@
       "scientific_semantics": "Pre-registers one independently signed action, protocol, qualification, execution, artifact, and scientific-slot binding before PR-4 admission or process start. It establishes execution eligibility but cannot admit an observation or mutate the Kernel.",
       "authority_class": "scientific_state",
       "current_owner": "aletheia.observations.store.register_scientific_execution_authorization",
-      "current_commit_boundary": "one caller-owned PostgreSQL append transaction after historical/live authority verification; the production registrar shares that transaction with PR-4 qualification admission and resource reservation",
+      "current_commit_boundary": "one caller-owned PostgreSQL transaction that locks the current Kernel action, rejects one-sided history, and atomically commits the SEA plus PR-4 qualification admission and resource reservation",
       "target_owner": "aletheia.observations.store.register_scientific_execution_authorization",
       "target_command_or_object": "ScientificExecutionAuthorizationWrite",
       "migration_mode": "retain_signed_pre_execution_authority",
@@ -3657,18 +3653,14 @@
         {
           "module": "aletheia.observations.execution_registration",
           "symbol": "PostgreSQLAtomicScientificExecutionRegistrar.register_and_reserve"
-        },
-        {
-          "module": "aletheia.observations.service",
-          "symbol": "PostgreSQLScientificBridgeService.register_execution_authorization"
         }
       ],
       "dual_write_policy": "none",
       "cutover_pr": "PR-5",
-      "golden_fixture": "tests/observations/test_service.py",
+      "golden_fixture": "tests/observations/test_execution_registration.py",
       "status": "authoritative_new_owner",
       "post_cutover_legacy_mode": "not_applicable_new_authority",
-      "blocker": "The atomic production registrar and controller step adapter are implemented, but deployment-owned execution-authority signing custody and target-host commissioning remain unimplemented.",
+      "blocker": "The atomic production registrar, one-sided-state rejection, and controller step adapter are implemented, but deployment-owned execution-authority signing custody and target-host commissioning remain unimplemented.",
       "exception_expiry": null
     },
     {

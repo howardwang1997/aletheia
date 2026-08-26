@@ -35,7 +35,7 @@ principals, signing keys, and policies are role-separated.
   execution scheduler, validator, admitter, or Kernel command authority.
 - The read-only qualification custody component can prove pre-admission eligibility but is
   structurally unable to claim a later allocator admission.
-- The subsequent `REGISTER_EXECUTION` service must verify this SEA and atomically couple its
-  append-only preregistration to PR-4 admission/reservation. It must not load this domain key.
-- Source composition closes one PR-7e factory; seven concrete factories plus target-host ACL,
+- PR-7j subsequently adds the `REGISTER_EXECUTION` service that verifies this SEA and atomically
+  couples its append-only preregistration to PR-4 admission/reservation without loading this key.
+- Six concrete factories plus target-host ACL,
   supervision, restart, and campaign evidence remain.

@@ -636,6 +636,64 @@ class PostgreSQLResearchActionAuthorityAdapter:
             ) from exc
         return binding.binding_sha256
 
+    def verify_current_action_protocol_binding_in_session(
+        self,
+        session: Session,
+        *,
+        binding: ScientificActionProtocolBinding,
+        observed_at: datetime,
+    ) -> str:
+        """Lock and prove that the authorization event is still the exact Quest head.
+
+        Historical bridge verification deliberately accepts an action that was later APPLIED so
+        validation and admission receipts remain replayable.  A *new* execution registration has
+        a narrower rule: while the caller-owned registration transaction is open, the action must
+        still be AUTHORIZED and its authorization event/snapshot must remain the current head.
+        ``ResearchKernelStore.audit_in_session`` takes the Quest-stream row lock, preventing a
+        concurrent Kernel commit from opening a time-of-check/time-of-use gap before reservation.
+        """
+
+        if not isinstance(session, Session):
+            raise TypeError("current action authority verification requires a SQLAlchemy Session")
+        _require_utc(observed_at, label="current action authority observation time")
+        try:
+            binding = ScientificActionProtocolBinding.model_validate(
+                binding.model_dump(mode="python")
+            )
+            if observed_at < binding.bound_at:
+                raise ValueError("current action authority observation predates the binding")
+            scope = binding.compilation_request.protocol.graph_scope
+            audit = self._store.audit_in_session(
+                session,
+                binding.action.quest_id,
+                expected_scope_binding=scope.scope_binding,
+            )
+            audit = ResearchReplayAudit.model_validate(audit.model_dump(mode="python"))
+            self._verify_audit(binding=binding, audit=audit, observed_at=observed_at)
+            actions = tuple(
+                action
+                for action in audit.state.actions
+                if action.action_ref == binding.action.object_ref
+            )
+            if (
+                len(actions) != 1
+                or actions[0].lifecycle is not ActionLifecycle.AUTHORIZED
+                or actions[0].decided_event_sha256 != binding.action_authorized_event.event_sha256
+                or not audit.events
+                or audit.events[-1] != binding.action_authorized_event
+                or audit.verified_snapshot_sha256s[-1] != binding.authorized_graph_snapshot_sha256
+            ):
+                raise ObservationAdapterVerificationError(
+                    "new execution registration no longer targets the current authorized head"
+                )
+        except ObservationAdapterVerificationError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - fail closed inside the caller transaction
+            raise ObservationAdapterVerificationError(
+                "current research action audit did not prove a registrable authorization"
+            ) from exc
+        return binding.binding_sha256
+
     @staticmethod
     def _verify_audit(
         *,

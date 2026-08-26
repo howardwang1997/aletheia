@@ -42,6 +42,6 @@ signing key and exposes no generic callback.
   operational projection and cannot mutate the Kernel or admit an observation.
 - This closes the continuation provider/factory and source-level artifact-custody gap. It does not
   commission the service account, socket/database/filesystem ACLs, supervisor, alerting, or a live
-  Linux multi-process campaign. PR-7g, PR-7h and PR-7i subsequently close the conservative
-  action-proposal, frozen protocol-compilation and exact-template execution-authorization
-  factories; seven other PR-7e service factories remain.
+  Linux multi-process campaign. PR-7g, PR-7h, PR-7i and PR-7j subsequently close the conservative
+  action-proposal, frozen protocol-compilation, exact-template execution-authorization, and atomic
+  registration factories; six other PR-7e service factories remain.

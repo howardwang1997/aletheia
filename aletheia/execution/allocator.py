@@ -1564,6 +1564,45 @@ class PostgreSQLExecutionAllocator:
             grant=grant,
         )
 
+    def load_exact_qualification_reservation_in_session(
+        self,
+        session: Session,
+        *,
+        bundle: EngineeringQualificationBundle,
+        grant: EngineeringQualificationGrant,
+    ) -> ReservationSnapshot | None:
+        """Load an exact committed reservation without acquiring mutation authority.
+
+        The scientific registration service uses this read seam while it owns the surrounding
+        transaction.  Absence is distinct from an exact historical reservation: a one-sided SEA
+        registration must never be mistaken for a response-loss retry.
+        """
+
+        if not isinstance(session, Session) or not session.in_transaction():
+            raise ValueError(
+                "caller-owned reservation lookup requires an active Session transaction"
+            )
+        bundle = EngineeringQualificationBundle.model_validate(bundle.model_dump(mode="python"))
+        grant = EngineeringQualificationGrant.model_validate(grant.model_dump(mode="python"))
+        intent = bundle.intent
+        attempt_id = intent.infrastructure_attempt.infrastructure_attempt_id
+        attempt = session.get(_ExecutionAttemptRecord, attempt_id)
+        if attempt is None:
+            return None
+        if attempt.execution_id != intent.execution_id:
+            raise AdmissionConflict("attempt id is already bound to another execution")
+        execution_head = session.get(_ExecutionHeadRecord, intent.execution_id)
+        if execution_head is None:
+            raise AdmissionConflict("qualification reservation has no execution head")
+        self._validate_execution_head(execution_head, bundle)
+        self._validate_idempotent_attempt(
+            session,
+            attempt,
+            bundle,
+            expected_grant_sha256=grant.grant_sha256,
+        )
+        return self._snapshot(session, attempt)
+
     def admit_and_reserve_in_session(
         self,
         session: Session,
