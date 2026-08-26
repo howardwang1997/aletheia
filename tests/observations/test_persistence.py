@@ -29,10 +29,12 @@ from aletheia.observations.store import (
     get_continuation_receipt_by_slot,
     get_controller_delivery_by_source,
     get_controller_registration_by_launch_request,
+    get_observation_issuance_challenge_by_sha256,
     get_observation_admission_by_slot,
     get_observation_validation_receipt_by_slot,
     get_protocol_compilation_by_action,
     get_scientific_execution_authorization_by_slot,
+    lock_scientific_execution_authorization_by_slot,
     list_controller_deliveries,
     record_continuation_receipt,
     record_controller_delivery,
@@ -647,6 +649,21 @@ def test_protocol_and_observation_chain_is_recoverable_by_action_and_slot() -> N
                 session, quest_id=QUEST, scientific_slot_id=SLOT
             )
             == authorization
+        )
+        assert (
+            lock_scientific_execution_authorization_by_slot(
+                session,
+                quest_id=QUEST,
+                scientific_slot_id=SLOT,
+            )
+            == authorization
+        )
+        assert (
+            get_observation_issuance_challenge_by_sha256(
+                session,
+                challenge_sha256=challenge_hash,
+            )
+            == validation_challenge
         )
         assert (
             get_observation_validation_receipt_by_slot(

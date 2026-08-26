@@ -47,11 +47,11 @@ and factory byte drift, and absence of mutation/signing fields.
 
 ## Remaining release gates
 
-Five PR-7e concrete factories remain: database observation attestation, independent F9-v2
-validation, committed-validation source, independent admission, and atomic admission/Kernel
-incorporation. The next ordered source slice is the database-observation service, which must issue
-DB-time challenges and commit validation receipts without loading validator, admitter, or Kernel
-keys.
+PR-7l subsequently closes database observation attestation with DB-time challenges and committed
+validation receipts while loading no validator, admitter, execution, or Kernel private key. Four
+PR-7e concrete factories remain: independent F9-v2 validation, committed-validation source,
+independent admission, and atomic admission/Kernel incorporation. The next ordered source slice is
+independent F9-v2 validation.
 
 No target host is commissioned. Read-only PostgreSQL/CAS/registry ACLs, Linux account/socket
 ownership, systemd supervision, alerts, and fresh multi-process PostgreSQL kill/restart tests remain
@@ -59,6 +59,7 @@ mandatory. These source and test receipts are engineering evidence, not deployme
 scientific result.
 
 See [ADR 0068](architecture/0068-verified-raw-run-source-rpc-service.md), the
+[PR-7l database-observation guide](PR7L_DATABASE_OBSERVATION_SERVICE.md), the
 [PR-7j registration guide](PR7J_ATOMIC_EXECUTION_REGISTRATION_SERVICE.md), the
 [PR-7e server guide](PR7E_EXTERNAL_RPC_SERVICE_RUNTIME.md), and the
 [PR-5 controller guide](PR5_DURABLE_SCIENTIFIC_CONTROLLER.md).

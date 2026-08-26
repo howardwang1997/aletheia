@@ -48,6 +48,7 @@ from aletheia.execution.runtime_v2_contracts import (
 )
 from aletheia.execution.terminal_source import (
     VerifiedQualificationRawRunMaterialReader,
+    VerifiedQualificationRunLineageReader,
     VerifiedQualificationTerminalOutboxReader,
 )
 
@@ -294,6 +295,16 @@ def compose_qualification_raw_run_material_reader(
     )
 
 
+def compose_qualification_run_lineage_reader(
+    config: QualificationTerminalReaderConfig,
+) -> VerifiedQualificationRunLineageReader:
+    """Compose only the complete run-lineage read facade from public verification pins."""
+
+    return VerifiedQualificationRunLineageReader(
+        _compose_qualification_verification_allocator(config)
+    )
+
+
 def _compose_qualification_verification_allocator(
     config: QualificationTerminalReaderConfig,
 ) -> PostgreSQLExecutionAllocator:
@@ -381,6 +392,7 @@ __all__ = [
     "QualificationTerminalRuntimeConfig",
     "TerminalNodeAuthorityConfig",
     "compose_qualification_raw_run_material_reader",
+    "compose_qualification_run_lineage_reader",
     "compose_qualification_terminal_reader",
     "compose_verified_qualification_terminal_reader",
 ]

@@ -1127,6 +1127,36 @@ def get_live_observation_issuance_challenge(
     return _write_projection(ObservationIssuanceChallengeWrite, rows[0] if rows else None)
 
 
+def get_observation_issuance_challenge_by_sha256(
+    session: Session,
+    *,
+    challenge_sha256: str,
+) -> ObservationIssuanceChallengeWrite | None:
+    """Load one exact immutable challenge, including expired historical rows."""
+
+    row = session.get(ResearchObservationIssuanceChallengeRecord, challenge_sha256)
+    return _write_projection(ObservationIssuanceChallengeWrite, row)
+
+
+def lock_scientific_execution_authorization_by_slot(
+    session: Session,
+    *,
+    quest_id: str,
+    scientific_slot_id: str,
+) -> ScientificExecutionAuthorizationWrite | None:
+    """Serialize all DB-attestation operations for one scientific slot."""
+
+    row = session.scalar(
+        select(ResearchScientificExecutionAuthorizationRecord)
+        .where(
+            ResearchScientificExecutionAuthorizationRecord.quest_id == quest_id,
+            ResearchScientificExecutionAuthorizationRecord.scientific_slot_id == scientific_slot_id,
+        )
+        .with_for_update()
+    )
+    return _write_projection(ScientificExecutionAuthorizationWrite, row)
+
+
 def get_observation_validation_receipt_by_slot(
     session: Session, *, quest_id: str, scientific_slot_id: str
 ) -> ObservationValidationReceiptWrite | None:
@@ -1484,12 +1514,14 @@ __all__ = [
     "get_controller_registration_by_launch_request",
     "get_controller_registration_by_quest",
     "get_live_observation_issuance_challenge",
+    "get_observation_issuance_challenge_by_sha256",
     "get_observation_admission_by_slot",
     "get_observation_admission_by_decision",
     "get_observation_validation_receipt_by_slot",
     "get_protocol_compilation_by_action",
     "get_protocol_compilation_by_protocol_version",
     "get_scientific_execution_authorization_by_slot",
+    "lock_scientific_execution_authorization_by_slot",
     "get_scientific_execution_authorization_by_attempt",
     "list_controller_deliveries",
     "list_controller_delivery_attempts",

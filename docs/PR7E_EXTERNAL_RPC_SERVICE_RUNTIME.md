@@ -52,9 +52,9 @@ PR-7g adds a conservative deterministic action-proposal factory with reconstruct
 cost/risk receipts and pinned spool custody; PR-7h adds the exact-action frozen-template protocol
 provider and canonical compiler factory; PR-7i adds the exact-template execution-authorization
 signer; PR-7j adds atomic execution registration/reservation; PR-7k adds the verified, keyless
-raw-run source. Five concrete production factories remain: database observation attestation,
-independent F9-v2 validation,
-committed-validation source, independent admission, and atomic Kernel incorporation. Separately,
+raw-run source; PR-7l adds the three-operation database-observation attestation service. Four
+concrete production factories remain: independent F9-v2 validation, committed-validation source,
+independent admission, and atomic Kernel incorporation. Separately,
 knowledge-grounded general provider authoring, independent Kernel command signing, and every
 service's target-host configuration, key custody, PostgreSQL ACLs, and health/alert policy remain
 open. A source-level handler or a test key is not commissioned authority.

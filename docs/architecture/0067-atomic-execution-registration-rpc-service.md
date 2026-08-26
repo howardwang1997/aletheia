@@ -45,5 +45,6 @@ linearization point.
 - Historical one-sided state cannot be silently repaired or mistaken for an exact retry.
 - The process has execution-database mutation capability but no scientific or runtime signing key.
   Target PostgreSQL ACLs and live process-kill tests remain required to prove the deployed boundary.
-- PR-7k subsequently closes the exact public `LOAD_RAW_RUN` source. Five concrete RPC factories
-  remain; the next is database observation attestation.
+- PR-7k subsequently closes the exact public `LOAD_RAW_RUN` source, and PR-7l closes database
+  observation attestation. Four concrete RPC factories remain; the next is independent F9-v2
+  validation.

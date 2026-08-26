@@ -45,9 +45,9 @@ same closed context, verifier, canonical compiler, and durable-registry boundary
 No target host is commissioned. The exact Linux account must still prove socket, PostgreSQL, CAS,
 transport-key, supervisor, alert, and process-restart custody. PR-7i and PR-7j subsequently supply
 the exact-template execution-authorization signer and atomic execution registration; PR-7k
-subsequently supplies the verified raw-run source. Five other PR-7e service factories spanning
-database observation, validation, admission, and Kernel-incorporation authorities remain
-incomplete.
+subsequently supplies the verified raw-run source, and PR-7l supplies database observation
+attestation. Four other PR-7e service factories spanning validation, admission, and
+Kernel-incorporation authorities remain incomplete.
 
 See [ADR 0065](architecture/0065-frozen-protocol-compilation-rpc-service.md),
 [ADR 0059](architecture/0059-durable-protocol-compilation-step.md), the

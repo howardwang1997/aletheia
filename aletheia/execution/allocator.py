@@ -430,13 +430,14 @@ class VerifiedQualificationRunLineage(ExecutionModel):
     schema_name: Literal["aletheia.verified_qualification_run_lineage"] = (
         "aletheia.verified_qualification_run_lineage"
     )
-    schema_version: Literal[2] = 2
+    schema_version: Literal[3] = 3
     execution_id: str = Field(pattern=_EXECUTION_ID_PATTERN)
     attempt_id: str = Field(pattern=_ATTEMPT_ID_PATTERN)
     intent_sha256: str = Field(pattern=_SHA256_PATTERN)
     qualification_bundle_sha256: str = Field(pattern=_SHA256_PATTERN)
     qualification_grant_sha256: str = Field(pattern=_SHA256_PATTERN)
     qualification_admission_sha256: str = Field(pattern=_SHA256_PATTERN)
+    verified_engineering_qualification: VerifiedEngineeringQualification
     qualification_admitted_at: AwareDatetime
     resource_reservation_sha256: str = Field(pattern=_SHA256_PATTERN)
     resource_reserved_at: AwareDatetime
@@ -488,7 +489,17 @@ class VerifiedQualificationRunLineage(ExecutionModel):
             sorted(item.verified_receipt_sha256 for item in self.artifact_verified_receipts)
         )
         if (
-            self.quoted_worker_node_manifest != self.terminal_worker_node_manifest
+            self.verified_engineering_qualification.execution_id != self.execution_id
+            or self.verified_engineering_qualification.infrastructure_attempt_id != self.attempt_id
+            or self.verified_engineering_qualification.intent_sha256 != self.intent_sha256
+            or self.verified_engineering_qualification.bundle_sha256
+            != self.qualification_bundle_sha256
+            or self.verified_engineering_qualification.grant_sha256
+            != self.qualification_grant_sha256
+            or _stable_admission_sha256(self.verified_engineering_qualification)
+            != self.qualification_admission_sha256
+            or self.verified_engineering_qualification.verified_at != self.qualification_admitted_at
+            or self.quoted_worker_node_manifest != self.terminal_worker_node_manifest
             or enrollment.node_manifest_sha256 != self.terminal_worker_node_manifest.manifest_sha256
             or enrollment.node_id != self.terminal_worker_node_manifest.node_id
             or self.artifact_manifest_sha256 != self.artifact_manifest.manifest_sha256
@@ -2757,6 +2768,7 @@ class PostgreSQLExecutionAllocator:
                 qualification_bundle_sha256=bundle.bundle_sha256,
                 qualification_grant_sha256=grant.grant_sha256,
                 qualification_admission_sha256=admission.admission_sha256,
+                verified_engineering_qualification=verified,
                 qualification_admitted_at=admission.admitted_at,
                 resource_reservation_sha256=resource.lease_sha256,
                 resource_reserved_at=resource.acquired_at,

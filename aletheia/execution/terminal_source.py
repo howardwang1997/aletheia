@@ -15,6 +15,7 @@ from aletheia.execution.allocator import (
     PostgreSQLExecutionAllocator,
     QualificationTerminalOutboxItem,
     VerifiedQualificationRawRunMaterial,
+    VerifiedQualificationRunLineage,
     VerifiedQualificationTerminalSource,
 )
 
@@ -95,7 +96,37 @@ class VerifiedQualificationRawRunMaterialReader:
         )
 
 
+class VerifiedQualificationRunLineageReader:
+    """Narrow facade exposing only complete, historically verified PR-4 run lineage."""
+
+    def __init__(self, allocator: PostgreSQLExecutionAllocator) -> None:
+        if not isinstance(allocator, PostgreSQLExecutionAllocator):
+            raise TypeError("run-lineage reader requires the PostgreSQL execution facade")
+        if allocator.runtime_control_issuance_enabled:
+            raise ValueError("run-lineage reader cannot retain runtime-control issuance")
+        if not allocator.runtime_control_verification_enabled:
+            raise ValueError("run-lineage reader requires pinned runtime-control verification")
+        self._allocator = allocator
+
+    def load_verified_qualification_run_lineage(
+        self,
+        *,
+        execution_id: str,
+        attempt_id: str,
+        observed_at: datetime,
+    ) -> VerifiedQualificationRunLineage | None:
+        candidate = self._allocator.load_verified_qualification_run_lineage(
+            execution_id=execution_id,
+            attempt_id=attempt_id,
+            observed_at=observed_at,
+        )
+        if candidate is None:
+            return None
+        return VerifiedQualificationRunLineage.model_validate(candidate.model_dump(mode="python"))
+
+
 __all__ = [
     "VerifiedQualificationRawRunMaterialReader",
+    "VerifiedQualificationRunLineageReader",
     "VerifiedQualificationTerminalOutboxReader",
 ]
