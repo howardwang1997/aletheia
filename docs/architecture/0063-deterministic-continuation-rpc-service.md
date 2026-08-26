@@ -44,4 +44,5 @@ signing key and exposes no generic callback.
   commission the service account, socket/database/filesystem ACLs, supervisor, alerting, or a live
   Linux multi-process campaign. PR-7g, PR-7h, PR-7i and PR-7j subsequently close the conservative
   action-proposal, frozen protocol-compilation, exact-template execution-authorization, and atomic
-  registration factories; six other PR-7e service factories remain.
+  registration factories; PR-7k subsequently closes verified raw-run loading. Five other PR-7e
+  service factories remain.

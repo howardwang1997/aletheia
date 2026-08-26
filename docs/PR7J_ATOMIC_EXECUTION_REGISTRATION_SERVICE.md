@@ -59,11 +59,10 @@ byte pins, and transport/domain key non-reuse.
 
 ## Remaining release gates
 
-Six PR-7e concrete factories remain: raw-run source, database observation attestation, independent
-F9-v2 validation, committed-validation source, independent admission, and atomic admission/Kernel
-incorporation. The next ordered source slice is the `LOAD_RAW_RUN` factory, which must reconstruct
-only an exact preregistered and terminally verified PR-4 run without acquiring execution mutation
-or scientific signing authority.
+PR-7k subsequently closes the verified, keyless raw-run source. Five PR-7e concrete factories
+remain: database observation attestation, independent F9-v2 validation, committed-validation
+source, independent admission, and atomic admission/Kernel incorporation. The next ordered source
+slice is the database-observation service.
 
 No target host is commissioned. Linux account/socket/PostgreSQL/CAS/registry ACLs, systemd
 supervision, alerts, receipt-key custody/rotation, and fresh PostgreSQL process-kill/restart tests
@@ -72,5 +71,6 @@ a scientific result.
 
 See [ADR 0067](architecture/0067-atomic-execution-registration-rpc-service.md), the
 [PR-7i execution-authorization guide](PR7I_EXECUTION_AUTHORIZATION_SERVICE.md), the
+[PR-7k raw-run source guide](PR7K_VERIFIED_RAW_RUN_SOURCE_SERVICE.md), the
 [PR-7e server guide](PR7E_EXTERNAL_RPC_SERVICE_RUNTIME.md), and the
 [PR-5 controller guide](PR5_DURABLE_SCIENTIFIC_CONTROLLER.md).

@@ -8,6 +8,7 @@ by the observation or controller authority graphs.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
@@ -19,15 +20,18 @@ from aletheia.execution.allocator import (
     VerifiedQualificationRunLineage,
 )
 from aletheia.execution.artifact_store import LocalArtifactStore
+from aletheia.execution.runtime_contracts import QualificationAuthorityVerifier
 from aletheia.observations.scientific_bridge import (
     CommittedObservationValidationReceipt,
     RawRunEnvelope,
     ScientificActionProtocolBinding,
+    ScientificBridgeAuthorityPin,
     ScientificExecutionAuthorization,
     VerifiedArtifactCustodyProjection,
     VerifiedExecutionAuthorityProjection,
     VerifiedRawRunCustodyProjection,
     validate_raw_run_structure,
+    verify_scientific_execution_authorization_historical,
 )
 from aletheia.observations.store import (
     ObservationValidationReceiptWrite,
@@ -79,6 +83,16 @@ class QualificationRawRunMaterialArchive(Protocol):
 DatabaseClock = Callable[[Session], datetime]
 
 
+@dataclass(frozen=True)
+class RawRunEnvelopeSourceVerificationContext:
+    """Public authorities needed to reverify the preregistered SEA at source time."""
+
+    qualification_authority: QualificationAuthorityVerifier
+    execution_authority_pin: ScientificBridgeAuthorityPin
+    validator_authority_pin: ScientificBridgeAuthorityPin
+    admission_authority_pin: ScientificBridgeAuthorityPin
+
+
 def _database_time(session: Session) -> datetime:
     observed = session.scalar(select(func.clock_timestamp()))
     if not isinstance(observed, datetime):  # pragma: no cover - PostgreSQL production path
@@ -97,6 +111,7 @@ class PostgreSQLRawRunEnvelopeSourceAdapter:
         *,
         execution_material: QualificationRawRunMaterialArchive,
         sea_sessions: sessionmaker[Session],
+        verification: RawRunEnvelopeSourceVerificationContext,
         database_clock: DatabaseClock = _database_time,
     ) -> None:
         if not callable(
@@ -111,6 +126,7 @@ class PostgreSQLRawRunEnvelopeSourceAdapter:
             raise TypeError("raw-run source requires sessions and a database clock")
         self._execution_material = execution_material
         self._sea_sessions = sea_sessions
+        self._verification = verification
         self._database_clock = database_clock
 
     def load_raw_run(
@@ -134,6 +150,14 @@ class PostgreSQLRawRunEnvelopeSourceAdapter:
                 )
             authorization = ScientificExecutionAuthorization.model_validate(
                 registration.authorization_json
+            )
+            authorization = verify_scientific_execution_authorization_historical(
+                authorization=authorization,
+                qualification_authority=self._verification.qualification_authority,
+                execution_authority_pin=self._verification.execution_authority_pin,
+                validator_authority_pin=self._verification.validator_authority_pin,
+                admission_authority_pin=self._verification.admission_authority_pin,
+                observed_at=observed_at,
             )
             message = authorization.message
             intent = message.qualification_bundle.intent
@@ -167,9 +191,10 @@ class PostgreSQLRawRunEnvelopeSourceAdapter:
                 != message.qualification_bundle.bundle_sha256
                 or material.qualification_grant_sha256 != message.qualification_grant.grant_sha256
                 or material.verified_at != observed_at
+                or not registration.registered_at < material.qualification_admitted_at
             ):
                 raise ObservationAdapterVerificationError(
-                    "verified PR-4 material was rebound from the preregistered SEA"
+                    "verified PR-4 material was rebound or not preregistered by the SEA"
                 )
             assembled_at = max(
                 material.accepted_terminal_submission.accepted_at,
@@ -806,5 +831,6 @@ __all__ = [
     "PostgreSQLRawRunCustodyVerificationAdapter",
     "PostgreSQLResearchActionAuthorityAdapter",
     "QualificationRawRunMaterialArchive",
+    "RawRunEnvelopeSourceVerificationContext",
     "QualificationRunLineageArchive",
 ]

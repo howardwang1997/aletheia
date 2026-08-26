@@ -39,5 +39,5 @@ port, mutable template registry, or model callback.
 - This closes the safe baseline provider/factory gap, not the service account, socket/PostgreSQL
   ACLs, transport-key custody, supervisor/alerting, or live Linux multi-process campaign. PR-7i and
   PR-7j subsequently close the exact-template execution-authorization signer and atomic
-  registration service; six other PR-7e
+  registration service; PR-7k subsequently closes verified raw-run loading. Five other PR-7e
   service factories remain.

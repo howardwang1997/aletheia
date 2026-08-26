@@ -7,11 +7,14 @@ inside a caller-owned transaction.  It cannot admit, reserve, launch, terminate,
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy.orm import Session
 
 from aletheia.execution.allocator import (
     PostgreSQLExecutionAllocator,
     QualificationTerminalOutboxItem,
+    VerifiedQualificationRawRunMaterial,
     VerifiedQualificationTerminalSource,
 )
 
@@ -61,4 +64,38 @@ class VerifiedQualificationTerminalOutboxReader:
         return QualificationTerminalOutboxItem.model_validate(candidate.model_dump(mode="python"))
 
 
-__all__ = ["VerifiedQualificationTerminalOutboxReader"]
+class VerifiedQualificationRawRunMaterialReader:
+    """Narrow read-only facade over the full PR-4 terminal-lineage verifier."""
+
+    def __init__(self, allocator: PostgreSQLExecutionAllocator) -> None:
+        if not isinstance(allocator, PostgreSQLExecutionAllocator):
+            raise TypeError("raw-run material reader requires the PostgreSQL execution facade")
+        if allocator.runtime_control_issuance_enabled:
+            raise ValueError("raw-run material reader cannot retain runtime-control issuance")
+        if not allocator.runtime_control_verification_enabled:
+            raise ValueError("raw-run material reader requires pinned runtime-control verification")
+        self._allocator = allocator
+
+    def load_verified_qualification_raw_run_material(
+        self,
+        *,
+        execution_id: str,
+        attempt_id: str,
+        observed_at: datetime,
+    ) -> VerifiedQualificationRawRunMaterial | None:
+        candidate = self._allocator.load_verified_qualification_raw_run_material(
+            execution_id=execution_id,
+            attempt_id=attempt_id,
+            observed_at=observed_at,
+        )
+        if candidate is None:
+            return None
+        return VerifiedQualificationRawRunMaterial.model_validate(
+            candidate.model_dump(mode="python")
+        )
+
+
+__all__ = [
+    "VerifiedQualificationRawRunMaterialReader",
+    "VerifiedQualificationTerminalOutboxReader",
+]

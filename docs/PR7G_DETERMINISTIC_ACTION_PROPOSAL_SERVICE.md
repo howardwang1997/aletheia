@@ -46,8 +46,8 @@ deployed Kernel command authority must still decide and sign any accepted comman
 The exact Linux service account must still prove socket, PostgreSQL, CAS, spool, supervisor, alert,
 and process-restart custody in the PR-4/PR-5 campaign. PR-7h, PR-7i and PR-7j subsequently supply
 the frozen protocol-compilation, exact-template execution-authorization, and atomic registration
-factories; six other PR-7e
-service factories and their domain-key/ACL
+factories; PR-7k subsequently supplies the verified raw-run source. Five other PR-7e service
+factories and their domain-key/ACL
 commissioning remain incomplete.
 
 See [ADR 0064](architecture/0064-deterministic-action-proposal-rpc-service.md),

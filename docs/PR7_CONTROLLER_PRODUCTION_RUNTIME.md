@@ -150,6 +150,9 @@ process commissioning remain open. PR-7i adds a deterministic exact-template exe
 whose separate `0400` domain key signs only after fresh Kernel, compilation-registry and PR-4
 public-custody verification. PR-7j now supplies that separate keyless process: it locks the current
 Kernel authorization and atomically commits SEA registration plus PR-4 admission/reservation.
+PR-7k now supplies a separate keyless raw-run source: it re-verifies the historical SEA, strict
+pre-admission chronology, complete PR-4 terminal lineage, and freshly rehashed artifacts before
+returning a deterministic envelope.
 Continuation now
 has its own two-audit service, mechanically reconstructed observation identity, pinned assessor
 policy, and durable provenance; its production service, assessment-artifact byte custody and ACL
@@ -157,7 +160,8 @@ remain open. See [ADR 0058](architecture/0058-durable-powerless-action-proposal-
 [ADR 0059](architecture/0059-durable-protocol-compilation-step.md), and
 [ADR 0060](architecture/0060-durable-continuation-assessment-step.md), plus
 [ADR 0066](architecture/0066-scientific-execution-authorization-rpc-service.md), and
-[ADR 0067](architecture/0067-atomic-execution-registration-rpc-service.md).
+[ADR 0067](architecture/0067-atomic-execution-registration-rpc-service.md), and
+[ADR 0068](architecture/0068-verified-raw-run-source-rpc-service.md).
 
 PR-7c closes the source-code terminal verification/composition gap. The read-only PostgreSQL ACL,
 filesystem/key custody, supervisor invocation, and live process-kill behavior must still be proven
