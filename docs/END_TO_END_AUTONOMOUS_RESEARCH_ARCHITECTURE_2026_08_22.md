@@ -1768,9 +1768,10 @@ ACL/supervisor 与 live process-kill campaign 仍待完成。详见
   reservation、launch、validation、admission 与 Kernel mutation 均留在独立服务。
 
 该切片关闭 safe exact-template SEA signer/factory，不等于 general execution planning 或 target-host
-commissioning evidence；PR-7j 随后关闭 atomic registration/reservation factory，其余六项
-raw-run/validation/admission/Kernel-incorporation service factory、ACL/supervisor 与 live process-kill
-campaign 仍待完成。详见 `PR7I_EXECUTION_AUTHORIZATION_SERVICE.md` 与
+commissioning evidence；PR-7j 随后关闭 atomic registration/reservation factory，PR-7k 随后关闭
+verified raw-run source；其余五项 database-observation/validation/admission/Kernel-incorporation
+service factory、ACL/supervisor 与 live process-kill campaign 仍待完成。详见
+`PR7I_EXECUTION_AUTHORIZATION_SERVICE.md` 与
 `architecture/0066-scientific-execution-authorization-rpc-service.md`。
 
 ### PR-7j：Atomic execution-registration RPC service
@@ -1792,10 +1793,28 @@ campaign 仍待完成。详见 `PR7I_EXECUTION_AUTHORIZATION_SERVICE.md` 与
   不得复用任何 Ed25519/X25519 domain key。
 
 该切片关闭 atomic SEA/PR-4 registration source composition，不等于 PostgreSQL ACL 或 host/process-kill
-evidence；其余六项 raw-run/database-observation/independent-validation/committed-validation/
-independent-admission/atomic-incorporation factory 仍待完成。下一项顺序工作是 `LOAD_RAW_RUN` concrete
-service。详见 `PR7J_ATOMIC_EXECUTION_REGISTRATION_SERVICE.md` 与
+evidence；PR-7k 随后关闭 verified raw-run source。其余五项 database-observation/
+independent-validation/committed-validation/independent-admission/atomic-incorporation factory
+仍待完成。详见 `PR7J_ATOMIC_EXECUTION_REGISTRATION_SERVICE.md` 与
 `architecture/0067-atomic-execution-registration-rpc-service.md`。
+
+### PR-7k：Verified raw-run source RPC service
+
+- 单 operation keyless factory 只接受 exact scientific-slot lookup，不接受 caller-supplied terminal 或
+  artifact material；
+- 历史 SEA 使用 deployment-pinned execution/validator/admitter/qualification public keys 重新验签，并要求
+  registration 严格早于 PR-4 qualification admission；
+- narrow read facade 重放 admission、reservation、runtime-v2 launch/termination、node enrollment/signature、
+  terminal acceptance，并 fresh reopen/rehash 完整 artifact CAS；
+- immutable receipt-derived `assembled_at` 保证 restart/exact retry byte-stable；factory 同时冻结 database/schema、
+  read-only registry/artifact roots、authority separation 与 implementation bytes；
+- 服务不持有 execution mutation、database attestation、validation、admission、terminal 或 Kernel signing key。
+
+该切片关闭 verified raw-run source composition，不等于 read-only PostgreSQL/CAS ACL 或 live host evidence；
+其余五项 database-observation/independent-validation/committed-validation/independent-admission/
+atomic-incorporation factory 仍待完成。下一项顺序工作是 database-observation service。详见
+`PR7K_VERIFIED_RAW_RUN_SOURCE_SERVICE.md` 与
+`architecture/0068-verified-raw-run-source-rpc-service.md`。
 
 PR-5 的本地 vertical cut 已完成；现在仍须完成 PR-4 target-host campaign、PR-5 production
 controller/validator/signer process commissioning 与 terminal target-host commissioning，之后才依据 fresh inventory
@@ -1884,11 +1903,12 @@ Unix RPC port 组合，response 使用独立 Ed25519 transport receipt 验证，
 lineage 与 read-only Kernel CAS；worker 不加载科学签名私钥。**PR-7e** 已补齐 common external RPC server
 runtime：closed payload/result、双向 Linux peer identity、socket parent/inode、service-owned `0400` transport
 key 与 byte-pinned factory 均 fail closed；这仍不是十一项 concrete authority service commissioning。
-**PR-7f**、**PR-7g**、**PR-7h**、**PR-7i** 与 **PR-7j** 分别完成 deterministic continuation、
+**PR-7f**、**PR-7g**、**PR-7h**、**PR-7i**、**PR-7j** 与 **PR-7k** 分别完成 deterministic continuation、
 conservative action-proposal、frozen protocol-compilation、exact-template scientific
-execution-authorization 与 atomic execution-registration concrete service factory；其余
-raw-run/validation/admission/Kernel signer factory 与 ACL 仍待完成。下一项顺序工作是 `LOAD_RAW_RUN`
-concrete service factory，随后继续其余 external authority process composition，再进入
+execution-authorization、atomic execution-registration 与 verified raw-run source concrete service
+factory；其余 database-observation/validation/admission/Kernel incorporation factory 与 ACL 仍待完成。
+下一项顺序工作是 database-observation concrete service factory，随后继续其余 external authority
+process composition，再进入
 真实 image/host qualification 与
 process-kill PostgreSQL campaign，而不是扩张
 controller authority。checkpoint 与 external reconciliation

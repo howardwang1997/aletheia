@@ -537,13 +537,16 @@ class VerifiedQualificationRawRunMaterial(ExecutionModel):
     schema_name: Literal["aletheia.verified_qualification_raw_run_material"] = (
         "aletheia.verified_qualification_raw_run_material"
     )
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     execution_id: str = Field(pattern=_EXECUTION_ID_PATTERN)
     attempt_id: str = Field(pattern=_ATTEMPT_ID_PATTERN)
     intent_sha256: str = Field(pattern=_SHA256_PATTERN)
     qualification_bundle_sha256: str = Field(pattern=_SHA256_PATTERN)
     qualification_grant_sha256: str = Field(pattern=_SHA256_PATTERN)
     qualification_admission_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_admitted_at: AwareDatetime
+    resource_reserved_at: AwareDatetime
+    runtime_launched_at: AwareDatetime
     accepted_runtime_termination: AcceptedRuntimeTermination
     terminal_submission: QualificationTerminalSubmission
     accepted_terminal_submission: AcceptedQualificationTerminalSubmission
@@ -582,9 +585,21 @@ class VerifiedQualificationRawRunMaterial(ExecutionModel):
             or terminal.artifact_verified_receipt_sha256s != receipt_hashes
             or tuple(item.artifact for item in self.artifact_verified_receipts) != manifest.entries
             or submission.disposition != terminal.disposition
+            or submission.submitted_at != terminal.node_submitted_at
             or terminal.accepted_at > self.verified_at
         ):
             raise ValueError("verified qualification raw-run material is rebound")
+        if not (
+            self.qualification_admitted_at
+            <= self.resource_reserved_at
+            <= self.runtime_launched_at
+            <= accepted.runtime_ended_at
+            <= accepted.accepted_at
+            <= submission.submitted_at
+            <= terminal.accepted_at
+            <= self.verified_at
+        ):
+            raise ValueError("verified qualification raw-run material is not historically ordered")
         return self
 
     @property
@@ -2885,6 +2900,9 @@ class PostgreSQLExecutionAllocator:
                 qualification_bundle_sha256=lineage.qualification_bundle_sha256,
                 qualification_grant_sha256=lineage.qualification_grant_sha256,
                 qualification_admission_sha256=lineage.qualification_admission_sha256,
+                qualification_admitted_at=lineage.qualification_admitted_at,
+                resource_reserved_at=lineage.resource_reserved_at,
+                runtime_launched_at=lineage.runtime_launched_at,
                 accepted_runtime_termination=accepted_termination,
                 terminal_submission=submission,
                 accepted_terminal_submission=terminal,

@@ -28,11 +28,15 @@ from aletheia.execution.runtime_contracts import (
     qualification_key_id,
 )
 from aletheia.execution.runtime_v2_contracts import RuntimeControlAuthorityPin
-from aletheia.execution.terminal_source import VerifiedQualificationTerminalOutboxReader
+from aletheia.execution.terminal_source import (
+    VerifiedQualificationRawRunMaterialReader,
+    VerifiedQualificationTerminalOutboxReader,
+)
 from aletheia.research_controller.contracts import ResearchControllerManifest
 from aletheia.execution.terminal_runtime import (
     QualificationTerminalRuntimeConfig,
     TerminalNodeAuthorityConfig,
+    compose_qualification_raw_run_material_reader,
 )
 from aletheia.research_controller_terminal_runtime import build_terminal_runtime
 from aletheia.research_controller_runtime import (
@@ -265,6 +269,23 @@ def test_terminal_factory_exposes_only_verified_reader_and_queue(
     assert allocator.runtime_control_issuance_enabled is False
     assert allocator.runtime_control_verification_enabled is True
     assert allocator._artifact_resolver._artifact_store.read_only is True
+
+
+def test_raw_run_reader_exposes_only_verified_terminal_material(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config, _controller_manifest = _config(monkeypatch, tmp_path)
+
+    reader = compose_qualification_raw_run_material_reader(config)
+
+    assert isinstance(reader, VerifiedQualificationRawRunMaterialReader)
+    assert not hasattr(reader, "admit_and_reserve")
+    assert not hasattr(reader, "start_attempt")
+    assert not hasattr(reader, "commit_terminal_receipt")
+    assert reader._allocator.runtime_control_issuance_enabled is False
+    assert reader._allocator.runtime_control_verification_enabled is True
+    assert reader._allocator._artifact_resolver._artifact_store.read_only is True
 
 
 def test_terminal_factory_requires_preexisting_read_only_artifact_layout(

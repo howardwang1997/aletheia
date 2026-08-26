@@ -46,7 +46,10 @@ from aletheia.execution.runtime_v2_contracts import (
     PinnedRuntimeControlVerificationAuthority,
     RuntimeControlAuthorityPin,
 )
-from aletheia.execution.terminal_source import VerifiedQualificationTerminalOutboxReader
+from aletheia.execution.terminal_source import (
+    VerifiedQualificationRawRunMaterialReader,
+    VerifiedQualificationTerminalOutboxReader,
+)
 
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
 _IDENTITY_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}$"
@@ -276,6 +279,26 @@ def compose_qualification_terminal_reader(
 ) -> VerifiedQualificationTerminalOutboxReader:
     """Compose the reusable public-key-only reader from an already pinned config."""
 
+    return VerifiedQualificationTerminalOutboxReader(
+        _compose_qualification_verification_allocator(config)
+    )
+
+
+def compose_qualification_raw_run_material_reader(
+    config: QualificationTerminalReaderConfig,
+) -> VerifiedQualificationRawRunMaterialReader:
+    """Compose only the raw-run material read facade from public verification pins."""
+
+    return VerifiedQualificationRawRunMaterialReader(
+        _compose_qualification_verification_allocator(config)
+    )
+
+
+def _compose_qualification_verification_allocator(
+    config: QualificationTerminalReaderConfig,
+) -> PostgreSQLExecutionAllocator:
+    """Build the internal verifier; callers receive only an operation-closed read facade."""
+
     try:
         payload = config.model_dump(
             mode="python",
@@ -350,13 +373,14 @@ def compose_qualification_terminal_reader(
             config.runtime_control_authority_pin
         ),
     )
-    return VerifiedQualificationTerminalOutboxReader(allocator)
+    return allocator
 
 
 __all__ = [
     "QualificationTerminalReaderConfig",
     "QualificationTerminalRuntimeConfig",
     "TerminalNodeAuthorityConfig",
+    "compose_qualification_raw_run_material_reader",
     "compose_qualification_terminal_reader",
     "compose_verified_qualification_terminal_reader",
 ]

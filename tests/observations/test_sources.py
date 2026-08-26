@@ -12,7 +12,9 @@ from aletheia.observations.adapters import (
     ObservationAdapterVerificationError,
     PostgreSQLCommittedObservationValidationSource,
     PostgreSQLRawRunEnvelopeSourceAdapter,
+    RawRunEnvelopeSourceVerificationContext,
 )
+from aletheia.observations.scientific_bridge import ScientificExecutionAuthorization
 from aletheia.observations.store import (
     ObservationValidationReceiptWrite,
     ScientificExecutionAuthorizationWrite,
@@ -44,6 +46,7 @@ class _MaterialArchive:
 def _material(raw_run, *, verified_at):
     authorization = raw_run.scientific_authorization.message
     intent = authorization.qualification_bundle.intent
+    qualification_admitted_at = authorization.authorized_at + timedelta(seconds=2)
     return VerifiedQualificationRawRunMaterial(
         execution_id=intent.execution_id,
         attempt_id=intent.infrastructure_attempt.infrastructure_attempt_id,
@@ -51,12 +54,24 @@ def _material(raw_run, *, verified_at):
         qualification_bundle_sha256=authorization.qualification_bundle.bundle_sha256,
         qualification_grant_sha256=authorization.qualification_grant.grant_sha256,
         qualification_admission_sha256=raw_run.qualification_admission_sha256,
+        qualification_admitted_at=qualification_admitted_at,
+        resource_reserved_at=qualification_admitted_at + timedelta(seconds=1),
+        runtime_launched_at=qualification_admitted_at + timedelta(seconds=2),
         accepted_runtime_termination=raw_run.accepted_runtime_termination,
         terminal_submission=raw_run.terminal_submission,
         accepted_terminal_submission=raw_run.accepted_terminal_submission,
         artifact_manifest=raw_run.artifact_manifest,
         artifact_verified_receipts=raw_run.artifact_verified_receipts,
         verified_at=verified_at,
+    )
+
+
+def _verification(case) -> RawRunEnvelopeSourceVerificationContext:
+    return RawRunEnvelopeSourceVerificationContext(
+        qualification_authority=case.qualification_authority,
+        execution_authority_pin=case.execution_pin,
+        validator_authority_pin=case.validator_pin,
+        admission_authority_pin=case.admission_pin,
     )
 
 
@@ -80,6 +95,7 @@ def test_raw_run_source_rebuilds_exact_deterministic_envelope(
     source = PostgreSQLRawRunEnvelopeSourceAdapter(
         execution_material=archive,
         sea_sessions=_sessions,
+        verification=_verification(case),
         database_clock=lambda _session: verified_at,
     )
     binding = case.authorization.message.action_protocol_binding
@@ -124,6 +140,7 @@ def test_raw_run_source_rejects_rebound_action_and_exported_material(
     source = PostgreSQLRawRunEnvelopeSourceAdapter(
         execution_material=_MaterialArchive(_material(original, verified_at=verified_at)),
         sea_sessions=_sessions,
+        verification=_verification(case),
         database_clock=lambda _session: verified_at,
     )
     binding = case.authorization.message.action_protocol_binding
@@ -141,10 +158,65 @@ def test_raw_run_source_rejects_rebound_action_and_exported_material(
     rebound_source = PostgreSQLRawRunEnvelopeSourceAdapter(
         execution_material=_MaterialArchive(rebound),
         sea_sessions=_sessions,
+        verification=_verification(case),
         database_clock=lambda _session: verified_at,
     )
     with pytest.raises(ObservationAdapterVerificationError, match="rebound"):
         rebound_source.load_raw_run(
+            quest_id=binding.action.quest_id,
+            action_sha256=binding.action.object_sha256,
+            scientific_slot_id=case.authorization.message.scientific_slot_id,
+        )
+
+
+def test_raw_run_source_rejects_invalid_sea_signature_and_late_registration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bridge_case()
+    original = _raw_run(case)
+    verified_at = original.assembled_at + timedelta(seconds=1)
+    material = _material(original, verified_at=verified_at)
+    binding = case.authorization.message.action_protocol_binding
+
+    invalid_authorization = ScientificExecutionAuthorization.model_validate(
+        {
+            **case.authorization.model_dump(mode="python"),
+            "signature_ed25519_hex": "00" * 64,
+        }
+    )
+    invalid_registration = ScientificExecutionAuthorizationWrite.from_contract(
+        invalid_authorization,
+        registered_at=case.authorization.message.authorized_at + timedelta(seconds=1),
+    )
+    monkeypatch.setattr(
+        adapters_module,
+        "get_scientific_execution_authorization_by_slot",
+        lambda *_args, **_kwargs: invalid_registration,
+    )
+    source = PostgreSQLRawRunEnvelopeSourceAdapter(
+        execution_material=_MaterialArchive(material),
+        sea_sessions=_sessions,
+        verification=_verification(case),
+        database_clock=lambda _session: verified_at,
+    )
+    with pytest.raises(ObservationAdapterVerificationError, match="could not assemble"):
+        source.load_raw_run(
+            quest_id=binding.action.quest_id,
+            action_sha256=binding.action.object_sha256,
+            scientific_slot_id=case.authorization.message.scientific_slot_id,
+        )
+
+    late_registration = ScientificExecutionAuthorizationWrite.from_contract(
+        case.authorization,
+        registered_at=material.qualification_admitted_at,
+    )
+    monkeypatch.setattr(
+        adapters_module,
+        "get_scientific_execution_authorization_by_slot",
+        lambda *_args, **_kwargs: late_registration,
+    )
+    with pytest.raises(ObservationAdapterVerificationError, match="not preregistered"):
+        source.load_raw_run(
             quest_id=binding.action.quest_id,
             action_sha256=binding.action.object_sha256,
             scientific_slot_id=case.authorization.message.scientific_slot_id,
