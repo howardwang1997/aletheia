@@ -76,8 +76,8 @@
     "service_mutator_call_graph_sha256": "13e491fdfcf7637e3ee2652a465eb9e119126e1360f379985cf628bf38138f5f",
     "service_boundary_limit": "This mechanically freezes statically declared aletheia.memory.service imports and imported-name uses across aletheia and operational scripts in module and nested lexical scopes. It does not claim to discover arbitrary dynamic imports or direct ORM, SQL, filesystem or external-system mutations; those are handled by separate reviewed surface baselines.",
     "writer_surface_usage_scheme": "ast_all_scope_import_alias_instance_scope_v2",
-    "writer_surface_usage_count": 376,
-    "writer_surface_call_graph_sha256": "3094679b879bafb39d872bb1534b018af079fc5f3a33a169eeca17e0f3a6aa77",
+    "writer_surface_usage_count": 377,
+    "writer_surface_call_graph_sha256": "1340fa71408daa116bcd3252ea5527e903bca57ee69f23852e53f97ee124068c",
     "allowed_legacy_caller_scope": "Every current aletheia-package caller must be covered by allowed_legacy_callers. Operational scripts are fully frozen in call_sites and may be omitted from the post-cutover application allowlist.",
     "shared_generic_writer_implementations": {
       "aletheia.observations.store._append_exact": {
@@ -109,7 +109,6 @@
       "jobs.durable_queue": "PR-5 controller adapters receive the authority-neutral DurableTaskQueuePort, so their caller-owned enqueue_in_session uses cannot resolve to the legacy concrete queue class statically; the exact controller callers and concrete _enqueue ORM scopes remain frozen separately.",
       "execution.qualification_authority": "PR-4b composes the runtime-v2 allocator entrypoints through one node adapter, while deployment enrollment and compatibility-only entrypoints remain uncalled surfaces; all composed callers, private ORM bindings and direct ORM mutation scopes are frozen separately.",
       "execution.transactional_outbox": "PR-4b composes the immutable runtime-v2 terminal intent writers but retains the uncalled v1 compatibility writer and has no dispatcher; exact callers and direct ORM mutation scopes are frozen separately.",
-      "observations.continuation_receipt": "PR-5 defines the exact append-only continuation store, but production ControllerStepExecutionPort composition is deliberately still absent; the local vertical-cut fixture exercises this surface directly.",
       "research_store.transactional_outbox": "The authority-minimal PostgreSQLResearchKernelOutbox caller-owned publication surface is composed by the controller dispatcher; the full-store transaction-owning mark_outbox_published wrapper remains an explicit uncalled compatibility surface."
     },
     "direct_file_sink_scheme": "ast_reviewed_direct_file_sink_v1",
@@ -3782,7 +3781,12 @@
         "module": "aletheia.observations.store",
         "symbol": "record_continuation_receipt"
       },
-      "call_sites": [],
+      "call_sites": [
+        {
+          "module": "aletheia.research_controller.continuation_step",
+          "symbol": "DurableContinuationAssessmentService.derive_and_register"
+        }
+      ],
       "storage_target": "postgres.observations_persistence.research_continuation_receipts",
       "mutation_kind": "append_only_graph_scoped_continuation_projection",
       "scientific_semantics": "Retains the exact graph-scoped follow-up, refinement, fork, activation, or terminal projection derived from one admitted observation. It is recoverable controller state; only a separately authorized Kernel command may enact it.",
@@ -3792,13 +3796,18 @@
       "target_owner": "aletheia.observations.store.record_continuation_receipt",
       "target_command_or_object": "ContinuationReceiptWrite",
       "migration_mode": "retain_append_only_recovery_projection",
-      "allowed_legacy_callers": [],
+      "allowed_legacy_callers": [
+        {
+          "module": "aletheia.research_controller.continuation_step",
+          "symbol": "DurableContinuationAssessmentService.derive_and_register"
+        }
+      ],
       "dual_write_policy": "none",
       "cutover_pr": "PR-5",
       "golden_fixture": null,
       "status": "authoritative_new_owner",
       "post_cutover_legacy_mode": "not_applicable_new_authority",
-      "blocker": "The production ControllerStepExecutionPort continuation adapter is intentionally not composed; only the local vertical fixture invokes this store.",
+      "blocker": "The continuation step adapter and two-audit durable service exist, but the production assessor/RPC and artifact-receipt custody, database principal/ACL, controller-manifest policy binding, worker runtime factory, and process-kill campaign remain uncommissioned.",
       "exception_expiry": null
     }
   ]

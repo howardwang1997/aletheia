@@ -36,9 +36,10 @@ from aletheia.protocols.compiler import (
 )
 from aletheia.protocols.schemas import ProtocolCompilationResult
 from aletheia.research_controller.continuation import (
-    ContinuationDisposition,
     ContinuationReceipt,
-    PredictionFit,
+    continuation_assessment_source_sha256,
+    derive_continuation_v2,
+    project_admitted_scientific_observation,
 )
 from aletheia.research_controller.contracts import (
     CompilationDisposition,
@@ -50,7 +51,11 @@ from aletheia.research_controller.contracts import (
     controller_task_spec,
 )
 from aletheia.research_kernel.reducer import ActionLifecycle, ActionSnapshot
-from aletheia.research_kernel.schemas import EventType, ObservationIncorporatedPayload
+from aletheia.research_kernel.schemas import (
+    EventType,
+    ObservationIncorporatedPayload,
+    ResearchEvent,
+)
 from aletheia.research_store.store import ResearchKernelStore, ResearchReplayAudit
 
 
@@ -290,11 +295,21 @@ def _continuation_contract(
     action: ActionSnapshot,
     admission: ObservationAdmissionWrite,
     committed_admission: CommittedObservationAdmission,
-    incorporation: ObservationIncorporatedPayload,
+    incorporation_event: ResearchEvent,
+    compilation_write: ProtocolCompilationWrite,
     compilation_request: ProtocolCompilationRequest,
+    validation_write: ObservationValidationReceiptWrite,
 ) -> ContinuationReceipt:
     try:
         receipt = ContinuationReceipt.model_validate(write.receipt_json)
+        incorporation = incorporation_event.payload
+        if not isinstance(incorporation, ObservationIncorporatedPayload):
+            raise ValueError("continuation source event is not an observation incorporation")
+        validation = committed_admission.message.decision.message.committed_validation_receipt
+        observation = project_admitted_scientific_observation(
+            incorporation=incorporation,
+            committed_validation=validation,
+        )
     except (TypeError, ValueError) as exc:
         raise ControllerRecoveryError("persisted continuation receipt is invalid") from exc
     protocol = compilation_request.protocol
@@ -303,39 +318,61 @@ def _continuation_contract(
         raise ControllerRecoveryError(
             "continuation receipt lacks graph-scoped F9-v2 world-model custody"
         )
-    active_hypotheses = tuple(
-        sorted(
-            item.hypothesis_sha256
-            for item in world_model.hypotheses
-            if item.lifecycle.value == "active"
+    try:
+        expected_receipt = derive_continuation_v2(
+            world_model=world_model,
+            observation=observation,
+            assessments=receipt.assessments,
+            assessment_provenance=receipt.assessment_provenance,
         )
-    )
-    assessed_hypotheses = tuple(item.hypothesis_sha256 for item in receipt.assessments)
-    predictions_by_hash = {item.prediction_sha256: item for item in world_model.predictions}
-    authorization = committed_admission.message.decision.message.committed_validation_receipt.message.receipt.message.raw_run.scientific_authorization.message
-    artifact_binding = authorization.scientific_observation_artifact_binding
-    predictions_match_observation = all(
-        (prediction := predictions_by_hash.get(assessment.prediction_sha256)) is not None
-        and prediction.hypothesis_sha256 == assessment.hypothesis_sha256
-        and prediction.observable_spec_sha256 == artifact_binding.observable.observable_sha256
-        and prediction.measurement_protocol_sha256 == protocol.method.method_contract_sha256
-        and prediction.outcome_space_sha256 == protocol.analysis_plan.outcome_space_sha256
-        for assessment in receipt.assessments
-    )
-    missing = set(active_hypotheses) - set(assessed_hypotheses)
-    extra = set(assessed_hypotheses) - set(active_hypotheses)
-    if missing:
-        expected_disposition = ContinuationDisposition.REDESIGN_OBSERVABLE
-        expected_reason_codes = ("active_hypothesis_prediction_missing",)
-    elif any(item.prediction_fit is PredictionFit.INDETERMINATE for item in receipt.assessments):
-        expected_disposition = ContinuationDisposition.REDESIGN_OBSERVABLE
-        expected_reason_codes = ("prediction_fit_indeterminate",)
-    elif all(item.prediction_fit is PredictionFit.OUT_OF_SUPPORT for item in receipt.assessments):
-        expected_disposition = ContinuationDisposition.HYPOTHESIS_SET_FORK_REQUIRED
-        expected_reason_codes = ("all_active_hypotheses_out_of_support",)
-    else:
-        expected_disposition = ContinuationDisposition.READY
-        expected_reason_codes = ("active_hypothesis_retains_support",)
+        expected_write = ContinuationReceiptWrite.from_contract(
+            expected_receipt,
+            quest_id=write.quest_id,
+            action_sha256=write.action_sha256,
+            observation=observation,
+            recorded_at=write.recorded_at,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ControllerRecoveryError(
+            "continuation receipt cannot be rederived from durable authority"
+        ) from exc
+    provenance = receipt.assessment_provenance
+    provenance_is_exact = True
+    if provenance is not None:
+        validation_message = validation.message.receipt.message
+        authorization = validation_message.raw_run.scientific_authorization.message
+        campaign = validation_message.validation_campaign_projection
+        if campaign is None:
+            raise ControllerRecoveryError(
+                "continuation assessment provenance lacks its validation campaign"
+            )
+        excluded_principals = {
+            authorization.action_protocol_binding.action.proposed_by_principal_id,
+            authorization.action_protocol_binding.action_proposed_event.principal_id,
+            authorization.action_protocol_binding.action_authorized_event.principal_id,
+            authorization.authorized_by_principal_id,
+            authorization.validator_principal_id,
+            authorization.admission_principal_id,
+            authorization.qualification_grant.message.authorized_by_principal_id,
+            validation_message.raw_run.accepted_terminal_submission.accepted_by_principal_id,
+        }
+        expected_source = continuation_assessment_source_sha256(
+            quest_id=write.quest_id,
+            action_sha256=write.action_sha256,
+            scientific_slot_id=write.scientific_slot_id,
+            incorporation_event_sha256=incorporation_event.event_sha256,
+            world_model_snapshot_sha256=world_model.world_model_sha256,
+            observation_projection_sha256=observation.projection_sha256,
+            compilation_sha256=compilation_write.compilation_sha256,
+            committed_validation_receipt_sha256=validation_write.committed_receipt_sha256,
+            validation_campaign_projection_sha256=campaign.projection_sha256,
+            committed_admission_sha256=admission.committed_admission_sha256,
+        )
+        provenance_is_exact = (
+            provenance.assessment_source_sha256 == expected_source
+            and provenance.assessed_by_principal_id not in excluded_principals
+            and incorporation_event.committed_at <= provenance.assessed_at <= write.recorded_at
+        )
     if (
         write.quest_id != action.action_ref.quest_id
         or write.action_sha256 != action.action_ref.object_sha256
@@ -349,12 +386,9 @@ def _continuation_contract(
         or write.disposition != receipt.disposition.value
         or receipt.world_model_snapshot_sha256 != incorporation.source_world_model_sha256
         or receipt.world_model_snapshot_sha256 != world_model.world_model_sha256
-        or assessed_hypotheses != tuple(sorted(set(assessed_hypotheses)))
-        or not active_hypotheses
-        or bool(extra)
-        or not predictions_match_observation
-        or receipt.disposition is not expected_disposition
-        or receipt.reason_codes != expected_reason_codes
+        or receipt != expected_receipt
+        or write != expected_write
+        or not provenance_is_exact
     ):
         raise ControllerRecoveryError(
             "continuation receipt was rebound from its admitted observation"
@@ -664,8 +698,10 @@ class PostgreSQLControllerRecoveryAdapter:
                     action=action,
                     admission=admission,
                     committed_admission=admitted_contract,
-                    incorporation=incorporation_payload,
+                    incorporation_event=matching_events[0],
+                    compilation_write=compilation,
                     compilation_request=compilation_request,
+                    validation_write=validation,
                 )
 
             try:

@@ -140,10 +140,12 @@ The three proposal steps now have a proposal-only source implementation with exa
 re-audit, bounded provider drafts, and write-once unsigned-command custody. They still need a
 commissioned provider endpoint and an independent Kernel command authority. The protocol compiler
 now has a two-audit, policy-pinned, append-only step service, but its production provider/RPC,
-receipt custody, ACL, recovery-policy composition, and worker factory remain open. The continuation
-step service also remains open. See
-[ADR 0058](architecture/0058-durable-powerless-action-proposal-steps.md) and
-[ADR 0059](architecture/0059-durable-protocol-compilation-step.md).
+receipt custody, ACL, recovery-policy composition, and worker factory remain open. Continuation now
+has its own two-audit service, mechanically reconstructed observation identity, pinned assessor
+policy, and durable provenance; its production RPC, assessment-artifact byte custody, ACL and worker
+composition remain open. See [ADR 0058](architecture/0058-durable-powerless-action-proposal-steps.md),
+[ADR 0059](architecture/0059-durable-protocol-compilation-step.md), and
+[ADR 0060](architecture/0060-durable-continuation-assessment-step.md).
 
 PR-7c closes the source-code terminal verification/composition gap. The read-only PostgreSQL ACL,
 filesystem/key custody, supervisor invocation, and live process-kill behavior must still be proven

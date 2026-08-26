@@ -40,8 +40,8 @@ from aletheia.research_controller.contracts import (
 from aletheia.research_controller.continuation import (
     HypothesisPredictionAssessment,
     PredictionFit,
-    ScientificObservationProjection,
     derive_continuation_v2,
+    project_admitted_scientific_observation,
 )
 from aletheia.research_controller.recovery import (
     ControllerRecoveryError,
@@ -991,21 +991,9 @@ def test_restart_rebuilds_complete_admitted_continuation_chain(
         incorporated_event_type=EventType.OBSERVATION_INCORPORATED.value,
     )
     predictions = tuple(sorted(world_model.predictions, key=lambda item: item.hypothesis_sha256))
-    artifact_binding = case.authorization.message.scientific_observation_artifact_binding
-    observation = ScientificObservationProjection(
-        scientific_slot_id=payload.scientific_slot_id,
-        committed_admission_sha256=payload.committed_admission_sha256,
-        scientific_observation_sha256=payload.scientific_observation_sha256,
-        source_world_model_sha256=payload.source_world_model_sha256,
-        outcome=validation.message.outcome,
-        observable_spec_sha256=artifact_binding.observable.observable_sha256,
-        measurement_protocol_sha256=(
-            binding.compilation_request.protocol.method.method_contract_sha256
-        ),
-        outcome_space_sha256=(
-            binding.compilation_request.protocol.analysis_plan.outcome_space_sha256
-        ),
-        observed_outcome_sha256="5" * 64,
+    observation = project_admitted_scientific_observation(
+        incorporation=payload,
+        committed_validation=committed_validation,
     )
     assessments = tuple(
         HypothesisPredictionAssessment(

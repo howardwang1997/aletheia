@@ -21,18 +21,23 @@ from aletheia.research_controller.contracts import (
     plan_recovery_tick,
 )
 from aletheia.research_controller.continuation import (
+    OBSERVED_OUTCOME_IDENTITY_POLICY_SHA256,
+    ContinuationAssessmentProvenance,
     ContinuationDisposition,
     ContinuationReceipt,
     HypothesisPredictionAssessment,
     PredictionFit,
     ScientificObservationProjection,
+    continuation_assessment_source_sha256,
     continuation_to_action_kind,
     derive_continuation_v2,
+    project_admitted_scientific_observation,
 )
 
 __all__ = [
     "CONTROLLER_TASK_TYPE",
     "CompilationDisposition",
+    "ContinuationAssessmentProvenance",
     "ControllerRecoveryProjection",
     "ControllerStep",
     "ControllerTickPlan",
@@ -41,6 +46,7 @@ __all__ = [
     "ContinuationDisposition",
     "ContinuationReceipt",
     "HypothesisPredictionAssessment",
+    "OBSERVED_OUTCOME_IDENTITY_POLICY_SHA256",
     "PredictionFit",
     "ResearchControllerLaunchReceipt",
     "ResearchControllerLaunchRequest",
@@ -48,8 +54,10 @@ __all__ = [
     "ResearchControllerRegistration",
     "ResearchControllerTaskInput",
     "ScientificObservationProjection",
+    "continuation_assessment_source_sha256",
     "continuation_to_action_kind",
     "controller_task_spec",
     "derive_continuation_v2",
     "plan_recovery_tick",
+    "project_admitted_scientific_observation",
 ]
