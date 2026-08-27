@@ -297,11 +297,7 @@ def test_audit_and_replay_reads_enforce_the_frozen_program_scope(api_fixture) ->
 
 
 def test_old_legacy_url_is_gone_and_explicit_legacy_url_remains(api_fixture) -> None:
-    production_paths = {
-        path
-        for route in production_app.routes
-        if isinstance(path := getattr(route, "path", None), str)
-    }
+    production_paths = set(production_app.openapi()["paths"])
     assert "/research-graph/quests" not in production_paths
     assert "/legacy/research-graph/quests" in production_paths
     assert "/research-kernel/programs/{program_id}/quests/{quest_id}/commands" in production_paths

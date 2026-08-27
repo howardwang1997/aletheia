@@ -56,8 +56,8 @@ jobs:
           conda run -n aletheia ruff check --config pyproject.toml aletheia tests
       - name: Test backend
         run: |
-          install -d -m 700 "${GITHUB_WORKSPACE}/.pytest-ci"
-          conda run -n aletheia pytest -q --basetemp="${GITHUB_WORKSPACE}/.pytest-ci"
+          sudo install -d -o "$(id -u)" -g "$(id -g)" -m 700 /opt/aletheia-ci-pytest
+          conda run -n aletheia pytest -q --basetemp=/opt/aletheia-ci-pytest
 
   frontend:
     runs-on: ubuntu-24.04

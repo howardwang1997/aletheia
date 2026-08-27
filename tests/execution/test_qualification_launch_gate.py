@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -269,8 +270,11 @@ def test_gate_rejects_rebound_stale_or_unsafe_authority(
         verify_launch(**scope)  # type: ignore[arg-type]
 
 
-def test_workload_executable_is_rehashed_from_one_open_descriptor() -> None:
-    executable = Path(os.path.realpath(os.sys.executable))
+def test_workload_executable_is_rehashed_from_one_open_descriptor(tmp_path: Path) -> None:
+    source = Path(os.path.realpath(os.sys.executable))
+    executable = tmp_path / "qualified-workload"
+    shutil.copyfile(source, executable)
+    executable.chmod(0o700)
     digest = hashlib.sha256(executable.read_bytes()).hexdigest()
 
     descriptor = _open_verified_workload(executable, digest)
