@@ -57,11 +57,12 @@ admission is forbidden.
 PR-8g now supplies the next ordered source stage: it publishes the exact process configs and
 private keys, creates/adopts the owner plus two restricted PostgreSQL peer roles, and atomically
 applies/revalidates the rendered ACL while all five units remain absent. It has not been run on a
-target host. PR-8h must add the concrete observer/campaign runner and execute the real
-Linux/systemd/rootful-Docker/loop/ext4/PostgreSQL process-kill campaign before any host can be
-called deployable.
+target host. PR-8h now supplies the concrete observer/campaign runner, but the real
+Linux/systemd/rootful-Docker/loop/ext4/PostgreSQL process-kill campaign still has to execute before
+any host can be called deployable.
 
 See [ADR 0079](architecture/0079-disabled-qualification-host-bootstrap.md), the
 [PR-8g authority commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), the
+[PR-8h target campaign guide](PR8H_QUALIFICATION_TARGET_CAMPAIGN.md), the
 [PR-8e terminal-outbox guide](PR8E_QUALIFICATION_TERMINAL_OUTBOX_FACTORY.md), and the
 [PR-4b deployment guide](PR4B_LOCAL_EXECUTION_COMPOSITION.md).

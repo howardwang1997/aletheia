@@ -22,6 +22,7 @@ from aletheia.execution.oci_deployment import (
     DurableDeadlineWatchdogService,
     ImmutableOCIImageLaunchGateVerifier,
     LoopbackOutputQuotaController,
+    LoopbackOutputQuotaProvisionerClient,
     LoopbackOutputQuotaProvisioningService,
     OCIImageAttestationError,
     OCIOutputQuotaError,
@@ -41,7 +42,7 @@ from aletheia.execution.runtime_v2_contracts import (
     MINIMUM_LOOP_OUTPUT_FILESYSTEM_BYTES,
     OutputQuotaProvisioningReceipt,
 )
-from aletheia.execution.schemas import canonical_json_bytes
+from aletheia.execution.schemas import canonical_json_bytes, canonical_sha256
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_oci_runtime import (  # noqa: E402
@@ -314,6 +315,50 @@ def test_mountinfo_parser_requires_closed_linux_shape() -> None:
     }
     with pytest.raises(OCIOutputQuotaError, match="unparseable"):
         LoopbackOutputQuotaController._parse_mountinfo("malformed")  # noqa: SLF001
+
+
+def test_root_service_health_attestations_bind_peer_boot_and_deployment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    quota = object.__new__(LoopbackOutputQuotaProvisionerClient)
+    quota._deployment = SimpleNamespace(deployment_sha256=H0)  # noqa: SLF001
+    quota_response = {
+        "schema": "aletheia.loopback_output_quota_health_response.v1",
+        "deployment_sha256": H0,
+        "service_pid": 123,
+        "service_boot_id": "boot.health",
+        "managed_by_systemd": True,
+    }
+    monkeypatch.setattr(quota, "_request", lambda request: (quota_response, 123))
+    monkeypatch.setattr(quota, "_current_boot_id", lambda: "boot.health")
+    assert quota.verify_service_health() == canonical_sha256(quota_response)
+
+    policy = _policy(tmp_path / "policy")
+    watchdog = SystemdDeadlineWatchdogController(
+        policy=policy,
+        deployment=_watchdog_deployment(tmp_path, policy),
+    )
+    watchdog_response = {
+        "schema": "aletheia.systemd_oci_watchdog_response.v1",
+        "operation": "health",
+        "deployment_sha256": watchdog._deployment.deployment_sha256,  # noqa: SLF001
+        "service_pid": 456,
+        "service_boot_id": "boot.health",
+        "managed_by_systemd": True,
+        "evidence_sha256": None,
+        "job_sha256": None,
+        "terminal_decision": None,
+        "cleanup_quiescence_record_sha256": None,
+        "cleanup_container_id": None,
+    }
+    monkeypatch.setattr(watchdog, "_request", lambda request: watchdog_response)
+    monkeypatch.setattr(watchdog, "_current_boot_id", lambda: "boot.health")
+    assert watchdog.verify_service_health() == canonical_sha256(watchdog_response)
+
+    quota_response["service_pid"] = 999
+    with pytest.raises(OCIOutputQuotaError, match="health differs"):
+        quota.verify_service_health()
 
 
 def test_quota_controller_constructor_requires_private_pinned_journal(tmp_path: Path) -> None:

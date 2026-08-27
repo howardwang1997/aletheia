@@ -409,6 +409,26 @@ def test_install_happy_path_and_exact_retry_are_idempotent() -> None:
     assert len(host.targets) == 6
 
 
+def test_public_receipt_verifier_reconstructs_plan_and_rejects_rebinding() -> None:
+    request = _request()
+    receipt = installer.install_qualification_service_files(
+        request,
+        _FakeHost(),
+        clock=_clock(),
+    )
+    plan = installer.verify_qualification_installation_receipt(request, receipt)
+    assert plan.plan_sha256 == receipt.plan_sha256
+
+    rebound = receipt.model_copy(
+        update={"receipt_id": None, "request_sha256": _sha("foreign-request")}
+    )
+    with pytest.raises(
+        installer.QualificationInstallationError,
+        match="differs from its request or plan",
+    ):
+        installer.verify_qualification_installation_receipt(request, rebound)
+
+
 @pytest.mark.parametrize("ordinal", tuple(range(6)))
 def test_crash_after_each_artifact_publish_resumes_exactly_once(ordinal: int) -> None:
     request = _request()

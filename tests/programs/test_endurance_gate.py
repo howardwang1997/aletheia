@@ -1087,13 +1087,22 @@ def test_accelerated_end_to_end_acceptance_passes_without_claiming_72h(tmp_path:
         program=program,
         campaigns=campaigns,
     )
+    # Graph transitions intentionally linearize with PostgreSQL time.  Derive the synthetic
+    # checkpoint clock after seeding so a slow CI worker cannot move the pivot beyond the first
+    # observation, while retaining a bounded maximum gap and a 30-second logical run.
+    first_checkpoint_at = max(
+        base + timedelta(seconds=10),
+        evidence.structural_pivots[0].occurred_at + timedelta(milliseconds=1),
+    )
+    second_checkpoint_at = first_checkpoint_at + timedelta(seconds=10)
+    completed_at = second_checkpoint_at + timedelta(seconds=10)
     manifest = prepare_endurance_gate_manifest(
         gate_key=f"accelerated-complete-{seed}",
         quest_id=quest.node_id,
         evidence_class=EnduranceEvidenceClass.ACCELERATED_ENGINEERING,
         required_duration_seconds=30,
         checkpoint_interval_seconds=10,
-        maximum_checkpoint_gap_seconds=10,
+        maximum_checkpoint_gap_seconds=300,
         prerequisite_fault_campaign_id=live_fault.campaign_id,
         harness_code_sha256=_sha(f"{seed}:complete-harness"),
         environment_manifest_sha256=_sha(f"{seed}:complete-environment"),
@@ -1104,13 +1113,13 @@ def test_accelerated_end_to_end_acceptance_passes_without_claiming_72h(tmp_path:
         gate.object_id,
         evidence,
         _endurance_context(seed, "complete-checkpoint-1"),
-        now=base + timedelta(seconds=10),
+        now=first_checkpoint_at,
     )
     store.append_checkpoint(
         gate.object_id,
         EnduranceCheckpointEvidence(),
         _endurance_context(seed, "complete-checkpoint-2"),
-        now=base + timedelta(seconds=20),
+        now=second_checkpoint_at,
     )
     store.finalize(
         gate.object_id,
@@ -1125,9 +1134,9 @@ def test_accelerated_end_to_end_acceptance_passes_without_claiming_72h(tmp_path:
             evidence_sha256s=(_sha(f"{seed}:complete-efficiency"),),
             assessor_code_sha256=_sha(f"{seed}:complete-efficiency-code"),
             assessed_by="harness:efficiency",
-            assessed_at=base + timedelta(seconds=26),
+            assessed_at=completed_at - timedelta(seconds=4),
         ),
-        now=base + timedelta(seconds=30),
+        now=completed_at,
     )
     report = store.get(gate.object_id).report
     assert report is not None

@@ -19,7 +19,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -37,6 +37,7 @@ from aletheia.execution.assignment_contracts import (
 )
 from aletheia.execution.qualification_deployment import (
     EXPECTED_EXECUTION_SCHEMA_REVISION,
+    PostgreSQLNonExecutionRoutineOwnerObservation,
     QualificationDeploymentSpecV1,
     postgresql_role_privileges_sha256,
     qualification_postgresql_peer_database_url,
@@ -1211,6 +1212,20 @@ def _postgresql_intent(
         application_role_connection_limit=request.application_role_connection_limit,
         acl_sha256=plan.postgresql_acl_sha256,
         schema_revision=spec.expected_schema_revision,
+    )
+
+
+def qualification_postgresql_commissioning_intent(
+    request: QualificationAuthorityCommissioningRequestV1,
+) -> QualificationPostgreSQLCommissioningIntent:
+    """Rebuild the exact PostgreSQL intent for independent read-only observation."""
+
+    frozen = QualificationAuthorityCommissioningRequestV1.model_validate(
+        request.model_dump(mode="python")
+    )
+    return _postgresql_intent(
+        frozen,
+        build_qualification_authority_commissioning_plan(frozen),
     )
 
 
@@ -2712,6 +2727,111 @@ class LinuxQualificationAuthorityCommissioningHost:
         finally:
             engine.dispose()
 
+    def observe_non_execution_public_routine_owners(
+        self,
+        intent: QualificationPostgreSQLCommissioningIntent,
+    ) -> tuple[PostgreSQLNonExecutionRoutineOwnerObservation, ...]:
+        """Enumerate the full immutable owner baseline outside the execution namespace."""
+
+        intent = QualificationPostgreSQLCommissioningIntent.model_validate(
+            intent.model_dump(mode="python")
+        )
+        expected_intent = qualification_postgresql_commissioning_intent(self.request)
+        if intent != expected_intent:
+            raise QualificationAuthorityCommissioningError(
+                "PostgreSQL owner observation intent differs from request"
+            )
+        engine = create_engine(self._database_url(intent), pool_pre_ping=True, future=True)
+        try:
+            with engine.connect() as connection, connection.begin():
+                connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+                self._admin_and_schema(connection, intent)
+                self._require_server_identity(connection)
+                rows = connection.execute(
+                    text(
+                        """
+                        SELECT CASE routine.prokind
+                                 WHEN 'f' THEN 'function'
+                                 WHEN 'p' THEN 'procedure'
+                               END AS routine_kind,
+                               routine.proname AS routine_name,
+                               ARRAY(
+                                 SELECT pg_catalog.format_type(argument.type_oid, NULL)
+                                   FROM unnest(routine.proargtypes::oid[])
+                                        WITH ORDINALITY AS argument(type_oid, ordinal)
+                                  ORDER BY argument.ordinal
+                               ) AS identity_argument_types,
+                               owner.rolname AS owner_role
+                          FROM pg_catalog.pg_proc AS routine
+                          JOIN pg_catalog.pg_namespace AS namespace
+                            ON namespace.oid = routine.pronamespace
+                          JOIN pg_catalog.pg_roles AS owner ON owner.oid = routine.proowner
+                         WHERE namespace.nspname = 'public'
+                           AND routine.prokind IN ('f', 'p')
+                           AND left(routine.proname, :prefix_length) <> :prefix
+                         ORDER BY routine_kind, routine_name,
+                                  identity_argument_types, owner_role
+                        """
+                    ),
+                    {
+                        "prefix": self.request.installation_request.deployment_spec.postgresql_execution_routine_name_prefix,
+                        "prefix_length": len(
+                            self.request.installation_request.deployment_spec.postgresql_execution_routine_name_prefix
+                        ),
+                    },
+                ).mappings()
+                return tuple(
+                    PostgreSQLNonExecutionRoutineOwnerObservation(
+                        routine_kind=row["routine_kind"],
+                        routine_schema="public",
+                        routine_name=row["routine_name"],
+                        identity_argument_types=tuple(row["identity_argument_types"]),
+                        owner_role=row["owner_role"],
+                    )
+                    for row in rows
+                )
+        except QualificationAuthorityCommissioningError:
+            raise
+        except SQLAlchemyError as exc:
+            raise QualificationAuthorityCommissioningError(
+                "PostgreSQL public-routine owners could not be observed"
+            ) from exc
+        finally:
+            engine.dispose()
+
+    def observe_postgresql_clock(
+        self,
+        intent: QualificationPostgreSQLCommissioningIntent,
+    ) -> datetime:
+        """Read one transaction-local database wall-clock sample through the pinned admin path."""
+
+        intent = QualificationPostgreSQLCommissioningIntent.model_validate(
+            intent.model_dump(mode="python")
+        )
+        if intent != qualification_postgresql_commissioning_intent(self.request):
+            raise QualificationAuthorityCommissioningError(
+                "PostgreSQL clock observation intent differs from request"
+            )
+        engine = create_engine(self._database_url(intent), pool_pre_ping=True, future=True)
+        try:
+            with engine.connect() as connection, connection.begin():
+                connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+                self._admin_and_schema(connection, intent)
+                value = connection.execute(text("SELECT pg_catalog.clock_timestamp()")).scalar_one()
+                if not isinstance(value, datetime) or value.utcoffset() != timedelta(0):
+                    raise QualificationAuthorityCommissioningError(
+                        "PostgreSQL clock sample is not timezone-aware UTC"
+                    )
+                return value
+        except QualificationAuthorityCommissioningError:
+            raise
+        except SQLAlchemyError as exc:
+            raise QualificationAuthorityCommissioningError(
+                "PostgreSQL clock could not be observed"
+            ) from exc
+        finally:
+            engine.dispose()
+
 
 def _load_request_file(path: Path) -> QualificationAuthorityCommissioningRequestV1:
     payload, _observation = _fresh_file(
@@ -2794,6 +2914,7 @@ __all__ = [
     "commission_qualification_authority",
     "finalize_qualification_deployment_spec",
     "main",
+    "qualification_postgresql_commissioning_intent",
     "verify_qualification_authority_commissioning_receipt",
 ]
 

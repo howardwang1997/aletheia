@@ -43,10 +43,14 @@ source-composition gates. PR-8f now supplies a separate disabled-only principal/
 and PR-8g supplies the config/key/ACL commissioning workflow. Neither stage has run on a target
 host; the final manifest and disabled units have not been installed.
 
+PR-8h now supplies the independent observer and destructive campaign runner. Its local contract
+tests do not change the fact that no target-host installation or campaign receipt exists.
+
 The Darwin unit/fault tests exercise the pure state machine and a non-root atomic-file primitive;
 they do not execute the concrete root/systemd adapter and are not target-host evidence.
 
 See [architecture decision 0075](architecture/0075-disabled-qualification-file-installer.md), the
 [PR-8g authority commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), the
+[PR-8h target campaign guide](PR8H_QUALIFICATION_TARGET_CAMPAIGN.md), the
 [PR-8a runner guide](PR8A_QUALIFICATION_SERVICE_RUNNERS.md), and the
 [PR-4b deployment guide](PR4B_LOCAL_EXECUTION_COMPOSITION.md).

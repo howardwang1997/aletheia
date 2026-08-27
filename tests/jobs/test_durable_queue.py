@@ -352,13 +352,21 @@ def test_real_worker_process_kill_is_recovered_after_restart(queue):
     script = "\n".join(
         (
             "import os",
+            "import time",
             "from aletheia.jobs import DurableTaskQueue",
             "q=DurableTaskQueue(principal='killed-child')",
+            "lease=None",
+            "for _ in range(100):",
             (
-                "lease=q.claim(worker_id='killed-worker',"
+                "    lease=q.claim(worker_id='killed-worker',"
                 "worker_manifest_sha256='f'*64,"
                 f"task_types=['{spec.task_type}'])"
             ),
+            "    if lease is not None:",
+            "        break",
+            "    time.sleep(0.01)",
+            "if lease is None:",
+            "    raise RuntimeError('exact queued task remained unavailable')",
             "print(lease.model_dump_json(), flush=True)",
             "os._exit(23)",
         )
