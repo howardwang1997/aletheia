@@ -51,7 +51,9 @@ jobs:
       - name: Audit Python dependencies
         run: conda run -n aletheia pip-audit --local
       - name: Lint Python
-        run: conda run -n aletheia ruff check aletheia tests
+        run: |
+          conda run -n aletheia ruff --version
+          conda run -n aletheia ruff check --config pyproject.toml aletheia tests
       - name: Test backend
         run: conda run -n aletheia pytest -q
 
