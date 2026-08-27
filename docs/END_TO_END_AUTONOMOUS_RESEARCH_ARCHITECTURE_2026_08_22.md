@@ -1547,8 +1547,11 @@ Docker 使用 pathname bind 而非 open fd，因此同 UID host peer、host root
 认证：PR-8a 已补五个 one-role runner 及 systemd `ExecStart` 的 exact manifest SHA pin；PR-8b 仅能以
 explicit opt-in、append-only crash journal 安装 exact manifest/disabled units 并执行 pinned daemon-reload。
 PR-8c/8d/8e 已补齐三个 root-side 及 node/outbox 五项 factories；PR-8f 又补 disabled-only principal/root
-bootstrap 与 node/outbox 的 exact local PostgreSQL peer URL，但尚未在 target host 执行，且仍无 config/key/ACL
-commissioning、concrete observer、frozen manifest instance 或 campaign runner，
+bootstrap 与 node/outbox 的 exact local PostgreSQL peer URL。PR-8g 继续闭合 bootstrap-receipt 到 final
+manifest/config/key/ACL 的 crash-replayable commissioning：bootstrap 使用显式 unfinalized-manifest sentinel，
+final spec 只允许替换两项 manifest digest，三把 key 在发布前机械核 public identity，五份 config 绑定 live
+inode，三项 PostgreSQL roles/owner/ACL 在 unshadowed peer HBA 前提下同事务提交。两阶段均尚未在 target host
+执行，且仍无 concrete observer、已安装 frozen manifest instance 或 campaign runner，
 exact campaign 也从未跑过，因此当前明确 nondeployable。代码中的 installed-manifest 类型只是从签名 live
 observation 派生 evidence 的 schema，不是已部署事实。`OutputQuotaProvisioningReceipt` 是 privileged local root service 的 trusted-local
 evidence，不是独立 remote attestation；watchdog 是 single-threaded inspect loop，
@@ -2025,7 +2028,10 @@ root daemon 也新增 exact live-verification operation。**PR-8e** 已补齐 no
 闭合。**PR-8f** 已实现第一阶段 disabled-only host bootstrap：固定两项 locked Linux/PostgreSQL peer
 identity、Docker group、`/run/postgresql` socket 与十五项 empty custody roots，并以 append-only journal
 收敛 crash retry；该代码尚未在 target host 执行，也不发布 config/key、不创建 PostgreSQL role/ACL、
-不安装或启动 unit。下一项顺序工作是完成 pinned config/key/ACL commissioning，再进入真实 image/host qualification 与
+不安装或启动 unit。**PR-8g** 已完成下一阶段 source workflow：从 bootstrap receipt finalise 唯一 manifest，
+顺序发布三把 public-identity-verified key 与五份 canonical config，并在 exact local-peer HBA 下同事务创建/
+复核三项 PostgreSQL role、database owner 与 rendered ACL；当前同样未在 target host 执行，且 unit 必须始终
+absent。下一项顺序工作是 PR-8b disabled install 后的 concrete observer 与真实 image/host qualification、
 process-kill PostgreSQL campaign，而不是扩张
 controller authority。checkpoint 与 external reconciliation
 仍需独立 typed contracts，不能由 generic retry 猜测。

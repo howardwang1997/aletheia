@@ -41,6 +41,9 @@ _SHA256_PATTERN = r"^[0-9a-f]{64}$"
 _LINUX_NAME_PATTERN = r"^[a-z_][a-z0-9_-]{0,31}$"
 _MAX_JOURNAL_BYTES = 16 * 1024 * 1024
 _OPT_IN_CONFIRMATION = "BOOTSTRAP_QUALIFICATION_ONLY_DISABLED"
+QUALIFICATION_UNFINALIZED_MANIFEST_SHA256 = hashlib.sha256(
+    b"aletheia.qualification.unfinalized-service-manifest.v1\x00"
+).hexdigest()
 _DIRECTORY_PURPOSES = (
     "artifact_store",
     "input_materialization_journal",
@@ -278,14 +281,19 @@ class QualificationBootstrapRequestV1(ExecutionModel):
         if len({item.path for item in tools}) != len(tools):
             raise ValueError("bootstrap tools must be distinct")
         if (
-            self.node_user_name != spec.postgresql_allocator_role
+            spec.deployment_manifest_sha256 != QUALIFICATION_UNFINALIZED_MANIFEST_SHA256
+            or spec.expected_deployment_manifest.reviewed_sha256
+            != QUALIFICATION_UNFINALIZED_MANIFEST_SHA256
+            or self.node_user_name != spec.postgresql_allocator_role
             or self.outbox_user_name != spec.postgresql_outbox_role
             or self.node_user_name == self.outbox_user_name
             or self.docker_group_expected_member_names != (self.node_user_name,)
             or self.postgresql_socket_directory.path != QUALIFICATION_POSTGRESQL_SOCKET_DIRECTORY
             or not _is_utc(self.requested_at)
         ):
-            raise ValueError("bootstrap principals or PostgreSQL peer binding differ from spec")
+            raise ValueError(
+                "bootstrap principals or PostgreSQL peer binding differ, or manifest sentinel differs"
+            )
         deployment_targets = tuple(Path(value) for value in guarded[:-1])
         if any(
             _overlap(Path(self.postgresql_socket_directory.path), target)
@@ -467,6 +475,63 @@ def build_qualification_bootstrap_plan(
         principals=_principals(request),
         directories=_directories(request),
     )
+
+
+def verify_qualification_bootstrap_receipt(
+    request: QualificationBootstrapRequestV1,
+    receipt: QualificationBootstrapReceiptV1,
+) -> QualificationBootstrapPlanV1:
+    """Rebuild every non-secret link in one completed bootstrap receipt."""
+
+    request = QualificationBootstrapRequestV1.model_validate(request.model_dump(mode="python"))
+    receipt = QualificationBootstrapReceiptV1.model_validate(receipt.model_dump(mode="python"))
+    plan = build_qualification_bootstrap_plan(request)
+    if (
+        receipt.deployment_id != plan.deployment_id
+        or receipt.request_id != request.request_id
+        or receipt.request_sha256 != canonical_sha256(request)
+        or receipt.plan_id != plan.plan_id
+        or receipt.plan_sha256 != plan.plan_sha256
+        or receipt.completed_at < request.requested_at
+    ):
+        raise QualificationBootstrapError("bootstrap receipt differs from its request or plan")
+    for principal, completion in zip(
+        plan.principals,
+        receipt.principal_completions,
+        strict=True,
+    ):
+        intent = QualificationBootstrapPrincipalIntent(
+            request_id=request.request_id,
+            plan_sha256=plan.plan_sha256,
+            principal=principal,
+        )
+        if (
+            completion.request_id != request.request_id
+            or completion.plan_sha256 != plan.plan_sha256
+            or completion.intent_sha256 != intent.intent_sha256
+            or completion.application.observation.principal != principal
+            or completion.completed_at < request.requested_at
+        ):
+            raise QualificationBootstrapError("bootstrap principal receipt chain differs")
+    for directory, completion in zip(
+        plan.directories,
+        receipt.directory_completions,
+        strict=True,
+    ):
+        intent = QualificationBootstrapDirectoryIntent(
+            request_id=request.request_id,
+            plan_sha256=plan.plan_sha256,
+            directory=directory,
+        )
+        if (
+            completion.request_id != request.request_id
+            or completion.plan_sha256 != plan.plan_sha256
+            or completion.intent_sha256 != intent.intent_sha256
+            or completion.application.observation.directory != directory
+            or completion.completed_at < request.requested_at
+        ):
+            raise QualificationBootstrapError("bootstrap directory receipt chain differs")
+    return plan
 
 
 class QualificationBootstrapPrincipalObservation(ExecutionModel):
@@ -811,6 +876,7 @@ def bootstrap_qualification_host(
                 if host.observe_directory(directory) != completion.application.observation:
                     raise QualificationBootstrapError("bootstrapped directory changed")
             host.verify_pinned_inputs(completed=True)
+            verify_qualification_bootstrap_receipt(request, existing)
             return existing
 
         principal_completions: list[QualificationBootstrapPrincipalCompletion] = []
@@ -908,6 +974,7 @@ def bootstrap_qualification_host(
             directory_completions=tuple(directory_completions),
             completed_at=monitored_now(),
         )
+        verify_qualification_bootstrap_receipt(request, receipt)
         host.write_journal_once(request_root / "receipt.json", canonical_json_bytes(receipt))
         inject("after_receipt")
         return receipt
@@ -1507,6 +1574,7 @@ def run_qualification_bootstrap_cli(argv: Sequence[str] | None = None) -> int:
 
 __all__ = [
     "LinuxQualificationBootstrapHost",
+    "QUALIFICATION_UNFINALIZED_MANIFEST_SHA256",
     "QualificationBootstrapDirectoryApplication",
     "QualificationBootstrapDirectoryCompletion",
     "QualificationBootstrapDirectoryObservation",
@@ -1525,4 +1593,5 @@ __all__ = [
     "build_qualification_bootstrap_plan",
     "load_qualification_bootstrap_request",
     "run_qualification_bootstrap_cli",
+    "verify_qualification_bootstrap_receipt",
 ]

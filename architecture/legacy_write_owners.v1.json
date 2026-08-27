@@ -23,8 +23,8 @@
       "aletheia/research_kernel": "new_authority",
       "aletheia/research_store": "new_authority_adapter"
     },
-    "legacy_source_ast_file_count": 318,
-    "legacy_source_ast_graph_sha256": "c526c2dcc7f7005c9f6f2229d84cc00b700bcb5017d11ef1680db9aebdc6661d",
+    "legacy_source_ast_file_count": 320,
+    "legacy_source_ast_graph_sha256": "2224fe0579542dbf0c6969fbe6366658f2f38fe33c94ed1030ef86757a1764b6",
     "legacy_source_ast_review_limit": "This normalized-AST backstop freezes every parseable Python file in the declared legacy production roots after explicitly removing new-authority and migration-tooling roots. It catches added, removed or semantically changed legacy Python source even when a specialized sink scanner does not recognize the syntax; comments, formatting, generated runtime code, non-Python launchers and the explicitly excluded roots are outside this digest.",
     "migration_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "migration_source_ast_roots": ["aletheia/migration", "migrations"],
@@ -112,9 +112,9 @@
       "research_store.transactional_outbox": "The authority-minimal PostgreSQLResearchKernelOutbox caller-owned publication surface is composed by the controller dispatcher; the full-store transaction-owning mark_outbox_published wrapper remains an explicit uncalled compatibility surface."
     },
     "direct_file_sink_scheme": "ast_reviewed_direct_file_sink_v1",
-    "direct_file_sink_scope_count": 186,
-    "direct_file_sink_call_count": 208,
-    "direct_file_sink_graph_sha256": "34db1dacc25055e207dff077b1e066d5189c0996053413429079dd4b4096b684",
+    "direct_file_sink_scope_count": 190,
+    "direct_file_sink_call_count": 212,
+    "direct_file_sink_graph_sha256": "0aba10032a7944548f9fe5d178299cd827fefad411179a6c270254a011b76df8",
     "direct_file_sink_review_limit": "The baseline covers direct Path/open/os.write, archive-open modes, atomic replace, serializer, dataframe and plotting file sinks across the declared aletheia, deployed docker-worker and recursive operational-script roots. Indirect library-internal writes, arbitrary dynamic dispatch and external systems remain separate reviewed boundaries.",
     "direct_file_sink_profiles": {
       "scientific_artifact": {
@@ -229,6 +229,14 @@
         "cutover_pr": "PR-8",
         "dual_write_policy": "none"
       },
+      "qualification_authority_commissioning_state": {
+        "authority_class": "operational_state",
+        "current_owner_rule": "sink_module",
+        "target_owner": "aletheia.qualification_authority_commissioning.LinuxQualificationAuthorityCommissioningHost",
+        "migration_mode": "retain_opt_in_disabled_config_key_acl_commissioning",
+        "cutover_pr": "PR-8",
+        "dual_write_policy": "none"
+      },
       "qualification_terminal_spool": {
         "authority_class": "operational_state",
         "current_owner_rule": "sink_module",
@@ -311,6 +319,7 @@
       "aletheia.orchestrator.": "operational_workspace",
       "aletheia.programs.": "scientific_program",
       "aletheia.qualification_bootstrap": "qualification_bootstrap_state",
+      "aletheia.qualification_authority_commissioning": "qualification_authority_commissioning_state",
       "aletheia.qualification_installer": "qualification_installation_state",
       "aletheia.research_controller.action_proposal_service": "controller_proposal_custody",
       "aletheia.research_controller.continuation_assessor": "controller_assessment_custody",
@@ -336,9 +345,9 @@
       "scripts.typed_": "scientific_artifact"
     },
     "direct_external_sink_scheme": "ast_reviewed_event_provider_process_sink_v1",
-    "direct_external_sink_scope_count": 124,
-    "direct_external_sink_call_count": 209,
-    "direct_external_sink_graph_sha256": "07252f2b43c12a6b88c5b5ee43d0cfaae225c52de0273deeffaab83ed888e4c0",
+    "direct_external_sink_scope_count": 125,
+    "direct_external_sink_call_count": 210,
+    "direct_external_sink_graph_sha256": "9d6dbc5cae4ab8728de34ff66e45c232ffc17947a634d3d44075620350dcc3c6",
     "direct_external_sink_review_limit": "The baseline covers AST-visible EventBus-style publish calls, outbound HTTP mutation calls, known model-provider and GitHub mutation methods, and subprocess launch calls across the declared aletheia, deployed docker-worker and recursive operational-script roots. It does not claim to discover dynamically dispatched SDK methods, hidden library network I/O, non-Python launchers, or runtime monkeypatching.",
     "direct_external_sink_profiles": {
       "event.": {
@@ -383,11 +392,22 @@
       "aletheia.notify.feishu|provider.http_post": ["feishu.notify"]
     },
     "direct_orm_mutation_scheme": "ast_import_bound_orm_mutation_v2",
-    "direct_orm_mutation_scope_count": 274,
-    "direct_orm_mutation_call_count": 436,
-    "direct_orm_mutation_graph_sha256": "911973c545078dfbd0a16e391b9c6eed098b2c312b91a3693973f5334eaf61c5",
+    "direct_orm_mutation_scope_count": 275,
+    "direct_orm_mutation_call_count": 438,
+    "direct_orm_mutation_graph_sha256": "5553d93b2e27ea32219fd160028a9e22a8bc21d556d498ce434707a09b1e2eef",
     "direct_orm_authority_source": "Every resolved table is classified by the postgres storage_target/storage_targets records in this inventory; non-constructor mutation scopes must match a declared legacy_entrypoint or additional_writers symbol.",
-    "direct_orm_review_limit": "This static AST baseline resolves explicit imports/re-exports and aliases for every declared SQLAlchemy model; ORM class self/cls bindings; model construction; query/get/select/scalar result flows; attribute, setattr and relationship mutation; explicit aliases of recognized setattr/session/query/table/SQLAlchemy mutation callables; session add/delete/merge/bulk APIs; SQLAlchemy/table/query insert/update/delete; literal mutating SQL; and fail-closed f-string/binary SQL edges. It does not claim to resolve dynamic imports, reflection-generated models, runtime monkeypatching, helper-returned model instances, dynamically selected mutator callables, or dynamic SQL hidden behind an untyped variable; any semantic change in legacy Python remains guarded by the separate normalized-AST source freeze.",
+    "direct_orm_review_limit": "This static AST baseline resolves explicit imports/re-exports and aliases for every declared SQLAlchemy model; ORM class self/cls bindings; model construction; query/get/select/scalar result flows; attribute, setattr and relationship mutation; explicit aliases of recognized setattr/session/query/table/SQLAlchemy mutation callables; session add/delete/merge/bulk APIs; SQLAlchemy/table/query insert/update/delete; literal mutating SQL; and fail-closed f-string/binary SQL edges. The sole declared dynamic SQL scope is the SHA-pinned qualification role/database/ACL DDL transaction below; it is operational host commissioning rather than an ORM-table writer. It does not claim to resolve dynamic imports, reflection-generated models, runtime monkeypatching, helper-returned model instances, dynamically selected mutator callables, or other dynamic SQL hidden behind an untyped variable; any semantic change in legacy Python remains guarded by the separate normalized-AST source freeze.",
+    "direct_dynamic_sql_writers": [
+      {
+        "module": "aletheia.qualification_authority_commissioning",
+        "symbol": "LinuxQualificationAuthorityCommissioningHost.commission_postgresql",
+        "operation": "unresolved_dynamic_sql",
+        "authority_class": "operational_state",
+        "target_owner": "aletheia.qualification_authority_commissioning.LinuxQualificationAuthorityCommissioningHost",
+        "mutation_scope": "three exact roles, database owner, former-admin database grant removal, and rendered qualification ACL in one transaction",
+        "cutover_pr": "PR-8"
+      }
+    ],
     "protected_orm_reference_scheme": "ast_explicit_import_and_reference_scope_v1",
     "protected_orm_reference_scope_count": 13,
     "protected_orm_reference_call_count": 27,

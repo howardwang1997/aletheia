@@ -2563,6 +2563,9 @@ def test_every_direct_file_sink_has_a_frozen_reviewed_authority_profile() -> Non
     assert any(row["module"].startswith("scripts.capability_") for row in graph)
     assert prefix_profiles["aletheia.qualification_installer"] == "qualification_installation_state"
     assert prefix_profiles["aletheia.qualification_bootstrap"] == "qualification_bootstrap_state"
+    assert prefix_profiles["aletheia.qualification_authority_commissioning"] == (
+        "qualification_authority_commissioning_state"
+    )
     assert {
         (
             "aletheia.qualification_installer",
@@ -2572,6 +2575,28 @@ def test_every_direct_file_sink_has_a_frozen_reviewed_authority_profile() -> Non
         (
             "aletheia.qualification_installer",
             "LinuxQualificationInstallationHost._publish_exact",
+            "write",
+        ),
+    } <= {(row["module"], row["symbol"], row["sink"]) for row in graph}
+    assert {
+        (
+            "aletheia.qualification_authority_commissioning",
+            "LinuxQualificationAuthorityCommissioningHost.publish_artifact",
+            "replace",
+        ),
+        (
+            "aletheia.qualification_authority_commissioning",
+            "LinuxQualificationAuthorityCommissioningHost.publish_artifact",
+            "write",
+        ),
+        (
+            "aletheia.qualification_authority_commissioning",
+            "LinuxQualificationAuthorityCommissioningHost.write_journal_once",
+            "replace",
+        ),
+        (
+            "aletheia.qualification_authority_commissioning",
+            "LinuxQualificationAuthorityCommissioningHost.write_journal_once",
             "write",
         ),
     } <= {(row["module"], row["symbol"], row["sink"]) for row in graph}
@@ -2636,11 +2661,21 @@ def test_direct_orm_mutations_are_frozen_classified_and_owned_by_declared_writer
     assert sum(row["count"] for row in graph) == policy["direct_orm_mutation_call_count"]
     canonical = json.dumps(graph, sort_keys=True, separators=(",", ":")).encode("utf-8")
     assert hashlib.sha256(canonical).hexdigest() == policy["direct_orm_mutation_graph_sha256"]
-    assert all(row["table"] != "<dynamic>" for row in graph), graph
+    dynamic_rows = [row for row in graph if row["table"] == "<dynamic>"]
+    declared_dynamic = policy["direct_dynamic_sql_writers"]
+    assert {(row["module"], row["symbol"], row["operation"]) for row in dynamic_rows} == {
+        (row["module"], row["symbol"], row["operation"]) for row in declared_dynamic
+    }
+    assert len(declared_dynamic) == 1
+    assert declared_dynamic[0]["authority_class"] == "operational_state"
+    assert declared_dynamic[0]["target_owner"].startswith("aletheia.")
+    assert declared_dynamic[0]["cutover_pr"] == "PR-8"
 
     writes_by_table = _postgres_inventory_by_table(inventory)
     assert writes_by_table
     for row in graph:
+        if row["table"] == "<dynamic>":
+            continue
         classified = writes_by_table[row["table"]]
         assert classified, row
         authority_profiles = {
@@ -2887,6 +2922,7 @@ def test_direct_external_sinks_are_frozen_classified_and_event_callers_declared(
         ("aletheia.compute.local", "process.Popen"),
         ("aletheia.qualification_installer", "process.run"),
         ("aletheia.qualification_bootstrap", "process.run"),
+        ("aletheia.qualification_authority_commissioning", "process.run"),
     }
     observed = {(row["module"], row["sink"]) for row in graph}
     assert required_outbound_sinks <= observed

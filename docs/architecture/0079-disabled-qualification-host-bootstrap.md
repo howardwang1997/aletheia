@@ -37,6 +37,7 @@ Later stages receive frozen UID/GID, directory inode and peer-auth assumptions i
 them incidentally while handling secrets or SQL. A root operator must still pre-provision the
 bootstrap journal parent, root-controlled target parents, Docker group and PostgreSQL socket.
 
-This is source-level commissioning machinery, not host evidence. Native dependency closure for the
-account tools, exact config/key publication, PostgreSQL role/ACL creation, disabled unit install,
-the independent Linux observer and the live process-kill campaign remain later gates.
+This is source-level commissioning machinery, not host evidence. PR-8g subsequently adds exact
+config/key publication and PostgreSQL role/ACL creation while keeping all units absent. Native
+dependency closure for the account tools, disabled unit install, the independent Linux observer
+and the live process-kill campaign remain later gates.
