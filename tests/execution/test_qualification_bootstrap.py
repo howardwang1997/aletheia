@@ -45,7 +45,16 @@ def _tool(path: str) -> deployment.QualificationExpectedRootExecutable:
 
 
 def _request(**updates: object) -> bootstrap.QualificationBootstrapRequestV1:
-    spec = _spec()
+    base_spec = updates.pop("deployment_spec", _spec())
+    assert isinstance(base_spec, deployment.QualificationDeploymentSpecV1)
+    spec = base_spec.model_copy(
+        update={
+            "deployment_manifest_sha256": bootstrap.QUALIFICATION_UNFINALIZED_MANIFEST_SHA256,
+            "expected_deployment_manifest": base_spec.expected_deployment_manifest.model_copy(
+                update={"reviewed_sha256": bootstrap.QUALIFICATION_UNFINALIZED_MANIFEST_SHA256}
+            ),
+        }
+    )
     values: dict[str, object] = {
         "deployment_spec": spec,
         "journal_root": "/var/lib/aletheia/bootstrap-journal",

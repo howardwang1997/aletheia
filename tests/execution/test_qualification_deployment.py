@@ -1167,7 +1167,7 @@ def test_postgresql_acl_is_deterministic_explicit_and_contains_no_secret() -> No
     second = deployment.render_postgresql_acl(spec)
     assert first == second
     assert hashlib.sha256(first).hexdigest() == (
-        "01e7fa5f68a14a473a250a413a19602ac9120445f722622413d26514cda1c8af"
+        "ece5c444d9abc39c25d637de07d26e1e6d97d9200cc5ac3c1b54f6c6bd783c85"
     )
     text = first.decode()
     assert text.count("ALTER TABLE public.") == 27
@@ -1187,6 +1187,10 @@ def test_postgresql_acl_is_deterministic_explicit_and_contains_no_secret() -> No
     assert "exact sequence catalog projection sha256" in text
     assert "owner role retains memberships" in text
     assert "pg_catalog.aclexplode" in text
+    assert text.count("pg_catalog.aclexplode(attribute.attacl)") == 2
+    assert "ARRAY[]::pg_catalog.aclitem[]" not in text
+    assert text.count("unnest(routine.proargtypes::oid[])") == 2
+    assert "pg_get_function_identity_arguments" not in text
     assert "FROM pg_catalog.pg_attribute AS attribute" in text
     assert "REVOKE %s (%I) ON TABLE public.%I FROM %s" in text
     assert 'REVOKE ALL PRIVILEGES ON DATABASE "aletheia_qualification"' in text

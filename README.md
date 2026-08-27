@@ -145,8 +145,13 @@ crash-replayable journal, and pins distinct passwordless `/run/postgresql` URLs 
 and outbox units. It has not been executed on a target host. A separate explicit PR-8b installer can atomically publish the exact
 manifest and five disabled unit files, journal crash recovery and invoke only pinned `systemctl
 daemon-reload`; it cannot create principals, apply the PostgreSQL ACL, enable/start services,
-qualify a host or admit science. This work still does not complete host commissioning, implement
-the concrete observer, or run the campaign. The exact Linux/rootful-Docker/systemd/loop/ext4/cgroup-v2/shared-
+qualify a host or admit science. PR-8g now supplies the intervening disabled authority
+commissioning stage: it finalizes only the manifest digest after live bootstrap inodes exist,
+publishes three public-identity-verified private keys and five process-bound configs, and atomically
+creates/adopts the three exact passwordless peer roles plus rendered PostgreSQL ACL. It has not been
+executed on a target host; all units remain absent and every scientific/deployment verdict remains
+false. This work still does not complete host commissioning, implement the concrete observer, or
+run the campaign. The exact Linux/rootful-Docker/systemd/loop/ext4/cgroup-v2/shared-
 mount campaign must pass before any host is called deployable. No target-host manifest instance has
 been frozen, that exact campaign has not run, and PR-4b is therefore nondeployable. PR-5 now adds
 the signed action-to-execution bridge, DB-time independent validation/admission, atomic
@@ -289,6 +294,7 @@ the [PR-2 operator guide](docs/migration/PR2_RESEARCH_EVENT_STORE.md), and the
 [PR-8d node-factory guide](docs/PR8D_QUALIFICATION_NODE_FACTORY.md), and
 [PR-8e terminal-outbox guide](docs/PR8E_QUALIFICATION_TERMINAL_OUTBOX_FACTORY.md),
 [PR-8f disabled-bootstrap guide](docs/PR8F_QUALIFICATION_HOST_BOOTSTRAP.md), plus
+[PR-8g authority-commissioning guide](docs/PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), plus
 [ADR 0056](docs/architecture/0056-independent-observation-controller-steps.md) and
 [ADR 0057](docs/architecture/0057-graph-scoped-f9-v2-validation-campaign.md), plus
 [ADR 0058](docs/architecture/0058-durable-powerless-action-proposal-steps.md), and

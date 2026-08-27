@@ -54,12 +54,14 @@ states that configs and private keys are unpublished, PostgreSQL roles and ACLs 
 systemd units are uninstalled/disabled/inactive, deployment qualification is false, and scientific
 admission is forbidden.
 
-The next ordered stage is PR-8g: publish the exact process configs and private keys, create the two
-restricted PostgreSQL peer roles, and apply/revalidate the rendered ACL while all five units remain
-disabled. PR-8h must then add the concrete observer/campaign runner and execute the real
+PR-8g now supplies the next ordered source stage: it publishes the exact process configs and
+private keys, creates/adopts the owner plus two restricted PostgreSQL peer roles, and atomically
+applies/revalidates the rendered ACL while all five units remain absent. It has not been run on a
+target host. PR-8h must add the concrete observer/campaign runner and execute the real
 Linux/systemd/rootful-Docker/loop/ext4/PostgreSQL process-kill campaign before any host can be
 called deployable.
 
 See [ADR 0079](architecture/0079-disabled-qualification-host-bootstrap.md), the
+[PR-8g authority commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), the
 [PR-8e terminal-outbox guide](PR8E_QUALIFICATION_TERMINAL_OUTBOX_FACTORY.md), and the
 [PR-4b deployment guide](PR4B_LOCAL_EXECUTION_COMPOSITION.md).
