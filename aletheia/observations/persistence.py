@@ -40,6 +40,12 @@ def _hashes(*names: str) -> str:
     return " AND ".join(_HASH_SQL.format(name=name) for name in names)
 
 
+def _postgresql_json_check(expression: str, *, name: str) -> CheckConstraint:
+    """Mirror PostgreSQL JSONB authority checks without breaking portable SQLite fixtures."""
+
+    return CheckConstraint(expression, name=name).ddl_if(dialect="postgresql")
+
+
 class ResearchControllerRegistrationRecord(Base):
     """One durable controller identity for one Quest."""
 
@@ -61,6 +67,21 @@ class ResearchControllerRegistrationRecord(Base):
         CheckConstraint(
             "controller_kind = 'research.controller.v1'",
             name="ck_rc_reg_kind",
+        ),
+        _postgresql_json_check(
+            "jsonb_typeof(registration_json) = 'object' AND "
+            "registration_json->>'schema_name' = "
+            "'aletheia.research_controller_registration' AND "
+            "registration_json->>'registration_id' = registration_id AND "
+            "registration_json->>'controller_id' = controller_id AND "
+            "registration_json->>'controller_manifest_sha256' = "
+            "controller_manifest_sha256 AND "
+            "registration_json->>'controller_principal_id' = controller_principal_id AND "
+            "registration_json->>'registered_by_principal_id' = "
+            "registered_by_principal_id AND "
+            "registration_json #>> '{launch_request,quest_id}' = quest_id AND "
+            "(registration_json->>'registered_at')::timestamptz = registered_at",
+            name="ck_rc_reg_json",
         ),
         UniqueConstraint("quest_id", name="uq_rc_reg_quest"),
         UniqueConstraint("registration_id", name="uq_rc_reg_id"),
@@ -120,6 +141,18 @@ class ResearchControllerDeliveryRecord(Base):
             "AND launch_request_sha256 IS NULL AND source_stream_version IS NULL "
             "AND execution_id IS NOT NULL AND attempt_id IS NOT NULL)",
             name="ck_rc_delivery_source_shape",
+        ),
+        _postgresql_json_check(
+            "jsonb_typeof(delivery_json) = 'object' AND "
+            "delivery_json->>'schema_name' = 'aletheia.research_controller_delivery' AND "
+            "delivery_json->>'registration_sha256' = registration_sha256 AND "
+            "delivery_json #>> '{wakeup,registration_id}' = registration_id AND "
+            "delivery_json #>> '{wakeup,quest_id}' = quest_id AND "
+            "delivery_json #>> '{wakeup,source_kind}' = source_kind AND "
+            "delivery_json #>> '{wakeup,source_key}' = source_key AND "
+            "delivery_json #>> '{wakeup,source_sha256}' = source_sha256 AND "
+            "delivery_json->>'task_id' = task_id",
+            name="ck_rc_delivery_json",
         ),
         UniqueConstraint("source_kind", "source_key", name="uq_rc_delivery_source_key"),
         UniqueConstraint("source_kind", "source_sha256", name="uq_rc_delivery_source_hash"),
@@ -240,6 +273,30 @@ class ResearchControllerDeliveryAttemptRecord(Base):
             "AND predecessor_result_sha256 IS NOT NULL "
             "AND predecessor_tick_receipt_sha256 IS NOT NULL)",
             name="ck_rcda_predecessor_shape",
+        ),
+        _postgresql_json_check(
+            "jsonb_typeof(attempt_json) = 'object' AND "
+            "attempt_json->>'schema_name' = "
+            "'aletheia.research_controller_delivery_attempt' AND "
+            "attempt_json->>'delivery_sha256' = delivery_sha256 AND "
+            "attempt_json->>'quest_id' = quest_id AND "
+            "attempt_json->>'wakeup_sha256' = wakeup_sha256 AND "
+            "attempt_json->>'controller_manifest_sha256' = controller_manifest_sha256 AND "
+            "(attempt_json->>'generation')::bigint = generation AND "
+            "attempt_json->>'kind' = kind AND attempt_json->>'task_id' = task_id AND "
+            "attempt_json->>'task_request_sha256' = task_request_sha256 AND "
+            "attempt_json->>'supersedes_task_id' IS NOT DISTINCT FROM supersedes_task_id AND "
+            "attempt_json->>'predecessor_status' IS NOT DISTINCT FROM predecessor_status AND "
+            "attempt_json->>'predecessor_terminal_category' IS NOT DISTINCT FROM "
+            "predecessor_terminal_category AND "
+            "attempt_json->>'predecessor_terminal_detail_sha256' IS NOT DISTINCT FROM "
+            "predecessor_terminal_detail_sha256 AND "
+            "attempt_json->>'predecessor_result_sha256' IS NOT DISTINCT FROM "
+            "predecessor_result_sha256 AND "
+            "attempt_json->>'predecessor_tick_receipt_sha256' IS NOT DISTINCT FROM "
+            "predecessor_tick_receipt_sha256 AND "
+            "(attempt_json->>'recorded_at')::timestamptz = recorded_at",
+            name="ck_rcda_json",
         ),
         CheckConstraint("task_id <> supersedes_task_id", name="ck_rcda_distinct_tasks"),
         UniqueConstraint(
@@ -375,6 +432,35 @@ class ResearchControllerDeliveryResolutionRecord(Base):
             "dead_letter_reason IS NULL",
             name="ck_rcdr_reason_shape",
         ),
+        _postgresql_json_check(
+            "jsonb_typeof(resolution_json) = 'object' AND "
+            "resolution_json->>'schema_name' = "
+            "'aletheia.research_controller_delivery_resolution' AND "
+            "resolution_json->>'delivery_sha256' = delivery_sha256 AND "
+            "resolution_json->>'quest_id' = quest_id AND "
+            "resolution_json->>'latest_attempt_sha256' = latest_attempt_sha256 AND "
+            "(resolution_json->>'exhausted_generation')::bigint = exhausted_generation AND "
+            "(resolution_json->>'max_delivery_generation')::bigint = max_delivery_generation AND "
+            "resolution_json->>'terminal_task_id' = terminal_task_id AND "
+            "resolution_json->>'terminal_task_status' = terminal_task_status AND "
+            "resolution_json->>'terminal_category' = terminal_category AND "
+            "resolution_json->>'terminal_detail_sha256' IS NOT DISTINCT FROM "
+            "terminal_detail_sha256 AND "
+            "resolution_json->>'terminal_result_sha256' IS NOT DISTINCT FROM "
+            "terminal_result_sha256 AND "
+            "resolution_json->>'tick_receipt_sha256' IS NOT DISTINCT FROM "
+            "tick_receipt_sha256 AND "
+            "resolution_json->>'step_disposition' IS NOT DISTINCT FROM step_disposition AND "
+            "(resolution_json->>'signed_kernel_command_committed')::boolean "
+            "IS NOT DISTINCT FROM signed_kernel_command_committed AND "
+            "(resolution_json->>'independent_observation_admission_committed')::boolean "
+            "IS NOT DISTINCT FROM independent_observation_admission_committed AND "
+            "resolution_json->>'controller_manifest_sha256' = controller_manifest_sha256 AND "
+            "resolution_json->>'disposition' = disposition AND "
+            "resolution_json->>'dead_letter_reason' IS NOT DISTINCT FROM dead_letter_reason AND "
+            "(resolution_json->>'resolved_at')::timestamptz = resolved_at",
+            name="ck_rcdr_json",
+        ),
         UniqueConstraint("delivery_sha256", name="uq_rcdr_delivery"),
         UniqueConstraint("terminal_task_id", name="uq_rcdr_terminal_task"),
         ForeignKeyConstraint(
@@ -445,6 +531,16 @@ class ResearchProtocolCompilationRecord(Base):
             "(protocol_version > 1 AND revision_parent_version = protocol_version - 1 "
             "AND revision_parent_sha256 IS NOT NULL))",
             name="ck_rpc_revision",
+        ),
+        _postgresql_json_check(
+            "jsonb_typeof(request_json) = 'object' AND "
+            "jsonb_typeof(result_json) = 'object' AND "
+            "request_json #>> '{protocol,protocol_id}' = protocol_id AND "
+            "(request_json #>> '{protocol,version}')::bigint = protocol_version AND "
+            "request_json #>> '{protocol,revision_parent_sha256}' "
+            "IS NOT DISTINCT FROM revision_parent_sha256 AND "
+            "result_json #>> '{receipt,protocol_sha256}' = protocol_sha256",
+            name="ck_rpc_json",
         ),
         UniqueConstraint("action_sha256", name="uq_rpc_action"),
         UniqueConstraint("request_sha256", name="uq_rpc_request"),
@@ -539,6 +635,21 @@ class ResearchScientificExecutionAuthorizationRecord(Base):
             "AND expires_at < observation_admission_deadline",
             name="ck_rsea_time",
         ),
+        _postgresql_json_check(
+            "jsonb_typeof(authorization_json) = 'object' AND "
+            "authorization_json->>'schema_name' = "
+            "'aletheia.scientific_execution_authorization' AND "
+            "authorization_json #>> '{message,scientific_slot_id}' = "
+            "scientific_slot_id AND "
+            "authorization_json #>> "
+            "'{message,action_protocol_binding,action,quest_id}' = quest_id AND "
+            "authorization_json #>> "
+            "'{message,qualification_bundle,intent,execution_id}' = execution_id AND "
+            "authorization_json #>> "
+            "'{message,qualification_bundle,intent,infrastructure_attempt,"
+            "infrastructure_attempt_id}' = attempt_id",
+            name="ck_rsea_json",
+        ),
         UniqueConstraint("scientific_slot_id", name="uq_rsea_slot"),
         UniqueConstraint("execution_id", name="uq_rsea_execution"),
         UniqueConstraint("attempt_id", name="uq_rsea_attempt"),
@@ -622,6 +733,13 @@ class ResearchObservationIssuanceChallengeRecord(Base):
             "issued_at <= recorded_at AND recorded_at < expires_at "
             "AND expires_at <= observation_admission_deadline",
             name="ck_roic_time",
+        ),
+        _postgresql_json_check(
+            "jsonb_typeof(challenge_json) = 'object' AND "
+            "challenge_json #>> '{message,scientific_slot_id}' = scientific_slot_id AND "
+            "challenge_json #>> '{message,nonce_sha256}' = nonce_sha256 AND "
+            "challenge_json #>> '{message,row_scope}' = row_scope",
+            name="ck_roic_json",
         ),
         UniqueConstraint("nonce_sha256", name="uq_roic_nonce"),
         UniqueConstraint(
@@ -731,6 +849,16 @@ class ResearchObservationValidationReceiptRecord(Base):
             "validated_at <= registered_at AND registered_at <= committed_at",
             name="ck_rovr_time",
         ),
+        _postgresql_json_check(
+            "jsonb_typeof(committed_receipt_json) = 'object' AND "
+            "committed_receipt_json->>'schema_name' = "
+            "'aletheia.committed_observation_validation_receipt' AND "
+            "committed_receipt_json #>> '{message,validation_receipt_sha256}' = "
+            "validation_receipt_sha256 AND "
+            "committed_receipt_json #>> '{message,issuance_challenge_sha256}' = "
+            "issuance_challenge_sha256",
+            name="ck_rovr_json",
+        ),
         UniqueConstraint("validation_receipt_sha256", name="uq_rovr_receipt"),
         UniqueConstraint("scientific_slot_id", name="uq_rovr_slot"),
         UniqueConstraint("raw_run_sha256", name="uq_rovr_raw_run"),
@@ -835,6 +963,20 @@ class ResearchObservationAdmissionRecord(Base):
         CheckConstraint(
             "registered_at <= committed_at",
             name="ck_roa_time",
+        ),
+        _postgresql_json_check(
+            "jsonb_typeof(admission_json) = 'object' AND "
+            "admission_json->>'schema_name' = "
+            "'aletheia.committed_observation_admission' AND "
+            "admission_json #>> '{message,decision_sha256}' = decision_sha256 AND "
+            "admission_json #>> '{message,committed_validation_receipt_sha256}' = "
+            "committed_validation_receipt_sha256 AND "
+            "admission_json #>> "
+            "'{message,exact_registered_validation_receipt_sha256}' = "
+            "validation_receipt_sha256 AND "
+            "admission_json #>> '{message,issuance_challenge_sha256}' = "
+            "issuance_challenge_sha256",
+            name="ck_roa_json",
         ),
         UniqueConstraint("scientific_slot_id", name="uq_roa_phase1_slot"),
         UniqueConstraint("decision_sha256", name="uq_roa_decision"),
@@ -983,6 +1125,18 @@ class ResearchContinuationReceiptRecord(Base):
         CheckConstraint(
             "disposition IN ('ready','redesign_observable','hypothesis_set_fork_required')",
             name="ck_rcr_disposition",
+        ),
+        _postgresql_json_check(
+            "jsonb_typeof(receipt_json) = 'object' AND "
+            "receipt_json->>'schema_name' = "
+            "'aletheia.graph_scoped_continuation_receipt' AND "
+            "receipt_json->>'scientific_slot_id' = scientific_slot_id AND "
+            "receipt_json->>'world_model_snapshot_sha256' = "
+            "world_model_snapshot_sha256 AND "
+            "receipt_json->>'observation_projection_sha256' = "
+            "observation_projection_sha256 AND "
+            "receipt_json->>'disposition' = disposition",
+            name="ck_rcr_json",
         ),
         UniqueConstraint("scientific_slot_id", name="uq_rcr_slot"),
         UniqueConstraint("action_sha256", name="uq_rcr_action"),

@@ -102,6 +102,59 @@ def test_pr5_exact_source_constraints_match_migration_and_orm_metadata():
     assert all(name in migration for name in expected)
 
 
+def test_pr5_json_authority_checks_match_migration_and_orm_metadata():
+    from sqlalchemy import CheckConstraint
+    from sqlalchemy.dialects import postgresql, sqlite
+    from sqlalchemy.schema import CreateTable
+
+    from aletheia.observations.persistence import (
+        ResearchContinuationReceiptRecord,
+        ResearchControllerDeliveryAttemptRecord,
+        ResearchControllerDeliveryRecord,
+        ResearchControllerDeliveryResolutionRecord,
+        ResearchControllerRegistrationRecord,
+        ResearchObservationAdmissionRecord,
+        ResearchObservationIssuanceChallengeRecord,
+        ResearchObservationValidationReceiptRecord,
+        ResearchProtocolCompilationRecord,
+        ResearchScientificExecutionAuthorizationRecord,
+    )
+
+    expected = {
+        ResearchControllerRegistrationRecord: "ck_rc_reg_json",
+        ResearchControllerDeliveryRecord: "ck_rc_delivery_json",
+        ResearchControllerDeliveryAttemptRecord: "ck_rcda_json",
+        ResearchControllerDeliveryResolutionRecord: "ck_rcdr_json",
+        ResearchProtocolCompilationRecord: "ck_rpc_json",
+        ResearchScientificExecutionAuthorizationRecord: "ck_rsea_json",
+        ResearchObservationIssuanceChallengeRecord: "ck_roic_json",
+        ResearchObservationValidationReceiptRecord: "ck_rovr_json",
+        ResearchObservationAdmissionRecord: "ck_roa_json",
+        ResearchContinuationReceiptRecord: "ck_rcr_json",
+    }
+    migration = (
+        Path(__file__).parents[1]
+        / "migrations"
+        / "versions"
+        / "20260828_0027_scientific_controller_persistence.py"
+    ).read_text()
+
+    for record_type, constraint_name in expected.items():
+        matching = {
+            constraint.name
+            for constraint in record_type.__table__.constraints
+            if isinstance(constraint, CheckConstraint) and constraint.name == constraint_name
+        }
+        assert matching == {constraint_name}
+        assert f"CONSTRAINT {constraint_name} CHECK" in str(
+            CreateTable(record_type.__table__).compile(dialect=postgresql.dialect())
+        )
+        assert constraint_name not in str(
+            CreateTable(record_type.__table__).compile(dialect=sqlite.dialect())
+        )
+        assert f"CONSTRAINT {constraint_name} CHECK" in migration
+
+
 def test_alembic_environment_registers_pr5_orm_metadata():
     source = (Path(__file__).parents[1] / "migrations" / "env.py").read_text()
     assert "import aletheia.observations.persistence" in source
