@@ -32,7 +32,7 @@ jobs:
           --health-retries 20
     env:
       ALETHEIA_DATABASE_URL: postgresql+psycopg://aletheia:aletheia-ci@localhost:5432/aletheia_ci
-      PYTHONPATH: "."
+      PYTHONPATH: ${{ github.workspace }}
       PYTHONHASHSEED: "0"
     steps:
       - uses: actions/checkout@v7
@@ -55,7 +55,9 @@ jobs:
           conda run -n aletheia ruff --version
           conda run -n aletheia ruff check --config pyproject.toml aletheia tests
       - name: Test backend
-        run: conda run -n aletheia pytest -q
+        run: |
+          install -d -m 700 "${GITHUB_WORKSPACE}/.pytest-ci"
+          conda run -n aletheia pytest -q --basetemp="${GITHUB_WORKSPACE}/.pytest-ci"
 
   frontend:
     runs-on: ubuntu-24.04

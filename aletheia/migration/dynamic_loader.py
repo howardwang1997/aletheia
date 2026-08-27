@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import importlib
 import importlib.util
+from importlib import import_module as _import_module
 import inspect
 from collections.abc import Iterator
 from functools import cached_property, partial
@@ -239,7 +239,7 @@ def resolve_guarded_dynamic_attribute(module_name: str, attribute_name: str) -> 
         raise ValueError(
             "raw legacy driver handlers are forbidden; register aletheia.scheduler.durable"
         )
-    value = getattr(importlib.import_module(module_name), attribute_name)
+    value = getattr(_import_module(module_name), attribute_name)
     _assert_not_legacy_driver_object(value)
     return value
 

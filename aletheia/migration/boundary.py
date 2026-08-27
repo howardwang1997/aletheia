@@ -247,7 +247,7 @@ _FILESYSTEM_API_ESCAPE = "<filesystem-api>"
 DEFAULT_AUDITED_DYNAMIC_LOADER_SOURCES = (
     (
         "aletheia.migration.dynamic_loader",
-        "3e6e22f2e7f1e6f4adc4e2c083de1e836c870a16e68775f0eeee512d4ef551bc",
+        "522280ff0844c54eb1b7f73df82547850bba519afe5aee692e7d1fe8921ec0a6",
     ),
 )
 DEFAULT_AUDITED_DYNAMIC_LOADER_ESCAPE_COUNTS = (

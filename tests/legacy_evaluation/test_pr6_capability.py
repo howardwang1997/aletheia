@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import math
 from pathlib import Path
 
 import pytest
@@ -8,7 +10,10 @@ from aletheia.legacy_evaluation.capability import (
     LegacyEvaluationCapability,
     LegacyEvaluationCapabilityError,
 )
-from aletheia.legacy_evaluation.contracts import canonical_sha256
+from aletheia.legacy_evaluation.contracts import (
+    LegacyEvaluationRawResult,
+    canonical_json_bytes,
+)
 
 from conftest import LegacyEvaluationCase, LegacyEvaluationRun, SOURCE_ROOT
 
@@ -28,15 +33,23 @@ def test_real_materials_evaluation_emits_only_raw_declared_artifacts(
         item.metric_name for item in run.case.harness.metric_projections
     }
     assert {item.legacy_kind.value for item in result.artifacts} >= {"eval", "model"}
-    assert {item.name: item.value for item in result.metrics}["mae"] == {
-        item.name: item.value for item in result.metrics
-    }["mae_lcso"]
+    metrics = {item.name: item.value for item in result.metrics}
+    assert metrics["mae"] == metrics["mae_lcso"]
+    assert metrics["rmse"] == metrics["rmse_lcso"]
+    assert metrics["r2"] == metrics["r2_lcso"]
+    assert all(math.isfinite(value) for value in metrics.values())
+    assert all(metrics[name] >= 0 for name in metrics if name.startswith(("mae", "rmse")))
+    assert metrics["mae_cv_std"] >= 0
+    assert metrics["rmse"] >= metrics["mae"]
+    assert metrics["rmse_holdout"] >= metrics["mae_holdout"]
+    assert all(metrics[name] <= 1 for name in metrics if name.startswith("r2"))
     assert {item.relative_path for item in result.artifacts} | {"raw-result.json"} == {
         child.name for child in run.output_root.iterdir()
     }
-    assert canonical_sha256(result.metrics) == (
-        "7bb0323c36f700527c580d669ce51e0d52e19cd5e4224d9d71eaeedaa712197e"
-    )
+    raw_result_bytes = (run.output_root / "raw-result.json").read_bytes()
+    assert raw_result_bytes == canonical_json_bytes(result)
+    assert LegacyEvaluationRawResult.model_validate_json(raw_result_bytes) == result
+    assert hashlib.sha256(raw_result_bytes).hexdigest() == result.raw_result_sha256
 
 
 def test_invocation_receipt_and_authorization_window_are_exact(
