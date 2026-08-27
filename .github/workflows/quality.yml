@@ -58,8 +58,9 @@ jobs:
         run: |
           ci_pytest_root="/var/lib/aletheia-ci-pytest-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           sudo install -d -o "$(id -u)" -g "$(id -g)" -m 700 "${ci_pytest_root}"
-          conda run -n aletheia python -c "from pathlib import Path; from aletheia.execution.oci_runtime import host_parent_chain_sha256; print(host_parent_chain_sha256(Path('${ci_pytest_root}/probe')))"
-          conda run -n aletheia pytest -q --basetemp="${ci_pytest_root}"
+          ci_pytest_base="${ci_pytest_root}/pytest"
+          conda run -n aletheia python -c "from pathlib import Path; from aletheia.execution.oci_runtime import host_parent_chain_sha256; print(host_parent_chain_sha256(Path('${ci_pytest_base}/probe')))"
+          conda run -n aletheia pytest -q --basetemp="${ci_pytest_base}"
 
   frontend:
     runs-on: ubuntu-24.04
