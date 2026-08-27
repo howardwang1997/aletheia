@@ -150,10 +150,13 @@ commissioning stage: it finalizes only the manifest digest after live bootstrap 
 publishes three public-identity-verified private keys and five process-bound configs, and atomically
 creates/adopts the three exact passwordless peer roles plus rendered PostgreSQL ACL. It has not been
 executed on a target host; all units remain absent and every scientific/deployment verdict remains
-false. This work still does not complete host commissioning, implement the concrete observer, or
-run the campaign. The exact Linux/rootful-Docker/systemd/loop/ext4/cgroup-v2/shared-
-mount campaign must pass before any host is called deployable. No target-host manifest instance has
-been frozen, that exact campaign has not run, and PR-4b is therefore nondeployable. PR-5 now adds
+false. PR-8h now supplies the concrete independent Linux observer and opt-in campaign runner: it
+freshly binds loaded unit bytes plus live process argv/identity/capabilities, rootful Docker,
+shared namespaces, AppArmor/image/ACL custody, and a destructive node/quota/watchdog/outbox/
+PostgreSQL recovery sequence around one pre-registered successful v2 execution. Its source and
+synthetic replay tests are complete, but the exact Linux/rootful-Docker/systemd/loop/ext4/cgroup-v2/
+shared-mount campaign has not run. No target-host manifest/campaign receipt exists, and PR-4b is
+therefore still nondeployable. PR-5 now adds
 the signed action-to-execution bridge, DB-time independent validation/admission, atomic
 `observation_incorporated` Kernel transition, `research.controller.v1` durable wakeups and
 lease/restart recovery, a pinned `/quests/{id}/launch` path, and graph-scoped typed continuation.

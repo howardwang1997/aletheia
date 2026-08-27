@@ -456,6 +456,14 @@ def _qualification_envelope(row_value: object) -> QualificationTerminalSpoolEnve
     return envelope
 
 
+def qualification_terminal_spool_envelope_from_row(
+    row_value: object,
+) -> QualificationTerminalSpoolEnvelopeV1:
+    """Rebuild one immutable v2 envelope from a read-only PostgreSQL row projection."""
+
+    return _qualification_envelope(row_value)
+
+
 def _spool_checkpoint(_phase: str, _path: Path) -> None:
     """Fault-injection seam; production deliberately performs no action."""
 
@@ -971,5 +979,6 @@ __all__ = [
     "QualificationTerminalOutboxSpool",
     "QualificationTerminalOutboxTickReceipt",
     "QualificationTerminalSpoolEnvelopeV1",
+    "qualification_terminal_spool_envelope_from_row",
     "compose_outbox_service",
 ]

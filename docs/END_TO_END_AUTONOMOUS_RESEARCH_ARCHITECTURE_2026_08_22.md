@@ -2031,9 +2031,13 @@ identity、Docker group、`/run/postgresql` socket 与十五项 empty custody ro
 不安装或启动 unit。**PR-8g** 已完成下一阶段 source workflow：从 bootstrap receipt finalise 唯一 manifest，
 顺序发布三把 public-identity-verified key 与五份 canonical config，并在 exact local-peer HBA 下同事务创建/
 复核三项 PostgreSQL role、database owner 与 rendered ACL；当前同样未在 target host 执行，且 unit 必须始终
-absent。下一项顺序工作是 PR-8b disabled install 后的 concrete observer 与真实 image/host qualification、
-process-kill PostgreSQL campaign，而不是扩张
-controller authority。checkpoint 与 external reconciliation
+absent。**PR-8h** 已补齐 concrete independent Linux observer 与 opt-in target campaign runner：签名观察
+绑定 exact loaded unit、live `/proc` process identity/argv/capability、rootful Docker、shared mount、
+AppArmor/image 与 PostgreSQL ACL；campaign 对一份已原子注册的 execution 顺序执行 node、outbox、quota、
+watchdog 与 PostgreSQL backend kill/recovery，并只从 exact v2 terminal row、durable spool 和 final
+reobservation 导出 `deployment_qualified=true`。当前只有 source 与 synthetic replay evidence，尚未在真实
+Linux target 执行，因此下一项顺序工作是完成 PR-8f→PR-8g→PR-8b target preparation 并运行/复核 PR-8h
+campaign receipt，而不是扩张 controller authority。checkpoint 与 external reconciliation
 仍需独立 typed contracts，不能由 generic retry 猜测。
 
 GPU node 的 deployment threat model 和 onboarding checklist 可以继续独立准备，但直到 PR-4b 的 target-host

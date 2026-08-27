@@ -492,6 +492,75 @@ class QualificationInstallationReceiptV1(ExecutionModel):
         return canonical_sha256(self)
 
 
+def verify_qualification_installation_receipt(
+    request: QualificationInstallationRequestV1,
+    receipt: QualificationInstallationReceiptV1,
+) -> QualificationInstallationPlanV1:
+    """Reconstruct every non-ephemeral link in one disabled installation receipt.
+
+    The two quiescence hashes intentionally remain opaque live observations: their typed values
+    are held in the crash journal and must be freshly re-observed before activation.  Everything
+    else in the receipt is derivable from the canonical request and deterministic plan.
+    """
+
+    try:
+        request = QualificationInstallationRequestV1.model_validate(
+            request.model_dump(mode="python")
+        )
+        receipt = QualificationInstallationReceiptV1.model_validate(
+            receipt.model_dump(mode="python")
+        )
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise QualificationInstallationError(
+            "qualification installation request or receipt is invalid"
+        ) from exc
+    plan = build_qualification_installation_plan(request)
+    if (
+        receipt.deployment_id != plan.deployment_id
+        or receipt.request_id != request.request_id
+        or receipt.request_sha256 != canonical_sha256(request)
+        or receipt.plan_id != plan.plan_id
+        or receipt.plan_sha256 != plan.plan_sha256
+        or receipt.completed_at < request.requested_at
+    ):
+        raise QualificationInstallationError(
+            "qualification installation receipt differs from its request or plan"
+        )
+    for artifact, completion in zip(
+        plan.artifacts,
+        receipt.artifact_completions,
+        strict=True,
+    ):
+        intent = QualificationInstallationArtifactIntent(
+            request_id=request.request_id,
+            plan_sha256=plan.plan_sha256,
+            artifact=artifact,
+        )
+        if (
+            completion.request_id != request.request_id
+            or completion.plan_sha256 != plan.plan_sha256
+            or completion.artifact_ordinal != artifact.ordinal
+            or completion.artifact_sha256 != artifact.artifact_sha256
+            or completion.intent_sha256 != intent.intent_sha256
+            or not _observation_matches_artifact(completion.installed_file, artifact)
+            or completion.installed_at < request.requested_at
+        ):
+            raise QualificationInstallationError(
+                "qualification installation artifact receipt chain differs"
+            )
+    reload_receipt = receipt.daemon_reload_receipt
+    if (
+        reload_receipt.request_id != request.request_id
+        or reload_receipt.plan_sha256 != plan.plan_sha256
+        or reload_receipt.systemctl_executable_sha256
+        != request.systemctl_executable.reviewed_sha256
+        or reload_receipt.reloaded_at < receipt.artifact_completions[-1].installed_at
+        or receipt.completed_at < reload_receipt.reloaded_at
+    ):
+        raise QualificationInstallationError("qualification daemon-reload receipt chain differs")
+    return plan
+
+
 def _artifact_payloads(
     request: QualificationInstallationRequestV1,
 ) -> tuple[tuple[QualificationInstallationArtifactV1, bytes], ...]:
@@ -1467,4 +1536,5 @@ __all__ = [
     "install_qualification_service_files",
     "load_qualification_installation_request",
     "run_qualification_installer_cli",
+    "verify_qualification_installation_receipt",
 ]

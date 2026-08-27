@@ -70,11 +70,13 @@ No target host or database was mutated at this checkpoint. The final receipt alw
 all five units remain absent, uninstalled, disabled and inactive; deployment qualification and
 scientific admission remain false. PR-8b must still install the final manifest and disabled units.
 
-PR-8h must provide the independent live observer and campaign runner, then execute the exact
-Linux/rootful-Docker/systemd/shared-mount/loop/ext4/cgroup-v2/AppArmor/PostgreSQL peer/process-kill
-campaign. In particular, unit tests and a synthetic host port do not prove OS peer login, real
-transaction rollback, key custody on the target filesystem or service restart recovery.
+PR-8h now provides the independent live observer and campaign runner, but it has not executed the
+exact Linux/rootful-Docker/systemd/shared-mount/loop/ext4/cgroup-v2/AppArmor/PostgreSQL
+peer/process-kill campaign. In particular, unit tests and a synthetic host port do not prove OS
+peer login, real transaction rollback, key custody on the target filesystem or service restart
+recovery.
 
 See [ADR 0080](architecture/0080-qualification-authority-commissioning.md), the
+[PR-8h target campaign guide](PR8H_QUALIFICATION_TARGET_CAMPAIGN.md), the
 [PR-8f bootstrap guide](PR8F_QUALIFICATION_HOST_BOOTSTRAP.md), and the
 [PR-8b disabled installer guide](PR8B_DISABLED_QUALIFICATION_INSTALLER.md).

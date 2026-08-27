@@ -3063,6 +3063,14 @@ class LoopbackOutputQuotaProvisioningService:
                 "service_pid": os.getpid(),
                 "evidence_sha256": evidence,
             }
+        elif operation == "health" and not request:
+            response = {
+                "schema": "aletheia.loopback_output_quota_health_response.v1",
+                "deployment_sha256": self._deployment.deployment_sha256,
+                "service_pid": os.getpid(),
+                "service_boot_id": self._current_boot_id(),
+                "managed_by_systemd": True,
+            }
         else:
             raise OCIOutputQuotaError("quota service request operation is not allowed")
         connection.sendall(canonical_json_bytes(response) + b"\n")
@@ -3282,6 +3290,32 @@ class LoopbackOutputQuotaProvisionerClient:
         ):
             raise OCIOutputQuotaError("quota verification response differs from exact request")
         return expected_evidence_sha256
+
+    def verify_service_health(self) -> str:
+        """Verify the root peer, boot, systemd provenance, and exact deployment identity."""
+
+        response, peer_pid = self._request({"operation": "health"})
+        if (
+            set(response)
+            != {
+                "schema",
+                "deployment_sha256",
+                "service_pid",
+                "service_boot_id",
+                "managed_by_systemd",
+            }
+            or response.get("schema") != "aletheia.loopback_output_quota_health_response.v1"
+            or response.get("deployment_sha256") != self._deployment.deployment_sha256
+            or response.get("service_pid") != peer_pid
+            or response.get("service_boot_id") != self._current_boot_id()
+            or response.get("managed_by_systemd") is not True
+        ):
+            raise OCIOutputQuotaError("quota service health differs from deployment scope")
+        return canonical_sha256(response)
+
+    @staticmethod
+    def _current_boot_id() -> str:
+        return LoopbackOutputQuotaProvisioningService._current_boot_id()
 
     def _request(self, request: Mapping[str, object]) -> tuple[dict[str, object], int]:
         payload = canonical_json_bytes(dict(request)) + b"\n"
@@ -5075,6 +5109,24 @@ class SystemdDeadlineWatchdogController:
         )
         return expected_evidence_sha256
 
+    def verify_service_health(self) -> str:
+        """Verify the root watchdog peer and its exact systemd/boot deployment."""
+
+        response = self._request({"operation": "health"})
+        self._validate_response(
+            response,
+            operation="health",
+            evidence=None,
+            expected_job_sha256=None,
+        )
+        if response.get("service_boot_id") != self._current_boot_id():
+            raise OCIWatchdogError("watchdog health response belongs to another boot")
+        return canonical_sha256(response)
+
+    @staticmethod
+    def _current_boot_id() -> str:
+        return DurableDeadlineWatchdogService._current_boot_id()
+
     def retire_and_verify_deadline_watchdog(
         self,
         *,
@@ -5207,8 +5259,8 @@ class SystemdDeadlineWatchdogController:
         response: Mapping[str, object],
         *,
         operation: str,
-        evidence: str,
-        expected_job_sha256: str,
+        evidence: str | None,
+        expected_job_sha256: str | None,
     ) -> None:
         terminal_decision = response.get("terminal_decision")
         quiescence_sha256 = response.get("cleanup_quiescence_record_sha256")

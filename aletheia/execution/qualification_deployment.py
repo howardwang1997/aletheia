@@ -2829,6 +2829,15 @@ def _expected_systemd_service_identities(
     )
 
 
+def expected_qualification_systemd_service_identities(
+    spec: QualificationDeploymentSpecV1,
+) -> tuple[QualificationSystemdServiceIdentityObservation, ...]:
+    """Return the exact effective identities a live systemd observer must prove."""
+
+    frozen = QualificationDeploymentSpecV1.model_validate(spec.model_dump(mode="python"))
+    return _expected_systemd_service_identities(frozen)
+
+
 def _service_module_matches_nested_pin(
     installed: PinnedRootFile,
     expected: QualificationExpectedRootFile,
@@ -3488,6 +3497,134 @@ def _preflight(
     )
 
 
+_DEPLOYMENT_PREFLIGHT_CHECK_NAMES = (
+    "observer_provenance_verified",
+    "observation_freshness_verified",
+    "linux_systemd_cgroup_verified",
+    "shared_mount_namespace_verified",
+    "installed_files_verified",
+    "custody_roots_verified",
+    "systemd_units_verified",
+    "postgresql_acl_verified",
+    "postgresql_schema_verified",
+    "postgresql_roles_verified",
+    "postgresql_acl_closure_verified",
+    "postgresql_clock_verified",
+    "image_layout_verified",
+    "output_quota_service_verified",
+    "deadline_watchdog_service_verified",
+    "code_identity_verified",
+)
+
+
+def verify_recorded_installed_manifest_observation(
+    manifest: QualificationInstalledDeploymentManifestV1,
+    signed_observation: SignedQualificationLinuxDeploymentObservation,
+    observer_pin: QualificationDeploymentObserverPin,
+    *,
+    verified_at: datetime,
+    strictly_after_manifest: bool = True,
+) -> QualificationDeploymentPreflight:
+    """Recompute one preflight from retained signed bytes without touching the host.
+
+    This verifies both the installed baseline and the later observation against the external key
+    pin, enforces the later observation window, and derives every check from the signed projection.
+    It is intentionally platform-independent so campaign evidence can be audited off-target.
+    """
+
+    manifest = QualificationInstalledDeploymentManifestV1.model_validate(
+        manifest.model_dump(mode="python")
+    )
+    signed = SignedQualificationLinuxDeploymentObservation.model_validate(
+        signed_observation.model_dump(mode="python")
+    )
+    observer_pin = QualificationDeploymentObserverPin.model_validate(
+        observer_pin.model_dump(mode="python")
+    )
+    _require_utc(verified_at, label="recorded deployment verification time")
+    units = render_systemd_units(manifest.spec)
+    acl = render_postgresql_acl(manifest.spec)
+    baseline_signed = manifest.installed_observation
+    baseline_ok = (
+        manifest.observer_pin_sha256 == observer_pin.pin_sha256
+        and _observer_provenance_is_valid(
+            signed=baseline_signed,
+            observer_pin=observer_pin,
+            spec=manifest.spec,
+            rendered_units=units,
+            postgresql_acl=acl,
+        )
+        and _observation_time_is_valid(
+            signed=baseline_signed,
+            observer_pin=observer_pin,
+            spec=manifest.spec,
+            checked_at=manifest.frozen_at,
+        )
+    )
+    if not baseline_ok:
+        return _preflight(
+            manifest,
+            observed_at=baseline_signed.observation.observed_at,
+            verified_at=verified_at,
+            blockers=("observer:installed-provenance-invalid",),
+            checks={name: False for name in _DEPLOYMENT_PREFLIGHT_CHECK_NAMES},
+        )
+    provenance_ok = _observer_provenance_is_valid(
+        signed=signed,
+        observer_pin=observer_pin,
+        spec=manifest.spec,
+        rendered_units=units,
+        postgresql_acl=acl,
+    )
+    freshness_ok = _observation_time_is_valid(
+        signed=signed,
+        observer_pin=observer_pin,
+        spec=manifest.spec,
+        checked_at=verified_at,
+        strictly_after=manifest.frozen_at if strictly_after_manifest else None,
+    )
+    if not provenance_ok or not freshness_ok:
+        blockers = tuple(
+            sorted(
+                blocker
+                for blocker, failed in (
+                    ("observer:provenance-invalid", not provenance_ok),
+                    ("observation:rollback-or-stale", not freshness_ok),
+                )
+                if failed
+            )
+        )
+        failed_checks = {name: False for name in _DEPLOYMENT_PREFLIGHT_CHECK_NAMES}
+        failed_checks["observer_provenance_verified"] = provenance_ok
+        failed_checks["observation_freshness_verified"] = freshness_ok
+        return _preflight(
+            manifest,
+            observed_at=signed.observation.observed_at,
+            verified_at=verified_at,
+            blockers=blockers,
+            checks=failed_checks,
+        )
+    observation = signed.observation
+    blockers, checks = _observation_blockers(
+        spec=manifest.spec,
+        observation=observation,
+        rendered_units=units,
+        postgresql_acl=acl,
+        installed_baseline=baseline_signed.observation,
+    )
+    return _preflight(
+        manifest,
+        observed_at=observation.observed_at,
+        verified_at=verified_at,
+        blockers=blockers,
+        checks={
+            "observer_provenance_verified": True,
+            "observation_freshness_verified": True,
+            **checks,
+        },
+    )
+
+
 def verify_installed_manifest(
     manifest: QualificationInstalledDeploymentManifestV1,
     observer: QualificationDeploymentObserver,
@@ -3501,24 +3638,6 @@ def verify_installed_manifest(
     observer_pin = QualificationDeploymentObserverPin.model_validate(
         observer_pin.model_dump(mode="python")
     )
-    check_names = (
-        "observer_provenance_verified",
-        "observation_freshness_verified",
-        "linux_systemd_cgroup_verified",
-        "shared_mount_namespace_verified",
-        "installed_files_verified",
-        "custody_roots_verified",
-        "systemd_units_verified",
-        "postgresql_acl_verified",
-        "postgresql_schema_verified",
-        "postgresql_roles_verified",
-        "postgresql_acl_closure_verified",
-        "postgresql_clock_verified",
-        "image_layout_verified",
-        "output_quota_service_verified",
-        "deadline_watchdog_service_verified",
-        "code_identity_verified",
-    )
     if sys.platform != "linux":
         verified_at = _monitored_utc_now()
         _require_utc(verified_at, label="monitored deployment verification time")
@@ -3527,7 +3646,7 @@ def verify_installed_manifest(
             observed_at=manifest.installed_observation.observation.observed_at,
             verified_at=verified_at,
             blockers=("host:linux-required",),
-            checks={name: False for name in check_names},
+            checks={name: False for name in _DEPLOYMENT_PREFLIGHT_CHECK_NAMES},
         )
 
     units = render_systemd_units(manifest.spec)
@@ -3556,7 +3675,7 @@ def verify_installed_manifest(
             observed_at=baseline_signed.observation.observed_at,
             verified_at=verified_at,
             blockers=("observer:installed-provenance-invalid",),
-            checks={name: False for name in check_names},
+            checks={name: False for name in _DEPLOYMENT_PREFLIGHT_CHECK_NAMES},
         )
     try:
         observed = observer.observe(spec=manifest.spec, rendered_units=units, postgresql_acl=acl)
@@ -3571,64 +3690,15 @@ def verify_installed_manifest(
             observed_at=baseline_signed.observation.observed_at,
             verified_at=verified_at,
             blockers=("observation:unavailable",),
-            checks={name: False for name in check_names},
+            checks={name: False for name in _DEPLOYMENT_PREFLIGHT_CHECK_NAMES},
         )
     verified_at = _monitored_utc_now()
     _require_utc(verified_at, label="monitored deployment verification time")
-    provenance_ok = _observer_provenance_is_valid(
-        signed=signed,
-        observer_pin=observer_pin,
-        spec=manifest.spec,
-        rendered_units=units,
-        postgresql_acl=acl,
-    )
-    freshness_ok = _observation_time_is_valid(
-        signed=signed,
-        observer_pin=observer_pin,
-        spec=manifest.spec,
-        checked_at=verified_at,
-        strictly_after=manifest.frozen_at,
-    )
-    if not provenance_ok or not freshness_ok:
-        blockers = tuple(
-            sorted(
-                blocker
-                for blocker, failed in (
-                    ("observer:provenance-invalid", not provenance_ok),
-                    ("observation:rollback-or-stale", not freshness_ok),
-                )
-                if failed
-            )
-        )
-        failed_checks = {name: False for name in check_names}
-        failed_checks["observer_provenance_verified"] = provenance_ok
-        failed_checks["observation_freshness_verified"] = freshness_ok
-        return _preflight(
-            manifest,
-            observed_at=signed.observation.observed_at,
-            verified_at=verified_at,
-            blockers=blockers,
-            checks=failed_checks,
-        )
-    observation = signed.observation
-    blockers, checks = _observation_blockers(
-        spec=manifest.spec,
-        observation=observation,
-        rendered_units=units,
-        postgresql_acl=acl,
-        installed_baseline=baseline_signed.observation,
-    )
-    checks = {
-        "observer_provenance_verified": True,
-        "observation_freshness_verified": True,
-        **checks,
-    }
-    return _preflight(
+    return verify_recorded_installed_manifest_observation(
         manifest,
-        observed_at=observation.observed_at,
+        signed,
+        observer_pin,
         verified_at=verified_at,
-        blockers=blockers,
-        checks=checks,
     )
 
 
@@ -3670,6 +3740,7 @@ __all__ = [
     "RenderedSystemdUnit",
     "SignedQualificationLinuxDeploymentObservation",
     "freeze_installed_manifest",
+    "expected_qualification_systemd_service_identities",
     "qualification_agent_implementation_sha256",
     "qualification_postgresql_peer_database_url",
     "QUALIFICATION_POSTGRESQL_SOCKET_DIRECTORY",
@@ -3679,4 +3750,5 @@ __all__ = [
     "reviewed_code_tree_manifest_sha256",
     "reviewed_native_dependency_closure_sha256",
     "verify_installed_manifest",
+    "verify_recorded_installed_manifest_observation",
 ]
