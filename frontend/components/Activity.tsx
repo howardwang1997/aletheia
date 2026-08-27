@@ -2,6 +2,94 @@
 
 import { LabEvent } from "@/lib/api";
 import { Markdown } from "@/components/Markdown";
+import type { ClaimSummary, CritiquePanelSummary, ReportSummary } from "@/lib/useSession";
+
+type DisplayValue = string | number | boolean | null | undefined;
+
+interface ThresholdSummary {
+  op?: DisplayValue;
+  threshold?: DisplayValue;
+}
+
+interface ActivityPayload {
+  accepted?: boolean;
+  amount?: DisplayValue;
+  audit_refuted?: boolean;
+  best_mae_lcso?: DisplayValue;
+  best_round?: DisplayValue;
+  branch?: DisplayValue;
+  breaches?: unknown;
+  candidates?: { experiment_type?: string; eig?: number }[];
+  cap?: DisplayValue;
+  capability?: DisplayValue;
+  claims?: { claim_type?: string; status?: string }[];
+  class?: DisplayValue;
+  computed?: boolean;
+  consensus_verdict?: DisplayValue;
+  content?: unknown;
+  continue?: boolean;
+  control_silent_if?: ThresholdSummary;
+  control_statistic?: DisplayValue;
+  cost_usd?: DisplayValue;
+  cumulative?: DisplayValue;
+  decision?: DisplayValue;
+  description?: DisplayValue;
+  disagreement?: DisplayValue;
+  error?: DisplayValue;
+  experiments?: DisplayValue;
+  fallback?: boolean;
+  form?: DisplayValue;
+  gaps?: DisplayValue;
+  gate_passed?: boolean;
+  holds?: boolean;
+  job_id?: DisplayValue;
+  kept?: DisplayValue;
+  lines?: DisplayValue;
+  mae?: DisplayValue;
+  max_rounds?: number;
+  methods?: DisplayValue;
+  metric?: DisplayValue;
+  metrics?: unknown;
+  min_vendors?: DisplayValue;
+  mode?: DisplayValue;
+  n?: number;
+  n_cases?: DisplayValue;
+  n_hits?: number;
+  n_vendors?: DisplayValue;
+  note?: DisplayValue;
+  number?: DisplayValue;
+  of?: DisplayValue;
+  op?: DisplayValue;
+  original?: DisplayValue;
+  preregistration_valid?: boolean;
+  query?: DisplayValue;
+  ran?: DisplayValue;
+  rationale?: DisplayValue;
+  reason?: DisplayValue;
+  reasons?: string[];
+  ref?: DisplayValue;
+  repo?: DisplayValue;
+  repro?: DisplayValue;
+  reproduced?: boolean;
+  requested?: DisplayValue;
+  results_gate?: DisplayValue;
+  round?: number;
+  rounds?: number;
+  score?: DisplayValue;
+  scorer?: DisplayValue;
+  scores?: Record<string, number>;
+  source?: DisplayValue;
+  stage?: DisplayValue;
+  statistic?: DisplayValue;
+  status?: DisplayValue;
+  subtype?: DisplayValue;
+  supported_if?: ThresholdSummary;
+  target?: DisplayValue;
+  test_statistic?: DisplayValue;
+  text?: DisplayValue;
+  tool?: DisplayValue;
+  used?: DisplayValue;
+}
 
 const PHASE1_STAGES = [
   "survey",
@@ -60,10 +148,10 @@ function statusLabel(status: { state: string; detail?: string }): string {
 }
 
 function line(e: LabEvent): string {
-  const p = (e.payload ?? {}) as Record<string, any>;
+  const p = (e.payload ?? {}) as ActivityPayload;
   switch (e.type) {
     case "thinking":
-      return p.text ?? "";
+      return String(p.text ?? "");
     case "tool_use":
       return `${p.tool ?? "tool"}`;
     case "tool_result":
@@ -185,7 +273,7 @@ function line(e: LabEvent): string {
     case "error":
       return `✖ ${p.error ?? ""}`;
     case "system":
-      return p.subtype ?? p.class ?? "system";
+      return String(p.subtype ?? p.class ?? "system");
     default:
       return JSON.stringify(p);
   }
@@ -226,7 +314,7 @@ function StageTimeline({ reached }: { reached: string[] }) {
   );
 }
 
-function Verdicts({ critiques }: { critiques: any[] }) {
+function Verdicts({ critiques }: { critiques: CritiquePanelSummary[] }) {
   return (
     <div className="verdicts">
       <div className="v-title">⚖ Critic verdicts</div>
@@ -239,7 +327,7 @@ function Verdicts({ critiques }: { critiques: any[] }) {
             </span>
             {c.rounds ? <span className="v-rounds"> · {c.rounds} round{c.rounds > 1 ? "s" : ""}</span> : null}
           </div>
-          {(c.critiques ?? []).map((cc: any, j: number) => (
+          {(c.critiques ?? []).map((cc, j) => (
             <div key={j} className="v-sub">
               [{cc.critic_id}/{cc.stance}] {cc.verdict}: {cc.summary}
             </div>
@@ -248,14 +336,6 @@ function Verdicts({ critiques }: { critiques: any[] }) {
       ))}
     </div>
   );
-}
-
-interface Claim {
-  claim_type?: string;
-  status?: string;
-  strength?: string;
-  evidence_kinds?: string[];
-  claim_text?: string;
 }
 
 // the verification spine made visible: each claim's status drives the colour, so a viewer can
@@ -268,7 +348,7 @@ const CLAIM_STATUS_CLASS: Record<string, string> = {
   not_evaluated: "cl-skip",
 };
 
-function ClaimsPanel({ claims }: { claims: Claim[] }) {
+function ClaimsPanel({ claims }: { claims: ClaimSummary[] }) {
   return (
     <div className="claims-card">
       <div className="plan-title">📒 Claim ledger</div>
@@ -306,9 +386,9 @@ export function Activity({
   finalizedPlan: Record<string, string> | null;
   stageHistory?: string[];
   experiments?: { round?: number; exp_id?: string; of?: number }[];
-  critiques?: any[];
-  claims?: Claim[] | null;
-  report?: { uri?: string; preview?: string } | null;
+  critiques?: CritiquePanelSummary[];
+  claims?: ClaimSummary[] | null;
+  report?: ReportSummary | null;
   finalMetrics?: Record<string, number> | null;
 }) {
   return (

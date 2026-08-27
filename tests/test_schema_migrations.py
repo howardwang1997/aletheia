@@ -14,6 +14,7 @@ from aletheia.db import (
     expected_schema_revision,
     require_schema_current,
 )
+from aletheia.schema_migrations import require_schema_exact
 
 
 def test_repository_has_one_expected_alembic_head():
@@ -125,6 +126,31 @@ def test_current_schema_is_accepted(monkeypatch):
     assert require_schema_current() is current
 
 
+def test_exact_schema_requires_current_revision_and_zero_structural_diffs(monkeypatch):
+    current = SchemaStatus("r2", "r2", True)
+    connection = MagicMock()
+    monkeypatch.setattr("aletheia.schema_migrations.require_schema_current", lambda conn: current)
+    monkeypatch.setattr("aletheia.schema_migrations.schema_diffs", lambda conn: [])
+
+    assert require_schema_exact(connection) is current
+
+
+def test_exact_schema_rejects_a_current_but_structurally_drifted_database(monkeypatch):
+    current = SchemaStatus("r2", "r2", True)
+    connection = MagicMock()
+    monkeypatch.setattr("aletheia.schema_migrations.require_schema_current", lambda conn: current)
+    monkeypatch.setattr(
+        "aletheia.schema_migrations.schema_diffs",
+        lambda conn: [("add_table", "missing_authority")],
+    )
+
+    with pytest.raises(
+        SchemaCompatibilityError,
+        match="revision is current but its structure differs",
+    ):
+        require_schema_exact(connection)
+
+
 @pytest.mark.parametrize(
     ("status", "message"),
     [
@@ -144,8 +170,27 @@ def test_application_startup_checks_but_never_creates_tables():
     from pathlib import Path
 
     source = (Path(__file__).parents[1] / "aletheia" / "api" / "main.py").read_text()
-    assert "require_schema_current()" in source
+    assert source.count("require_schema_exact()") == 2
+    assert "require_schema_current" not in source
     assert "create_all()" not in source
+
+
+def test_durable_runtime_entry_points_require_exact_schema_structure():
+    root = Path(__file__).parents[1]
+    entry_points = (
+        "durable_tasks.py",
+        "durable_worker.py",
+        "manage_knowledge_corpus.py",
+        "research_graph.py",
+        "research_memory.py",
+        "research_portfolio.py",
+        "run_research_controller_runtime.py",
+        "scientific_transactions.py",
+    )
+    for name in entry_points:
+        source = (root / "scripts" / name).read_text()
+        assert "require_schema_exact" in source, name
+        assert "require_schema_current" not in source, name
 
 
 def test_legacy_create_all_name_delegates_to_alembic(monkeypatch):

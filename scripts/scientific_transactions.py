@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 
-from aletheia.db import require_schema_current
+from aletheia.schema_migrations import require_schema_exact
 from aletheia.jobs import OneTimeExternalActionStore, ScientificTransitionStore
 
 
@@ -30,7 +30,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
-    require_schema_current()
+    require_schema_exact()
     if args.resource == "command":
         print(ScientificTransitionStore().get(args.command_id).model_dump_json(indent=2))
     elif args.resource == "action":

@@ -19,7 +19,7 @@ from aletheia.api import (
 )
 from aletheia.api.deps import require_access
 from aletheia.auth.users import bootstrap_owner
-from aletheia.db import require_schema_current
+from aletheia.schema_migrations import require_schema_exact
 from aletheia.orchestrator.session import get_session_manager
 
 
@@ -27,7 +27,7 @@ from aletheia.orchestrator.session import get_session_manager
 async def lifespan(app: FastAPI):
     # Runtime code never mutates the schema. Deployments migrate explicitly and startup refuses
     # empty, stale, future, or unversioned databases.
-    require_schema_current()
+    require_schema_exact()
     bootstrap_owner()  # seed the owner's local login from settings (idempotent)
     yield
     # Shut down any live conversation sessions cleanly.
@@ -68,7 +68,7 @@ async def healthz() -> dict:
 
 @app.get("/readyz", tags=["meta"])
 async def readyz() -> dict:
-    status = require_schema_current()
+    status = require_schema_exact()
     return {
         "status": "ready",
         "service": "aletheia",

@@ -18,7 +18,14 @@ import aletheia.jobs.persistence  # noqa: F401  (register F11 durable queue tabl
 import aletheia.observations.persistence  # noqa: F401  (register PR-5 bridge tables)
 import aletheia.programs.persistence  # noqa: F401  (register F11 scientific graph tables)
 import aletheia.research_store.persistence  # noqa: F401  (register kernel-store tables)
-from aletheia.db import Base, SchemaCompatibilityError, alembic_config, engine
+from aletheia.db import (
+    Base,
+    SchemaCompatibilityError,
+    SchemaStatus,
+    alembic_config,
+    engine,
+    require_schema_current,
+)
 
 LEGACY_BASELINE_REVISION = "20260813_0001"
 POST_BASELINE_TABLES = frozenset(
@@ -194,6 +201,38 @@ def schema_diffs(
         },
     )
     return list(compare_metadata(context, Base.metadata))
+
+
+def require_schema_exact(connection: Connection | None = None) -> SchemaStatus:
+    """Fail closed unless both the revision and ORM-managed structure match this build.
+
+    An Alembic stamp is only a claim about migration history. It is not proof that every table,
+    column, index, foreign key and ORM-managed constraint exists. Deployment entry points use this
+    stronger check so a manually stamped, partially restored or otherwise drifted database cannot
+    report ready and then execute against a different authority graph.
+
+    This function intentionally lives at the deployment/migration layer. Keeping the import out of
+    :mod:`aletheia.db` prevents protected authority packages from gaining a reverse dependency on
+    every persistence module registered for Alembic comparison.
+    """
+
+    owned = connection is None
+    conn = engine().connect() if owned else connection
+    assert conn is not None
+    try:
+        status = require_schema_current(conn)
+        diffs = schema_diffs(conn)
+        if not diffs:
+            return status
+        preview = "; ".join(repr(diff)[:240] for diff in diffs[:5])
+        raise SchemaCompatibilityError(
+            "database revision is current but its structure differs from this Aletheia build; "
+            "restore a verified backup or rebuild and migrate a fresh database "
+            f"({len(diffs)} differences: {preview})"
+        )
+    finally:
+        if owned:
+            conn.close()
 
 
 def adopt_existing_baseline() -> BaselineAdoptionReceipt:

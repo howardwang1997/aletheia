@@ -21,6 +21,38 @@ export interface ChatMsg {
   ts?: string;
 }
 
+export interface CritiqueSummary {
+  critic_id?: string;
+  stance?: string;
+  verdict?: string;
+  summary?: string;
+}
+
+export interface CritiquePanelSummary {
+  target?: string;
+  consensus_verdict?: string;
+  gate_passed?: boolean;
+  rounds?: number;
+  critiques?: CritiqueSummary[];
+}
+
+export interface ClaimSummary {
+  claim_type?: string;
+  status?: string;
+  strength?: string;
+  evidence_kinds?: string[];
+  claim_text?: string;
+}
+
+export interface ReportSummary {
+  uri?: string;
+  preview?: string;
+}
+
+function payloadOf(event: LabEvent | undefined): Record<string, unknown> {
+  return event?.payload ?? {};
+}
+
 // Events shown in the activity feed (scoping + the launched lifecycle loop).
 const ACTIVITY_TYPES = new Set([
   "thinking",
@@ -198,7 +230,7 @@ export function useSession() {
         .filter((e) => e.type === "user_message" || e.type === "assistant_text")
         .map((e) => ({
           role: e.type === "user_message" ? "user" : "agent",
-          text: String((e.payload as any)?.text ?? ""),
+          text: String(payloadOf(e).text ?? ""),
           ts: e.ts,
         })),
     [events],
@@ -208,20 +240,27 @@ export function useSession() {
 
   const status = useMemo(() => {
     const last = [...events].reverse().find((e) => e.type === "status");
-    return (last?.payload as any) ?? { state: "idle" };
+    const payload = payloadOf(last);
+    return {
+      state: typeof payload.state === "string" ? payload.state : "idle",
+      ...(typeof payload.detail === "string" ? { detail: payload.detail } : {}),
+    };
   }, [events]);
 
   const cost = useMemo(() => {
     const result = [...events].reverse().find((e) => e.type === "result");
     const budget = [...events].reverse().find((e) => e.type === "budget");
     return Number(
-      (result?.payload as any)?.cost_usd ?? (budget?.payload as any)?.cumulative ?? 0,
+      payloadOf(result).cost_usd ?? payloadOf(budget).cumulative ?? 0,
     );
   }, [events]);
 
   const finalizedPlan = useMemo(() => {
     const last = [...events].reverse().find((e) => e.type === "goal_finalized");
-    return ((last?.payload as any)?.plan as Record<string, string>) ?? null;
+    const plan = payloadOf(last).plan;
+    return plan && typeof plan === "object" && !Array.isArray(plan)
+      ? (plan as Record<string, string>)
+      : null;
   }, [events]);
 
   // --- launched-run lifecycle ---
@@ -231,12 +270,15 @@ export function useSession() {
     () =>
       events
         .filter((e) => e.type === "stage")
-        .map((e) => String((e.payload as any)?.stage ?? "")),
+        .map((e) => String(payloadOf(e).stage ?? "")),
     [events],
   );
 
   const critiques = useMemo(
-    () => events.filter((e) => e.type === "critique_panel").map((e) => e.payload as any),
+    () =>
+      events
+        .filter((e) => e.type === "critique_panel")
+        .map((e) => payloadOf(e) as CritiquePanelSummary),
     [events],
   );
 
@@ -244,7 +286,8 @@ export function useSession() {
   // evidence kinds that grounded each), emitted once claims are finalized.
   const claims = useMemo(() => {
     const last = [...events].reverse().find((e) => e.type === "claims");
-    return ((last?.payload as any)?.claims as any[]) ?? null;
+    const claims = payloadOf(last).claims;
+    return Array.isArray(claims) ? (claims as ClaimSummary[]) : null;
   }, [events]);
 
   // campaign: one Run -> several linked experiments (round markers)
@@ -258,17 +301,18 @@ export function useSession() {
 
   const report = useMemo(() => {
     const last = [...events].reverse().find((e) => e.type === "report");
-    return (last?.payload as any) ?? null;
+    return last ? (payloadOf(last) as ReportSummary) : null;
   }, [events]);
 
   const finalMetrics = useMemo(() => {
     const fin = [...events].reverse().find((e) => e.type === "run_finished");
     const cs = [...events].reverse().find(
-      (e) => e.type === "compute_status" && (e.payload as any)?.metrics,
+      (e) => e.type === "compute_status" && payloadOf(e).metrics,
     );
-    return ((fin?.payload as any)?.metrics ?? (cs?.payload as any)?.metrics ?? null) as
-      | Record<string, number>
-      | null;
+    const metrics = payloadOf(fin).metrics ?? payloadOf(cs).metrics;
+    return metrics && typeof metrics === "object" && !Array.isArray(metrics)
+      ? (metrics as Record<string, number>)
+      : null;
   }, [events]);
 
   const paused = useMemo(

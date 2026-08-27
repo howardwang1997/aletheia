@@ -51,3 +51,4 @@ dependencies:
       - pytest-asyncio
       - "hypothesis>=6"
       - ruff
+      - pip-audit

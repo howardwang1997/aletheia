@@ -7,7 +7,7 @@ import argparse
 import json
 from pathlib import Path
 
-from aletheia.db import require_schema_current
+from aletheia.schema_migrations import require_schema_exact
 from aletheia.jobs import DurableTaskQueue, TaskSpec, TaskStatus
 
 
@@ -47,7 +47,7 @@ def _print_models(values) -> None:
 
 def main() -> int:
     args = _parser().parse_args()
-    require_schema_current()
+    require_schema_exact()
     queue = DurableTaskQueue(principal=args.principal)
     if args.command == "enqueue":
         spec = TaskSpec.model_validate_json(args.spec.read_text(encoding="utf-8"))

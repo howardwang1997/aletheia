@@ -26,7 +26,8 @@ export function ProgramGraph() {
   }, []);
 
   useEffect(() => {
-    void refresh();
+    const scheduled = window.setTimeout(() => void refresh(), 0);
+    return () => window.clearTimeout(scheduled);
   }, [refresh]);
 
   return (

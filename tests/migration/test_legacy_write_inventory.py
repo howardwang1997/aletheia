@@ -19,6 +19,7 @@ LEDGER_PATH = REPOSITORY_ROOT / "aletheia" / "memory" / "ledger.py"
 DRIVER_PATH = REPOSITORY_ROOT / "aletheia" / "scheduler" / "driver.py"
 
 LEGACY_SOURCE_AST_EXCLUDED_ROOTS = {
+    "aletheia/arl1.py": "new_qualification_authority",
     "aletheia/api/research_kernel.py": "new_authority_adapter",
     "aletheia/durable_tasks": "authority_neutral_contracts",
     "aletheia/execution": "new_authority",

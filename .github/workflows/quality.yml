@@ -1,0 +1,76 @@
+name: quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: aletheia
+          POSTGRES_PASSWORD: aletheia-ci
+          POSTGRES_DB: aletheia_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aletheia -d aletheia_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      ALETHEIA_DATABASE_URL: postgresql+psycopg://aletheia:aletheia-ci@localhost:5432/aletheia_ci
+      PYTHONPATH: "."
+      PYTHONHASHSEED: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: conda-incubator/setup-miniconda@v4
+        with:
+          activate-environment: aletheia
+          environment-file: environment.yml
+          miniforge-version: latest
+          auto-activate-base: false
+      - name: Migrate a fresh database
+        run: conda run -n aletheia alembic upgrade head
+      - name: Reject migration and live-schema drift
+        run: |
+          conda run -n aletheia alembic check
+          conda run -n aletheia python -c "from aletheia.schema_migrations import require_schema_exact; require_schema_exact()"
+      - name: Audit Python dependencies
+        run: conda run -n aletheia pip-audit --local
+      - name: Lint Python
+        run: conda run -n aletheia ruff check aletheia tests
+      - name: Test backend
+        run: conda run -n aletheia pytest -q
+
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Audit production dependencies
+        run: npm audit --omit=dev
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build

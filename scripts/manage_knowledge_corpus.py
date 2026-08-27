@@ -15,7 +15,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from aletheia.db import require_schema_current
+from aletheia.schema_migrations import require_schema_exact
 from aletheia.knowledge.ingestion import CorpusIngestionBundle
 from aletheia.knowledge.persistence import get_ingestion_bundle, store_ingestion_bundle
 
@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
         output = _summary(_read_bundle(args.bundle), action="validated")
     elif args.command == "persist":
         bundle = _read_bundle(args.bundle)
-        require_schema_current()
+        require_schema_exact()
         result = store_ingestion_bundle(bundle)
         output = _summary(bundle, action="persisted", created=result.created)
     else:
@@ -92,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
             character not in "0123456789abcdef" for character in args.bundle_sha256
         ):
             raise ValueError("bundle_sha256 must be 64 lowercase hexadecimal characters")
-        require_schema_current()
+        require_schema_exact()
         output = _summary(get_ingestion_bundle(args.bundle_sha256), action="inspected")
     print(json.dumps(output, sort_keys=True, separators=(",", ":")))
     return 0

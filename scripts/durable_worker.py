@@ -8,7 +8,7 @@ import asyncio
 import signal
 from collections.abc import Callable
 
-from aletheia.db import require_schema_current
+from aletheia.schema_migrations import require_schema_exact
 from aletheia.jobs.worker import DurableWorker, TaskHandler
 from aletheia.migration.dynamic_loader import resolve_guarded_dynamic_attribute
 
@@ -68,7 +68,7 @@ async def _run(args) -> None:
 
 def main() -> int:
     args = _parser().parse_args()
-    require_schema_current()
+    require_schema_exact()
     asyncio.run(_run(args))
     return 0
 

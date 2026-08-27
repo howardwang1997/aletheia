@@ -7,7 +7,7 @@ import argparse
 import json
 from typing import Any
 
-from aletheia.db import require_schema_current
+from aletheia.schema_migrations import require_schema_exact
 from aletheia.programs import ResearchMemoryError, ResearchMemoryStore
 
 
@@ -35,7 +35,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
-    require_schema_current()
+    require_schema_exact()
     store = ResearchMemoryStore()
     try:
         if args.command in {"show", "verify"}:
