@@ -44,7 +44,6 @@ ROOT = Path(__file__).resolve().parents[3]
 BASE_MANIFEST = (
     ROOT / "configs/capabilities/materials_band_gap_range_compression_provisional_v2.yaml"
 )
-REGISTRY_V4 = ROOT / "workspaces/evaluator/capabilities/materials_registry_v4.json"
 CURRENT_AUDIT = ROOT / "configs/materials/f10_mechanistic_campaign_readiness_audit_v1.json"
 
 
@@ -687,10 +686,10 @@ def test_bundle_rejects_derived_decision_tampering(tmp_path, f9_chain):
         MechanisticCampaignEvidenceBundle.model_validate(raw)
 
 
-def test_current_registry_readiness_is_explicitly_blocked():
-    registry = c.CapabilityRegistrySnapshot.model_validate_json(
-        REGISTRY_V4.read_text(encoding="utf-8")
-    )
+def test_current_registry_readiness_is_explicitly_blocked(
+    materials_registry_v4: c.CapabilityRegistrySnapshot,
+):
+    registry = materials_registry_v4
     audit = build_mechanistic_campaign_readiness_audit(
         audit_id="materials-f10s6-current-readiness-v1",
         registry=registry,

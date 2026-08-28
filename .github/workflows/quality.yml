@@ -1,0 +1,83 @@
+name: quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg17@sha256:dca0d688bbb31d3f851502ffcb9c7791387b4fcc544ae434dab41761e5ece317
+        env:
+          POSTGRES_USER: aletheia
+          POSTGRES_PASSWORD: aletheia-ci
+          POSTGRES_DB: aletheia_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aletheia -d aletheia_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      ALETHEIA_DATABASE_URL: postgresql+psycopg://aletheia:aletheia-ci@localhost:5432/aletheia_ci
+      PYTHONPATH: ${{ github.workspace }}
+      PYTHONHASHSEED: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: conda-incubator/setup-miniconda@v4
+        with:
+          activate-environment: aletheia
+          environment-file: environment.yml
+          miniforge-version: latest
+          auto-activate-base: false
+      - name: Migrate a fresh database
+        run: conda run -n aletheia alembic upgrade head
+      - name: Reject migration and live-schema drift
+        run: |
+          conda run -n aletheia alembic check
+          conda run -n aletheia python -c "from aletheia.schema_migrations import require_schema_exact; require_schema_exact()"
+      - name: Audit Python dependencies
+        run: conda run -n aletheia pip-audit --local
+      - name: Lint Python
+        run: |
+          conda run -n aletheia ruff --version
+          conda run -n aletheia ruff check --config pyproject.toml aletheia tests
+      - name: Test backend
+        run: |
+          ci_pytest_root="/var/lib/aletheia-ci-pytest-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          sudo install -d -o "$(id -u)" -g "$(id -g)" -m 700 "${ci_pytest_root}"
+          ci_pytest_base="${ci_pytest_root}/pytest"
+          conda run -n aletheia python -c "from pathlib import Path; from aletheia.execution.oci_runtime import host_parent_chain_sha256; print(host_parent_chain_sha256(Path('${ci_pytest_root}/probe')))"
+          conda run -n aletheia pytest -q --basetemp="${ci_pytest_base}"
+
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Audit production dependencies
+        run: npm audit --omit=dev
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build

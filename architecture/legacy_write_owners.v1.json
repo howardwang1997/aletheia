@@ -12,6 +12,7 @@
     },
     "legacy_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "legacy_source_ast_excluded_roots": {
+      "aletheia/arl1.py": "new_qualification_authority",
       "aletheia/api/research_kernel.py": "new_authority_adapter",
       "aletheia/durable_tasks": "authority_neutral_contracts",
       "aletheia/execution": "new_authority",
@@ -24,12 +25,12 @@
       "aletheia/research_store": "new_authority_adapter"
     },
     "legacy_source_ast_file_count": 323,
-    "legacy_source_ast_graph_sha256": "4be8ecd6d1aee6a3b82c558bfc29ee413905e4fe00473068b088a6cd890daaa6",
+    "legacy_source_ast_graph_sha256": "092290a2d4720783e9a66ddc6c8c7d77d2f7aa96e949aa4415fea3a347675e18",
     "legacy_source_ast_review_limit": "This normalized-AST backstop freezes every parseable Python file in the declared legacy production roots after explicitly removing new-authority and migration-tooling roots. It catches added, removed or semantically changed legacy Python source even when a specialized sink scanner does not recognize the syntax; comments, formatting, generated runtime code, non-Python launchers and the explicitly excluded roots are outside this digest.",
     "migration_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "migration_source_ast_roots": ["aletheia/migration", "migrations"],
     "migration_source_ast_file_count": 34,
-    "migration_source_ast_graph_sha256": "2a795aa6f68fd998ae4f0af407a6032a77dfd0498ce5c15c5284f2d8f0513716",
+    "migration_source_ast_graph_sha256": "e8dec40cd7e5b6c459ae25e611d5414ea8769a2507656fdb6ecc05147b39452e",
     "migration_source_ast_review_limit": "Migration tooling and immutable Alembic revision history have a separate normalized-AST freeze. Historical schema DML/backfills remain deployment authority reviewed through the migration chain rather than runtime scientific write owners.",
     "non_python_invocation_source_scheme": "git_index_regular_mode_path_byte_sha256_v1",
     "non_python_invocation_source_roots": [
@@ -43,8 +44,8 @@
       "frontend/node_modules/**",
       "docker/**/*.py"
     ],
-    "non_python_invocation_source_file_count": 30,
-    "non_python_invocation_source_graph_sha256": "a548ae3fed9d39142dec5a356a6a89e73a6949636659b9fec31e2b9c7c4bb1e7",
+    "non_python_invocation_source_file_count": 31,
+    "non_python_invocation_source_graph_sha256": "bcc596c2b67a2ef2b9e25e5ccbde9c2f3440cac0745171d69ac052da306431a0",
     "non_python_invocation_source_review_limit": "Every Git-indexed frontend source/configuration file, recursive shell launcher, non-Python docker launcher and root docker-compose YAML is frozen by exact relative path, regular-file Git mode and byte SHA. Symlinks and non-regular Git modes fail closed. Generated frontend/.next, frontend/node_modules and docker Python already covered by the production AST graph are excluded. The byte freeze catches otherwise-unrecognized syntax but does not infer runtime behavior of generated or third-party code.",
     "frontend_http_mutation_methods": ["DELETE", "PATCH", "POST", "PUT"],
     "non_python_invocation_authority_profiles": {

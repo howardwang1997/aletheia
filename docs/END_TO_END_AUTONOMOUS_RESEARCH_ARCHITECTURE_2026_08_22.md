@@ -883,8 +883,13 @@ ARL 是累积等级：晋升必须同时满足所有较低等级的冻结证据�
 | `ARL-3 Mission-bound Researcher` | 仅给 mission/charter，自主形成问题、演化方法/measurement/design space，并获取该 modality 所需的新 evidence | 不能声称领域通用或已独立发现 |
 | `ARL-4 Independently Confirmed Autonomous Discovery` | 新主张通过时间冻结的 prior-art 审核、外部专家裁决和与 claim type 匹配的独立确认 | 仍不自动获得无限现实权限 |
 
-当前 Aletheia 在若干受限计算任务上部分满足 `ARL-1`，但还没有一份冻结的系统级 ARL 资格 receipt；
-它也拥有若干 `ARL-2` 所需但未由主控制面贯通的 F8–F11 原语。没有 `ARL-3` 或 `ARL-4` 证据。
+当前 Aletheia 在若干受限计算任务上部分满足 `ARL-1`。2026-08-28 已实现冻结的系统级 ARL-1
+evidence bundle、独立 source-verification port、确定性报告、Ed25519 资格 receipt 与离线重验合同；它要求
+完整 ARL-0 gates、canonical compiler replay、至少两次预注册 exact reexecution、all-attempt、预冻结
+validator、admission/incorporation，以及原生重放 PR-8h target campaign。由于真实 Linux target campaign
+尚未执行，production source verifier 也尚未产生 retained receipt，**当前仍没有一份可签发的 ARL-1
+资格 receipt，系统没有晋级 ARL-1**。它也拥有若干 `ARL-2` 所需但未由主控制面贯通的 F8–F11
+原语。没有 `ARL-3` 或 `ARL-4` 证据。
 
 ARL-4 的独立确认按主张类型定义：
 
@@ -2039,6 +2044,13 @@ reobservation 导出 `deployment_qualified=true`。当前只有 source 与 synth
 Linux target 执行，因此下一项顺序工作是完成 PR-8f→PR-8g→PR-8b target preparation 并运行/复核 PR-8h
 campaign receipt，而不是扩张 controller authority。checkpoint 与 external reconciliation
 仍需独立 typed contracts，不能由 generic retry 猜测。
+
+**ARL-1 qualification source slice** 已补系统级累积资格合同：API 与 durable entrypoint 现在除
+Alembic head 外还必须通过 ORM structural diff，防止 stamped-but-drifted database 假就绪；给定协议
+必须 canonical recompile，scientific-executor node 必须预注册至少两次 exact reexecution，并保留
+all-attempt、预定义 validator、validation/admission/incorporation、reproduction 与确定性 report。独立
+source verifier 与资格 signer 必须 principal/key/policy 分离，最终 receipt 永久限定为 bounded protocol
+execution engineering claim。该 slice 不改变上述顺序：没有真实 PR-8h receipt 时不能签发 ARL-1。
 
 GPU node 的 deployment threat model 和 onboarding checklist 可以继续独立准备，但直到 PR-4b 的 target-host
 deployment campaign 和 PR-5 的 production composition/deployment campaign 都通过前，不部署逐任务 remote

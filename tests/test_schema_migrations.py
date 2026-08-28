@@ -14,6 +14,7 @@ from aletheia.db import (
     expected_schema_revision,
     require_schema_current,
 )
+from aletheia.schema_migrations import require_schema_exact
 
 
 def test_repository_has_one_expected_alembic_head():
@@ -101,6 +102,59 @@ def test_pr5_exact_source_constraints_match_migration_and_orm_metadata():
     assert all(name in migration for name in expected)
 
 
+def test_pr5_json_authority_checks_match_migration_and_orm_metadata():
+    from sqlalchemy import CheckConstraint
+    from sqlalchemy.dialects import postgresql, sqlite
+    from sqlalchemy.schema import CreateTable
+
+    from aletheia.observations.persistence import (
+        ResearchContinuationReceiptRecord,
+        ResearchControllerDeliveryAttemptRecord,
+        ResearchControllerDeliveryRecord,
+        ResearchControllerDeliveryResolutionRecord,
+        ResearchControllerRegistrationRecord,
+        ResearchObservationAdmissionRecord,
+        ResearchObservationIssuanceChallengeRecord,
+        ResearchObservationValidationReceiptRecord,
+        ResearchProtocolCompilationRecord,
+        ResearchScientificExecutionAuthorizationRecord,
+    )
+
+    expected = {
+        ResearchControllerRegistrationRecord: "ck_rc_reg_json",
+        ResearchControllerDeliveryRecord: "ck_rc_delivery_json",
+        ResearchControllerDeliveryAttemptRecord: "ck_rcda_json",
+        ResearchControllerDeliveryResolutionRecord: "ck_rcdr_json",
+        ResearchProtocolCompilationRecord: "ck_rpc_json",
+        ResearchScientificExecutionAuthorizationRecord: "ck_rsea_json",
+        ResearchObservationIssuanceChallengeRecord: "ck_roic_json",
+        ResearchObservationValidationReceiptRecord: "ck_rovr_json",
+        ResearchObservationAdmissionRecord: "ck_roa_json",
+        ResearchContinuationReceiptRecord: "ck_rcr_json",
+    }
+    migration = (
+        Path(__file__).parents[1]
+        / "migrations"
+        / "versions"
+        / "20260828_0027_scientific_controller_persistence.py"
+    ).read_text()
+
+    for record_type, constraint_name in expected.items():
+        matching = {
+            constraint.name
+            for constraint in record_type.__table__.constraints
+            if isinstance(constraint, CheckConstraint) and constraint.name == constraint_name
+        }
+        assert matching == {constraint_name}
+        assert f"CONSTRAINT {constraint_name} CHECK" in str(
+            CreateTable(record_type.__table__).compile(dialect=postgresql.dialect())
+        )
+        assert constraint_name not in str(
+            CreateTable(record_type.__table__).compile(dialect=sqlite.dialect())
+        )
+        assert f"CONSTRAINT {constraint_name} CHECK" in migration
+
+
 def test_alembic_environment_registers_pr5_orm_metadata():
     source = (Path(__file__).parents[1] / "migrations" / "env.py").read_text()
     assert "import aletheia.observations.persistence" in source
@@ -125,6 +179,31 @@ def test_current_schema_is_accepted(monkeypatch):
     assert require_schema_current() is current
 
 
+def test_exact_schema_requires_current_revision_and_zero_structural_diffs(monkeypatch):
+    current = SchemaStatus("r2", "r2", True)
+    connection = MagicMock()
+    monkeypatch.setattr("aletheia.schema_migrations.require_schema_current", lambda conn: current)
+    monkeypatch.setattr("aletheia.schema_migrations.schema_diffs", lambda conn: [])
+
+    assert require_schema_exact(connection) is current
+
+
+def test_exact_schema_rejects_a_current_but_structurally_drifted_database(monkeypatch):
+    current = SchemaStatus("r2", "r2", True)
+    connection = MagicMock()
+    monkeypatch.setattr("aletheia.schema_migrations.require_schema_current", lambda conn: current)
+    monkeypatch.setattr(
+        "aletheia.schema_migrations.schema_diffs",
+        lambda conn: [("add_table", "missing_authority")],
+    )
+
+    with pytest.raises(
+        SchemaCompatibilityError,
+        match="revision is current but its structure differs",
+    ):
+        require_schema_exact(connection)
+
+
 @pytest.mark.parametrize(
     ("status", "message"),
     [
@@ -144,8 +223,27 @@ def test_application_startup_checks_but_never_creates_tables():
     from pathlib import Path
 
     source = (Path(__file__).parents[1] / "aletheia" / "api" / "main.py").read_text()
-    assert "require_schema_current()" in source
+    assert source.count("require_schema_exact()") == 2
+    assert "require_schema_current" not in source
     assert "create_all()" not in source
+
+
+def test_durable_runtime_entry_points_require_exact_schema_structure():
+    root = Path(__file__).parents[1]
+    entry_points = (
+        "durable_tasks.py",
+        "durable_worker.py",
+        "manage_knowledge_corpus.py",
+        "research_graph.py",
+        "research_memory.py",
+        "research_portfolio.py",
+        "run_research_controller_runtime.py",
+        "scientific_transactions.py",
+    )
+    for name in entry_points:
+        source = (root / "scripts" / name).read_text()
+        assert "require_schema_exact" in source, name
+        assert "require_schema_current" not in source, name
 
 
 def test_legacy_create_all_name_delegates_to_alembic(monkeypatch):

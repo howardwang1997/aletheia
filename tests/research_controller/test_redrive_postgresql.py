@@ -306,12 +306,18 @@ def test_postgresql_redrive_restart_concurrency_successor_and_resolution(
         .inspected_delivery_count
         == 0
     )
+    with session_scope() as session:
+        generation_one_attempt = list_controller_delivery_attempts(
+            session,
+            delivery_sha256=delivery.delivery_sha256,
+        )[-1]
+    generation_one_available_at = queue.get(generation_one_attempt.task_id).available_at
 
     generation_one = queue.claim(
         worker_id="pytest:failed-controller",
         worker_manifest_sha256=manifest.worker_manifest_sha256,
         task_types=[CONTROLLER_TASK_TYPE],
-        now=NOW + timedelta(minutes=1),
+        now=generation_one_available_at,
     )
     assert generation_one is not None
     queue.fail(
@@ -319,7 +325,7 @@ def test_postgresql_redrive_restart_concurrency_successor_and_resolution(
         category=TerminalCategory.INFRASTRUCTURE,
         detail_sha256="c" * 64,
         retry=False,
-        now=NOW + timedelta(minutes=1, seconds=1),
+        now=generation_one_available_at + timedelta(seconds=1),
     )
     with ThreadPoolExecutor(max_workers=2) as pool:
         receipts = tuple(
@@ -343,7 +349,7 @@ def test_postgresql_redrive_restart_concurrency_successor_and_resolution(
         queue,
         wakeup=wakeup,
         disposition=ControllerStepDisposition.COMPLETED,
-        now=NOW + timedelta(minutes=2),
+        now=generation_one_available_at + timedelta(minutes=2),
     )
     with pytest.raises(
         IntegrityError,
@@ -354,7 +360,7 @@ def test_postgresql_redrive_restart_concurrency_successor_and_resolution(
             manifest=manifest,
             wakeup=wakeup,
             delivery_sha256=delivery.delivery_sha256,
-            now=NOW + timedelta(minutes=2, seconds=2),
+            now=generation_one_available_at + timedelta(minutes=2, seconds=2),
             claimed_tick_receipt_sha256="f" * 64,
         )
     successor = ControllerDeliveryReconciler(manifest=manifest, queue=queue).reconcile_once()
@@ -364,7 +370,7 @@ def test_postgresql_redrive_restart_concurrency_successor_and_resolution(
         queue,
         wakeup=wakeup,
         disposition=ControllerStepDisposition.AWAITING_AUTHORITY,
-        now=NOW + timedelta(minutes=3),
+        now=generation_one_available_at + timedelta(minutes=3),
     )
     with pytest.raises(
         IntegrityError,
@@ -375,7 +381,7 @@ def test_postgresql_redrive_restart_concurrency_successor_and_resolution(
             manifest=manifest,
             wakeup=wakeup,
             delivery_sha256=delivery.delivery_sha256,
-            now=NOW + timedelta(minutes=3, seconds=2),
+            now=generation_one_available_at + timedelta(minutes=3, seconds=2),
         )
     with pytest.raises(
         IntegrityError,
@@ -386,7 +392,7 @@ def test_postgresql_redrive_restart_concurrency_successor_and_resolution(
             manifest=manifest,
             delivery_sha256=delivery.delivery_sha256,
             quest_id=quest_id,
-            resolved_at=NOW + timedelta(minutes=3, seconds=3),
+            resolved_at=generation_one_available_at + timedelta(minutes=3, seconds=3),
         )
     with ThreadPoolExecutor(max_workers=2) as pool:
         resolutions = tuple(
@@ -411,7 +417,7 @@ def test_postgresql_redrive_restart_concurrency_successor_and_resolution(
             manifest=manifest,
             wakeup=wakeup,
             delivery_sha256=delivery.delivery_sha256,
-            now=NOW + timedelta(minutes=4),
+            now=generation_one_available_at + timedelta(minutes=4),
         )
     assert (
         ControllerDeliveryReconciler(manifest=manifest, queue=queue)

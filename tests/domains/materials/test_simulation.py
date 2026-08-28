@@ -389,7 +389,9 @@ def test_worker_retains_unsupported_element_as_execution_failure(tmp_path: Path)
     assert "Xe" in failure["message"]
 
 
-def test_simulation_capability_is_discoverable_but_provisional_only():
+def test_simulation_capability_is_discoverable_but_provisional_only(
+    materials_registry_v4: CapabilityRegistrySnapshot,
+):
     manifest = ExperimentCapabilityManifest.model_validate(
         yaml.safe_load(
             (
@@ -421,13 +423,10 @@ def test_simulation_capability_is_discoverable_but_provisional_only():
     )
     assert manifest.minimum_sample_rule.rule_sha256 == content_sha256(minimum_evidence)
 
-    snapshot = CapabilityRegistrySnapshot.model_validate_json(
-        (ROOT / "workspaces/evaluator/capabilities/materials_registry_v4.json").read_bytes()
-    )
-    assert snapshot.snapshot_sha256 == (
+    assert materials_registry_v4.snapshot_sha256 == (
         "80ea6dfa5c250dbdb76a4b3b38ceb7460580d17d7cdb47695da93ff38930ad77"
     )
-    registry = CapabilityRegistry(snapshot)
+    registry = CapabilityRegistry(materials_registry_v4)
     with pytest.raises(UnsupportedCapability, match="provisional"):
         registry.get(manifest.capability_id)
     assert registry.get(manifest.capability_id, allow_provisional=True) == manifest

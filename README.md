@@ -156,7 +156,15 @@ shared namespaces, AppArmor/image/ACL custody, and a destructive node/quota/watc
 PostgreSQL recovery sequence around one pre-registered successful v2 execution. Its source and
 synthetic replay tests are complete, but the exact Linux/rootful-Docker/systemd/loop/ext4/cgroup-v2/
 shared-mount campaign has not run. No target-host manifest/campaign receipt exists, and PR-4b is
-therefore still nondeployable. PR-5 now adds
+therefore still nondeployable. The ARL-1 source slice now adds a cumulative, signed system
+qualification gate: it replays all ARL-0 evidence, the canonical compiler and exact PR-8h receipt,
+requires at least two preregistered exact reexecutions plus all-attempt/validator/admission/
+incorporation/report evidence, and hard-codes an engineering-only claim ceiling. Runtime startup
+and `/readyz` also reject a current Alembic stamp when the actual schema structure has drifted.
+No real target campaign or production source-verification receipt exists, so the
+**ARL-1 qualification gate is implemented, but Aletheia is not ARL-1 qualified**. See
+[`docs/ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md`](docs/ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md).
+PR-5 now adds
 the signed action-to-execution bridge, DB-time independent validation/admission, atomic
 `observation_incorporated` Kernel transition, `research.controller.v1` durable wakeups and
 lease/restart recovery, a pinned `/quests/{id}/launch` path, and graph-scoped typed continuation.

@@ -16,8 +16,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
-
 from aletheia.compute.mcp_tools import resolve_data_spec
 from aletheia.config import get_settings
 from aletheia.data.registry import attach_local

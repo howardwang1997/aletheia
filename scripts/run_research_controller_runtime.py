@@ -8,7 +8,7 @@ import asyncio
 import json
 import signal
 
-from aletheia.db import require_schema_current
+from aletheia.schema_migrations import require_schema_exact
 from aletheia.research_controller_runtime import (
     ResearchControllerRuntimeCycleReceipt,
     build_research_controller_runtime,
@@ -71,7 +71,7 @@ async def _run(args: argparse.Namespace) -> None:
 
 def main() -> int:
     args = _parser().parse_args()
-    require_schema_current()
+    require_schema_exact()
     asyncio.run(_run(args))
     return 0
 

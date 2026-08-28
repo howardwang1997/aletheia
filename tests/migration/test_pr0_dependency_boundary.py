@@ -414,7 +414,7 @@ def test_guarded_loader_rejects_raw_driver_before_import(monkeypatch: pytest.Mon
         raise AssertionError("raw driver request reached importlib")
 
     monkeypatch.setattr(
-        "aletheia.migration.dynamic_loader.importlib.import_module",
+        "aletheia.migration.dynamic_loader._import_module",
         unexpected_import,
     )
 
@@ -434,7 +434,7 @@ def test_guarded_loader_rejects_indirect_driver_object(monkeypatch: pytest.Monke
     ReexportedDriver.__module__ = "aletheia.scheduler.driver"
     alias_module = SimpleNamespace(factory=partial(ReexportedDriver))
     monkeypatch.setattr(
-        "aletheia.migration.dynamic_loader.importlib.import_module",
+        "aletheia.migration.dynamic_loader._import_module",
         lambda _module_name: alias_module,
     )
 
@@ -452,7 +452,7 @@ def test_guarded_loader_rejects_raw_driver_subclass(monkeypatch: pytest.MonkeyPa
         pass
 
     monkeypatch.setattr(
-        "aletheia.migration.dynamic_loader.importlib.import_module",
+        "aletheia.migration.dynamic_loader._import_module",
         lambda _module_name: SimpleNamespace(factory=DriverSubclass),
     )
 
@@ -485,7 +485,7 @@ def test_guarded_loader_rejects_function_origins(monkeypatch: pytest.MonkeyPatch
 
     for wrapped_value in wrapped_values:
         monkeypatch.setattr(
-            "aletheia.migration.dynamic_loader.importlib.import_module",
+            "aletheia.migration.dynamic_loader._import_module",
             lambda _module_name, value=wrapped_value: SimpleNamespace(factory=value),
         )
         with pytest.raises(ValueError, match="resolved dynamic object belongs"):
@@ -530,7 +530,7 @@ def test_guarded_loader_rejects_callable_instance_origin(
 
     for wrapped_value in wrapped_values:
         monkeypatch.setattr(
-            "aletheia.migration.dynamic_loader.importlib.import_module",
+            "aletheia.migration.dynamic_loader._import_module",
             lambda _module_name, value=wrapped_value: SimpleNamespace(factory=value),
         )
         with pytest.raises(ValueError, match="resolved dynamic object belongs"):
@@ -566,7 +566,7 @@ def test_guarded_loader_rejects_wrapped_callable_class_state(
 
     for wrapped_value in wrapped_values:
         monkeypatch.setattr(
-            "aletheia.migration.dynamic_loader.importlib.import_module",
+            "aletheia.migration.dynamic_loader._import_module",
             lambda _module_name, value=wrapped_value: SimpleNamespace(factory=value),
         )
         with pytest.raises(ValueError, match="resolved dynamic object belongs"):
@@ -583,7 +583,7 @@ def test_guarded_loader_rejects_direct_class_state(monkeypatch: pytest.MonkeyPat
         driver = RawDriver
 
     monkeypatch.setattr(
-        "aletheia.migration.dynamic_loader.importlib.import_module",
+        "aletheia.migration.dynamic_loader._import_module",
         lambda _module_name: SimpleNamespace(factory=Wrapper),
     )
 
@@ -609,7 +609,7 @@ def test_guarded_loader_rejects_safe_descriptor_origins(monkeypatch: pytest.Monk
 
     for wrapped_value in (PropertyWrapper, CachedPropertyWrapper):
         monkeypatch.setattr(
-            "aletheia.migration.dynamic_loader.importlib.import_module",
+            "aletheia.migration.dynamic_loader._import_module",
             lambda _module_name, value=wrapped_value: SimpleNamespace(factory=value),
         )
         with pytest.raises(ValueError, match="resolved dynamic object belongs"):
@@ -633,7 +633,7 @@ def test_guarded_loader_rejects_function_custom_state(monkeypatch: pytest.Monkey
 
     for wrapped_value in (attribute_wrapper, annotation_wrapper):
         monkeypatch.setattr(
-            "aletheia.migration.dynamic_loader.importlib.import_module",
+            "aletheia.migration.dynamic_loader._import_module",
             lambda _module_name, value=wrapped_value: SimpleNamespace(factory=value),
         )
         with pytest.raises(ValueError, match="resolved dynamic object belongs"):
@@ -649,7 +649,7 @@ def test_guarded_loader_rejects_partial_argument_origin(monkeypatch: pytest.Monk
 
     for wrapped_value in wrapped_values:
         monkeypatch.setattr(
-            "aletheia.migration.dynamic_loader.importlib.import_module",
+            "aletheia.migration.dynamic_loader._import_module",
             lambda _module_name, value=wrapped_value: SimpleNamespace(factory=value),
         )
         with pytest.raises(ValueError, match="resolved dynamic object belongs"):
@@ -672,7 +672,7 @@ def test_guarded_loader_rejects_container_reexports(monkeypatch: pytest.MonkeyPa
 
     for wrapped_value in wrapped_values:
         monkeypatch.setattr(
-            "aletheia.migration.dynamic_loader.importlib.import_module",
+            "aletheia.migration.dynamic_loader._import_module",
             lambda _module_name, value=wrapped_value: SimpleNamespace(factory=value),
         )
         with pytest.raises(ValueError, match="resolved dynamic object belongs"):
@@ -689,7 +689,7 @@ def test_guarded_loader_fails_closed_when_function_origins_cannot_be_inspected(
         raise RuntimeError("inspection unavailable")
 
     monkeypatch.setattr(
-        "aletheia.migration.dynamic_loader.importlib.import_module",
+        "aletheia.migration.dynamic_loader._import_module",
         lambda _module_name: SimpleNamespace(factory=safe_factory),
     )
     monkeypatch.setattr(
@@ -707,7 +707,7 @@ def test_guarded_loader_returns_non_driver_object(monkeypatch: pytest.MonkeyPatc
 
     alias_module = SimpleNamespace(factory=safe_factory)
     monkeypatch.setattr(
-        "aletheia.migration.dynamic_loader.importlib.import_module",
+        "aletheia.migration.dynamic_loader._import_module",
         lambda _module_name: alias_module,
     )
 
@@ -1463,7 +1463,7 @@ def test_audited_dynamic_loader_allowlist_is_exact_and_does_not_spread(tmp_path:
     assert DEFAULT_AUDITED_DYNAMIC_LOADER_SOURCES == (
         (
             "aletheia.migration.dynamic_loader",
-            "3e6e22f2e7f1e6f4adc4e2c083de1e836c870a16e68775f0eeee512d4ef551bc",
+            "522280ff0844c54eb1b7f73df82547850bba519afe5aee692e7d1fe8921ec0a6",
         ),
     )
     assert DEFAULT_AUDITED_DYNAMIC_LOADER_ESCAPE_COUNTS == (

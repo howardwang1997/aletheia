@@ -63,6 +63,7 @@ _PRINCIPALS = {
     ResearchAuthorizationRole.AMENDMENT: "human:amender",
     ResearchAuthorizationRole.EMERGENCY: "human:emergency",
 }
+_PRODUCTION_PATHS = frozenset(production_app.openapi()["paths"])
 
 
 def _authority() -> tuple[ResearchAuthorizationTrustRootV1, ResearchAuthorizationPolicyV1]:
@@ -297,10 +298,9 @@ def test_audit_and_replay_reads_enforce_the_frozen_program_scope(api_fixture) ->
 
 
 def test_old_legacy_url_is_gone_and_explicit_legacy_url_remains(api_fixture) -> None:
-    production_paths = {route.path for route in production_app.routes}
-    assert "/research-graph/quests" not in production_paths
-    assert "/legacy/research-graph/quests" in production_paths
-    assert "/research-kernel/programs/{program_id}/quests/{quest_id}/commands" in production_paths
+    assert "/research-graph/quests" not in _PRODUCTION_PATHS
+    assert "/legacy/research-graph/quests" in _PRODUCTION_PATHS
+    assert "/research-kernel/programs/{program_id}/quests/{quest_id}/commands" in _PRODUCTION_PATHS
 
     with TestClient(api_fixture["app"]) as client:
         assert client.get("/research-graph/quests").status_code == 404
