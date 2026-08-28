@@ -614,6 +614,44 @@ def test_observer_config_keeps_external_docker_review_pin_separate_from_live_pro
     assert request.observer_config.scientific_admission_allowed is False
 
 
+def test_concrete_observer_uses_one_live_postgresql_catalog_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    request, manifest, _preflight = _request_and_evidence(monkeypatch, tmp_path)
+    config = request.observer_config
+    expected = manifest.installed_observation.observation
+    changed_routine = expected.postgresql_routines[0].model_copy(
+        update={"definition_sha256": _sha("live-routine-definition-drift")}
+    )
+    live_catalog = commissioning.QualificationPostgreSQLExecutionCatalogProjectionV1(
+        routines=(changed_routine, *expected.postgresql_routines[1:]),
+        triggers=expected.postgresql_triggers,
+        sequences=expected.postgresql_sequences,
+        object_owners=expected.postgresql_execution_object_owners,
+    )
+    live = commissioning.QualificationPostgreSQLDeploymentProjectionV1(
+        commissioned_state=config.commissioning_receipt.postgresql_completion.commissioned_state,
+        execution_catalog=live_catalog,
+        non_execution_public_routine_owners=(
+            expected.postgresql_non_execution_public_routine_owners
+        ),
+        database_time=datetime.now(timezone.utc),
+    )
+    observer = LinuxQualificationDeploymentObserver(config)
+    observer._authority_host = SimpleNamespace(  # noqa: SLF001
+        observe_postgresql_deployment_projection=lambda _intent: live
+    )
+
+    projection = observer._postgresql_projection()  # noqa: SLF001
+
+    assert projection["postgresql_routines"] == live_catalog.routines
+    assert projection["postgresql_routines"] != (
+        config.commissioning_request.installation_request.deployment_spec.expected_postgresql_routines
+    )
+    assert projection["postgresql_execution_object_owners"] == live_catalog.object_owners
+
+
 def test_concrete_observer_signs_only_the_frozen_call_scope(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

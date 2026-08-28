@@ -31,12 +31,9 @@ from aletheia.execution.oci_deployment import (
     host_parent_chain_sha256,
 )
 from aletheia.execution.qualification_deployment import (
-    EXECUTION_SEQUENCES,
-    EXECUTION_TABLES,
     ObservedNativeDependency,
     ObservedNativeDependencyClosure,
     POSTGRESQL_DANGEROUS_BUILTIN_ROLES,
-    PostgreSQLExecutionObjectOwnerObservation,
     PostgreSQLRestrictedRoleObservation,
     QualificationDeploymentObserverPin,
     QualificationDeploymentSpecV1,
@@ -49,7 +46,6 @@ from aletheia.execution.qualification_deployment import (
     RenderedSystemdUnit,
     SignedQualificationLinuxDeploymentObservation,
     expected_qualification_systemd_service_identities,
-    postgresql_role_privileges_sha256,
     render_postgresql_acl,
     render_systemd_units,
 )
@@ -1093,15 +1089,20 @@ class LinuxQualificationDeploymentObserver:
 
     def _postgresql_projection(self) -> dict[str, object]:
         intent = qualification_postgresql_commissioning_intent(self.request)
-        state = self._authority_host.observe_postgresql(intent)
         host_before = datetime.now(timezone.utc)
-        database_time = self._authority_host.observe_postgresql_clock(intent)
+        live = self._authority_host.observe_postgresql_deployment_projection(intent)
         host_after = datetime.now(timezone.utc)
+        state = live.commissioned_state
+        catalog = live.execution_catalog
         clock_healthy = (
-            host_before - timedelta(seconds=1) <= database_time <= host_after + timedelta(seconds=1)
+            host_before - timedelta(seconds=1)
+            <= live.database_time
+            <= host_after + timedelta(seconds=1)
         )
-        unrelated_owners = self._authority_host.observe_non_execution_public_routine_owners(intent)
         spec = self.spec
+        owner_state = next(
+            item for item in state.roles if item.role_name == spec.postgresql_owner_role
+        )
         roles = tuple(
             PostgreSQLRestrictedRoleObservation(
                 role_name=item.role_name,
@@ -1112,8 +1113,10 @@ class LinuxQualificationDeploymentObserver:
                 inherits_roles=item.inherit,
                 can_replicate=item.replication,
                 bypasses_row_security=item.bypass_rls,
-                member_of_owner_role=False,
-                owns_execution_objects=False,
+                member_of_owner_role=(spec.postgresql_owner_role in item.direct_memberships),
+                owns_execution_objects=any(
+                    owner.owner_role == item.role_name for owner in catalog.object_owners
+                ),
                 can_create_in_schema=False,
                 can_create_temporary_tables=False,
                 can_delete_execution_rows=False,
@@ -1126,54 +1129,20 @@ class LinuxQualificationDeploymentObserver:
                 dangerous_builtin_role_memberships=tuple(
                     sorted(set(item.direct_memberships) & set(POSTGRESQL_DANGEROUS_BUILTIN_ROLES))
                 ),
-                table_privileges_sha256=postgresql_role_privileges_sha256(
-                    spec,
-                    role_name=item.role_name,
-                ),
+                table_privileges_sha256=item.target_privileges_sha256,
             )
             for item in state.roles
             if item.role_name in {spec.postgresql_allocator_role, spec.postgresql_outbox_role}
         )
-        owners = tuple(
-            sorted(
-                (
-                    PostgreSQLExecutionObjectOwnerObservation(
-                        object_kind="database",
-                        object_name=spec.postgresql_database,
-                        owner_role=spec.postgresql_owner_role,
-                    ),
-                    PostgreSQLExecutionObjectOwnerObservation(
-                        object_kind="schema",
-                        object_name=spec.postgresql_schema,
-                        owner_role=spec.postgresql_owner_role,
-                    ),
-                    *(
-                        PostgreSQLExecutionObjectOwnerObservation(
-                            object_kind="table",
-                            object_name=name,
-                            owner_role=spec.postgresql_owner_role,
-                        )
-                        for name in EXECUTION_TABLES
-                    ),
-                    *(
-                        PostgreSQLExecutionObjectOwnerObservation(
-                            object_kind="sequence",
-                            object_name=name,
-                            owner_role=spec.postgresql_owner_role,
-                        )
-                        for name in EXECUTION_SEQUENCES
-                    ),
-                    *(
-                        PostgreSQLExecutionObjectOwnerObservation(
-                            object_kind=item.routine_kind,
-                            object_name=item.identity,
-                            owner_role=spec.postgresql_owner_role,
-                        )
-                        for item in spec.expected_postgresql_routines
-                    ),
-                ),
-                key=lambda item: (item.object_kind, item.object_name),
-            )
+        expected_routine_keys = {
+            (item.routine_kind, item.routine_name, item.identity_argument_types)
+            for item in spec.expected_postgresql_routines
+        }
+        unexpected_routines = tuple(
+            item
+            for item in catalog.routines
+            if (item.routine_kind, item.routine_name, item.identity_argument_types)
+            not in expected_routine_keys
         )
         return {
             "schema_revision": state.schema_revision,
@@ -1181,11 +1150,15 @@ class LinuxQualificationDeploymentObserver:
             "postgresql_acl_sha256": state.acl_sha256,
             "postgresql_clock_healthy": clock_healthy,
             "postgresql_roles": roles,
-            "postgresql_owner_role_inherits": False,
-            "postgresql_owner_direct_role_memberships": (),
-            "postgresql_owner_transitive_role_memberships": (),
-            "postgresql_owner_dangerous_builtin_role_memberships": (),
-            "postgresql_owner_role_members": (),
+            "postgresql_owner_role_inherits": owner_state.inherit,
+            "postgresql_owner_direct_role_memberships": owner_state.direct_memberships,
+            "postgresql_owner_transitive_role_memberships": owner_state.direct_memberships,
+            "postgresql_owner_dangerous_builtin_role_memberships": tuple(
+                sorted(
+                    set(owner_state.direct_memberships) & set(POSTGRESQL_DANGEROUS_BUILTIN_ROLES)
+                )
+            ),
+            "postgresql_owner_role_members": owner_state.direct_members,
             "postgresql_unexpected_database_grants": (),
             "postgresql_unexpected_schema_grants": (),
             "postgresql_unexpected_table_grants": (),
@@ -1193,13 +1166,15 @@ class LinuxQualificationDeploymentObserver:
             "postgresql_unexpected_sequence_grants": (),
             "postgresql_unexpected_routine_execute_grants": (),
             "postgresql_unexpected_grant_options": (),
-            "postgresql_unexpected_execution_routines": (),
-            "postgresql_routines": spec.expected_postgresql_routines,
-            "postgresql_triggers": spec.expected_postgresql_triggers,
-            "postgresql_sequences": spec.expected_postgresql_sequences,
-            "postgresql_non_execution_public_routine_owners": unrelated_owners,
+            "postgresql_unexpected_execution_routines": unexpected_routines,
+            "postgresql_routines": catalog.routines,
+            "postgresql_triggers": catalog.triggers,
+            "postgresql_sequences": catalog.sequences,
+            "postgresql_non_execution_public_routine_owners": (
+                live.non_execution_public_routine_owners
+            ),
             "postgresql_non_execution_public_routine_owner_projection_exhaustive": True,
-            "postgresql_execution_object_owners": owners,
+            "postgresql_execution_object_owners": catalog.object_owners,
         }
 
     def _observe_live(self) -> QualificationLinuxDeploymentObservation:

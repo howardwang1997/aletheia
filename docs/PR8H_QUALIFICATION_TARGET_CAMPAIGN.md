@@ -50,6 +50,15 @@ while ordinary configs, keys and control records retain their 16 MiB bounded rea
 two target-compatibility blockers without weakening either custody boundary.  It does not freeze
 the final deployment manifest, install the units or create qualification evidence.
 
+PostgreSQL observation no longer copies routine, trigger, sequence or owner claims out of the
+deployment spec.  One `REPEATABLE READ, READ ONLY` snapshot reruns the exhaustive ACL/role gate,
+hashes every live execution routine and non-internal trigger definition, reads each exact sequence
+configuration and object owner, freezes the unrelated-public-routine owner baseline, and samples
+the database clock.  A fresh PostgreSQL 17 target schema produced 27 routine, 70 trigger, one
+sequence and 57 owner records through this path. Missing or definition-drifted expected objects,
+plus unexpected execution routines and triggers on the protected tables, therefore remain visible
+to preflight instead of being hidden by an expected-value echo.
+
 ## Destructive campaign and evidence order
 
 The request embeds the complete observer config and one already-committed

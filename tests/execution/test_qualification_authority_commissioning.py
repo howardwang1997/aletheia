@@ -795,6 +795,222 @@ class _RoleConnection:
         return _RoleRows(rows=())
 
 
+class _CatalogRows:
+    def __init__(self, rows):
+        self.rows = tuple(rows)
+
+    def mappings(self):
+        return self
+
+    def one(self):
+        assert len(self.rows) == 1
+        return self.rows[0]
+
+    def __iter__(self):
+        return iter(self.rows)
+
+
+class _CatalogConnection:
+    def __init__(self, *, spec, routine_definition: str, trigger_definition: str):
+        routine = spec.expected_postgresql_routines[0]
+        trigger = spec.expected_postgresql_triggers[0]
+        sequence = spec.expected_postgresql_sequences[0]
+        self.rows = {
+            "routine": (
+                {
+                    "routine_kind": routine.routine_kind,
+                    "routine_name": routine.routine_name,
+                    "identity_argument_types": list(routine.identity_argument_types),
+                    "definition": routine_definition,
+                    "language": routine.language,
+                    "security_definer": routine.security_definer,
+                    "configuration": list(routine.configuration),
+                    "volatility": routine.volatility,
+                    "owner_role": "live_routine_owner",
+                },
+            ),
+            "trigger": (
+                {
+                    "table_name": trigger.table_name,
+                    "trigger_name": trigger.trigger_name,
+                    "function_name": routine.routine_name,
+                    "function_identity_argument_types": list(routine.identity_argument_types),
+                    "definition": trigger_definition,
+                    "enabled": trigger.enabled,
+                    "function_schema": "public",
+                },
+            ),
+            "sequence": (
+                {
+                    **sequence.model_dump(mode="python"),
+                    "owner_role": "live_sequence_owner",
+                },
+            ),
+            "relation_owner": (
+                {
+                    "object_kind": "table",
+                    "object_name": trigger.table_name,
+                    "owner_role": "live_table_owner",
+                },
+                {
+                    "object_kind": "sequence",
+                    "object_name": sequence.sequence_name,
+                    "owner_role": "live_sequence_owner",
+                },
+            ),
+            "database_owner": ({"owner_role": "live_database_owner"},),
+            "schema_owner": ({"owner_role": "live_schema_owner"},),
+        }
+
+    def execute(self, statement, _parameters=None):
+        sql = str(statement)
+        if "pg_get_functiondef" in sql:
+            key = "routine"
+        elif "pg_get_triggerdef" in sql:
+            key = "trigger"
+        elif "FROM pg_catalog.pg_class AS sequence_relation" in sql:
+            key = "sequence"
+        elif "CASE relation.relkind" in sql:
+            key = "relation_owner"
+        elif "FROM pg_catalog.pg_database AS database" in sql:
+            key = "database_owner"
+        elif "FROM pg_catalog.pg_namespace AS namespace" in sql:
+            key = "schema_owner"
+        else:  # pragma: no cover - a new query must extend this closed fake
+            raise AssertionError(sql)
+        return _CatalogRows(self.rows[key])
+
+
+def test_live_execution_catalog_hashes_database_definitions_and_owners(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    request, _payloads = _request(monkeypatch, tmp_path)
+    spec = request.installation_request.deployment_spec
+    routine_definition = "CREATE FUNCTION public.live_definition() RETURNS trigger ...\n"
+    trigger_definition = "CREATE TRIGGER live_definition BEFORE INSERT ..."
+    catalog = commissioning.LinuxQualificationAuthorityCommissioningHost._execution_catalog(
+        _CatalogConnection(
+            spec=spec,
+            routine_definition=routine_definition,
+            trigger_definition=trigger_definition,
+        ),
+        spec,
+    )
+
+    assert (
+        catalog.routines[0].definition_sha256
+        == hashlib.sha256(routine_definition.encode()).hexdigest()
+    )
+    assert catalog.routines[0].definition_sha256 != (
+        spec.expected_postgresql_routines[0].definition_sha256
+    )
+    assert (
+        catalog.triggers[0].definition_sha256
+        == hashlib.sha256(trigger_definition.encode()).hexdigest()
+    )
+    assert {(item.object_kind, item.owner_role) for item in catalog.object_owners} == {
+        ("database", "live_database_owner"),
+        ("function", "live_routine_owner"),
+        ("schema", "live_schema_owner"),
+        ("sequence", "live_sequence_owner"),
+        ("table", "live_table_owner"),
+    }
+    duplicate_owner = catalog.object_owners[0].model_copy(update={"owner_role": "variant_owner"})
+    with pytest.raises(ValidationError, match="catalog projection is not canonical"):
+        commissioning.QualificationPostgreSQLExecutionCatalogProjectionV1.model_validate(
+            {
+                **catalog.model_dump(mode="python"),
+                "object_owners": tuple(
+                    sorted(
+                        (*catalog.object_owners, duplicate_owner),
+                        key=lambda item: (
+                            item.object_kind,
+                            item.object_name,
+                            item.owner_role,
+                        ),
+                    )
+                ),
+            }
+        )
+
+
+class _ScalarRows:
+    def __init__(self, value):
+        self.value = value
+
+    def scalar_one(self):
+        return self.value
+
+
+class _AtomicProjectionConnection:
+    def __init__(self):
+        self.commands: list[str] = []
+
+    @contextmanager
+    def begin(self):
+        yield
+
+    def exec_driver_sql(self, command: str):
+        self.commands.append(command)
+
+    def execute(self, statement):
+        assert "clock_timestamp" in str(statement)
+        return _ScalarRows(NOW)
+
+
+class _AtomicProjectionEngine:
+    def __init__(self, connection):
+        self.connection = connection
+        self.disposed = False
+
+    @contextmanager
+    def connect(self):
+        yield self.connection
+
+    def dispose(self):
+        self.disposed = True
+
+
+def test_deployment_projection_uses_one_repeatable_read_only_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    request, payloads = _request(monkeypatch, tmp_path)
+    intent = _database_intent(request)
+    spec = request.installation_request.deployment_spec
+    state = _FakeHost(request, payloads)._state(intent)
+    catalog = commissioning.LinuxQualificationAuthorityCommissioningHost._execution_catalog(
+        _CatalogConnection(
+            spec=spec,
+            routine_definition="CREATE FUNCTION public.atomic_projection() ...\n",
+            trigger_definition="CREATE TRIGGER atomic_projection ...",
+        ),
+        spec,
+    )
+    connection = _AtomicProjectionConnection()
+    engine = _AtomicProjectionEngine(connection)
+    monkeypatch.setattr(commissioning, "create_engine", lambda *_args, **_kwargs: engine)
+    host = object.__new__(commissioning.LinuxQualificationAuthorityCommissioningHost)
+    host.request = request
+    monkeypatch.setattr(host, "_database_url", lambda _intent: ADMIN_URL)
+    monkeypatch.setattr(host, "_state", lambda _connection, _intent: state)
+    monkeypatch.setattr(host, "_execution_catalog", lambda _connection, _spec: catalog)
+    monkeypatch.setattr(
+        host,
+        "_non_execution_public_routine_owners",
+        lambda _connection, *, execution_prefix: (),
+    )
+
+    observed = host.observe_postgresql_deployment_projection(intent)
+
+    assert observed.commissioned_state == state
+    assert observed.execution_catalog == catalog
+    assert observed.database_time == NOW
+    assert connection.commands == ["SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"]
+    assert engine.disposed is True
+
+
 def test_live_role_privilege_projection_is_exact(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
