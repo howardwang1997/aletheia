@@ -64,13 +64,11 @@ def _workspace_deployment(
 ) -> oci_deployment.SharedOutputWorkspaceDeploymentPin:
     spec = _spec()
     custody = {item.purpose: item for item in observation.custody_roots}["workspace_source"]
-    units = {Path(item.path).name: item for item in observation.systemd_unit_files}
     modules = {item.path: item for item in observation.service_module_files}
     service_module = modules[spec.expected_quota_service_module.path]
     return oci_deployment.SharedOutputWorkspaceDeploymentPin(
         deployment_id=f"{spec.deployment_id}:workspace",
         systemd_unit_name=spec.workspace_unit_name,
-        systemd_unit=units[spec.workspace_unit_name],
         service_executable=observation.python_executable,
         mount=observation.quota_deployment.mount,
         service_module_sha256=service_module.sha256,
@@ -238,6 +236,27 @@ def test_process_config_binding_has_no_config_digest_self_reference() -> None:
         }
     )
     assert qualification_service_process_config_binding_sha256(rebound) != binding
+
+
+def test_root_service_deployments_do_not_self_pin_future_systemd_inodes(
+    tmp_path: Path,
+) -> None:
+    values = _configs(tmp_path)
+    deployments = (
+        values[1].workspace_deployment,
+        values[3].quota_deployment,
+        values[5].watchdog_deployment,
+    )
+    assert all(item.schema_version == 2 for item in deployments)
+    assert all("systemd_unit" not in type(item).model_fields for item in deployments)
+    for item in deployments:
+        with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+            type(item).model_validate(
+                {
+                    **item.model_dump(mode="python"),
+                    "systemd_unit": {"path": f"/etc/systemd/system/{item.systemd_unit_name}"},
+                }
+            )
 
 
 def test_guarded_loader_accepts_final_config_hash_without_self_reference(

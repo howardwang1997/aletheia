@@ -29,7 +29,6 @@ from aletheia.execution.oci_deployment import (
     OCIWatchdogError,
     PinnedOCIImageLayout,
     PinnedRootExecutable,
-    PinnedRootFile,
     SystemdDeadlineWatchdogController,
     SystemdWatchdogDeploymentPin,
     _QuotaFilesystemFormatted,
@@ -477,14 +476,6 @@ def _watchdog_deployment(
         deployment_id="watchdog.test",
         policy_sha256=policy.policy_sha256,
         systemd_unit_name=unit_name,
-        systemd_unit=PinnedRootFile(
-            path=str(tmp_path / unit_name),
-            sha256=H0,
-            device=1,
-            inode=1,
-            mode=0o400,
-            parent_chain_sha256=H0,
-        ),
         service_executable=PinnedRootExecutable(
             path=policy.runtime_binary_path,
             sha256=policy.runtime_binary_sha256,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -426,7 +427,6 @@ def _observation(
         _root_file(item.path, sha256=item.content_sha256, inode=100 + index)
         for index, item in enumerate(units)
     )
-    unit_by_name = {item.unit_name: pin for item, pin in zip(units, unit_pins, strict=True)}
     python = _root_executable(spec.python_executable, inode=200)
     python_environment = deployment.QualificationObservedRootCodeTree(
         path=spec.reviewed_python_environment.root_path,
@@ -530,7 +530,6 @@ def _observation(
         allowed_client_gid=spec.node_gid,
         provisioner_policy_sha256=spec.output_quota_policy_sha256,
         provisioner_principal_id="principal:qualification-quota",
-        systemd_unit=unit_by_name[spec.quota_unit_name],
         service_executable=python,
         losetup=losetup,
         mkfs=mkfs,
@@ -554,7 +553,6 @@ def _observation(
         deployment_id=f"{spec.deployment_id}:watchdog",
         policy_sha256=spec.oci_policy_sha256,
         systemd_unit_name=spec.watchdog_unit_name,
-        systemd_unit=unit_by_name[spec.watchdog_unit_name],
         service_executable=python,
         service_module_sha256=service_module.sha256,
         service_module_device=service_module.device,
@@ -1168,6 +1166,28 @@ def test_effective_loaded_systemd_state_drift_fails_closed(monkeypatch, identity
     identities = list(current.systemd_service_identities)
     identities[0] = identities[0].model_copy(update=identity_update(identities[0]))
     changed = current.model_copy(update={"systemd_service_identities": tuple(identities)})
+    report = _verify(
+        monkeypatch,
+        manifest,
+        _Observer(_sign_observation(changed, pin, spec=spec)),
+        pin,
+        verified_at=NOW + timedelta(seconds=2),
+    )
+    assert "systemd:unit-bytes-or-custody-drift" in report.blockers
+    assert report.ready_for_opt_in_campaign is False
+
+
+def test_installed_unit_file_custody_remains_independently_verified(monkeypatch) -> None:
+    spec = _spec()
+    manifest, _observer, pin = _freeze(monkeypatch, spec=spec)
+    current = _observation(spec, observed_at=NOW + timedelta(seconds=1))
+    changed_units = tuple(
+        item.model_copy(update={"sha256": _sha("changed-installed-unit")})
+        if Path(item.path).name == spec.quota_unit_name
+        else item
+        for item in current.systemd_unit_files
+    )
+    changed = current.model_copy(update={"systemd_unit_files": changed_units})
     report = _verify(
         monkeypatch,
         manifest,
@@ -2260,20 +2280,6 @@ def test_drifted_observation_cannot_be_frozen(monkeypatch) -> None:
                         update={
                             "losetup": observed.quota_deployment.losetup.model_copy(
                                 update={"sha256": _sha("arbitrary-losetup")}
-                            )
-                        }
-                    )
-                }
-            ),
-            "quota:deployment-drift",
-        ),
-        (
-            lambda observed: observed.model_copy(
-                update={
-                    "quota_deployment": observed.quota_deployment.model_copy(
-                        update={
-                            "systemd_unit": observed.quota_deployment.systemd_unit.model_copy(
-                                update={"sha256": _sha("self-reported-unit")}
                             )
                         }
                     )
