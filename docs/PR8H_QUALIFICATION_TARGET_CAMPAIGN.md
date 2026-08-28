@@ -88,6 +88,13 @@ immediately. A target fixture must therefore be a bounded, pre-registered, long-
 workload whose normal successful output is preserved when the polling node process—not its Docker
 container—is killed.
 
+The checked-in qualification smoke workload now accepts an exact
+`--minimum-runtime-seconds 0..600` hold before it atomically publishes the unchanged deterministic
+output. The target campaign must explicitly select a nonzero bounded value in its signed workload
+argv; the default remains zero so the source change alone cannot be mistaken for a long-running
+campaign execution. The final OCI manifest/config and launch-gate evidence must be regenerated
+after this source enters `main`.
+
 Every completed phase is a canonical append-only journal record. Exact restart reuses recorded
 evidence and revalidates a completed receipt. Root quota generations and terminal subphases have
 their own internal records so a runner crash cannot silently substitute a second scientific slot.
