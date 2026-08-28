@@ -1371,7 +1371,6 @@ def register_scientific_execution_authorization(
             ("scientific_slot_id",),
             ("execution_id",),
             ("attempt_id",),
-            ("source_event_sha256",),
             ("qualification_bundle_sha256",),
             ("qualification_grant_sha256",),
         ),

@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from aletheia.execution.runtime_contracts import (
     EngineeringQualificationBundle,
     QualificationAuthorityVerifier,
+    VerifiedInputArtifactResolution,
     VerifiedEngineeringQualification,
     WorkerNodeEnrollment,
     WorkerNodeEnrollmentMessage,
@@ -31,9 +32,16 @@ from aletheia.execution.schemas import (
     ArtifactManifest,
     ArtifactManifestEntry,
     ArtifactVerifiedReceipt,
+    ExecutionIntent,
+    ExecutionReceipt,
+    ExecutionTerminalState,
     InfrastructureAttempt,
+    InputArtifactBinding,
     NetworkPolicy,
+    ScientificReplicateSlot,
 )
+from aletheia.protocols.compiler import ProtocolCompilationRequest, compile_protocol
+from aletheia.protocols.schemas import ProtocolIR
 from aletheia.research_kernel.schemas import (
     ActionAuthorizedPayload,
     ActionKind,
@@ -98,6 +106,8 @@ from test_runtime_contracts import (  # noqa: E402
     _AuthorityResolver,
     _Resolver,
     _intermediate_qualification_case,
+    _signed_case,
+    fixture_by_name,
 )
 
 EXECUTION_AUTHORITY_PRIVATE_KEY = bytes(range(32, 64))
@@ -479,8 +489,8 @@ class BridgeCase:
     qualification_admission_sha256: str
 
 
-def _bridge_case() -> BridgeCase:
-    qualification = _intermediate_qualification_case(include_producer_lineage=True)
+def _bridge_case(qualification: QualificationCase | None = None) -> BridgeCase:
+    qualification = qualification or _intermediate_qualification_case(include_producer_lineage=True)
     worker_manifest = _worker_manifest(qualification)
     qualification = _qualification_for_manifest(qualification, worker_manifest)
     worker_enrollment = WorkerNodeEnrollment(
@@ -690,6 +700,226 @@ def _bridge_case() -> BridgeCase:
         validation_campaign_custody=validation_campaign_custody,
         qualification_admission_sha256=engineering_qualification_admission_sha256(verified),
     )
+
+
+def _replicate_bridge_cases(replicate_count: int = 2) -> tuple[BridgeCase, ...]:
+    """Build real signed SEA fixtures for every slot of one accepted replay-safe node."""
+
+    fixture = fixture_by_name("grouped_regression")
+    original = fixture.request.protocol
+    steps = tuple(
+        type(step).model_validate(
+            {
+                **step.model_dump(mode="python"),
+                "scientific_replicate_count": replicate_count,
+                "replicate_seed_sha256s": tuple(
+                    _digest(f"{step.step_id}:replicate:{index}")
+                    for index in range(1, replicate_count + 1)
+                ),
+            }
+        )
+        for step in original.steps
+    )
+    resource_budget = type(original.resource_budget).model_validate(
+        {
+            **original.resource_budget.model_dump(mode="python"),
+            "maximum_total_artifact_bytes": (
+                original.resource_budget.maximum_total_artifact_bytes * replicate_count
+            ),
+        }
+    )
+    protocol = ProtocolIR.model_validate(
+        {
+            **original.model_dump(mode="python"),
+            "steps": steps,
+            "resource_budget": resource_budget,
+        }
+    )
+    request = ProtocolCompilationRequest(
+        protocol=protocol,
+        capability_catalog=fixture.request.capability_catalog,
+        resource_catalog=fixture.request.resource_catalog,
+        compiler_implementation_sha256=fixture.request.compiler_implementation_sha256,
+    )
+    result = compile_protocol(request)
+    assert result.report.accepted and result.work_order is not None
+    work_order = result.work_order
+    producer_node = next(
+        item for item in work_order.nodes if item.protocol_step_id == "step.01_group"
+    )
+    node = next(item for item in work_order.nodes if item.protocol_step_id == "step.02_estimate")
+    observed_at = NOW + timedelta(minutes=5)
+    qualifications: list[QualificationCase] = []
+    for slot_index in range(1, replicate_count + 1):
+        producer_slot = ScientificReplicateSlot(
+            quest_id=work_order.quest_id,
+            protocol_sha256=work_order.protocol_sha256,
+            work_order_id=work_order.work_order_id,
+            work_order_node_id=producer_node.node_id,
+            work_order_node_sha256=producer_node.node_sha256,
+            slot_count=replicate_count,
+            slot_index=slot_index,
+            replicate_kind=producer_node.replicate_kind,
+            preregistration_sha256=producer_node.replicate_preregistration_sha256,
+            randomization_seed_sha256=producer_node.replicate_seed_sha256s[slot_index - 1],
+            independent_site_required=producer_node.independent_site_required,
+        )
+        producer_input = InputArtifactBinding(
+            input_port_id=producer_node.input_port_ids[0],
+            source_kind="protocol_input",
+            artifact_verified_receipt_sha256=_digest(f"replicate-producer-input:{slot_index}"),
+        )
+        producer_intent = ExecutionIntent(
+            quest_id=work_order.quest_id,
+            protocol_sha256=work_order.protocol_sha256,
+            work_order_id=work_order.work_order_id,
+            work_order_sha256=work_order.work_order_sha256,
+            work_order_node_id=producer_node.node_id,
+            work_order_node_sha256=producer_node.node_sha256,
+            capability_id=producer_node.capability_id,
+            capability_manifest_sha256=producer_node.capability_manifest_sha256,
+            external_action_kind=producer_node.external_action_kind,
+            resource_catalog_sha256=work_order.resource_catalog_sha256,
+            resource_request=producer_node.resource_request,
+            retry_policy=producer_node.retry_policy,
+            replicate_slot=producer_slot,
+            infrastructure_attempt=InfrastructureAttempt(
+                replicate_slot_id=producer_slot.replicate_slot_id,
+                attempt_number=1,
+            ),
+            input_artifact_bindings=(producer_input,),
+            expected_artifacts=producer_node.expected_artifacts,
+            environment_sha256=producer_node.environment_sha256,
+            command_sha256=producer_node.command_sha256,
+            execution_parameters_sha256=producer_node.execution_parameters_sha256,
+            effect_class=producer_node.effect_class,
+            authorized_at=NOW - timedelta(hours=4),
+            deadline=NOW - timedelta(hours=1),
+        )
+        target_port_id = node.input_port_ids[0]
+        expected = next(
+            item for item in producer_node.expected_artifacts if item.artifact_key == target_port_id
+        )
+        entry = ArtifactManifestEntry(
+            expected_artifact_id=expected.expected_artifact_id,
+            artifact_key=expected.artifact_key,
+            role=expected.role,
+            content_sha256=_digest(f"replicate-intermediate-content:{slot_index}"),
+            bytes=128,
+            media_type=expected.media_type,
+            schema_sha256=expected.schema_sha256,
+            quarantine_ref=f"quarantine://replicate/{slot_index}/intermediate.groups",
+        )
+        manifest = ArtifactManifest(
+            intent_sha256=producer_intent.intent_sha256,
+            execution_id=producer_intent.execution_id,
+            replicate_slot_id=producer_slot.replicate_slot_id,
+            infrastructure_attempt_id=(
+                producer_intent.infrastructure_attempt.infrastructure_attempt_id
+            ),
+            entries=(entry,),
+            produced_at=NOW - timedelta(hours=2),
+        )
+        verified_receipt = ArtifactVerifiedReceipt(
+            artifact_manifest_sha256=manifest.manifest_sha256,
+            producer_attempt_id=(producer_intent.infrastructure_attempt.infrastructure_attempt_id),
+            artifact=entry,
+            custody_mode=ArtifactCustodyMode.CENTRAL_REHASH,
+            verifier_principal_id="principal:artifact-verifier",
+            object_store_id="research-cas",
+            final_object_ref=f"cas://sha256/{entry.content_sha256}",
+            final_object_version="generation-1",
+            verified_at=NOW - timedelta(minutes=90),
+        )
+        producer_execution_receipt = ExecutionReceipt(
+            intent=producer_intent,
+            worker_node_manifest_sha256=_digest(f"replicate-producer-node-manifest:{slot_index}"),
+            node_inventory_sha256=_digest(f"replicate-producer-node-inventory:{slot_index}"),
+            resource_lease_sha256=_digest(f"replicate-producer-resource-lease:{slot_index}"),
+            node_execution_receipt_sha256=_digest(
+                f"replicate-producer-execution-receipt:{slot_index}"
+            ),
+            started_at=NOW - timedelta(hours=3),
+            ended_at=NOW - timedelta(minutes=100),
+            observed_at=NOW - timedelta(minutes=80),
+            terminal_state=ExecutionTerminalState.ENGINEERING_SUCCEEDED,
+            artifact_manifest=manifest,
+            artifact_verified_receipts=(verified_receipt,),
+            verified_by_principal_id="principal:execution-verifier",
+            verified_at=NOW - timedelta(minutes=70),
+        )
+        resolution = VerifiedInputArtifactResolution(
+            verified_receipt_sha256=verified_receipt.verified_receipt_sha256,
+            verified_receipt=verified_receipt,
+            artifact_manifest=manifest,
+            producer_execution_receipt=producer_execution_receipt,
+            content_rehash_sha256=entry.content_sha256,
+            content_bytes=entry.bytes,
+            resolved_by_principal_id="principal:archive-resolver",
+            resolved_at=observed_at,
+        )
+        slot = ScientificReplicateSlot(
+            quest_id=work_order.quest_id,
+            protocol_sha256=work_order.protocol_sha256,
+            work_order_id=work_order.work_order_id,
+            work_order_node_id=node.node_id,
+            work_order_node_sha256=node.node_sha256,
+            slot_count=replicate_count,
+            slot_index=slot_index,
+            replicate_kind=node.replicate_kind,
+            preregistration_sha256=node.replicate_preregistration_sha256,
+            randomization_seed_sha256=node.replicate_seed_sha256s[slot_index - 1],
+            independent_site_required=node.independent_site_required,
+        )
+        input_binding = InputArtifactBinding(
+            input_port_id=target_port_id,
+            source_kind="work_order_output",
+            artifact_verified_receipt_sha256=verified_receipt.verified_receipt_sha256,
+            source_work_order_node_id=producer_node.node_id,
+            source_work_order_node_sha256=producer_node.node_sha256,
+            source_replicate_slot_id=producer_slot.replicate_slot_id,
+            source_slot_index=slot_index,
+        )
+        intent = ExecutionIntent(
+            quest_id=work_order.quest_id,
+            protocol_sha256=work_order.protocol_sha256,
+            work_order_id=work_order.work_order_id,
+            work_order_sha256=work_order.work_order_sha256,
+            work_order_node_id=node.node_id,
+            work_order_node_sha256=node.node_sha256,
+            capability_id=node.capability_id,
+            capability_manifest_sha256=node.capability_manifest_sha256,
+            external_action_kind=node.external_action_kind,
+            resource_catalog_sha256=work_order.resource_catalog_sha256,
+            resource_request=node.resource_request,
+            retry_policy=node.retry_policy,
+            replicate_slot=slot,
+            infrastructure_attempt=InfrastructureAttempt(
+                replicate_slot_id=slot.replicate_slot_id,
+                attempt_number=1,
+            ),
+            input_artifact_bindings=(input_binding,),
+            expected_artifacts=node.expected_artifacts,
+            environment_sha256=node.environment_sha256,
+            command_sha256=node.command_sha256,
+            execution_parameters_sha256=node.execution_parameters_sha256,
+            effect_class=node.effect_class,
+            authorized_at=NOW,
+            deadline=NOW + timedelta(hours=1),
+        )
+        qualifications.append(
+            _signed_case(
+                request=request,
+                result=result,
+                intent=intent,
+                resolution=resolution,
+                observed_at=observed_at,
+                quote_at=NOW,
+                grant_at=NOW + timedelta(minutes=1),
+                grant_expires_at=NOW + timedelta(minutes=10),
+            )
+        )
+    return tuple(_bridge_case(item) for item in qualifications)
 
 
 def _verify_authorization(
@@ -1245,7 +1475,7 @@ def test_authorization_signature_and_qualification_only_literals_fail_closed() -
         )
 
 
-def test_phase_one_rejects_retry_attempt_and_multiple_scientific_slots() -> None:
+def test_phase_one_rejects_retry_attempt_and_incomplete_scientific_slot_projection() -> None:
     case = _bridge_case()
     retry_attempt = InfrastructureAttempt(
         replicate_slot_id=case.qualification.bundle.intent.replicate_slot.replicate_slot_id,
@@ -1303,6 +1533,30 @@ def test_phase_one_rejects_retry_attempt_and_multiple_scientific_slots() -> None
             validator_authority_pin=case.validator_pin,
             admission_authority_pin=case.admission_pin,
             observed_at=NOW + timedelta(minutes=6),
+        )
+
+
+def test_bridge_accepts_every_preregistered_replicate_with_its_exact_seed() -> None:
+    cases = _replicate_bridge_cases()
+
+    assert tuple(item.binding.replicate_slot.slot_index for item in cases) == (1, 2)
+    assert len({item.binding.scientific_slot_id for item in cases}) == 2
+    assert len({item.authorization.authorization_sha256 for item in cases}) == 2
+    for item in cases:
+        _verify_authorization(item, item.authorization)
+
+    second = cases[1]
+    rebound_slot = second.binding.replicate_slot.model_copy(
+        update={
+            "randomization_seed_sha256": cases[0].binding.replicate_slot.randomization_seed_sha256
+        }
+    )
+    with pytest.raises(ValidationError, match="exact WorkOrder projection"):
+        ScientificActionProtocolBinding.model_validate(
+            {
+                **second.binding.model_dump(mode="python"),
+                "replicate_slot": rebound_slot,
+            }
         )
 
 

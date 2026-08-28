@@ -144,7 +144,10 @@ _SERVICE_OPERATIONS = {
     "action_proposal": (ControllerWorkerRPCOperation.MATERIALIZE_ACTION_PROPOSAL,),
     "protocol_compilation": (ControllerWorkerRPCOperation.COMPILE_PROTOCOL,),
     "execution_authorization": (ControllerWorkerRPCOperation.ISSUE_EXECUTION_AUTHORIZATION,),
-    "execution_registration": (ControllerWorkerRPCOperation.REGISTER_EXECUTION,),
+    "execution_registration": (
+        ControllerWorkerRPCOperation.REGISTER_EXECUTION,
+        ControllerWorkerRPCOperation.REGISTER_EXECUTION_CAMPAIGN,
+    ),
     "raw_run_source": (ControllerWorkerRPCOperation.LOAD_RAW_RUN,),
     "database_observation": (
         ControllerWorkerRPCOperation.COMMIT_VALIDATION,

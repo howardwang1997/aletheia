@@ -89,7 +89,10 @@ _SERVICE_OPERATIONS = {
     "execution_authorization": _operations(
         ControllerWorkerRPCOperation.ISSUE_EXECUTION_AUTHORIZATION
     ),
-    "execution_registration": _operations(ControllerWorkerRPCOperation.REGISTER_EXECUTION),
+    "execution_registration": _operations(
+        ControllerWorkerRPCOperation.REGISTER_EXECUTION,
+        ControllerWorkerRPCOperation.REGISTER_EXECUTION_CAMPAIGN,
+    ),
     "raw_run_source": _operations(ControllerWorkerRPCOperation.LOAD_RAW_RUN),
     "database_observation": _operations(
         ControllerWorkerRPCOperation.ISSUE_VALIDATION_CHALLENGE,

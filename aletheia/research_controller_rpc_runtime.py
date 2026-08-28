@@ -182,7 +182,7 @@ class ControllerWorkerRPCServerStartupReceipt(ControllerModel):
     deployment_sha256: str = Field(pattern=_SHA256_PATTERN)
     service_id: str = Field(pattern=r"^rpcs_[0-9a-f]{32}$")
     receipt_key_id: str = Field(pattern=r"^rpck_[0-9a-f]{32}$")
-    operations: tuple[ControllerWorkerRPCOperation, ...] = Field(min_length=1, max_length=14)
+    operations: tuple[ControllerWorkerRPCOperation, ...] = Field(min_length=1, max_length=15)
     socket_device_id: int = Field(ge=0)
     socket_inode: int = Field(ge=1)
     started_at: AwareDatetime

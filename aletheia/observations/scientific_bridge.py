@@ -408,7 +408,12 @@ class ScientificObservationArtifactBinding(ScientificBridgeModel):
 
 
 class ScientificActionProtocolBinding(ScientificBridgeModel):
-    """Closed action -> protocol -> WorkOrder node -> one preregistered slot binding."""
+    """Closed action -> protocol -> WorkOrder node -> one preregistered slot binding.
+
+    One authorized action may preregister several exact scientific slots.  Each binding still
+    names exactly one slot; campaign-level atomic registration is enforced by the execution
+    registrar rather than by weakening this per-execution contract.
+    """
 
     schema_name: Literal["aletheia.scientific_action_protocol_binding"] = (
         "aletheia.scientific_action_protocol_binding"
@@ -498,12 +503,10 @@ class ScientificActionProtocolBinding(ScientificBridgeModel):
             or slot.slot_count != node.scientific_replicate_count
             or slot.replicate_kind != node.replicate_kind
             or slot.preregistration_sha256 != node.replicate_preregistration_sha256
-            or slot.randomization_seed_sha256 != node.replicate_seed_sha256s[0]
+            or slot.randomization_seed_sha256 != node.replicate_seed_sha256s[slot.slot_index - 1]
             or slot.independent_site_required != node.independent_site_required
         ):
             raise ValueError("scientific replicate slot is not the exact WorkOrder projection")
-        if slot.slot_count != 1 or slot.slot_index != 1:
-            raise ValueError("scientific bridge Phase 1 supports exactly one preregistered slot")
         if not authorized.committed_at <= protocol.authored_at <= self.bound_at:
             raise ValueError(
                 "action binding was not frozen after authorization and protocol authorship"

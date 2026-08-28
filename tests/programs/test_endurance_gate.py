@@ -187,10 +187,7 @@ def _passing_fault_report(seed: str, quest_id: str, base: datetime):
             evidence_sha256s=(
                 _sha(f"{spec.scenario_id}:recovery"),
                 _sha(f"{spec.scenario_id}:diagnostic"),
-                *(
-                    _sha(f"{spec.scenario_id}:{item.metric.value}")
-                    for item in expectations
-                ),
+                *(_sha(f"{spec.scenario_id}:{item.metric.value}") for item in expectations),
             ),
             diagnostic_sha256=_sha(f"{spec.scenario_id}:diagnostic"),
             started_at=base + timedelta(seconds=1),
@@ -415,9 +412,7 @@ def _seed_portfolio_epoch(
             estimated_duration_seconds=60,
             risk_level=PortfolioRiskLevel.LOW,
             measurement_status=PortfolioMeasurementStatus.VALIDATED,
-            measurement_evidence_sha256=_sha(
-                f"{seed}:{action.candidate_id}:measurement"
-            ),
+            measurement_evidence_sha256=_sha(f"{seed}:{action.candidate_id}:measurement"),
             required_capability_sha256s=(),
             available_capability_sha256s=(),
             required_data_roles=(),
@@ -426,16 +421,12 @@ def _seed_portfolio_epoch(
             novelty_ppm=500_000,
             success_probability_ppm=800_000,
             value_evidence_sha256=_sha(f"{seed}:{action.candidate_id}:value"),
-            replication_debt_ledger_sha256=_sha(
-                f"{seed}:{action.candidate_id}:replication"
-            ),
+            replication_debt_ledger_sha256=_sha(f"{seed}:{action.candidate_id}:replication"),
             replication_debt_before=0,
             expected_replication_debt_reduction=0,
             correlation_tags=(f"correlation-{action.action_type.value}",),
             diversity_tags=(f"diversity-{action.action_type.value}",),
-            assessment_evidence_sha256s=(
-                _sha(f"{seed}:{action.candidate_id}:assessment"),
-            ),
+            assessment_evidence_sha256s=(_sha(f"{seed}:{action.candidate_id}:assessment"),),
             completed_at=base + timedelta(seconds=16),
         )
         for action in actions
@@ -571,9 +562,7 @@ def _seed_in_window_evidence(
         item
         for item in live_fault.results
         if next(
-            spec
-            for spec in live_fault.manifest.scenarios
-            if spec.scenario_id == item.scenario_id
+            spec for spec in live_fault.manifest.scenarios if spec.scenario_id == item.scenario_id
         ).boundary
         is FaultBoundary.API_PROCESS
     )
@@ -581,9 +570,7 @@ def _seed_in_window_evidence(
         item
         for item in live_fault.results
         if next(
-            spec
-            for spec in live_fault.manifest.scenarios
-            if spec.scenario_id == item.scenario_id
+            spec for spec in live_fault.manifest.scenarios if spec.scenario_id == item.scenario_id
         ).boundary
         is FaultBoundary.PROVIDER
     )
@@ -610,9 +597,7 @@ def _seed_in_window_evidence(
                     fault_campaign_id=live_fault_receipt.campaign_id,
                     fault_report_sha256=live_fault.report_sha256,
                     scenario_id=process_result.scenario_id,
-                    recovery_evidence_sha256s=(
-                        process_result.observation.evidence_sha256s[0],
-                    ),
+                    recovery_evidence_sha256s=(process_result.observation.evidence_sha256s[0],),
                     occurred_at=process_result.observation.completed_at,
                 ),
                 EnduranceInterruptionReceipt(
@@ -620,9 +605,7 @@ def _seed_in_window_evidence(
                     fault_campaign_id=live_fault_receipt.campaign_id,
                     fault_report_sha256=live_fault.report_sha256,
                     scenario_id=provider_result.scenario_id,
-                    recovery_evidence_sha256s=(
-                        provider_result.observation.evidence_sha256s[0],
-                    ),
+                    recovery_evidence_sha256s=(provider_result.observation.evidence_sha256s[0],),
                     occurred_at=provider_result.observation.completed_at,
                 ),
             ),
@@ -777,9 +760,7 @@ def _pure_graph(base: datetime) -> QuestGraphSnapshot:
         "rebuilt_at": None,
     }
     projection = {
-        key: [item.model_dump(mode="json") for item in value]
-        if isinstance(value, tuple)
-        else value
+        key: [item.model_dump(mode="json") for item in value] if isinstance(value, tuple) else value
         for key, value in payload.items()
         if key != "rebuilt_at"
     }
@@ -984,9 +965,7 @@ def test_cosmetic_pivot_cannot_satisfy_structural_evidence() -> None:
             source_transition_id="source-stop",
             successor_transition_id="successor-start",
             before=before,
-            after=before.model_copy(
-                update={"analysis_plan_sha256": _sha("after-wording")}
-            ),
+            after=before.model_copy(update={"analysis_plan_sha256": _sha("after-wording")}),
             assessor_code_sha256=_sha("pivot-assessor"),
             assessed_by="harness:pivot",
             evidence_sha256s=(_sha("pivot-evidence"),),
@@ -1157,7 +1136,7 @@ def test_accelerated_end_to_end_acceptance_passes_without_claiming_72h(tmp_path:
     assert audit.eligible_for_f11_scientific_exit_review is False
 
 
-def test_real_time_store_rejects_clock_override_before_start() -> None:
+def test_real_time_store_rejects_clock_override_before_start(monkeypatch) -> None:
     seed = uuid.uuid4().hex
     base = datetime.now(timezone.utc) - timedelta(minutes=2)
     _, quest, _, _, _, fault_receipt = _seed_store_prerequisites(seed, base)
@@ -1180,6 +1159,14 @@ def test_real_time_store_rejects_clock_override_before_start() -> None:
         )
     store = ResearchEnduranceStore()
     gate = store.start(manifest, _endurance_context(seed, "real-start-database-clock"))
+    original_observe = ResearchEnduranceStore._observe
+
+    def delayed_observe(*args, **kwargs):
+        observation = original_observe(*args, **kwargs)
+        args[0].execute(text("SELECT pg_sleep(5.1)"))
+        return observation
+
+    monkeypatch.setattr(ResearchEnduranceStore, "_observe", staticmethod(delayed_observe))
     store.finalize(
         gate.object_id,
         _endurance_context(seed, "real-finalize-too-early"),
@@ -1220,15 +1207,26 @@ def test_endurance_migration_matches_orm_and_guards_exist() -> None:
     assert "trg_research_endurance_checkpoint_guard" in trigger_names
     assert "trg_research_endurance_report_guard" in trigger_names
     assert "trg_research_endurance_checkpoints_append_only" in trigger_names
-    assert "command_input->'manifest'" in function_bodies[
-        "aletheia_validate_research_endurance_gate"
-    ]
-    assert "NEW.process_kill_count" in function_bodies[
-        "aletheia_validate_research_endurance_checkpoint"
-    ]
-    assert "NEW.provider_interruption_count" in function_bodies[
-        "aletheia_validate_research_endurance_checkpoint"
-    ]
-    assert "COALESCE(command_input->'efficiency', 'null'::jsonb)" in function_bodies[
-        "aletheia_validate_research_endurance_report"
-    ]
+    assert (
+        "command_input->'manifest'" in function_bodies["aletheia_validate_research_endurance_gate"]
+    )
+    assert (
+        "NEW.process_kill_count"
+        in function_bodies["aletheia_validate_research_endurance_checkpoint"]
+    )
+    assert (
+        "NEW.provider_interruption_count"
+        in function_bodies["aletheia_validate_research_endurance_checkpoint"]
+    )
+    assert (
+        "COALESCE(command_input->'efficiency', 'null'::jsonb)"
+        in function_bodies["aletheia_validate_research_endurance_report"]
+    )
+    for function_name, timestamp_field in (
+        ("aletheia_validate_research_endurance_gate", "started_at"),
+        ("aletheia_validate_research_endurance_checkpoint", "observed_at"),
+        ("aletheia_validate_research_endurance_report", "completed_at"),
+    ):
+        body = function_bodies[function_name]
+        assert f"NEW.{timestamp_field} IS DISTINCT FROM transaction_timestamp()" in body
+        assert f"clock_timestamp() - NEW.{timestamp_field}" not in body

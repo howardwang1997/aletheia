@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from aletheia.execution.allocator import PostgreSQLExecutionAllocator
 from aletheia.observations import execution_registration as registration_module
 from aletheia.observations.execution_registration import (
+    AtomicScientificExecutionCampaignRegistrationReceipt,
     PostgreSQLAtomicScientificExecutionRegistrar,
     ScientificExecutionRegistrationError,
     ScientificExecutionRegistrationVerificationContext,
@@ -24,7 +25,7 @@ from persistence_test_support import sqlite_observation_engine
 
 _OBSERVATION_TESTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(_OBSERVATION_TESTS))
-from test_scientific_bridge import _bridge_case  # noqa: E402
+from test_scientific_bridge import _bridge_case, _replicate_bridge_cases  # noqa: E402
 
 
 class _Allocator(PostgreSQLExecutionAllocator):
@@ -81,6 +82,59 @@ class _Allocator(PostgreSQLExecutionAllocator):
             created=created,
             lease_token="never-exposed" if created else None,
             snapshot=self.snapshot,
+        )
+
+
+class _CampaignAllocator(PostgreSQLExecutionAllocator):
+    def __init__(self, *, first_reserved_at, fail_on_call: int | None = None) -> None:
+        self.first_reserved_at = first_reserved_at
+        self.fail_on_call = fail_on_call
+        self.calls: list[tuple[object, object, Session]] = []
+        self.snapshots: dict[str, object] = {}
+
+    @property
+    def runtime_control_issuance_enabled(self) -> bool:
+        return False
+
+    @property
+    def runtime_control_verification_enabled(self) -> bool:
+        return True
+
+    def load_exact_qualification_reservation_in_session(self, session, *, bundle, grant):
+        assert session.in_transaction()
+        attempt_id = bundle.intent.infrastructure_attempt.infrastructure_attempt_id
+        snapshot = self.snapshots.get(attempt_id)
+        if snapshot is not None:
+            assert snapshot.execution_id == bundle.intent.execution_id
+            assert snapshot.grant_sha256 == grant.grant_sha256
+        return snapshot
+
+    def admit_and_reserve_in_session(self, session, *, bundle, grant):
+        assert session.in_transaction()
+        self.calls.append((bundle, grant, session))
+        if self.fail_on_call == len(self.calls):
+            raise RuntimeError("injected campaign allocator failure")
+        intent = bundle.intent
+        attempt_id = intent.infrastructure_attempt.infrastructure_attempt_id
+        snapshot = self.snapshots.get(attempt_id)
+        created = snapshot is None
+        if created:
+            snapshot = SimpleNamespace(
+                execution_id=intent.execution_id,
+                attempt_id=attempt_id,
+                intent_sha256=intent.intent_sha256,
+                admission_sha256=(f"{len(self.calls):064x}"),
+                resource_lease_sha256=(f"{len(self.calls) + 100:064x}"),
+                bundle_sha256=bundle.bundle_sha256,
+                grant_sha256=grant.grant_sha256,
+                status="reserved",
+                reserved_at=self.first_reserved_at + timedelta(seconds=len(self.snapshots)),
+            )
+            self.snapshots[attempt_id] = snapshot
+        return SimpleNamespace(
+            created=created,
+            lease_token="never-exposed" if created else None,
+            snapshot=snapshot,
         )
 
 
@@ -238,6 +292,153 @@ def test_atomic_registrar_exact_retry_is_byte_stable_and_skips_current_head_rech
     assert retried.receipt_sha256 == first.receipt_sha256
     assert len(current_action_authority.calls) == 1
     assert len(allocator.calls) == 2
+
+
+def test_replicate_campaign_preregisters_every_slot_before_any_reservation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cases = _replicate_bridge_cases()
+    authorizations = tuple(item.authorization for item in cases)
+    engine = sqlite_observation_engine()
+    with Session(engine) as session, session.begin():
+        _seed_authorization_parents(session, cases[0])
+    registered_at = authorizations[0].message.authorized_at + timedelta(seconds=1)
+    first_reserved_at = registered_at + timedelta(seconds=1)
+    final_observed_at = first_reserved_at + timedelta(seconds=2)
+    allocator = _CampaignAllocator(first_reserved_at=first_reserved_at)
+    current_action_authority = _CurrentActionAuthority()
+    locked_slots: list[str] = []
+    monkeypatch.setattr(
+        registration_module,
+        "_lock_scientific_slot",
+        lambda _session, slot_id: locked_slots.append(slot_id),
+    )
+    registrar = PostgreSQLAtomicScientificExecutionRegistrar(
+        verification=_verification(
+            cases[0],
+            current_action_authority=current_action_authority,
+        ),
+        allocator=allocator,
+        session_scope_factory=_scope(engine),
+        database_clock=_Clock(registered_at, final_observed_at),
+    )
+
+    receipt = registrar.register_and_reserve_campaign(authorizations)
+
+    assert isinstance(receipt, AtomicScientificExecutionCampaignRegistrationReceipt)
+    assert receipt.authorizations == authorizations
+    assert tuple(item.scientific_slot_id for item in receipt.registration_receipts) == tuple(
+        item.message.scientific_slot_id for item in authorizations
+    )
+    assert tuple(
+        item.message.action_protocol_binding.replicate_slot.slot_index
+        for item in receipt.authorizations
+    ) == (1, 2)
+    assert locked_slots == sorted(locked_slots)
+    assert len(current_action_authority.calls) == 2
+    assert len(allocator.calls) == 2
+    assert max(item.registered_at for item in receipt.registration_receipts) < min(
+        item.reserved_at for item in receipt.registration_receipts
+    )
+    assert "never-exposed" not in receipt.model_dump_json()
+    with Session(engine) as session:
+        rows = session.scalars(
+            select(ResearchScientificExecutionAuthorizationRecord).order_by(
+                ResearchScientificExecutionAuthorizationRecord.scientific_slot_id
+            )
+        ).all()
+        assert len(rows) == 2
+        assert len({item.source_event_sha256 for item in rows}) == 1
+
+
+def test_replicate_campaign_exact_retry_is_stable_and_rejects_partial_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cases = _replicate_bridge_cases()
+    authorizations = tuple(item.authorization for item in cases)
+    engine = sqlite_observation_engine()
+    with Session(engine) as session, session.begin():
+        _seed_authorization_parents(session, cases[0])
+    registered_at = authorizations[0].message.authorized_at + timedelta(seconds=1)
+    first_reserved_at = registered_at + timedelta(seconds=1)
+    allocator = _CampaignAllocator(first_reserved_at=first_reserved_at)
+    current_action_authority = _CurrentActionAuthority()
+    monkeypatch.setattr(registration_module, "_lock_scientific_slot", lambda *_args: None)
+    registrar = PostgreSQLAtomicScientificExecutionRegistrar(
+        verification=_verification(
+            cases[0],
+            current_action_authority=current_action_authority,
+        ),
+        allocator=allocator,
+        session_scope_factory=_scope(engine),
+        database_clock=_Clock(
+            registered_at,
+            first_reserved_at + timedelta(seconds=2),
+            first_reserved_at + timedelta(seconds=3),
+        ),
+    )
+
+    first = registrar.register_and_reserve_campaign(authorizations)
+    retried = registrar.register_and_reserve_campaign(authorizations)
+
+    assert retried == first
+    assert retried.campaign_registration_sha256 == first.campaign_registration_sha256
+    assert len(current_action_authority.calls) == 2
+    assert len(allocator.calls) == 4
+
+    partial_engine = sqlite_observation_engine()
+    with Session(partial_engine) as session, session.begin():
+        _seed_authorization_parents(session, cases[0])
+    partial_allocator = _CampaignAllocator(first_reserved_at=first_reserved_at)
+    partial_registrar = PostgreSQLAtomicScientificExecutionRegistrar(
+        verification=_verification(cases[0]),
+        allocator=partial_allocator,
+        session_scope_factory=_scope(partial_engine),
+        database_clock=_Clock(
+            registered_at,
+            first_reserved_at + timedelta(seconds=1),
+            first_reserved_at + timedelta(seconds=2),
+        ),
+    )
+    partial_registrar.register_and_reserve(authorizations[0])
+    with pytest.raises(ScientificExecutionRegistrationError, match="partially registered"):
+        partial_registrar.register_and_reserve_campaign(authorizations)
+
+
+def test_replicate_campaign_rejects_noncanonical_or_partial_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cases = _replicate_bridge_cases()
+    authorizations = tuple(item.authorization for item in cases)
+    registered_at = authorizations[0].message.authorized_at + timedelta(seconds=1)
+    first_reserved_at = registered_at + timedelta(seconds=1)
+    engine = sqlite_observation_engine()
+    with Session(engine) as session, session.begin():
+        _seed_authorization_parents(session, cases[0])
+    allocator = _CampaignAllocator(
+        first_reserved_at=first_reserved_at,
+        fail_on_call=2,
+    )
+    monkeypatch.setattr(registration_module, "_lock_scientific_slot", lambda *_args: None)
+    registrar = PostgreSQLAtomicScientificExecutionRegistrar(
+        verification=_verification(cases[0]),
+        allocator=allocator,
+        session_scope_factory=_scope(engine),
+        database_clock=lambda _session: registered_at,
+    )
+
+    with pytest.raises(ScientificExecutionRegistrationError, match="failed atomic"):
+        registrar.register_and_reserve_campaign(authorizations)
+    with Session(engine) as session:
+        assert (
+            session.scalar(
+                select(func.count()).select_from(ResearchScientificExecutionAuthorizationRecord)
+            )
+            == 0
+        )
+
+    with pytest.raises(ScientificExecutionRegistrationError, match="campaign failed atomic"):
+        registrar.register_and_reserve_campaign(tuple(reversed(authorizations)))
 
 
 def test_registrar_rejects_a_one_sided_historical_sea_before_reservation(

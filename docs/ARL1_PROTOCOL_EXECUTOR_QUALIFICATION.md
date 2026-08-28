@@ -34,20 +34,55 @@ The dashboard is upgraded from vulnerable Next.js 15.1.6 to 16.3.3. Production `
 clean at this checkpoint. The removed `next lint` command is replaced with ESLint's supported flat
 configuration, and the previously hidden TypeScript/React findings are fixed rather than ignored.
 
+The Conda environment now also carries explicit patched-version floors for the direct and
+transitive packages reported by `pip-audit`, including cryptography, MCP, Starlette,
+python-multipart, Pillow, Torch and their HTTP/runtime dependencies. A resolved environment must
+pass both `pip check` and `pip-audit --local`; lowering those floors is not an ARL-1-compatible
+deployment change. Every direct Python-base OCI source now upgrades to the audited pip/setuptools
+floor before installing anything; qualification, legacy-evaluation and sandbox sources also carry
+the patched cryptography, pydantic-settings and Torch floors. A static regression gate prevents the
+audited vulnerable pins from returning.
+
 ## What is and is not complete
 
-The qualification contract, compiler replay, target-campaign replay, independent-verifier seam,
-signature path, deterministic report and tamper tests are implemented. The target campaign must
-complete before any protocol execution, validator and execution-authorization timestamps must
-precede execution, source verification cannot predate the evidence it attests, and offline receipt
-verification independently reapplies policy validity bounds. No production ARL-1 qualification
-receipt has been issued.
+The qualification contract, compiler replay, target-campaign replay, independent verifier,
+signature path, deterministic report and tamper tests are implemented. The concrete verifier
+freshly reopens the write-once evidence archive, PostgreSQL receipts, artifact CAS, F9-v2 campaign
+archive and Research Kernel CAS/ledger; it also runs exact executable/input-pinned ARL-0 gate
+commands without a shell. A single authorized action can preregister an exhaustive two-to-100-slot
+campaign in one database transaction before the first qualification reservation. The target
+campaign must complete before any protocol execution, validator and execution-authorization
+timestamps must precede execution, source verification cannot predate the evidence it attests,
+and offline receipt verification independently reapplies policy validity bounds.
+
+Production one-shot entrypoints now exist for the given-protocol campaign and for three separate
+qualification phases: source replay/signing, qualification signing, and keyless fresh audit. Each
+phase requires Linux, an exact process identity, an out-of-band deployment-manifest byte digest,
+canonical no-duplicate-key JSON, exact code/database/schema/inode pins and an explicit operation
+acknowledgement. The source verifier and qualification signer load only their own 0400 Ed25519 key;
+the auditor loads neither private key and must use a third application principal. CLI output is the
+exact canonical JSON accepted by the next phase, without an added newline.
+
+Qualification and later audit timestamps are not accepted from evidence JSON. The issuance and
+verification manifests contain at most a 24-hour approved operation window; after fresh source
+replay the runtime reads PostgreSQL `clock_timestamp()` through the pinned database, derives the
+receipt expiry from a bounded validity duration, and checks the clock again before releasing the
+result. This prevents a stale manifest from backdating, future-dating or reviving an expired
+qualification receipt.
+
+After atomically preregistering and reserving every replicate, the campaign invocation may receive
+one signed `raw_run:terminal_material_pending` source status while a node is still running. It waits
+only for that closed status, uses the service-signed bounded retry interval, and stops no later than
+the authorization's observation-admission deadline. Missing registration, invalid signatures,
+database drift, rebound terminal material and custody failures are never retried as readiness.
+
+No production ARL-1 qualification receipt has been issued.
 
 This development machine is macOS and cannot supply the required Linux/root/systemd/cgroup-v2/
 rootful-Docker/AppArmor/loop-ext4 target evidence. The existing PR-8h source tests use synthetic
 host ports and are intentionally ineligible because every ARL evidence contract requires
-`synthetic_evidence=false`. A production source-verifier composition must also replay the retained
-database/CAS evidence instead of returning a recording test receipt.
+`synthetic_evidence=false`. The production composition is available, but it has deliberately not
+been pointed at invented target receipts or recording ports to manufacture a qualification.
 
 Therefore the honest current status remains **ARL-1 qualification gate implemented, deployed
 system not ARL-1 qualified**.
@@ -59,8 +94,30 @@ Run the focused qualification and schema gates:
 ```bash
 conda run -n aletheia pytest -q \
   tests/execution/test_arl1_qualification.py \
+  tests/execution/test_arl1_verifier.py \
+  tests/execution/test_arl1_campaign.py \
+  tests/execution/test_arl1_runtime.py \
+  tests/execution/test_arl1_qualification_runtime.py \
+  tests/observations/test_execution_registration.py \
+  tests/observations/test_scientific_bridge.py \
+  tests/observations/test_sources.py \
+  tests/research_controller/test_execution_registration_rpc_runtime.py \
+  tests/research_controller/test_external_rpc.py \
+  tests/research_controller/test_external_rpc_server.py \
+  tests/research_controller/test_raw_run_source_rpc_runtime.py \
+  tests/research_controller/test_worker_composition.py \
   tests/test_schema_migrations.py \
   tests/execution/test_qualification_campaign.py
+```
+
+Audit the resolved Python environment and the separately frozen legacy-evaluation image
+resolution:
+
+```bash
+conda run -n aletheia pip check
+conda run -n aletheia pip-audit --local
+conda run -n aletheia pip-audit \
+  -r configs/capabilities/legacy-evaluation-runtime-constraints-v1.txt
 ```
 
 Run frontend validation:
@@ -81,11 +138,17 @@ The real exit procedure must use a disposable qualified Linux target:
 2. execute PR-8f bootstrap, PR-8g commissioning and PR-8b installation;
 3. run PR-8h and retain its request, journal, signed observations and final receipt;
 4. execute each policy-required given protocol with all preregistered exact reexecutions through
-   the production controller, validator, admission and Kernel incorporation path;
+   the production controller, bounded terminal-material wait, validator, admission and Kernel
+   incorporation path;
 5. retain the all-attempt and evidence-archive manifests plus deterministic reports;
-6. run a production `ARL1EvidenceVerificationPort` under a principal separate from the ARL signer;
-7. issue the signed receipt, restart from empty process memory, and freshly verify the complete
-   bundle again; and
-8. tamper one byte in every retained source class and require verification to fail.
+6. run each byte-pinned given-protocol campaign with
+   `scripts/run-arl1-protocol-campaign.py --apply --acknowledge
+   RUN_ARL1_PROTOCOL_CAMPAIGN`, retaining its canonical stdout and SHA-256;
+7. run `scripts/run-arl1-qualification.py prepare` under the source-verifier principal with exact
+   acknowledgement `PREPARE_ARL1_EVIDENCE_BUNDLE`, then run `issue` under the disjoint
+   qualification principal with `ISSUE_ARL1_QUALIFICATION`;
+8. restart from empty process memory and run `scripts/run-arl1-qualification.py verify` under a
+   third, keyless auditor principal with `VERIFY_ARL1_QUALIFICATION`; and
+9. tamper one byte in every retained source class and require verification to fail.
 
 No local test or CI badge substitutes for those target-host steps.

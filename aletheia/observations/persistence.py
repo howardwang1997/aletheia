@@ -653,7 +653,6 @@ class ResearchScientificExecutionAuthorizationRecord(Base):
         UniqueConstraint("scientific_slot_id", name="uq_rsea_slot"),
         UniqueConstraint("execution_id", name="uq_rsea_execution"),
         UniqueConstraint("attempt_id", name="uq_rsea_attempt"),
-        UniqueConstraint("source_event_sha256", name="uq_rsea_source_event"),
         UniqueConstraint("qualification_bundle_sha256", name="uq_rsea_bundle"),
         UniqueConstraint("qualification_grant_sha256", name="uq_rsea_grant"),
         UniqueConstraint(
@@ -675,6 +674,12 @@ class ResearchScientificExecutionAuthorizationRecord(Base):
             initially="DEFERRED",
         ),
         Index("ix_rsea_quest_registered", "quest_id", "registered_at"),
+        Index(
+            "ix_rsea_quest_source_event",
+            "quest_id",
+            "source_event_sequence",
+            "source_event_sha256",
+        ),
     )
 
     authorization_sha256: Mapped[str] = mapped_column(String(64), primary_key=True)

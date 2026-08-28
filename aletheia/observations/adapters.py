@@ -68,6 +68,10 @@ class ObservationAdapterVerificationError(RuntimeError):
     """A concrete adapter could not prove the requested historical binding."""
 
 
+class RawRunTerminalMaterialPending(ObservationAdapterVerificationError):
+    """The exact preregistered execution has not produced terminal material yet."""
+
+
 class QualificationRunLineageArchive(Protocol):
     """Public execution read seam; implementations must not expose private ORM records."""
 
@@ -189,7 +193,7 @@ class PostgreSQLRawRunEnvelopeSourceAdapter:
                 )
             )
             if material_candidate is None:
-                raise ObservationAdapterVerificationError(
+                raise RawRunTerminalMaterialPending(
                     "raw-run source has no verified PR-4 terminal material"
                 )
             material = VerifiedQualificationRawRunMaterial.model_validate(
@@ -967,5 +971,6 @@ __all__ = [
     "PostgreSQLResearchActionAuthorityAdapter",
     "QualificationRawRunMaterialArchive",
     "RawRunEnvelopeSourceVerificationContext",
+    "RawRunTerminalMaterialPending",
     "QualificationRunLineageArchive",
 ]

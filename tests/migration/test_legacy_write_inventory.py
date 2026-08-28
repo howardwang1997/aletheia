@@ -20,6 +20,10 @@ DRIVER_PATH = REPOSITORY_ROOT / "aletheia" / "scheduler" / "driver.py"
 
 LEGACY_SOURCE_AST_EXCLUDED_ROOTS = {
     "aletheia/arl1.py": "new_qualification_authority",
+    "aletheia/arl1_campaign.py": "new_qualification_authority",
+    "aletheia/arl1_qualification_runtime.py": "new_qualification_authority",
+    "aletheia/arl1_runtime.py": "new_qualification_authority",
+    "aletheia/arl1_verifier.py": "new_qualification_authority",
     "aletheia/api/research_kernel.py": "new_authority_adapter",
     "aletheia/durable_tasks": "authority_neutral_contracts",
     "aletheia/execution": "new_authority",
@@ -30,6 +34,8 @@ LEGACY_SOURCE_AST_EXCLUDED_ROOTS = {
     "aletheia/research_controller": "new_authority",
     "aletheia/research_kernel": "new_authority",
     "aletheia/research_store": "new_authority_adapter",
+    "scripts/run-arl1-protocol-campaign.py": "new_qualification_entrypoint",
+    "scripts/run-arl1-qualification.py": "new_qualification_entrypoint",
 }
 MIGRATION_SOURCE_AST_ROOTS = ("aletheia/migration", "migrations")
 FRONTEND_HTTP_MUTATION_METHODS = ("DELETE", "PATCH", "POST", "PUT")
@@ -2030,7 +2036,11 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
             (
                 "aletheia.observations.execution_registration",
                 "PostgreSQLAtomicScientificExecutionRegistrar.register_and_reserve",
-            )
+            ),
+            (
+                "aletheia.observations.execution_registration",
+                "PostgreSQLAtomicScientificExecutionRegistrar._register_and_reserve_many",
+            ),
         }
     )
     assert {

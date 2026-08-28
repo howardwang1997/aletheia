@@ -5,7 +5,11 @@
 # appear in DeploymentPinnedOCIPolicy.
 FROM python:3.11-slim@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff
 
-RUN pip install --no-cache-dir "cryptography==48.0.0"
+RUN python -m pip install --no-cache-dir --upgrade \
+    "pip==26.2.1" \
+    "setuptools==84.0.0"
+
+RUN pip install --no-cache-dir "cryptography==50.0.0"
 
 COPY aletheia/execution/qualification_launch_gate.py \
     /opt/aletheia/bin/qualification-launch-gate

@@ -118,24 +118,30 @@ def _aware(value: datetime, label: str) -> datetime:
 
 
 def _command_key(context: EnduranceCommandContext, operation: str) -> str:
-    return "edk_" + content_sha256(
-        {
-            "schema": "aletheia.research_endurance_command_key.v1",
-            "operation": operation,
-            "client_idempotency_key": context.idempotency_key,
-        }
-    )[:32]
+    return (
+        "edk_"
+        + content_sha256(
+            {
+                "schema": "aletheia.research_endurance_command_key.v1",
+                "operation": operation,
+                "client_idempotency_key": context.idempotency_key,
+            }
+        )[:32]
+    )
 
 
 def _source_key(context: EnduranceCommandContext) -> str | None:
     if context.source_event_key is None:
         return None
-    return "eds_" + content_sha256(
-        {
-            "schema": "aletheia.research_endurance_source_key.v1",
-            "source_event_key": context.source_event_key,
-        }
-    )[:32]
+    return (
+        "eds_"
+        + content_sha256(
+            {
+                "schema": "aletheia.research_endurance_source_key.v1",
+                "source_event_key": context.source_event_key,
+            }
+        )[:32]
+    )
 
 
 def _command(
@@ -211,11 +217,7 @@ def _graph_sources(graph: QuestGraphSnapshot) -> tuple[Any, tuple[str, ...], tup
         )
     )
     campaigns = tuple(
-        sorted(
-            item.node_id
-            for item in graph.nodes
-            if item.node_type is GraphNodeType.CAMPAIGN
-        )
+        sorted(item.node_id for item in graph.nodes if item.node_type is GraphNodeType.CAMPAIGN)
     )
     if len(questions) < 2:
         raise ResearchEnduranceSourceError("endurance gate requires at least two frozen questions")
@@ -249,9 +251,7 @@ def prepare_endurance_gate_manifest(
 
             row = session.get(EpistemicResearchQuestionRecord, question_sha256)
             if row is None:
-                raise ResearchEnduranceSourceError(
-                    f"frozen question is missing: {question_sha256}"
-                )
+                raise ResearchEnduranceSourceError(f"frozen question is missing: {question_sha256}")
             try:
                 question = ResearchQuestion.model_validate(row.payload_json)
             except Exception as exc:
@@ -340,9 +340,15 @@ def _all_evidence(
     tuple[EnduranceInterruptionReceipt, ...],
     tuple[EnduranceStructuralPivotReceipt, ...],
 ]:
-    reproductions = tuple(item for checkpoint in checkpoints for item in checkpoint.evidence.reproductions)
-    interruptions = tuple(item for checkpoint in checkpoints for item in checkpoint.evidence.interruptions)
-    pivots = tuple(item for checkpoint in checkpoints for item in checkpoint.evidence.structural_pivots)
+    reproductions = tuple(
+        item for checkpoint in checkpoints for item in checkpoint.evidence.reproductions
+    )
+    interruptions = tuple(
+        item for checkpoint in checkpoints for item in checkpoint.evidence.interruptions
+    )
+    pivots = tuple(
+        item for checkpoint in checkpoints for item in checkpoint.evidence.structural_pivots
+    )
     for label, items in (
         ("reproduction", reproductions),
         ("interruption", interruptions),
@@ -436,23 +442,18 @@ def evaluate_endurance_gate(
         item for item in interruptions if item.kind is EnduranceInterruptionKind.PROCESS_KILL
     )
     provider_interruptions = tuple(
-        item
-        for item in interruptions
-        if item.kind is EnduranceInterruptionKind.PROVIDER_TRANSPORT
+        item for item in interruptions if item.kind is EnduranceInterruptionKind.PROVIDER_TRANSPORT
     )
     points = (started_at, *(item.observation.observed_at for item in ordered), completed_at)
     gaps = tuple(
-        math.ceil((right - left).total_seconds())
-        for left, right in zip(points, points[1:])
+        math.ceil((right - left).total_seconds()) for left, right in zip(points, points[1:])
     )
     maximum_gap = max(gaps, default=0)
     elapsed = int((completed_at - started_at).total_seconds())
     all_observations = tuple(item.observation for item in ordered) + (final_observation,)
     blockers: list[str] = []
     if elapsed < manifest.required_duration_seconds:
-        blockers.append(
-            f"duration:minimum_not_met:{elapsed}/{manifest.required_duration_seconds}"
-        )
+        blockers.append(f"duration:minimum_not_met:{elapsed}/{manifest.required_duration_seconds}")
     if not ordered:
         blockers.append("checkpoints:none")
     if maximum_gap > manifest.maximum_checkpoint_gap_seconds:
@@ -478,13 +479,11 @@ def evaluate_endurance_gate(
         )
     if len(reproductions) < manifest.minimum_reproductions:
         blockers.append(
-            f"reproductions:minimum_not_met:{len(reproductions)}/"
-            f"{manifest.minimum_reproductions}"
+            f"reproductions:minimum_not_met:{len(reproductions)}/{manifest.minimum_reproductions}"
         )
     if len(process_kills) < manifest.minimum_process_kills:
         blockers.append(
-            f"process_kills:minimum_not_met:{len(process_kills)}/"
-            f"{manifest.minimum_process_kills}"
+            f"process_kills:minimum_not_met:{len(process_kills)}/{manifest.minimum_process_kills}"
         )
     if len(provider_interruptions) < manifest.minimum_provider_interruptions:
         blockers.append(
@@ -493,8 +492,7 @@ def evaluate_endurance_gate(
         )
     if len(pivots) < manifest.minimum_structural_pivots:
         blockers.append(
-            f"structural_pivots:minimum_not_met:{len(pivots)}/"
-            f"{manifest.minimum_structural_pivots}"
+            f"structural_pivots:minimum_not_met:{len(pivots)}/{manifest.minimum_structural_pivots}"
         )
     if len(final_observation.portfolio_epoch_ids) < manifest.minimum_portfolio_epochs:
         blockers.append(
@@ -578,7 +576,12 @@ class ResearchEnduranceStore:
                     "real-time endurance evidence rejects caller-supplied clocks"
                 )
             return _aware(supplied, "accelerated endurance clock")
-        observed = session.scalar(select(func.clock_timestamp()))
+        clock = (
+            func.now()
+            if evidence_class is EnduranceEvidenceClass.REAL_TIME_72H
+            else func.clock_timestamp()
+        )
+        observed = session.scalar(select(clock))
         if observed is None:  # pragma: no cover - PostgreSQL always supplies this
             raise ResearchEnduranceInvariantError(
                 "database did not provide an endurance wall-clock timestamp"
@@ -608,9 +611,7 @@ class ResearchEnduranceStore:
     ) -> ScientificCommandReceipt:
         row = session.get(ScientificCommandRecord, command_id)
         if row is None:
-            raise ResearchEnduranceInvariantError(
-                f"endurance command is missing: {command_id}"
-            )
+            raise ResearchEnduranceInvariantError(f"endurance command is missing: {command_id}")
         try:
             ScientificTransitionStore._verify_event(session, row)
             receipt = ScientificTransitionStore._receipt(row, created=False)
@@ -627,9 +628,7 @@ class ResearchEnduranceStore:
             or row.input_json.get("gate_id") != gate_id
             or receipt.result.get("object_id") != object_id
         ):
-            raise ResearchEnduranceInvariantError(
-                f"endurance command was rebound: {command_id}"
-            )
+            raise ResearchEnduranceInvariantError(f"endurance command was rebound: {command_id}")
         return receipt
 
     @staticmethod
@@ -770,7 +769,9 @@ class ResearchEnduranceStore:
                         )
                         for item in binding_rows
                     ),
-                    sources=tuple(MemorySourceRef.model_validate(item) for item in row.source_refs_json),
+                    sources=tuple(
+                        MemorySourceRef.model_validate(item) for item in row.source_refs_json
+                    ),
                 )
             except Exception as exc:
                 raise ResearchEnduranceInvariantError(
@@ -781,8 +782,7 @@ class ResearchEnduranceStore:
                 spec.fact_id != row.fact_id
                 or spec.fact_sha256 != row.fact_sha256
                 or command is None
-                or command.command_type
-                != ScientificCommandType.RESEARCH_MEMORY_MUTATION.value
+                or command.command_type != ScientificCommandType.RESEARCH_MEMORY_MUTATION.value
                 or command.aggregate_id != row.fact_id
                 or command.result_json is None
                 or command.result_json.get("object_id") != row.fact_id
@@ -954,22 +954,14 @@ class ResearchEnduranceStore:
             reconciliation_required_count=sum(
                 item.status == "reconciliation_required" for item in actions
             ),
-            scientific_state_loss_count=(
-                lost + fault_totals["scientific_state_loss_count"]
-            ),
-            duplicate_scientific_state_count=fault_totals[
-                "duplicate_scientific_state_count"
-            ],
-            duplicate_budget_charge_count=fault_totals[
-                "duplicate_budget_charge_count"
-            ],
+            scientific_state_loss_count=(lost + fault_totals["scientific_state_loss_count"]),
+            duplicate_scientific_state_count=fault_totals["duplicate_scientific_state_count"],
+            duplicate_budget_charge_count=fault_totals["duplicate_budget_charge_count"],
             duplicate_outward_action_count=(
-                duplicate_actions
-                + fault_totals["duplicate_outward_authorization_count"]
+                duplicate_actions + fault_totals["duplicate_outward_authorization_count"]
             ),
             unresolved_ambiguity_without_block_count=(
-                unresolved
-                + fault_totals["unresolved_ambiguity_without_block_count"]
+                unresolved + fault_totals["unresolved_ambiguity_without_block_count"]
             ),
             event_state_mismatch_count=(
                 event_mismatch
@@ -1044,12 +1036,13 @@ class ResearchEnduranceStore:
                 f"interruption receipt is not bound to passing in-window evidence: "
                 f"{receipt.receipt_id}"
             )
-        spec = next(item for item in report.manifest.scenarios if item.scenario_id == result.scenario_id)
+        spec = next(
+            item for item in report.manifest.scenarios if item.scenario_id == result.scenario_id
+        )
         if receipt.kind is EnduranceInterruptionKind.PROCESS_KILL:
             valid = (
                 spec.boundary in {FaultBoundary.API_PROCESS, FaultBoundary.WORKER_PROCESS}
-                and result.observation.observed_outcome
-                is FaultInjectionOutcome.PROCESS_EXIT
+                and result.observation.observed_outcome is FaultInjectionOutcome.PROCESS_EXIT
             )
         else:
             valid = (
@@ -1093,7 +1086,8 @@ class ResearchEnduranceStore:
             or fact.kind != MemoryFactKind.NEGATIVE_RESULT.value
             or source is None
             or source.node_id != receipt.source_campaign_id
-            or source.to_state not in {
+            or source.to_state
+            not in {
                 GraphNodeState.PAUSED.value,
                 GraphNodeState.STOPPED.value,
                 GraphNodeState.FAILED.value,
@@ -1112,9 +1106,7 @@ class ResearchEnduranceStore:
                 <= receipt.occurred_at
                 <= observed_at
             )
-            or not (
-                fact.created_at <= successor.created_at <= receipt.occurred_at
-            )
+            or not (fact.created_at <= successor.created_at <= receipt.occurred_at)
             or receipt.assessed_by in {source.principal, successor.principal}
         ):
             raise ResearchEnduranceSourceError(
@@ -1239,9 +1231,7 @@ class ResearchEnduranceStore:
                     frozen_budget_manifest_sha256=manifest.frozen_budget_manifest_sha256,
                     frozen_data_role_manifest_sha256=manifest.frozen_data_role_manifest_sha256,
                     prerequisite_fault_campaign_id=manifest.prerequisite_fault_campaign_id,
-                    prerequisite_fault_report_sha256=(
-                        manifest.prerequisite_fault_report_sha256
-                    ),
+                    prerequisite_fault_report_sha256=(manifest.prerequisite_fault_report_sha256),
                     started_at=started_at,
                     command_id=command.command_id,
                     started_by=context.principal,
@@ -1447,7 +1437,9 @@ class ResearchEnduranceStore:
             receipt = self._commands.execute(
                 command,
                 apply,
-                now=now if evidence_class is EnduranceEvidenceClass.ACCELERATED_ENGINEERING else None,
+                now=now
+                if evidence_class is EnduranceEvidenceClass.ACCELERATED_ENGINEERING
+                else None,
             )
         except IntegrityError as exc:
             raise ResearchEnduranceConflict(
@@ -1529,10 +1521,11 @@ class ResearchEnduranceStore:
             rows = self._checkpoint_rows(session, gate_id, lock_tail=True)
             checkpoints = tuple(self._parse_checkpoint(row) for row in rows)
             if checkpoints and completed_at < checkpoints[-1].observation.observed_at:
-                raise ResearchEnduranceConflict(
-                    "endurance completion predates its last checkpoint"
-                )
-            if efficiency is not None and not gate.started_at <= efficiency.assessed_at <= completed_at:
+                raise ResearchEnduranceConflict("endurance completion predates its last checkpoint")
+            if (
+                efficiency is not None
+                and not gate.started_at <= efficiency.assessed_at <= completed_at
+            ):
                 raise ResearchEnduranceSourceError(
                     "efficiency assessment is outside the endurance window"
                 )
@@ -1609,7 +1602,9 @@ class ResearchEnduranceStore:
             receipt = self._commands.execute(
                 command,
                 apply,
-                now=now if evidence_class is EnduranceEvidenceClass.ACCELERATED_ENGINEERING else None,
+                now=now
+                if evidence_class is EnduranceEvidenceClass.ACCELERATED_ENGINEERING
+                else None,
             )
         except IntegrityError as exc:
             raise ResearchEnduranceConflict(
@@ -1622,7 +1617,9 @@ class ResearchEnduranceStore:
         )
 
     @classmethod
-    def _snapshot(cls, session: Session, gate: ResearchEnduranceGateRecord) -> EnduranceGateSnapshot:
+    def _snapshot(
+        cls, session: Session, gate: ResearchEnduranceGateRecord
+    ) -> EnduranceGateSnapshot:
         try:
             manifest = EnduranceGateManifest.model_validate(gate.manifest_json)
         except Exception as exc:
@@ -1642,8 +1639,7 @@ class ResearchEnduranceStore:
             or manifest.frozen_budget_manifest_sha256 != gate.frozen_budget_manifest_sha256
             or manifest.frozen_data_role_manifest_sha256 != gate.frozen_data_role_manifest_sha256
             or manifest.prerequisite_fault_campaign_id != gate.prerequisite_fault_campaign_id
-            or manifest.prerequisite_fault_report_sha256
-            != gate.prerequisite_fault_report_sha256
+            or manifest.prerequisite_fault_report_sha256 != gate.prerequisite_fault_report_sha256
         ):
             raise ResearchEnduranceInvariantError(
                 f"endurance start bindings changed: {gate.gate_id}"
@@ -1711,8 +1707,7 @@ class ResearchEnduranceStore:
                 or report.eligible_for_f11_scientific_exit_review
                 != report_row.eligible_for_f11_scientific_exit_review
                 or report.completed_at != report_row.completed_at
-                or report.checkpoint_chain_sha256
-                != _checkpoint_chain_sha256(manifest, checkpoints)
+                or report.checkpoint_chain_sha256 != _checkpoint_chain_sha256(manifest, checkpoints)
             ):
                 raise ResearchEnduranceInvariantError(
                     f"endurance report bindings changed: {gate.gate_id}"

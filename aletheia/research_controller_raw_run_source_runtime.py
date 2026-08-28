@@ -27,12 +27,16 @@ def build_raw_run_source_rpc_service(*, deployment, configuration_bytes):
     from aletheia.observations.adapters import (
         PostgreSQLRawRunEnvelopeSourceAdapter,
         RawRunEnvelopeSourceVerificationContext,
+        RawRunTerminalMaterialPending,
     )
     from aletheia.observations.scientific_bridge import (
         ScientificBridgeAuthorityPin,
         ScientificBridgeRole,
     )
-    from aletheia.research_controller.external_rpc import ControllerWorkerRPCOperation
+    from aletheia.research_controller.external_rpc import (
+        ControllerWorkerRPCOperation,
+        RawRunLoadResult,
+    )
     from aletheia.research_controller.external_rpc_server import (
         ControllerWorkerRPCHandlerBinding,
         ControllerWorkerRPCHandlerSet,
@@ -335,11 +339,19 @@ def build_raw_run_source_rpc_service(*, deployment, configuration_bytes):
     def load_raw_run(payload):
         if type(payload) is not ScientificSlotLookupRPCPayload:
             raise TypeError("raw-run source RPC handler received another payload type")
-        return source.load_raw_run(
-            quest_id=payload.quest_id,
-            action_sha256=payload.action_sha256,
-            scientific_slot_id=payload.scientific_slot_id,
-        )
+        try:
+            raw_run = source.load_raw_run(
+                quest_id=payload.quest_id,
+                action_sha256=payload.action_sha256,
+                scientific_slot_id=payload.scientific_slot_id,
+            )
+        except RawRunTerminalMaterialPending:
+            return RawRunLoadResult(
+                disposition="pending",
+                pending_code="raw_run:terminal_material_pending",
+                retry_after_milliseconds=250,
+            )
+        return RawRunLoadResult(disposition="ready", raw_run=raw_run)
 
     after = fresh_regular_bytes(
         implementation_path,

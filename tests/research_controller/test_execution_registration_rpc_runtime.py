@@ -17,6 +17,7 @@ from aletheia.db import expected_schema_revision
 from aletheia.execution.qualification_custody import QualificationPreAdmissionCustodyConfig
 from aletheia.execution.registration_custody import QualificationExecutionRegistrationConfig
 from aletheia.observations.execution_registration import (
+    AtomicScientificExecutionCampaignRegistrationReceipt,
     AtomicScientificExecutionRegistrationReceipt,
 )
 from aletheia.research_controller.external_rpc import (
@@ -25,6 +26,7 @@ from aletheia.research_controller.external_rpc import (
     controller_worker_rpc_key_id,
 )
 from aletheia.research_controller.external_rpc_server import (
+    ScientificExecutionCampaignRegistrationRPCPayload,
     ScientificExecutionRegistrationRPCPayload,
 )
 from aletheia.research_controller.step_executor import ControllerStepAuthorityBinding
@@ -46,6 +48,7 @@ for _path in (_TEST_ROOT, _OBSERVATION_TESTS):
 
 from test_execution_authorization_rpc_runtime import _fixture as _authorization_fixture  # noqa: E402
 from test_execution_authorization_service import _case as _authorization_case  # noqa: E402
+from test_scientific_bridge import _replicate_bridge_cases  # noqa: E402
 from test_terminal_runtime import _config as _terminal_config  # noqa: E402
 
 
@@ -53,7 +56,14 @@ def _sha(label: str) -> str:
     return hashlib.sha256(label.encode()).hexdigest()
 
 
-def _fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def _fixture(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    operations: tuple[ControllerWorkerRPCOperation, ...] = (
+        ControllerWorkerRPCOperation.REGISTER_EXECUTION,
+    ),
+):
     authorization_root = tmp_path / "authorization"
     terminal_root = tmp_path / "terminal"
     registration_root = tmp_path / "registration"
@@ -124,7 +134,7 @@ def _fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         service_principal_id="principal:scientific-execution-registration-service",
         service_manifest_sha256=_sha("execution-registration-service-manifest"),
         service_policy_sha256=_sha("execution-registration-service-policy"),
-        operations=(ControllerWorkerRPCOperation.REGISTER_EXECUTION,),
+        operations=operations,
         authority_binding_sha256s=(binding.binding_sha256,),
         socket_path=str(socket_root / "execution-registration.sock"),
         socket_owner_uid=process_uid,
@@ -261,6 +271,59 @@ def test_checked_in_execution_registration_factory_is_keyless_and_operation_clos
         handler(object())
     assert config["private_domain_signing_key_loaded"] is False
     assert "signing_key" not in config
+
+
+def test_checked_in_execution_registration_factory_exposes_atomic_campaign_operation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    operations = (
+        ControllerWorkerRPCOperation.REGISTER_EXECUTION,
+        ControllerWorkerRPCOperation.REGISTER_EXECUTION_CAMPAIGN,
+    )
+    deployment, config, config_path, _authorization = _fixture(
+        monkeypatch,
+        tmp_path,
+        operations=operations,
+    )
+    authorizations = tuple(case.authorization for case in _replicate_bridge_cases())
+    expected = AtomicScientificExecutionCampaignRegistrationReceipt(
+        authorizations=authorizations,
+        registration_receipts=tuple(
+            _registration_receipt(authorization) for authorization in authorizations
+        ),
+    )
+
+    class _Registrar:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def register_and_reserve(self, _candidate):
+            raise AssertionError("single-slot registration must not serve a campaign request")
+
+        def register_and_reserve_campaign(self, candidates):
+            assert candidates == authorizations
+            return expected
+
+    monkeypatch.setattr(
+        registration_module,
+        "PostgreSQLAtomicScientificExecutionRegistrar",
+        _Registrar,
+    )
+    handlers = build_execution_registration_rpc_service(
+        deployment=deployment,
+        configuration_bytes=config_path.read_bytes(),
+    )
+
+    assert handlers.operations == operations
+    handler = handlers.handler_for(ControllerWorkerRPCOperation.REGISTER_EXECUTION_CAMPAIGN)
+    assert (
+        handler(ScientificExecutionCampaignRegistrationRPCPayload(authorizations=authorizations))
+        == expected
+    )
+    with pytest.raises(TypeError, match="another payload"):
+        handler(ScientificExecutionRegistrationRPCPayload(authorization=authorizations[0]))
+    assert config["private_domain_signing_key_loaded"] is False
 
 
 def test_guarded_rpc_runtime_loads_execution_registration_factory(
