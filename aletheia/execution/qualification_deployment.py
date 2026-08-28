@@ -42,6 +42,7 @@ _POSTGRESQL_IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 _POSTGRESQL_IDENTITY_ARGUMENT = re.compile(r"^[a-z][a-z0-9_.]*(?: [a-z][a-z0-9_.]*)*(?:\[\])?$")
 _SAFE_SYSTEMD_PATH = re.compile(r"^/[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$")
 _SAFE_RELATIVE_CODE_PATH = re.compile(r"^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$")
+_PYTHON_SITE_PACKAGES_RELATIVE_PATH = re.compile(r"^lib/python[0-9]+[.][0-9]+/site-packages$")
 _UNIT_PATTERNS: Mapping[str, re.Pattern[str]] = {
     "workspace": re.compile(r"^aletheia-qualification-workspace(?:-[a-z0-9_.-]+)?[.]service$"),
     "quota": re.compile(r"^aletheia-qualification-output-quota(?:-[a-z0-9_.-]+)?[.]service$"),
@@ -854,6 +855,19 @@ class QualificationDeploymentSpecV1(ExecutionModel):
                 import_path.relative_to(containing_tree.root_path)
             ) not in {directory.relative_path for directory in containing_tree.directories}:
                 raise ValueError("expected Python import paths must name reviewed directories")
+        site_packages = Path(self.expected_python_import_paths[-1])
+        if (
+            len(self.expected_python_import_paths) != 2
+            or self.expected_python_import_paths[0] != self.code_root
+            or python_environment_root not in site_packages.parents
+            or _PYTHON_SITE_PACKAGES_RELATIVE_PATH.fullmatch(
+                str(site_packages.relative_to(python_environment_root))
+            )
+            is None
+        ):
+            raise ValueError(
+                "expected Python import paths must bind code root then one reviewed site-packages"
+            )
         python_entry = {
             entry.relative_path: entry for entry in self.reviewed_python_environment.entries
         }.get(str(paths["python_executable"].relative_to(python_environment_root)))
@@ -1166,6 +1180,7 @@ def _python_environment_assignments(
     values = (
         f"PYTHONHOME={spec.reviewed_python_environment.root_path}",
         f"PYTHONPATH={spec.code_root}",
+        "ALETHEIA_QUALIFICATION_SITE_PACKAGES=" + spec.expected_python_import_paths[1],
         "PYTHONNOUSERSITE=1",
         "PYTHONSAFEPATH=1",
         "PYTHONDONTWRITEBYTECODE=1",

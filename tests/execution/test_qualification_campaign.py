@@ -15,6 +15,7 @@ import aletheia.execution.qualification_deployment as deployment
 import aletheia.qualification_authority_commissioning as commissioning
 import aletheia.qualification_campaign as campaign
 import aletheia.qualification_installer as installer
+import aletheia.qualification_observer as qualification_observer
 from aletheia.execution.qualification_outbox_service import (
     QualificationTerminalSpoolEnvelopeV1,
 )
@@ -51,6 +52,49 @@ from .test_qualification_deployment import (
 from .test_qualification_installer import _FakeHost as _InstallationHost
 
 NOW = datetime(2026, 8, 27, 6, 0, 0, tzinfo=timezone.utc)
+
+
+def test_reviewed_tree_streams_large_files_and_rejects_link_or_owner_drift(
+    tmp_path: Path,
+) -> None:
+    payload = b"x" * (17 * 1024 * 1024)
+    candidate = tmp_path / "libpython.so"
+    candidate.write_bytes(payload)
+    candidate.chmod(0o444)
+    digest = hashlib.sha256(payload).hexdigest()
+    metadata = candidate.stat()
+
+    observed_digest, observed = qualification_observer._hash_reviewed_tree_file(
+        candidate,
+        expected_sha256=digest,
+        expected_byte_length=len(payload),
+        expected_owner_uid=metadata.st_uid,
+        expected_owner_gid=metadata.st_gid,
+        expected_mode=0o444,
+    )
+    assert observed_digest == digest
+    assert observed.st_size == len(payload)
+
+    with pytest.raises(QualificationObserverError, match="custody differs"):
+        qualification_observer._hash_reviewed_tree_file(
+            candidate,
+            expected_sha256=digest,
+            expected_byte_length=len(payload),
+            expected_owner_uid=metadata.st_uid + 1,
+            expected_owner_gid=metadata.st_gid,
+            expected_mode=0o444,
+        )
+
+    candidate.with_name("libpython-hardlink.so").hardlink_to(candidate)
+    with pytest.raises(QualificationObserverError, match="custody differs"):
+        qualification_observer._hash_reviewed_tree_file(
+            candidate,
+            expected_sha256=digest,
+            expected_byte_length=len(payload),
+            expected_owner_uid=metadata.st_uid,
+            expected_owner_gid=metadata.st_gid,
+            expected_mode=0o444,
+        )
 
 
 def _clock_from(start: datetime):

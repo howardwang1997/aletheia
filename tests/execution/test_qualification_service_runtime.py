@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import runpy
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
+import aletheia.qualification_python_bootstrap as python_bootstrap
 import aletheia.qualification_service_runtime as runtime
 from aletheia.execution.schemas import canonical_json_bytes
 
@@ -424,6 +428,71 @@ def test_thin_runner_compiles_in_exactly_one_role(
     namespace = runpy.run_path(str(Path(__file__).resolve().parents[2] / "scripts" / script_name))
     assert namespace["main"]() == 17
     assert observed == [expected_role]
+
+
+def test_no_site_runner_appends_reviewed_packages_after_stdlib() -> None:
+    import pydantic
+
+    repository_root = Path(__file__).resolve().parents[2]
+    site_packages = Path(pydantic.__file__).resolve().parent.parent
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "PYTHONHOME": sys.prefix,
+            "PYTHONPATH": str(repository_root),
+            python_bootstrap.QUALIFICATION_SITE_PACKAGES_ENV: str(site_packages),
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONSAFEPATH": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONHASHSEED": "0",
+        }
+    )
+    completed = subprocess.run(
+        (
+            sys.executable,
+            "-S",
+            "-s",
+            "-P",
+            "-c",
+            (
+                "import sys; "
+                "from aletheia.qualification_python_bootstrap import "
+                "activate_reviewed_site_packages; "
+                "activated = activate_reviewed_site_packages(); "
+                "import dataclasses, pydantic, sqlalchemy; "
+                "assert sys.path[-1] == activated; "
+                "assert dataclasses.__file__.startswith(sys.prefix)"
+            ),
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=environment,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+    environment["PYTHONPATH"] = f"{repository_root}:{site_packages}"
+    injected = subprocess.run(
+        (
+            sys.executable,
+            "-S",
+            "-s",
+            "-P",
+            "-c",
+            (
+                "from aletheia.qualification_python_bootstrap import "
+                "activate_reviewed_site_packages; activate_reviewed_site_packages()"
+            ),
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=environment,
+    )
+    assert injected.returncode != 0
+    assert "injected before reviewed bootstrap" in injected.stderr
 
 
 def test_handler_set_rejects_wrong_operation_or_noncallable() -> None:
