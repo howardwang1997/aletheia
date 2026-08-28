@@ -27,6 +27,7 @@
       "aletheia/research_controller": "new_authority",
       "aletheia/research_kernel": "new_authority",
       "aletheia/research_store": "new_authority_adapter",
+      "scripts/prepare-qualification-python-runtime.py": "new_qualification_entrypoint",
       "scripts/run-arl1-protocol-campaign.py": "new_qualification_entrypoint",
       "scripts/run-arl1-qualification.py": "new_qualification_entrypoint"
     },
@@ -119,9 +120,9 @@
       "research_store.transactional_outbox": "The authority-minimal PostgreSQLResearchKernelOutbox caller-owned publication surface is composed by the controller dispatcher; the full-store transaction-owning mark_outbox_published wrapper remains an explicit uncalled compatibility surface."
     },
     "direct_file_sink_scheme": "ast_reviewed_direct_file_sink_v1",
-    "direct_file_sink_scope_count": 195,
-    "direct_file_sink_call_count": 217,
-    "direct_file_sink_graph_sha256": "99a601f575b6239c0d2ea465e71ddad75e17f0f7ac9960e293b8009123ea20a0",
+    "direct_file_sink_scope_count": 196,
+    "direct_file_sink_call_count": 218,
+    "direct_file_sink_graph_sha256": "1fde85f2799369d797920eceb4b3d515c92b076add64b4172c807d27d6fb2494",
     "direct_file_sink_review_limit": "The baseline covers direct Path/open/os.write, archive-open modes, atomic replace, serializer, dataframe and plotting file sinks across the declared aletheia, deployed docker-worker and recursive operational-script roots. Indirect library-internal writes, arbitrary dynamic dispatch and external systems remain separate reviewed boundaries.",
     "direct_file_sink_profiles": {
       "scientific_artifact": {
@@ -268,6 +269,14 @@
         "cutover_pr": "PR-4",
         "dual_write_policy": "none"
       },
+      "qualification_runtime_preparation_state": {
+        "authority_class": "operational_state",
+        "current_owner_rule": "sink_module",
+        "target_owner": "aletheia.execution.qualification_target_preparation",
+        "migration_mode": "retain_explicit_immutable_runtime_preparation",
+        "cutover_pr": "PR-8",
+        "dual_write_policy": "none"
+      },
       "qualification_workload_output": {
         "authority_class": "operational_state",
         "current_owner_rule": "sink_module",
@@ -335,6 +344,7 @@
       "aletheia.execution.oci_deployment": "qualification_host_control_state",
       "aletheia.execution.oci_runtime": "qualification_oci_runtime_state",
       "aletheia.execution.qualification_outbox_service": "qualification_terminal_spool",
+      "aletheia.execution.qualification_target_preparation": "qualification_runtime_preparation_state",
       "aletheia.knowledge.": "knowledge_archive",
       "aletheia.legacy_evaluation.capability": "qualification_workload_output",
       "aletheia.memory.transcript": "operational_workspace",
@@ -371,9 +381,9 @@
       "scripts.typed_": "scientific_artifact"
     },
     "direct_external_sink_scheme": "ast_reviewed_event_provider_process_sink_v1",
-    "direct_external_sink_scope_count": 128,
-    "direct_external_sink_call_count": 213,
-    "direct_external_sink_graph_sha256": "1e28ee4e91c92ddb39e99752043f7f44890c47c565a830eae267ceaeeb4dc3fb",
+    "direct_external_sink_scope_count": 130,
+    "direct_external_sink_call_count": 215,
+    "direct_external_sink_graph_sha256": "186b552b076fbd88337a23694d73f32b26590e09f2fd0f78a6a4be4a6df43b38",
     "direct_external_sink_review_limit": "The baseline covers AST-visible EventBus-style publish calls, outbound HTTP mutation calls, known model-provider and GitHub mutation methods, and subprocess launch calls across the declared aletheia, deployed docker-worker and recursive operational-script roots. It does not claim to discover dynamically dispatched SDK methods, hidden library network I/O, non-Python launchers, or runtime monkeypatching.",
     "direct_external_sink_profiles": {
       "event.": {

@@ -34,6 +34,7 @@ LEGACY_SOURCE_AST_EXCLUDED_ROOTS = {
     "aletheia/research_controller": "new_authority",
     "aletheia/research_kernel": "new_authority",
     "aletheia/research_store": "new_authority_adapter",
+    "scripts/prepare-qualification-python-runtime.py": "new_qualification_entrypoint",
     "scripts/run-arl1-protocol-campaign.py": "new_qualification_entrypoint",
     "scripts/run-arl1-qualification.py": "new_qualification_entrypoint",
 }

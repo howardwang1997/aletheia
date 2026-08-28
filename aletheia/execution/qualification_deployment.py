@@ -41,7 +41,11 @@ _SYMBOLIC_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,191}$"
 _POSTGRESQL_IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 _POSTGRESQL_IDENTITY_ARGUMENT = re.compile(r"^[a-z][a-z0-9_.]*(?: [a-z][a-z0-9_.]*)*(?:\[\])?$")
 _SAFE_SYSTEMD_PATH = re.compile(r"^/[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$")
-_SAFE_RELATIVE_CODE_PATH = re.compile(r"^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$")
+# Reviewed trees are traversed with descriptor/path APIs rather than shell interpolation.  Real
+# Conda distributions contain inert data files such as ``script (dev).tmpl`` and
+# ``launcher manifest.xml``; accept those two printable filename characters while continuing to
+# reject controls and every shell metacharacter that is not already part of the historical set.
+_SAFE_RELATIVE_CODE_PATH = re.compile(r"^[A-Za-z0-9._+() -]+(?:/[A-Za-z0-9._+() -]+)*$")
 _PYTHON_SITE_PACKAGES_RELATIVE_PATH = re.compile(r"^lib/python[0-9]+[.][0-9]+/site-packages$")
 _UNIT_PATTERNS: Mapping[str, re.Pattern[str]] = {
     "workspace": re.compile(r"^aletheia-qualification-workspace(?:-[a-z0-9_.-]+)?[.]service$"),
@@ -1178,6 +1182,8 @@ def _python_environment_assignments(
     database_role: str | None = None,
 ) -> tuple[str, ...]:
     values = (
+        "LANG=C",
+        "LC_ALL=C",
         f"PYTHONHOME={spec.reviewed_python_environment.root_path}",
         f"PYTHONPATH={spec.code_root}",
         "ALETHEIA_QUALIFICATION_SITE_PACKAGES=" + spec.expected_python_import_paths[1],
