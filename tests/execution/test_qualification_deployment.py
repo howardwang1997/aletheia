@@ -1045,7 +1045,7 @@ def test_systemd_render_is_deterministic_and_preserves_required_service_boundari
         )
     )
     assert canonical_sha256(first) == (
-        "78e1282509ee39e1efb4ff0e41335979d94e70d838c5cffe8c38c6e7e3c0d337"
+        "4aa7623afa0f0aa3b6579da6dbfb4b25d7c7505261e0185739c39dcd685b0bcb"
     )
 
     by_name = {item.unit_name: item.content for item in first}
@@ -1074,7 +1074,9 @@ def test_systemd_render_is_deterministic_and_preserves_required_service_boundari
     )
     assert all(f"WorkingDirectory={spec.code_root}" in item.content for item in first)
     assert all(
-        f"Environment=PYTHONHOME={spec.reviewed_python_environment.root_path}" in item.content
+        "Environment=LANG=C" in item.content
+        and "Environment=LC_ALL=C" in item.content
+        and f"Environment=PYTHONHOME={spec.reviewed_python_environment.root_path}" in item.content
         and f"Environment=PYTHONPATH={spec.code_root}" in item.content
         and (
             "Environment=ALETHEIA_QUALIFICATION_SITE_PACKAGES="
@@ -1147,9 +1149,9 @@ def test_postgresql_peer_url_rejects_foreign_roles() -> None:
         lambda identity: {"exec_start_pre_argvs": (("/bin/false", "prepare"),)},
         lambda identity: {"exec_start_post_argvs": (("/bin/false", "post"),)},
         lambda identity: {
-            "effective_environment": (
-                "PYTHONHOME=/tmp/unreviewed-runtime",
-                *identity.effective_environment[1:],
+            "effective_environment": tuple(
+                "PYTHONHOME=/tmp/unreviewed-runtime" if value.startswith("PYTHONHOME=") else value
+                for value in identity.effective_environment
             )
         },
         lambda identity: {
@@ -1736,6 +1738,45 @@ def test_portable_modes_require_root_and_worker_access_bits() -> None:
             reviewed_sha256=_sha("libbad"),
             expected_mode=0o004,
             executable_required=False,
+        )
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    (
+        "lib/python3.11/site-packages/setuptools/script (dev).tmpl",
+        "lib/python3.11/site-packages/setuptools/launcher manifest.xml",
+    ),
+)
+def test_reviewed_tree_accepts_inert_conda_data_filenames(relative_path: str) -> None:
+    entry = deployment.QualificationReviewedCodeFile(
+        relative_path=relative_path,
+        reviewed_sha256=_sha(relative_path),
+        byte_length=1,
+        expected_mode=0o444,
+    )
+
+    assert entry.relative_path == relative_path
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    (
+        "package/newline\nname.py",
+        "package/tab\tname.py",
+        "package/quote'name.py",
+        'package/quote"name.py',
+        "package/$variable.py",
+        "package/name;command.py",
+    ),
+)
+def test_reviewed_tree_rejects_control_and_shell_active_filenames(relative_path: str) -> None:
+    with pytest.raises(ValidationError, match="canonical root-controlled"):
+        deployment.QualificationReviewedCodeFile(
+            relative_path=relative_path,
+            reviewed_sha256=_sha(relative_path),
+            byte_length=1,
+            expected_mode=0o444,
         )
 
 

@@ -156,7 +156,10 @@ shared namespaces, AppArmor/image/ACL custody, and a destructive node/quota/watc
 PostgreSQL recovery sequence around one pre-registered successful v2 execution. Its source and
 synthetic replay tests are complete, but the exact Linux/rootful-Docker/systemd/loop/ext4/cgroup-v2/
 shared-mount campaign has not run. No target-host manifest/campaign receipt exists, and PR-4b is
-therefore still nondeployable. The ARL-1 source slice now adds a cumulative, signed system
+therefore still nondeployable. The target-preparation slice now materializes a Conda environment
+into an exhaustive root-owned no-link tree, binds Python to an explicitly pinned in-tree
+loader/glibc closure, and rejects any ambient native mapping under the same `-S` isolation used by
+the service units. Its receipt is preparation evidence only. The ARL-1 source slice now adds a cumulative, signed system
 qualification gate: it replays all ARL-0 evidence, the canonical compiler and exact PR-8h receipt,
 requires at least two preregistered exact reexecutions plus all-attempt/validator/admission/
 incorporation/report evidence, and hard-codes an engineering-only claim ceiling. Runtime startup
