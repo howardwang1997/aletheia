@@ -29,6 +29,7 @@ from aletheia.execution.oci_deployment import (
     OCIWatchdogError,
     PinnedOCIImageLayout,
     PinnedRootExecutable,
+    PreinstalledOutputWorkspaceRootPin,
     SystemdDeadlineWatchdogController,
     SystemdWatchdogDeploymentPin,
     _QuotaFilesystemFormatted,
@@ -407,6 +408,40 @@ def test_mountinfo_parser_requires_closed_linux_shape() -> None:
     }
     with pytest.raises(OCIOutputQuotaError, match="unparseable"):
         LoopbackOutputQuotaController._parse_mountinfo("malformed")  # noqa: SLF001
+
+
+def test_preinstalled_workspace_resolves_kernel_mount_id_only_after_bind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = PreinstalledOutputWorkspaceRootPin(
+        path="/srv/output",
+        device=7,
+        inode=8,
+        owner_gid=2101,
+        parent_chain_sha256=H0,
+    )
+    metadata = SimpleNamespace(
+        st_mode=stat.S_IFDIR | 0o1730,
+        st_uid=0,
+        st_gid=2101,
+        st_dev=7,
+        st_ino=8,
+    )
+    mountinfo = "77 1 7:8 / /srv/output rw shared:99 - ext4 /dev/root rw\n"
+    monkeypatch.setattr(Path, "resolve", lambda self, strict=True: self)
+    monkeypatch.setattr(oci_deployment_module.os, "open", lambda *args, **kwargs: 41)
+    monkeypatch.setattr(oci_deployment_module.os, "fstat", lambda descriptor: metadata)
+    monkeypatch.setattr(oci_deployment_module.os, "close", lambda descriptor: None)
+    monkeypatch.setattr(Path, "read_text", lambda self, **kwargs: mountinfo)
+    monkeypatch.setattr(oci_deployment_module, "host_parent_chain_sha256", lambda path: H0)
+
+    observed = oci_deployment_module._observe_live_output_workspace_root(expected)
+    assert observed.mount_id == 77
+    assert "mount_id" not in type(expected).model_fields
+
+    mountinfo = "77 1 7:8 / /srv/output rw - ext4 /dev/root rw\n"
+    with pytest.raises(OCIOutputQuotaError, match="pre-install custody"):
+        oci_deployment_module._observe_live_output_workspace_root(expected)
 
 
 def test_root_service_health_attestations_bind_peer_boot_and_deployment(
@@ -2202,7 +2237,6 @@ def test_quota_target_lineage_rejects_symlink_and_inode_replacement(
             mode=0o1730,
             device=metadata.st_dev,
             inode=metadata.st_ino,
-            mount_id=9,
             parent_chain_sha256=H0,
         ),
         allowed_client_uid=os.geteuid(),
@@ -2210,6 +2244,11 @@ def test_quota_target_lineage_rejects_symlink_and_inode_replacement(
     )
     monkeypatch.setattr(service, "_trusted_root_service_uid", lambda: os.geteuid())
     monkeypatch.setattr(service, "_find_mount", lambda path: {"mount_id": 9})
+    monkeypatch.setattr(
+        oci_deployment_module,
+        "_observe_live_output_workspace_root",
+        lambda expected: SimpleNamespace(mount_id=9),
+    )
     monkeypatch.setattr(oci_deployment_module, "host_parent_chain_sha256", lambda path: H0)
     if mutation == "rename-race":
         original_fchown = os.fchown

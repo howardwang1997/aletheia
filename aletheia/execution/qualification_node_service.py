@@ -742,9 +742,10 @@ def _compose_worker(config: QualificationNodeServiceConfigV1) -> QualificationEx
         max_runtime_proof_age_seconds=config.max_runtime_proof_age_seconds,
         artifact_submission_grace_seconds=config.artifact_submission_grace_seconds,
     )
+    quota_controller = LoopbackOutputQuotaProvisionerClient(config.quota_deployment)
     state_store = NodeLocalStateStore(
         node_state_root,
-        output_workspace_root_pin=config.quota_deployment.workspace_root_pin,
+        output_workspace_root_pin=quota_controller.output_workspace_root_pin,
     )
     node_allocator = PostgreSQLNodeAllocatorAdapter(
         allocator=allocator,
@@ -763,7 +764,7 @@ def _compose_worker(config: QualificationNodeServiceConfigV1) -> QualificationEx
         policy=config.oci_policy,
         journal_root=runtime_journal_root,
         runtime_control_authority=runtime_issuer.authority_verifier,
-        output_quota_controller=LoopbackOutputQuotaProvisionerClient(config.quota_deployment),
+        output_quota_controller=quota_controller,
         launch_gate_verifier=ImmutableOCIImageLaunchGateVerifier(
             policy=config.oci_policy,
             runtime_control_authority=config.runtime_control_authority_pin,

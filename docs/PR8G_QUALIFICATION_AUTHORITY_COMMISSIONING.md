@@ -29,6 +29,10 @@ content includes the final manifest digest, so placing a future unit pin back in
 whose digest is itself part of that manifest would create an unsatisfiable hash/inode cycle. The
 PR-8b receipt freezes the installed files after publication and the independent PR-8h observer
 then reopens the exact loaded fragments, inode custody and daemon-reload state before qualification.
+The quota config similarly freezes the exact source inode that must appear at the shared output
+path, but not a Linux mount ID that does not exist until the workspace one-shot performs the bind.
+Quota and node composition independently resolve that live shared-mount ID after startup; the node
+then pins it for its process lifetime and PR-8h freezes it in the signed host observation.
 
 The crash-replayable execution order is fixed: node Ed25519 key, assignment X25519 key, runtime-
 control Ed25519 key, workspace/quota/watchdog/node/outbox configs, then PostgreSQL. Each file has an

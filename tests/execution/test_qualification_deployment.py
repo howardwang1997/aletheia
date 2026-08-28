@@ -16,6 +16,7 @@ from aletheia.execution.oci_deployment import (
     PinnedOCIImageLayout,
     PinnedRootExecutable,
     PinnedRootFile,
+    PreinstalledOutputWorkspaceRootPin,
     SystemdWatchdogDeploymentPin,
 )
 from aletheia.execution.runtime_v2_contracts import PinnedOutputWorkspaceRoot
@@ -43,6 +44,19 @@ def _expected_executable(path: str) -> deployment.QualificationExpectedRootExecu
         path=path,
         reviewed_sha256=_sha(path),
         expected_mode=0o555,
+    )
+
+
+def _preinstalled_workspace_root(
+    live: PinnedOutputWorkspaceRoot,
+) -> PreinstalledOutputWorkspaceRootPin:
+    return PreinstalledOutputWorkspaceRootPin(
+        path=live.path,
+        device=live.device,
+        inode=live.inode,
+        owner_gid=live.owner_gid,
+        mode=live.mode,
+        parent_chain_sha256=live.parent_chain_sha256,
     )
 
 
@@ -522,7 +536,7 @@ def _observation(
         deployment_id=f"{spec.deployment_id}:quota",
         systemd_unit_name=spec.quota_unit_name,
         workspace_root=spec.output_workspace_root,
-        workspace_root_pin=workspace,
+        workspace_root_pin=_preinstalled_workspace_root(workspace),
         backing_root=spec.quota_backing_root,
         state_root=spec.quota_state_root,
         socket_path=spec.quota_socket_path,
@@ -1513,7 +1527,7 @@ def test_legitimate_reboot_and_new_shared_mount_namespace_can_remain_ready(monke
             "custody_roots": rebooted_custody_roots,
             "quota_deployment": current_boot.quota_deployment.model_copy(
                 update={
-                    "workspace_root_pin": current_workspace,
+                    "workspace_root_pin": _preinstalled_workspace_root(current_workspace),
                     "socket_parent_device": 122,
                     "socket_parent_inode": 1308,
                     "socket_parent_parent_chain_sha256": _sha("quota-socket-parent-after-reboot"),
@@ -1589,9 +1603,6 @@ def test_same_boot_dynamic_identity_changes_fail_closed(
         )
         updates = {
             "output_workspace_root": workspace,
-            "quota_deployment": current.quota_deployment.model_copy(
-                update={"workspace_root_pin": workspace}
-            ),
         }
     elif mutation == "quota_socket":
         updates = {

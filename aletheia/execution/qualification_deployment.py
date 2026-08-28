@@ -25,6 +25,7 @@ from aletheia.execution.oci_deployment import (
     PinnedOCIImageLayout,
     PinnedRootExecutable,
     PinnedRootFile,
+    PreinstalledOutputWorkspaceRootPin,
     SystemdWatchdogDeploymentPin,
 )
 from aletheia.execution.runtime_v2_contracts import PinnedOutputWorkspaceRoot
@@ -2923,6 +2924,29 @@ def _quota_persistent_projection(
     )
 
 
+def _preinstalled_workspace_root_matches_live(
+    expected: PreinstalledOutputWorkspaceRootPin,
+    observed: PinnedOutputWorkspaceRoot,
+) -> bool:
+    return (
+        expected.path,
+        expected.device,
+        expected.inode,
+        expected.owner_uid,
+        expected.owner_gid,
+        expected.mode,
+        expected.parent_chain_sha256,
+    ) == (
+        observed.path,
+        observed.device,
+        observed.inode,
+        observed.owner_uid,
+        observed.owner_gid,
+        observed.mode,
+        observed.parent_chain_sha256,
+    )
+
+
 def _watchdog_persistent_projection(
     deployment: SystemdWatchdogDeploymentPin,
 ) -> dict[str, object]:
@@ -3266,7 +3290,10 @@ def _observation_blockers(
         and quota.deployment_id == f"{spec.deployment_id}:quota"
         and quota.systemd_unit_name == spec.quota_unit_name
         and quota.workspace_root == spec.output_workspace_root
-        and quota.workspace_root_pin == observation.output_workspace_root
+        and _preinstalled_workspace_root_matches_live(
+            quota.workspace_root_pin,
+            observation.output_workspace_root,
+        )
         and quota.backing_root == spec.quota_backing_root
         and quota.state_root == spec.quota_state_root
         and quota.socket_path == spec.quota_socket_path

@@ -18,6 +18,7 @@ from aletheia.execution.artifact_store import LocalArtifactStore
 import aletheia.execution.oci_deployment as oci_deployment_module
 from aletheia.execution.oci_deployment import (
     LoopbackOutputQuotaProvisioningService,
+    PreinstalledOutputWorkspaceRootPin,
     _QuotaFilesystemFormatted,
     _QuotaLoopAttachment,
 )
@@ -1779,6 +1780,13 @@ def test_pinned_workspace_quota_service_recovers_composed_node_cold_start_phases
         owner_gid=os.getegid(),
         parent_chain_sha256="0" * 64,
     )
+    preinstalled_workspace_pin = PreinstalledOutputWorkspaceRootPin(
+        path=workspace_pin.path,
+        device=workspace_pin.device,
+        inode=workspace_pin.inode,
+        owner_gid=workspace_pin.owner_gid,
+        parent_chain_sha256=workspace_pin.parent_chain_sha256,
+    )
     monkeypatch.setattr(
         NodeLocalStateStore,
         "_verify_output_workspace_root",
@@ -1855,7 +1863,7 @@ def test_pinned_workspace_quota_service_recovers_composed_node_cold_start_phases
         state_root=str(state_root),
         backing_root=str(backing_root),
         workspace_root=str(workspace_root),
-        workspace_root_pin=workspace_pin,
+        workspace_root_pin=preinstalled_workspace_pin,
         allowed_client_uid=os.geteuid(),
         allowed_client_gid=os.getegid(),
         filesystem_type="ext4",
@@ -1884,6 +1892,11 @@ def test_pinned_workspace_quota_service_recovers_composed_node_cold_start_phases
         }
 
     monkeypatch.setattr(service, "_find_mount", _find_mount)
+    monkeypatch.setattr(
+        oci_deployment_module,
+        "_observe_live_output_workspace_root",
+        lambda expected: workspace_pin,
+    )
 
     def _ensure_loop_attachment(
         intent, *, backing_identity: str, generation_root: Path

@@ -238,7 +238,7 @@ def test_process_config_binding_has_no_config_digest_self_reference() -> None:
     assert qualification_service_process_config_binding_sha256(rebound) != binding
 
 
-def test_root_service_deployments_do_not_self_pin_future_systemd_inodes(
+def test_root_service_deployments_do_not_self_pin_future_kernel_identities(
     tmp_path: Path,
 ) -> None:
     values = _configs(tmp_path)
@@ -249,6 +249,12 @@ def test_root_service_deployments_do_not_self_pin_future_systemd_inodes(
     )
     assert all(item.schema_version == 2 for item in deployments)
     assert all("systemd_unit" not in type(item).model_fields for item in deployments)
+    workspace_root = values[3].quota_deployment.workspace_root_pin
+    assert "mount_id" not in type(workspace_root).model_fields
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        type(workspace_root).model_validate(
+            {**workspace_root.model_dump(mode="python"), "mount_id": 1}
+        )
     for item in deployments:
         with pytest.raises(ValueError, match="Extra inputs are not permitted"):
             type(item).model_validate(

@@ -37,6 +37,9 @@ replace a pre-installation review pin with a post-installation hash and create a
 Likewise, privileged service configs freeze only their unit names; the observer is the independent
 post-installation authority for exact unit bytes and inode custody, avoiding a future-unit
 config/manifest self-reference while retaining the same fail-closed live check.
+The observer also supplies the first durable evidence of the kernel-assigned shared-workspace
+mount ID. Pre-install configs cannot truthfully predict it; live node composition pins it for the
+process lifetime and same-boot revalidation rejects any later mount-identity drift.
 
 ## Target compatibility checkpoint
 
