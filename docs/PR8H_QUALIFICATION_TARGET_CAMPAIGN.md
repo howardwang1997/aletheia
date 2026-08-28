@@ -1,7 +1,7 @@
 # PR-8h independent observer and qualification target campaign
 
 - Status: observer/campaign source complete; no target-host campaign receipt exists
-- Date: 2026-08-27
+- Date: 2026-08-29
 
 ## What this slice closes
 
@@ -34,6 +34,21 @@ The independent observer freshly proves:
 The deployment spec's existing Docker and authority-bundle digests remain opaque external review
 pins. The observer separately freezes and compares a typed live Docker projection; it does not
 replace a pre-installation review pin with a post-installation hash and create a hash cycle.
+
+## Target compatibility checkpoint
+
+The selected disposable Ubuntu target has passed a pre-campaign compatibility checkpoint, but not
+the campaign itself.  On that host the production verifier freshly read the root-owned OCI
+archive, manifest, config, ten layer diff IDs and in-image launch gate, then bound them to Docker
+29.1.3's containerd-backed image inspection.  Docker 29 identifies this image by an exact OCI
+manifest `Descriptor`; legacy graphdriver installations instead identify the config digest.  The
+verifier accepts only those two closed representations and rejects a mixed or extended descriptor.
+
+The same target also exposed a 31,369,824-byte root-owned Docker CLI.  Executable observation now
+uses a separate 256 MiB streaming ceiling with before/after inode and parent-chain stability,
+while ordinary configs, keys and control records retain their 16 MiB bounded reader.  This closes
+two target-compatibility blockers without weakening either custody boundary.  It does not freeze
+the final deployment manifest, install the units or create qualification evidence.
 
 ## Destructive campaign and evidence order
 
@@ -123,10 +138,11 @@ receipt into a passing shape.
 
 ## Explicit remaining gate
 
-This repository checkpoint has no eligible Linux target and has not run the destructive command.
-Therefore no host is currently proven deployable, PR-4b remains nondeployable, and
-`scientific_admission_allowed` is always false even in a successful campaign receipt. The next
-ordered operation is target preparation plus the real campaign—not more controller authority.
+The selected Linux target is compatible, but its final root-owned tool/code/policy bundle is not
+yet frozen or installed and the destructive command has not run. Therefore no host is currently
+proven deployable, PR-4b remains nondeployable, and `scientific_admission_allowed` is always false
+even in a successful campaign receipt. The next ordered operation is to finish the immutable
+target inputs, then commission, install and run the real campaign—not more controller authority.
 
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the

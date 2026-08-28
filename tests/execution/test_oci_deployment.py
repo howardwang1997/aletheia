@@ -247,6 +247,99 @@ def test_launch_gate_verifier_hashes_manifest_config_layers_and_gate(
     assert _verify_gate(verifier) == verifier._expected_evidence_sha256()  # noqa: SLF001
 
 
+def test_launch_gate_verifier_accepts_docker_containerd_manifest_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    policy, pin, docker, _ = _image_fixture(tmp_path)
+    manifest_path = Path(pin.layout_root) / "blobs" / "sha256" / policy.image_manifest_sha256
+    docker.update(
+        {
+            "Id": f"sha256:{policy.image_manifest_sha256}",
+            "Descriptor": {
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "digest": f"sha256:{policy.image_manifest_sha256}",
+                "size": manifest_path.stat().st_size,
+            },
+        }
+    )
+    verifier = _verifier(monkeypatch, policy=policy, pin=pin, docker=docker)
+
+    assert _verify_gate(verifier) == verifier._expected_evidence_sha256()  # noqa: SLF001
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("mediaType", "application/vnd.oci.image.config.v1+json"),
+        ("digest", f"sha256:{H0}"),
+        ("size", 1),
+    ),
+)
+def test_launch_gate_verifier_rejects_tampered_docker_containerd_descriptor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
+) -> None:
+    policy, pin, docker, _ = _image_fixture(tmp_path)
+    manifest_path = Path(pin.layout_root) / "blobs" / "sha256" / policy.image_manifest_sha256
+    docker.update(
+        {
+            "Id": f"sha256:{policy.image_manifest_sha256}",
+            "Descriptor": {
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "digest": f"sha256:{policy.image_manifest_sha256}",
+                "size": manifest_path.stat().st_size,
+            },
+        }
+    )
+    descriptor = docker["Descriptor"]
+    assert isinstance(descriptor, dict)
+    descriptor[field] = value
+    verifier = _verifier(monkeypatch, policy=policy, pin=pin, docker=docker)
+
+    with pytest.raises(OCIImageAttestationError, match="Docker image differs"):
+        _verify_gate(verifier)
+
+
+def test_launch_gate_verifier_rejects_noncanonical_docker_containerd_descriptor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    policy, pin, docker, _ = _image_fixture(tmp_path)
+    manifest_path = Path(pin.layout_root) / "blobs" / "sha256" / policy.image_manifest_sha256
+    docker.update(
+        {
+            "Id": f"sha256:{policy.image_manifest_sha256}",
+            "Descriptor": {
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "digest": f"sha256:{policy.image_manifest_sha256}",
+                "size": manifest_path.stat().st_size,
+                "annotations": {},
+            },
+        }
+    )
+    verifier = _verifier(monkeypatch, policy=policy, pin=pin, docker=docker)
+
+    with pytest.raises(OCIImageAttestationError, match="Docker image differs"):
+        _verify_gate(verifier)
+
+
+def test_launch_gate_verifier_rejects_mixed_containerd_descriptor_and_config_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    policy, pin, docker, _ = _image_fixture(tmp_path)
+    manifest_path = Path(pin.layout_root) / "blobs" / "sha256" / policy.image_manifest_sha256
+    docker["Descriptor"] = {
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "digest": f"sha256:{policy.image_manifest_sha256}",
+        "size": manifest_path.stat().st_size,
+    }
+    verifier = _verifier(monkeypatch, policy=policy, pin=pin, docker=docker)
+
+    with pytest.raises(OCIImageAttestationError, match="Docker image differs"):
+        _verify_gate(verifier)
+
+
 def test_launch_gate_verifier_rejects_docker_diff_id_mismatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

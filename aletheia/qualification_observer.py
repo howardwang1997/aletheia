@@ -72,6 +72,7 @@ from aletheia.qualification_installer import (
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
 _SYMBOLIC_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,191}$"
 _MAX_FILE_BYTES = 16 * 1024 * 1024
+_MAX_EXECUTABLE_BYTES = 256 * 1024 * 1024
 _MAX_COMMAND_BYTES = 4 * 1024 * 1024
 _OBSERVER_SIGNATURE_DOMAIN = b"aletheia.qualification-deployment-observation.v1\x00"
 _LINUX_CAPABILITY_NAMES = (
@@ -422,12 +423,98 @@ def _pinned_root_file(path: str, *, expected_sha256: str | None = None) -> Pinne
 def _pinned_root_executable(
     expected: QualificationExpectedRootExecutable,
 ) -> PinnedRootExecutable:
-    return PinnedRootExecutable.model_validate(
-        _pinned_root_file(
-            expected.path,
-            expected_sha256=expected.reviewed_sha256,
-        ).model_dump(mode="python")
+    digest, metadata, parent_chain_sha256 = _stream_exact_executable(
+        Path(expected.path),
+        expected_sha256=expected.reviewed_sha256,
+        expected_owner_uid=expected.expected_owner_uid,
+        expected_owner_gid=expected.expected_owner_gid,
+        expected_mode=expected.expected_mode,
     )
+    return PinnedRootExecutable(
+        path=expected.path,
+        sha256=digest,
+        device=metadata.st_dev,
+        inode=metadata.st_ino,
+        owner_uid=metadata.st_uid,
+        owner_gid=metadata.st_gid,
+        mode=stat.S_IMODE(metadata.st_mode),
+        parent_chain_sha256=parent_chain_sha256,
+    )
+
+
+def _stream_exact_executable(
+    path: Path,
+    *,
+    expected_sha256: str,
+    expected_owner_uid: int,
+    expected_owner_gid: int,
+    expected_mode: int,
+    maximum_bytes: int = _MAX_EXECUTABLE_BYTES,
+) -> tuple[str, os.stat_result, str]:
+    """Hash one large executable without weakening the bounded control-file reader."""
+
+    try:
+        parent_before = host_parent_chain_sha256(path)
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except (OSError, ValueError) as exc:
+        raise QualificationObserverError(f"observer executable is unavailable: {path}") from exc
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_nlink != 1
+            or not 0 < before.st_size <= maximum_bytes
+            or before.st_uid != expected_owner_uid
+            or before.st_gid != expected_owner_gid
+            or stat.S_IMODE(before.st_mode) != expected_mode
+            or not before.st_mode & 0o111
+        ):
+            raise QualificationObserverError(f"observer executable custody is unsafe: {path}")
+        digest = hashlib.sha256()
+        total = 0
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+            total += len(chunk)
+            if total > maximum_bytes:
+                raise QualificationObserverError(f"observer executable is oversized: {path}")
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    try:
+        path_after = path.lstat()
+        parent_after = host_parent_chain_sha256(path)
+    except (OSError, ValueError) as exc:
+        raise QualificationObserverError(f"observer executable changed: {path}") from exc
+
+    def identity(value: os.stat_result) -> tuple[int, ...]:
+        return (
+            value.st_dev,
+            value.st_ino,
+            value.st_mode,
+            value.st_uid,
+            value.st_gid,
+            value.st_nlink,
+            value.st_size,
+            value.st_mtime_ns,
+            value.st_ctime_ns,
+        )
+
+    resolved = digest.hexdigest()
+    if (
+        total != before.st_size
+        or identity(before) != identity(after)
+        or identity(after) != identity(path_after)
+        or parent_before != parent_after
+        or resolved != expected_sha256
+    ):
+        raise QualificationObserverError(f"observer executable changed or differs: {path}")
+    return resolved, after, parent_after
 
 
 def _run_pinned(

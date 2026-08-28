@@ -97,6 +97,42 @@ def test_reviewed_tree_streams_large_files_and_rejects_link_or_owner_drift(
         )
 
 
+def test_observer_streams_large_reviewed_executable_without_relaxing_control_files(
+    tmp_path: Path,
+) -> None:
+    payload = b"x" * (qualification_observer._MAX_FILE_BYTES + 1)  # noqa: SLF001
+    candidate = tmp_path / "docker"
+    candidate.write_bytes(payload)
+    candidate.chmod(0o555)
+    digest = hashlib.sha256(payload).hexdigest()
+    metadata = candidate.stat()
+
+    observed_digest, observed, parent_chain_sha256 = (
+        qualification_observer._stream_exact_executable(  # noqa: SLF001
+            candidate,
+            expected_sha256=digest,
+            expected_owner_uid=metadata.st_uid,
+            expected_owner_gid=metadata.st_gid,
+            expected_mode=0o555,
+        )
+    )
+    assert observed_digest == digest
+    assert observed.st_size == len(payload)
+    assert len(parent_chain_sha256) == 64
+
+    with pytest.raises(QualificationObserverError, match="custody is unsafe"):
+        qualification_observer._read_exact_file(candidate)  # noqa: SLF001
+    with pytest.raises(QualificationObserverError, match="custody is unsafe"):
+        qualification_observer._stream_exact_executable(  # noqa: SLF001
+            candidate,
+            expected_sha256=digest,
+            expected_owner_uid=metadata.st_uid,
+            expected_owner_gid=metadata.st_gid,
+            expected_mode=0o555,
+            maximum_bytes=qualification_observer._MAX_FILE_BYTES,  # noqa: SLF001
+        )
+
+
 def _clock_from(start: datetime):
     counter = 0
 
