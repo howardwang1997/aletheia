@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import stat
-import sys
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -413,24 +413,30 @@ def test_subprocess_arl0_replayer_runs_exact_pinned_command(tmp_path) -> None:
         checks=("canonical_snapshot_replay", "event_chain_replay"),
     )
     result_bytes = canonical_json_bytes(result)
-    executable = Path(sys.executable).resolve(strict=True)
+    system_cat = shutil.which("cat")
+    assert system_cat is not None
+    executable = Path(system_cat).resolve(strict=True)
     pinned_input = tmp_path / "gate-input.json"
     pinned_input.write_bytes(b"frozen-input")
     pinned_input.chmod(0o400)
+    result_input = tmp_path / "gate-result.json"
+    result_input.write_bytes(result_bytes)
+    result_input.chmod(0o400)
     pin = ARL0GateCommandPinV1(
         gate_kind=ARL0GateKind.LEDGER_REPLAY,
         evaluated_scope_sha256=scope_sha256,
         executable_path=str(executable),
         executable_sha256=hashlib.sha256(executable.read_bytes()).hexdigest(),
-        arguments=(
-            "-c",
-            f"import sys;sys.stdout.buffer.write(bytes.fromhex('{result_bytes.hex()}'))",
-        ),
+        arguments=(str(result_input),),
         working_directory=str(tmp_path),
         pinned_inputs=(
             ARL0PinnedInputV1(
                 absolute_path=str(pinned_input),
                 content_sha256=hashlib.sha256(b"frozen-input").hexdigest(),
+            ),
+            ARL0PinnedInputV1(
+                absolute_path=str(result_input),
+                content_sha256=hashlib.sha256(result_bytes).hexdigest(),
             ),
         ),
         environment=(),
