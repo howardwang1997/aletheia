@@ -15,11 +15,18 @@ from aletheia.db import (
     expected_schema_revision,
     require_schema_current,
 )
+from aletheia.execution.qualification_deployment import (
+    EXPECTED_EXECUTION_SCHEMA_REVISION,
+)
 from aletheia.schema_migrations import require_schema_exact
 
 
 def test_repository_has_one_expected_alembic_head():
     assert expected_schema_revision() == "20260828_0029"
+
+
+def test_qualification_deployment_pins_the_repository_alembic_head():
+    assert EXPECTED_EXECUTION_SCHEMA_REVISION == expected_schema_revision()
 
 
 def test_real_time_endurance_uses_exact_transaction_clock_guards():
