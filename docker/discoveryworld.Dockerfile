@@ -6,6 +6,10 @@
 # attribution, modification, and no-resale license; this repository does not vendor those assets.
 FROM python:3.11-slim-bookworm@sha256:2e32f7d302adc1c37428355c1e646897c0c53f4fd60b6a551245fb90ee129f91
 
+RUN python -m pip install --no-cache-dir --upgrade \
+    "pip==26.2.1" \
+    "setuptools==84.0.0"
+
 ARG DISCOVERYWORLD_COMMIT=fd591323920be0d3786ef350955de1945aa571e5
 ARG DISCOVERYWORLD_ARCHIVE_SHA256=0ef5f45566807083754aa140e5653b9e8260434fc71d977591598b6625e619b1
 

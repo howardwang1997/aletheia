@@ -14,6 +14,7 @@ from aletheia.observations.adapters import (
     PostgreSQLCommittedObservationValidationSource,
     PostgreSQLRawRunEnvelopeSourceAdapter,
     RawRunEnvelopeSourceVerificationContext,
+    RawRunTerminalMaterialPending,
 )
 from aletheia.observations.scientific_bridge import ScientificExecutionAuthorization
 from aletheia.observations.store import (
@@ -135,6 +136,37 @@ def test_raw_run_source_rebuilds_exact_deterministic_envelope(
     assert first.assembled_at == expected_assembled_at
     assert first.scientific_authorization == case.authorization
     assert len(archive.calls) == 2
+
+
+def test_raw_run_source_distinguishes_terminal_material_pending_from_invalid_custody(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bridge_case()
+    registration = ScientificExecutionAuthorizationWrite.from_contract(
+        case.authorization,
+        registered_at=case.authorization.message.authorized_at + timedelta(seconds=1),
+    )
+    monkeypatch.setattr(
+        adapters_module,
+        "get_scientific_execution_authorization_by_slot",
+        lambda *_args, **_kwargs: registration,
+    )
+    source = PostgreSQLRawRunEnvelopeSourceAdapter(
+        execution_material=_MaterialArchive(None),
+        sea_sessions=_sessions,
+        verification=_verification(case),
+        database_clock=lambda _session: (
+            case.authorization.message.authorized_at + timedelta(seconds=2)
+        ),
+    )
+    binding = case.authorization.message.action_protocol_binding
+
+    with pytest.raises(RawRunTerminalMaterialPending, match="no verified PR-4 terminal"):
+        source.load_raw_run(
+            quest_id=binding.action.quest_id,
+            action_sha256=binding.action.object_sha256,
+            scientific_slot_id=case.authorization.message.scientific_slot_id,
+        )
 
 
 def test_raw_run_source_rejects_rebound_action_and_exported_material(

@@ -2,13 +2,17 @@
 # manifest/config digests; this source file is not itself target-host qualification evidence.
 FROM python:3.11-slim@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff
 
+RUN python -m pip install --no-cache-dir --upgrade \
+    "pip==26.2.1" \
+    "setuptools==84.0.0"
+
 COPY configs/capabilities/legacy-evaluation-runtime-constraints-v1.txt \
     /opt/aletheia/config/legacy-evaluation-runtime-constraints-v1.txt
 
 RUN pip install --no-cache-dir \
     --constraint /opt/aletheia/config/legacy-evaluation-runtime-constraints-v1.txt \
     "cloudpickle==3.1.2" \
-    "cryptography==48.0.0" \
+    "cryptography==50.0.0" \
     "joblib==1.5.3" \
     "matminer==0.10.1" \
     "numpy==2.4.6" \

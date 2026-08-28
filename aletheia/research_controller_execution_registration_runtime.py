@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 def build_execution_registration_rpc_service(*, deployment, configuration_bytes):
-    """Compose exactly ``REGISTER_EXECUTION`` without loading a domain signing key."""
+    """Compose the single and atomic-campaign registration operations without a signing key."""
 
     import hashlib
     import json
@@ -36,6 +36,7 @@ def build_execution_registration_rpc_service(*, deployment, configuration_bytes)
     from aletheia.research_controller.external_rpc_server import (
         ControllerWorkerRPCHandlerBinding,
         ControllerWorkerRPCHandlerSet,
+        ScientificExecutionCampaignRegistrationRPCPayload,
         ScientificExecutionRegistrationRPCPayload,
     )
     from aletheia.research_controller.step_executor import (
@@ -237,7 +238,15 @@ def build_execution_registration_rpc_service(*, deployment, configuration_bytes)
         | {key.principal_id for key in config.kernel_reader.trust_root.commissioning_keys}
     )
     if (
-        pin.operations != (ControllerWorkerRPCOperation.REGISTER_EXECUTION,)
+        pin.operations
+        not in {
+            (ControllerWorkerRPCOperation.REGISTER_EXECUTION,),
+            (ControllerWorkerRPCOperation.REGISTER_EXECUTION_CAMPAIGN,),
+            (
+                ControllerWorkerRPCOperation.REGISTER_EXECUTION,
+                ControllerWorkerRPCOperation.REGISTER_EXECUTION_CAMPAIGN,
+            ),
+        }
         or pin.authority_binding_sha256s != (binding.binding_sha256,)
         or config.controller_id != deployment.controller_id
         or config.controller_manifest_sha256 != deployment.controller_manifest_sha256
@@ -338,6 +347,11 @@ def build_execution_registration_rpc_service(*, deployment, configuration_bytes)
             raise TypeError("execution registration RPC handler received another payload type")
         return registrar.register_and_reserve(payload.authorization)
 
+    def register_execution_campaign(payload):
+        if type(payload) is not ScientificExecutionCampaignRegistrationRPCPayload:
+            raise TypeError("execution campaign RPC handler received another payload type")
+        return registrar.register_and_reserve_campaign(payload.authorizations)
+
     after = fresh_regular_bytes(
         implementation_path,
         expected_sha256=config.registrar_implementation_source_sha256,
@@ -345,13 +359,15 @@ def build_execution_registration_rpc_service(*, deployment, configuration_bytes)
     )
     if before != after:
         raise ValueError("execution registration implementation changed during composition")
+    handlers = {
+        ControllerWorkerRPCOperation.REGISTER_EXECUTION: register_execution,
+        ControllerWorkerRPCOperation.REGISTER_EXECUTION_CAMPAIGN: (register_execution_campaign),
+    }
     return ControllerWorkerRPCHandlerSet(
         operations=pin.operations,
-        bindings=(
-            ControllerWorkerRPCHandlerBinding(
-                operation=ControllerWorkerRPCOperation.REGISTER_EXECUTION,
-                handler=register_execution,
-            ),
+        bindings=tuple(
+            ControllerWorkerRPCHandlerBinding(operation=operation, handler=handlers[operation])
+            for operation in pin.operations
         ),
     )
 

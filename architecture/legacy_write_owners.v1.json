@@ -13,6 +13,10 @@
     "legacy_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "legacy_source_ast_excluded_roots": {
       "aletheia/arl1.py": "new_qualification_authority",
+      "aletheia/arl1_campaign.py": "new_qualification_authority",
+      "aletheia/arl1_qualification_runtime.py": "new_qualification_authority",
+      "aletheia/arl1_runtime.py": "new_qualification_authority",
+      "aletheia/arl1_verifier.py": "new_qualification_authority",
       "aletheia/api/research_kernel.py": "new_authority_adapter",
       "aletheia/durable_tasks": "authority_neutral_contracts",
       "aletheia/execution": "new_authority",
@@ -22,15 +26,17 @@
       "aletheia/protocols": "new_authority",
       "aletheia/research_controller": "new_authority",
       "aletheia/research_kernel": "new_authority",
-      "aletheia/research_store": "new_authority_adapter"
+      "aletheia/research_store": "new_authority_adapter",
+      "scripts/run-arl1-protocol-campaign.py": "new_qualification_entrypoint",
+      "scripts/run-arl1-qualification.py": "new_qualification_entrypoint"
     },
     "legacy_source_ast_file_count": 323,
-    "legacy_source_ast_graph_sha256": "092290a2d4720783e9a66ddc6c8c7d77d2f7aa96e949aa4415fea3a347675e18",
+    "legacy_source_ast_graph_sha256": "c2c3ceba984cc2b883011ac864b9cf6f4c14681c658f4b4d4237ab169c0bc8dc",
     "legacy_source_ast_review_limit": "This normalized-AST backstop freezes every parseable Python file in the declared legacy production roots after explicitly removing new-authority and migration-tooling roots. It catches added, removed or semantically changed legacy Python source even when a specialized sink scanner does not recognize the syntax; comments, formatting, generated runtime code, non-Python launchers and the explicitly excluded roots are outside this digest.",
     "migration_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "migration_source_ast_roots": ["aletheia/migration", "migrations"],
-    "migration_source_ast_file_count": 34,
-    "migration_source_ast_graph_sha256": "e8dec40cd7e5b6c459ae25e611d5414ea8769a2507656fdb6ecc05147b39452e",
+    "migration_source_ast_file_count": 36,
+    "migration_source_ast_graph_sha256": "4d41c539586630514449d558cbaf8121df0596eb66e8f2505ad9a49f1ce61f0d",
     "migration_source_ast_review_limit": "Migration tooling and immutable Alembic revision history have a separate normalized-AST freeze. Historical schema DML/backfills remain deployment authority reviewed through the migration chain rather than runtime scientific write owners.",
     "non_python_invocation_source_scheme": "git_index_regular_mode_path_byte_sha256_v1",
     "non_python_invocation_source_roots": [
@@ -45,7 +51,7 @@
       "docker/**/*.py"
     ],
     "non_python_invocation_source_file_count": 31,
-    "non_python_invocation_source_graph_sha256": "bcc596c2b67a2ef2b9e25e5ccbde9c2f3440cac0745171d69ac052da306431a0",
+    "non_python_invocation_source_graph_sha256": "bb8acd852fd0587da8fad00ea4001aad12c9c5cc25f616d36c6f4681ce19c361",
     "non_python_invocation_source_review_limit": "Every Git-indexed frontend source/configuration file, recursive shell launcher, non-Python docker launcher and root docker-compose YAML is frozen by exact relative path, regular-file Git mode and byte SHA. Symlinks and non-regular Git modes fail closed. Generated frontend/.next, frontend/node_modules and docker Python already covered by the production AST graph are excluded. The byte freeze catches otherwise-unrecognized syntax but does not infer runtime behavior of generated or third-party code.",
     "frontend_http_mutation_methods": ["DELETE", "PATCH", "POST", "PUT"],
     "non_python_invocation_authority_profiles": {
@@ -78,7 +84,7 @@
     "service_boundary_limit": "This mechanically freezes statically declared aletheia.memory.service imports and imported-name uses across aletheia and operational scripts in module and nested lexical scopes. It does not claim to discover arbitrary dynamic imports or direct ORM, SQL, filesystem or external-system mutations; those are handled by separate reviewed surface baselines.",
     "writer_surface_usage_scheme": "ast_all_scope_import_alias_instance_scope_v2",
     "writer_surface_usage_count": 377,
-    "writer_surface_call_graph_sha256": "ec5509dcca5c719630d7993f04f05eaafc8a5e1603a22d44f710678ee8f59bc7",
+    "writer_surface_call_graph_sha256": "e96f834a1777bd3f63446cea6bbd77f72ec86ac40e76e059929e52f8ff04b60f",
     "allowed_legacy_caller_scope": "Every current aletheia-package caller must be covered by allowed_legacy_callers. Operational scripts are fully frozen in call_sites and may be omitted from the post-cutover application allowlist.",
     "shared_generic_writer_implementations": {
       "aletheia.observations.store._append_exact": {
@@ -113,9 +119,9 @@
       "research_store.transactional_outbox": "The authority-minimal PostgreSQLResearchKernelOutbox caller-owned publication surface is composed by the controller dispatcher; the full-store transaction-owning mark_outbox_published wrapper remains an explicit uncalled compatibility surface."
     },
     "direct_file_sink_scheme": "ast_reviewed_direct_file_sink_v1",
-    "direct_file_sink_scope_count": 194,
-    "direct_file_sink_call_count": 216,
-    "direct_file_sink_graph_sha256": "cf0c6cd562d51638f73a15ac64ccea53c6e2b158607ea1f624773bc8cb514094",
+    "direct_file_sink_scope_count": 195,
+    "direct_file_sink_call_count": 217,
+    "direct_file_sink_graph_sha256": "99a601f575b6239c0d2ea465e71ddad75e17f0f7ac9960e293b8009123ea20a0",
     "direct_file_sink_review_limit": "The baseline covers direct Path/open/os.write, archive-open modes, atomic replace, serializer, dataframe and plotting file sinks across the declared aletheia, deployed docker-worker and recursive operational-script roots. Indirect library-internal writes, arbitrary dynamic dispatch and external systems remain separate reviewed boundaries.",
     "direct_file_sink_profiles": {
       "scientific_artifact": {
@@ -301,10 +307,20 @@
         "migration_mode": "retain_content_addressed_authority",
         "cutover_pr": "PR-2",
         "dual_write_policy": "none"
+      },
+      "arl1_qualification_evidence": {
+        "authority_class": "scientific_state",
+        "current_owner_rule": "sink_module",
+        "target_owner": "aletheia.arl1_verifier.LocalARL1EvidenceArchive",
+        "migration_mode": "retain_content_addressed_qualification_evidence",
+        "cutover_pr": "PR-ARL1",
+        "dual_write_policy": "none"
       }
     },
     "direct_file_sink_profile_by_prefix": {
       "aletheia.api.datasets": "scientific_artifact",
+      "aletheia.arl1_qualification_runtime": "arl1_qualification_evidence",
+      "aletheia.arl1_verifier": "arl1_qualification_evidence",
       "aletheia.capabilities.": "scientific_observation",
       "aletheia.coder.": "operational_workspace",
       "aletheia.compute.": "operational_workspace",
@@ -355,9 +371,9 @@
       "scripts.typed_": "scientific_artifact"
     },
     "direct_external_sink_scheme": "ast_reviewed_event_provider_process_sink_v1",
-    "direct_external_sink_scope_count": 127,
-    "direct_external_sink_call_count": 212,
-    "direct_external_sink_graph_sha256": "6c8bfc8f307c50fbc96dd2af277e10c7075bd46dacacfbbb93f492790c9732f1",
+    "direct_external_sink_scope_count": 128,
+    "direct_external_sink_call_count": 213,
+    "direct_external_sink_graph_sha256": "1e28ee4e91c92ddb39e99752043f7f44890c47c565a830eae267ceaeeb4dc3fb",
     "direct_external_sink_review_limit": "The baseline covers AST-visible EventBus-style publish calls, outbound HTTP mutation calls, known model-provider and GitHub mutation methods, and subprocess launch calls across the declared aletheia, deployed docker-worker and recursive operational-script roots. It does not claim to discover dynamically dispatched SDK methods, hidden library network I/O, non-Python launchers, or runtime monkeypatching.",
     "direct_external_sink_profiles": {
       "event.": {
@@ -3231,6 +3247,10 @@
         {
           "module": "aletheia.observations.execution_registration",
           "symbol": "PostgreSQLAtomicScientificExecutionRegistrar.register_and_reserve"
+        },
+        {
+          "module": "aletheia.observations.execution_registration",
+          "symbol": "PostgreSQLAtomicScientificExecutionRegistrar._register_and_reserve_many"
         }
       ],
       "storage_target": "postgres.execution_persistence.execution_nodes",
@@ -3405,6 +3425,10 @@
         {
           "module": "aletheia.observations.execution_registration",
           "symbol": "PostgreSQLAtomicScientificExecutionRegistrar.register_and_reserve"
+        },
+        {
+          "module": "aletheia.observations.execution_registration",
+          "symbol": "PostgreSQLAtomicScientificExecutionRegistrar._register_and_reserve_many"
         }
       ],
       "dual_write_policy": "none",
@@ -3707,6 +3731,10 @@
         {
           "module": "aletheia.observations.execution_registration",
           "symbol": "PostgreSQLAtomicScientificExecutionRegistrar.register_and_reserve"
+        },
+        {
+          "module": "aletheia.observations.execution_registration",
+          "symbol": "PostgreSQLAtomicScientificExecutionRegistrar._register_and_reserve_many"
         }
       ],
       "storage_target": "postgres.observations_persistence.research_scientific_execution_authorizations",
@@ -3722,6 +3750,10 @@
         {
           "module": "aletheia.observations.execution_registration",
           "symbol": "PostgreSQLAtomicScientificExecutionRegistrar.register_and_reserve"
+        },
+        {
+          "module": "aletheia.observations.execution_registration",
+          "symbol": "PostgreSQLAtomicScientificExecutionRegistrar._register_and_reserve_many"
         }
       ],
       "dual_write_policy": "none",

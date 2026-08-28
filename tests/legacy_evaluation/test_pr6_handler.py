@@ -132,7 +132,7 @@ def test_candidate_image_is_digest_and_dependency_pinned() -> None:
     assert "legacy-evaluation-runtime-constraints-v1.txt" in dockerfile
     for requirement in (
         "cloudpickle==3.1.2",
-        "cryptography==48.0.0",
+        "cryptography==50.0.0",
         "joblib==1.5.3",
         "matminer==0.10.1",
         "numpy==2.4.6",

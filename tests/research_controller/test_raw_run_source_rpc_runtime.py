@@ -16,9 +16,11 @@ from aletheia.execution.registration_custody import QualificationExecutionRegist
 from aletheia.execution.terminal_source import VerifiedQualificationRawRunMaterialReader
 from aletheia.execution.terminal_runtime import QualificationTerminalReaderConfig
 from aletheia.observations import adapters as adapters_module
+from aletheia.observations.adapters import RawRunTerminalMaterialPending
 from aletheia.research_controller.external_rpc import (
     ControllerWorkerRPCOperation,
     ControllerWorkerRPCServicePin,
+    RawRunLoadResult,
     controller_worker_rpc_key_id,
 )
 from aletheia.research_controller.external_rpc_server import ScientificSlotLookupRPCPayload
@@ -222,13 +224,52 @@ def test_checked_in_raw_run_source_factory_is_keyless_read_only_and_operation_cl
         action_sha256=binding.action.object_sha256,
         scientific_slot_id=message.scientific_slot_id,
     )
-    assert handler(payload) == expected
+    assert handler(payload) == RawRunLoadResult(disposition="ready", raw_run=expected)
     assert calls == [payload.model_dump(mode="python")]
     with pytest.raises(TypeError, match="another payload"):
         handler(object())
     assert config["private_domain_signing_key_loaded"] is False
     assert config["execution_mutation_allowed"] is False
     assert "signing_key" not in config
+
+
+def test_raw_run_source_factory_returns_typed_pending_without_masking_other_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    deployment, _config, config_path, authorization = _fixture(monkeypatch, tmp_path)
+
+    class _PendingSource:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def load_raw_run(self, **_scope):
+            raise RawRunTerminalMaterialPending("terminal is still running")
+
+    monkeypatch.setattr(
+        adapters_module,
+        "PostgreSQLRawRunEnvelopeSourceAdapter",
+        _PendingSource,
+    )
+    handlers = build_raw_run_source_rpc_service(
+        deployment=deployment,
+        configuration_bytes=config_path.read_bytes(),
+    )
+    message = authorization.message
+    binding = message.action_protocol_binding
+    result = handlers.handler_for(ControllerWorkerRPCOperation.LOAD_RAW_RUN)(
+        ScientificSlotLookupRPCPayload(
+            quest_id=binding.action.quest_id,
+            action_sha256=binding.action.object_sha256,
+            scientific_slot_id=message.scientific_slot_id,
+        )
+    )
+
+    assert result == RawRunLoadResult(
+        disposition="pending",
+        pending_code="raw_run:terminal_material_pending",
+        retry_after_milliseconds=250,
+    )
 
 
 def test_guarded_rpc_runtime_loads_raw_run_source_factory(

@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from aletheia.observations.coordinator import AtomicObservationAdmissionReceipt
 from aletheia.observations.execution_registration import (
+    AtomicScientificExecutionCampaignRegistrationReceipt,
     AtomicScientificExecutionRegistrationReceipt,
 )
 from aletheia.observations.scientific_bridge import (
@@ -51,6 +52,7 @@ from aletheia.research_controller.external_rpc import (
     ControllerWorkerRPCRequest,
     ControllerWorkerRPCResponse,
     ControllerWorkerRPCServicePin,
+    RawRunLoadResult,
     ValidationCampaignResult,
 )
 from aletheia.research_kernel.schemas import canonical_json_bytes, canonical_sha256
@@ -92,6 +94,13 @@ class ControllerTickRPCPayload(ControllerModel):
 
 class ScientificExecutionRegistrationRPCPayload(ControllerModel):
     authorization: ScientificExecutionAuthorization
+
+
+class ScientificExecutionCampaignRegistrationRPCPayload(ControllerModel):
+    authorizations: tuple[ScientificExecutionAuthorization, ...] = Field(
+        min_length=2,
+        max_length=100,
+    )
 
 
 class ScientificSlotLookupRPCPayload(ControllerModel):
@@ -140,6 +149,9 @@ _OPERATION_PAYLOAD_MODELS: dict[ControllerWorkerRPCOperation, _PayloadModel] = {
     ControllerWorkerRPCOperation.COMPILE_PROTOCOL: ControllerTickRPCPayload,
     ControllerWorkerRPCOperation.ISSUE_EXECUTION_AUTHORIZATION: ControllerTickRPCPayload,
     ControllerWorkerRPCOperation.REGISTER_EXECUTION: ScientificExecutionRegistrationRPCPayload,
+    ControllerWorkerRPCOperation.REGISTER_EXECUTION_CAMPAIGN: (
+        ScientificExecutionCampaignRegistrationRPCPayload
+    ),
     ControllerWorkerRPCOperation.LOAD_RAW_RUN: ScientificSlotLookupRPCPayload,
     ControllerWorkerRPCOperation.PREPARE_VALIDATION_CAMPAIGN: RawRunRPCPayload,
     ControllerWorkerRPCOperation.ISSUE_VALIDATION_CHALLENGE: (
@@ -159,7 +171,10 @@ _OPERATION_RESULT_MODELS: dict[ControllerWorkerRPCOperation, _ResultModel] = {
     ControllerWorkerRPCOperation.COMPILE_PROTOCOL: ProtocolCompilationWrite,
     ControllerWorkerRPCOperation.ISSUE_EXECUTION_AUTHORIZATION: ScientificExecutionAuthorization,
     ControllerWorkerRPCOperation.REGISTER_EXECUTION: (AtomicScientificExecutionRegistrationReceipt),
-    ControllerWorkerRPCOperation.LOAD_RAW_RUN: RawRunEnvelope,
+    ControllerWorkerRPCOperation.REGISTER_EXECUTION_CAMPAIGN: (
+        AtomicScientificExecutionCampaignRegistrationReceipt
+    ),
+    ControllerWorkerRPCOperation.LOAD_RAW_RUN: RawRunLoadResult,
     ControllerWorkerRPCOperation.PREPARE_VALIDATION_CAMPAIGN: ValidationCampaignResult,
     ControllerWorkerRPCOperation.ISSUE_VALIDATION_CHALLENGE: (
         ValidationChallengeRegistrationReceipt
@@ -400,6 +415,7 @@ __all__ = [
     "ControllerWorkerRPCServiceBlocked",
     "RawRunRPCPayload",
     "ScientificExecutionRegistrationRPCPayload",
+    "ScientificExecutionCampaignRegistrationRPCPayload",
     "ScientificSlotLookupRPCPayload",
     "ValidationChallengeIssuanceRPCPayload",
     "ValidationCommitRPCPayload",

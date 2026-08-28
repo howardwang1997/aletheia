@@ -29,6 +29,8 @@ from aletheia.research_controller.external_rpc import (
     RPCRawRunEnvelopeSource,
     RPCScientificExecutionAuthorizationIssuer,
     RPCScientificExecutionRegistrar,
+    RawRunEnvelopePending,
+    RawRunLoadResult,
     controller_worker_rpc_key_id,
 )
 from aletheia.research_controller.protocol_compilation_step import ProtocolCompilationUnavailable
@@ -303,6 +305,48 @@ def test_protocol_rpc_facade_maps_signed_blocker_to_step_disposition() -> None:
     assert caught.value.blocker_codes == ("provider:unavailable",)
 
 
+def test_raw_run_rpc_facade_preserves_signed_terminal_pending_status() -> None:
+    private_key = _private_key("raw-run-receipt")
+    binding = ControllerStepAuthorityBinding(
+        role=ControllerStepAuthorityRole.EXECUTION_AUTHORIZATION,
+        principal_id="principal.execution.authorization",
+        key_id="key.execution.authorization",
+        policy_sha256=_sha("execution-policy"),
+        service_manifest_sha256=_sha("execution-manifest"),
+        externally_deployed=True,
+    )
+    client = ControllerWorkerRPCClient(
+        pin=_pin(
+            private_key=private_key,
+            operation=ControllerWorkerRPCOperation.LOAD_RAW_RUN,
+            authority_binding_sha256s=(binding.binding_sha256,),
+        ),
+        controller_id=f"rctl_{_sha('controller')[:32]}",
+        controller_manifest_sha256=_sha("controller"),
+        worker_process_principal_id="principal.controller.worker",
+        transport=_SignedTransport(
+            private_key=private_key,
+            result=RawRunLoadResult(
+                disposition="pending",
+                pending_code="raw_run:terminal_material_pending",
+                retry_after_milliseconds=250,
+            ),
+        ),
+        clock=lambda: NOW,
+    )
+    facade = RPCRawRunEnvelopeSource(client, binding)
+
+    with pytest.raises(RawRunEnvelopePending) as caught:
+        facade.load_raw_run(
+            quest_id="qst_" + "1" * 32,
+            action_sha256=_sha("action"),
+            scientific_slot_id="sos_" + "2" * 32,
+        )
+
+    assert caught.value.pending_code == "raw_run:terminal_material_pending"
+    assert caught.value.retry_after_milliseconds == 250
+
+
 class _StopRPC(Exception):
     pass
 
@@ -368,6 +412,11 @@ def test_rpc_facades_cover_each_closed_operation_without_a_catch_all() -> None:
             RPCScientificExecutionRegistrar(_RecordingClient(execution), execution),
             "register_and_reserve",
             {"authorization": tick},
+        ),
+        (
+            RPCScientificExecutionRegistrar(_RecordingClient(execution), execution),
+            "register_and_reserve_campaign",
+            {"authorizations": (tick, tick)},
         ),
         (
             RPCRawRunEnvelopeSource(_RecordingClient(execution), execution),

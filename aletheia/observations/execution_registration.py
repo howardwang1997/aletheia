@@ -140,6 +140,147 @@ class AtomicScientificExecutionRegistrationReceipt(ScientificBridgeModel):
         return canonical_sha256(self)
 
 
+def _validate_campaign_authorizations(
+    authorizations: tuple[ScientificExecutionAuthorization, ...],
+) -> None:
+    if not 2 <= len(authorizations) <= 100:
+        raise ValueError("scientific replicate campaign requires between two and 100 slots")
+    first = authorizations[0].message.action_protocol_binding
+    expected_indexes = tuple(range(1, len(authorizations) + 1))
+    slots = tuple(item.message.action_protocol_binding.replicate_slot for item in authorizations)
+    if tuple(item.slot_index for item in slots) != expected_indexes or any(
+        item.slot_count != len(authorizations) for item in slots
+    ):
+        raise ValueError("scientific replicate campaign slots must be exhaustive and canonical")
+    for authorization in authorizations[1:]:
+        message = authorization.message
+        first_message = authorizations[0].message
+        binding = authorization.message.action_protocol_binding
+        if (
+            binding.action != first.action
+            or binding.action_proposed_event != first.action_proposed_event
+            or binding.action_authorized_event != first.action_authorized_event
+            or binding.authorized_graph_snapshot_sha256 != first.authorized_graph_snapshot_sha256
+            or binding.compilation_request != first.compilation_request
+            or binding.compilation_result != first.compilation_result
+            or binding.compilation_receipt != first.compilation_receipt
+            or binding.work_order != first.work_order
+            or binding.work_order_node != first.work_order_node
+            or binding.bound_at != first.bound_at
+        ):
+            raise ValueError(
+                "scientific replicate campaign members do not share one authorized action node"
+            )
+        if (
+            message.validator_manifest_sha256 != first_message.validator_manifest_sha256
+            or message.observation_validation_policy_sha256
+            != first_message.observation_validation_policy_sha256
+            or message.admission_policy != first_message.admission_policy
+            or message.scientific_observation_artifact_binding
+            != first_message.scientific_observation_artifact_binding
+            or message.execution_authority_policy_sha256
+            != first_message.execution_authority_policy_sha256
+            or message.authorized_by_principal_id != first_message.authorized_by_principal_id
+            or message.authorization_key_id != first_message.authorization_key_id
+            or message.validator_authority_policy_sha256
+            != first_message.validator_authority_policy_sha256
+            or message.validator_principal_id != first_message.validator_principal_id
+            or message.validator_key_id != first_message.validator_key_id
+            or message.admission_authority_policy_sha256
+            != first_message.admission_authority_policy_sha256
+            or message.admission_principal_id != first_message.admission_principal_id
+            or message.admission_key_id != first_message.admission_key_id
+            or message.authorized_at != first_message.authorized_at
+            or message.expires_at != first_message.expires_at
+            or message.observation_admission_deadline
+            != first_message.observation_admission_deadline
+        ):
+            raise ValueError(
+                "scientific replicate campaign members changed validation or authority policy"
+            )
+    identities = (
+        tuple(item.authorization_sha256 for item in authorizations),
+        tuple(item.message.scientific_slot_id for item in authorizations),
+        tuple(item.message.qualification_bundle.bundle_sha256 for item in authorizations),
+        tuple(item.message.qualification_grant.grant_sha256 for item in authorizations),
+        tuple(item.message.qualification_bundle.intent.execution_id for item in authorizations),
+        tuple(
+            item.message.qualification_bundle.intent.infrastructure_attempt.infrastructure_attempt_id
+            for item in authorizations
+        ),
+        tuple(item.replicate_slot_id for item in slots),
+    )
+    if any(len(set(values)) != len(authorizations) for values in identities):
+        raise ValueError("scientific replicate campaign member identities must be unique")
+
+
+class AtomicScientificExecutionCampaignRegistrationReceipt(ScientificBridgeModel):
+    """Typed proof that every preregistered slot committed before any reservation.
+
+    The full signed authorizations are retained deliberately.  A later verifier can reconstruct
+    every slot, bundle, grant, and execution identity rather than trusting an opaque list of
+    hashes returned by the registration process.
+    """
+
+    schema_name: Literal["aletheia.atomic_scientific_execution_campaign_registration_receipt"] = (
+        "aletheia.atomic_scientific_execution_campaign_registration_receipt"
+    )
+    schema_version: Literal[1] = 1
+    authorizations: tuple[ScientificExecutionAuthorization, ...] = Field(
+        min_length=2,
+        max_length=100,
+    )
+    registration_receipts: tuple[AtomicScientificExecutionRegistrationReceipt, ...] = Field(
+        min_length=2,
+        max_length=100,
+    )
+    all_authorizations_registered_before_any_reservation: Literal[True] = True
+    one_database_transaction: Literal[True] = True
+    exact_retry_stable: Literal[True] = True
+    qualification_only: Literal[True] = True
+    scientific_admission_allowed: Literal[False] = False
+
+    @model_validator(mode="after")
+    def _campaign_registration_is_exact(
+        self,
+    ) -> "AtomicScientificExecutionCampaignRegistrationReceipt":
+        _validate_campaign_authorizations(self.authorizations)
+        if len(self.registration_receipts) != len(self.authorizations):
+            raise ValueError("scientific campaign registration coverage is incomplete")
+        for authorization, receipt in zip(
+            self.authorizations,
+            self.registration_receipts,
+            strict=True,
+        ):
+            message = authorization.message
+            binding = message.action_protocol_binding
+            intent = message.qualification_bundle.intent
+            if (
+                receipt.authorization_sha256 != authorization.authorization_sha256
+                or receipt.quest_id != binding.action.quest_id
+                or receipt.scientific_slot_id != message.scientific_slot_id
+                or receipt.action_sha256 != binding.action.object_sha256
+                or receipt.execution_id != intent.execution_id
+                or receipt.attempt_id != intent.infrastructure_attempt.infrastructure_attempt_id
+                or receipt.qualification_bundle_sha256 != message.qualification_bundle.bundle_sha256
+                or receipt.qualification_grant_sha256 != message.qualification_grant.grant_sha256
+            ):
+                raise ValueError(
+                    "scientific campaign registration receipt rebound one authorization"
+                )
+        registered_at = tuple(item.registered_at for item in self.registration_receipts)
+        reserved_at = tuple(item.reserved_at for item in self.registration_receipts)
+        if len(set(registered_at)) != 1 or max(registered_at) >= min(reserved_at):
+            raise ValueError(
+                "scientific campaign was not fully preregistered before its first reservation"
+            )
+        return self
+
+    @property
+    def campaign_registration_sha256(self) -> str:
+        return canonical_sha256(self)
+
+
 SessionScopeFactory = Callable[[], AbstractContextManager[Session]]
 DatabaseClock = Callable[[Session], datetime]
 
@@ -168,7 +309,7 @@ def _lock_scientific_slot(session: Session, scientific_slot_id: str) -> None:
 
 
 class PostgreSQLAtomicScientificExecutionRegistrar:
-    """Commit one signed SEA and its exact PR-4 reservation without a crash gap."""
+    """Commit signed SEA slots and their exact PR-4 reservations without a crash gap."""
 
     def __init__(
         self,
@@ -251,99 +392,184 @@ class PostgreSQLAtomicScientificExecutionRegistrar:
         self,
         authorization: ScientificExecutionAuthorization,
     ) -> AtomicScientificExecutionRegistrationReceipt:
+        return self._register_and_reserve_many((authorization,))[0]
+
+    def register_and_reserve_campaign(
+        self,
+        authorizations: tuple[ScientificExecutionAuthorization, ...],
+    ) -> AtomicScientificExecutionCampaignRegistrationReceipt:
+        """Atomically preregister every exact slot before reserving any campaign member."""
+
         try:
-            authorization = ScientificExecutionAuthorization.model_validate(
-                authorization.model_dump(mode="python")
+            frozen = tuple(
+                ScientificExecutionAuthorization.model_validate(item.model_dump(mode="python"))
+                for item in authorizations
             )
-            message = authorization.message
-            binding = message.action_protocol_binding
-            quest_id = binding.action.quest_id
-            scientific_slot_id = message.scientific_slot_id
+            _validate_campaign_authorizations(frozen)
+            receipts = self._register_and_reserve_many(frozen, campaign=True)
+            return AtomicScientificExecutionCampaignRegistrationReceipt(
+                authorizations=frozen,
+                registration_receipts=receipts,
+            )
+        except ScientificExecutionRegistrationError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - campaign validation fails closed
+            raise ScientificExecutionRegistrationError(
+                "scientific replicate campaign failed atomic registration"
+            ) from exc
+
+    def _register_and_reserve_many(
+        self,
+        authorizations: tuple[ScientificExecutionAuthorization, ...],
+        *,
+        campaign: bool = False,
+    ) -> tuple[AtomicScientificExecutionRegistrationReceipt, ...]:
+        try:
+            authorizations = tuple(
+                ScientificExecutionAuthorization.model_validate(item.model_dump(mode="python"))
+                for item in authorizations
+            )
+            if campaign:
+                _validate_campaign_authorizations(authorizations)
+            elif len(authorizations) != 1:
+                raise ScientificExecutionRegistrationError(
+                    "single execution registration received multiple authorizations"
+                )
             with self._session_scope_factory() as session:
                 if not isinstance(session, Session):
                     raise ScientificExecutionRegistrationError(
                         "execution registration requires one SQLAlchemy Session transaction"
                     )
-                _lock_scientific_slot(session, scientific_slot_id)
+                for authorization in authorizations:
+                    _lock_scientific_slot(
+                        session,
+                        authorization.message.scientific_slot_id,
+                    )
                 if not session.in_transaction():  # pragma: no cover - lock always autobegins
                     raise ScientificExecutionRegistrationError(
                         "execution registration failed to begin its PostgreSQL transaction"
                     )
                 observed_at = self._database_clock(session)
-                existing = get_scientific_execution_authorization_by_slot(
-                    session,
-                    quest_id=quest_id,
-                    scientific_slot_id=scientific_slot_id,
-                )
-                prior_reservation = self._allocator.load_exact_qualification_reservation_in_session(
-                    session,
-                    bundle=message.qualification_bundle,
-                    grant=message.qualification_grant,
-                )
-                if (existing is None) != (prior_reservation is None):
-                    raise ScientificExecutionRegistrationError(
-                        "scientific authorization and qualification reservation are one-sided"
-                    )
-                if existing is None:
-                    current_binding_sha256 = self._verify_current_authorization(
-                        session=session,
-                        authorization=authorization,
-                        observed_at=observed_at,
-                    )
-                    register_scientific_execution_authorization(
+                existing_states: list[tuple[object | None, object | None]] = []
+                for authorization in authorizations:
+                    message = authorization.message
+                    binding = message.action_protocol_binding
+                    existing = get_scientific_execution_authorization_by_slot(
                         session,
-                        ScientificExecutionAuthorizationWrite.from_contract(
-                            authorization,
-                            registered_at=observed_at,
-                        ),
+                        quest_id=binding.action.quest_id,
+                        scientific_slot_id=message.scientific_slot_id,
                     )
-                    registered_at = observed_at
-                else:
-                    persisted = ScientificExecutionAuthorization.model_validate(
-                        existing.authorization_json
-                    )
-                    if persisted != authorization:
-                        raise ObservationIdentityConflict(
-                            "scientific slot is registered to another execution authorization"
+                    prior_reservation = (
+                        self._allocator.load_exact_qualification_reservation_in_session(
+                            session,
+                            bundle=message.qualification_bundle,
+                            grant=message.qualification_grant,
                         )
-                    verify_scientific_execution_authorization_historical(
-                        authorization=persisted,
-                        qualification_authority=self._verification.qualification_authority,
-                        execution_authority_pin=self._verification.execution_authority_pin,
-                        validator_authority_pin=self._verification.validator_authority_pin,
-                        admission_authority_pin=self._verification.admission_authority_pin,
-                        observed_at=observed_at,
                     )
-                    registered_at = existing.registered_at
+                    if (existing is None) != (prior_reservation is None):
+                        raise ScientificExecutionRegistrationError(
+                            "scientific authorization and qualification reservation are one-sided"
+                        )
+                    existing_states.append((existing, prior_reservation))
+                existing_count = sum(item[0] is not None for item in existing_states)
+                if campaign and existing_count not in {0, len(authorizations)}:
+                    raise ScientificExecutionRegistrationError(
+                        "scientific replicate campaign is only partially registered"
+                    )
+                new_campaign = existing_count == 0
+                current_binding_sha256s: list[str] = []
+                registered_ats: list[datetime] = []
+                if new_campaign:
+                    for authorization in authorizations:
+                        current_binding_sha256s.append(
+                            self._verify_current_authorization(
+                                session=session,
+                                authorization=authorization,
+                                observed_at=observed_at,
+                            )
+                        )
+                    for authorization in authorizations:
+                        register_scientific_execution_authorization(
+                            session,
+                            ScientificExecutionAuthorizationWrite.from_contract(
+                                authorization,
+                                registered_at=observed_at,
+                            ),
+                        )
+                        registered_ats.append(observed_at)
+                else:
+                    for authorization, state in zip(
+                        authorizations,
+                        existing_states,
+                        strict=True,
+                    ):
+                        existing = state[0]
+                        if existing is None:  # pragma: no cover - guarded by existing_count above
+                            raise ScientificExecutionRegistrationError(
+                                "historical campaign authorization disappeared inside its transaction"
+                            )
+                        persisted = ScientificExecutionAuthorization.model_validate(
+                            existing.authorization_json
+                        )
+                        if persisted != authorization:
+                            raise ObservationIdentityConflict(
+                                "scientific slot is registered to another execution authorization"
+                            )
+                        verify_scientific_execution_authorization_historical(
+                            authorization=persisted,
+                            qualification_authority=self._verification.qualification_authority,
+                            execution_authority_pin=self._verification.execution_authority_pin,
+                            validator_authority_pin=self._verification.validator_authority_pin,
+                            admission_authority_pin=self._verification.admission_authority_pin,
+                            observed_at=observed_at,
+                        )
+                        registered_ats.append(existing.registered_at)
 
-                claim = self._allocator.admit_and_reserve_in_session(
-                    session,
-                    bundle=message.qualification_bundle,
-                    grant=message.qualification_grant,
-                )
-                if existing is None:
-                    if not claim.created:
+                claims: list[ReservationClaim] = []
+                for authorization in authorizations:
+                    message = authorization.message
+                    claim = self._allocator.admit_and_reserve_in_session(
+                        session,
+                        bundle=message.qualification_bundle,
+                        grant=message.qualification_grant,
+                    )
+                    if new_campaign and not claim.created:
                         raise ScientificExecutionRegistrationError(
                             "new scientific authorization found a pre-existing reservation"
                         )
+                    if not new_campaign and claim.created:
+                        raise ScientificExecutionRegistrationError(
+                            "historical scientific authorization lacked its atomic reservation"
+                        )
+                    claims.append(claim)
+                if new_campaign:
                     final_observed_at = self._database_clock(session)
-                    if final_observed_at < claim.snapshot.reserved_at:
+                    if any(final_observed_at < claim.snapshot.reserved_at for claim in claims):
                         raise ScientificExecutionRegistrationError(
                             "post-reservation database time precedes allocator linearization"
                         )
-                    self._reverify_after_reservation(
+                    for authorization, binding_sha256 in zip(
+                        authorizations,
+                        current_binding_sha256s,
+                        strict=True,
+                    ):
+                        self._reverify_after_reservation(
+                            authorization=authorization,
+                            binding_sha256=binding_sha256,
+                            observed_at=final_observed_at,
+                        )
+                return tuple(
+                    self._receipt(
                         authorization=authorization,
-                        binding_sha256=current_binding_sha256,
-                        observed_at=final_observed_at,
+                        registered_at=registered_at,
+                        claim=claim,
                     )
-                elif claim.created:
-                    raise ScientificExecutionRegistrationError(
-                        "historical scientific authorization lacked its atomic reservation"
+                    for authorization, registered_at, claim in zip(
+                        authorizations,
+                        registered_ats,
+                        claims,
+                        strict=True,
                     )
-                return self._receipt(
-                    authorization=authorization,
-                    registered_at=registered_at,
-                    claim=claim,
                 )
         except ScientificExecutionRegistrationError:
             raise
@@ -392,6 +618,7 @@ class PostgreSQLAtomicScientificExecutionRegistrar:
 
 
 __all__ = [
+    "AtomicScientificExecutionCampaignRegistrationReceipt",
     "AtomicScientificExecutionRegistrationReceipt",
     "CurrentResearchActionRegistrationAuthorityPort",
     "PostgreSQLAtomicScientificExecutionRegistrar",

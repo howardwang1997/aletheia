@@ -161,8 +161,14 @@ qualification gate: it replays all ARL-0 evidence, the canonical compiler and ex
 requires at least two preregistered exact reexecutions plus all-attempt/validator/admission/
 incorporation/report evidence, and hard-codes an engineering-only claim ceiling. Runtime startup
 and `/readyz` also reject a current Alembic stamp when the actual schema structure has drifted.
-No real target campaign or production source-verification receipt exists, so the
-**ARL-1 qualification gate is implemented, but Aletheia is not ARL-1 qualified**. See
+The production path now includes atomic multi-replicate registration, a concrete PostgreSQL/CAS/
+Kernel/F9-v2 source verifier, a keyless given-protocol campaign runtime, and separate guarded
+prepare/issue/keyless-audit entrypoints. The campaign treats only a signed terminal-material-
+pending source status as retryable and bounds that wait by the authorization's admission deadline.
+Qualification and audit timestamps are derived after fresh replay from the pinned PostgreSQL clock,
+not from caller-supplied evidence or receipt JSON. No real target campaign or production
+source-verification receipt exists, so the **ARL-1 software closure is implemented, but Aletheia is
+not ARL-1 qualified**. See
 [`docs/ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md`](docs/ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md).
 PR-5 now adds
 the signed action-to-execution bridge, DB-time independent validation/admission, atomic

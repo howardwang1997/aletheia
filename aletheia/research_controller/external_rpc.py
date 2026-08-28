@@ -27,6 +27,7 @@ from pydantic import AwareDatetime, Field, model_validator
 
 from aletheia.observations.coordinator import AtomicObservationAdmissionReceipt
 from aletheia.observations.execution_registration import (
+    AtomicScientificExecutionCampaignRegistrationReceipt,
     AtomicScientificExecutionRegistrationReceipt,
 )
 from aletheia.observations.scientific_bridge import (
@@ -79,6 +80,20 @@ class ControllerWorkerRPCBlocked(ControllerWorkerRPCError):
         super().__init__(",".join(blocker_codes))
 
 
+class RawRunEnvelopePending(ControllerWorkerRPCError):
+    """The exact preregistered execution has no terminal envelope yet."""
+
+    def __init__(self, *, pending_code: str, retry_after_milliseconds: int) -> None:
+        if (
+            pending_code != "raw_run:terminal_material_pending"
+            or not 50 <= retry_after_milliseconds <= 5_000
+        ):
+            raise ValueError("raw-run pending status is outside its closed contract")
+        self.pending_code = pending_code
+        self.retry_after_milliseconds = retry_after_milliseconds
+        super().__init__(pending_code)
+
+
 class ControllerWorkerRPCOperation(str, Enum):
     """Closed operation vocabulary; there is no generic model callback."""
 
@@ -86,6 +101,7 @@ class ControllerWorkerRPCOperation(str, Enum):
     COMPILE_PROTOCOL = "compile_protocol"
     ISSUE_EXECUTION_AUTHORIZATION = "issue_execution_authorization"
     REGISTER_EXECUTION = "register_execution"
+    REGISTER_EXECUTION_CAMPAIGN = "register_execution_campaign"
     LOAD_RAW_RUN = "load_raw_run"
     PREPARE_VALIDATION_CAMPAIGN = "prepare_validation_campaign"
     ISSUE_VALIDATION_CHALLENGE = "issue_validation_challenge"
@@ -136,7 +152,7 @@ class ControllerWorkerRPCServicePin(ControllerModel):
     service_principal_id: str = Field(pattern=_IDENTITY_PATTERN)
     service_manifest_sha256: str = Field(pattern=_SHA256_PATTERN)
     service_policy_sha256: str = Field(pattern=_SHA256_PATTERN)
-    operations: tuple[ControllerWorkerRPCOperation, ...] = Field(min_length=1, max_length=14)
+    operations: tuple[ControllerWorkerRPCOperation, ...] = Field(min_length=1, max_length=15)
     authority_binding_sha256s: tuple[str, ...] = Field(max_length=8)
     socket_path: str
     socket_owner_uid: int = Field(ge=0)
@@ -512,6 +528,18 @@ class RPCScientificExecutionRegistrar:
             result_type=AtomicScientificExecutionRegistrationReceipt,
         )
 
+    def register_and_reserve_campaign(
+        self,
+        authorizations: tuple[ScientificExecutionAuthorization, ...],
+    ) -> AtomicScientificExecutionCampaignRegistrationReceipt:
+        return self._client.call(
+            ControllerWorkerRPCOperation.REGISTER_EXECUTION_CAMPAIGN,
+            payload={
+                "authorizations": tuple(_json(item) for item in authorizations),
+            },
+            result_type=AtomicScientificExecutionCampaignRegistrationReceipt,
+        )
+
 
 class RPCRawRunEnvelopeSource:
     def __init__(self, client: ControllerWorkerRPCClient, binding: ControllerStepAuthorityBinding):
@@ -519,15 +547,53 @@ class RPCRawRunEnvelopeSource:
         self.authority_binding = _binding(binding, pin=client.pin)
 
     def load_raw_run(self, *, quest_id, action_sha256, scientific_slot_id) -> RawRunEnvelope:
-        return self._client.call(
+        result = self._client.call(
             ControllerWorkerRPCOperation.LOAD_RAW_RUN,
             payload={
                 "quest_id": quest_id,
                 "action_sha256": action_sha256,
                 "scientific_slot_id": scientific_slot_id,
             },
-            result_type=RawRunEnvelope,
+            result_type=RawRunLoadResult,
         )
+        if result.disposition == "pending":
+            if result.pending_code is None or result.retry_after_milliseconds is None:
+                raise ControllerWorkerRPCError("pending raw-run result lost its retry contract")
+            raise RawRunEnvelopePending(
+                pending_code=result.pending_code,
+                retry_after_milliseconds=result.retry_after_milliseconds,
+            )
+        if result.raw_run is None:
+            raise ControllerWorkerRPCError("ready raw-run result lost its envelope")
+        return result.raw_run
+
+
+class RawRunLoadResult(ControllerModel):
+    """Signed source status; pending is not an execution or custody failure."""
+
+    schema_name: Literal["aletheia.raw_run_load_result"] = "aletheia.raw_run_load_result"
+    schema_version: Literal[1] = 1
+    disposition: Literal["ready", "pending"]
+    raw_run: RawRunEnvelope | None = None
+    pending_code: Literal["raw_run:terminal_material_pending"] | None = None
+    retry_after_milliseconds: int | None = Field(default=None, ge=50, le=5_000)
+
+    @model_validator(mode="after")
+    def _result_is_exact(self) -> "RawRunLoadResult":
+        if self.disposition == "ready":
+            if (
+                self.raw_run is None
+                or self.pending_code is not None
+                or self.retry_after_milliseconds is not None
+            ):
+                raise ValueError("ready raw-run result has invalid status custody")
+        elif (
+            self.raw_run is not None
+            or self.pending_code != "raw_run:terminal_material_pending"
+            or self.retry_after_milliseconds is None
+        ):
+            raise ValueError("pending raw-run result has invalid status custody")
+        return self
 
 
 class ValidationCampaignResult(ControllerModel):
@@ -710,6 +776,8 @@ __all__ = [
     "RPCRawRunEnvelopeSource",
     "RPCScientificExecutionAuthorizationIssuer",
     "RPCScientificExecutionRegistrar",
+    "RawRunEnvelopePending",
+    "RawRunLoadResult",
     "ValidationCampaignResult",
     "controller_worker_rpc_key_id",
 ]

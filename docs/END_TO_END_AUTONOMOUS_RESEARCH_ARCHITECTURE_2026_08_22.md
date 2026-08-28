@@ -884,10 +884,15 @@ ARL 是累积等级：晋升必须同时满足所有较低等级的冻结证据�
 | `ARL-4 Independently Confirmed Autonomous Discovery` | 新主张通过时间冻结的 prior-art 审核、外部专家裁决和与 claim type 匹配的独立确认 | 仍不自动获得无限现实权限 |
 
 当前 Aletheia 在若干受限计算任务上部分满足 `ARL-1`。2026-08-28 已实现冻结的系统级 ARL-1
-evidence bundle、独立 source-verification port、确定性报告、Ed25519 资格 receipt 与离线重验合同；它要求
-完整 ARL-0 gates、canonical compiler replay、至少两次预注册 exact reexecution、all-attempt、预冻结
-validator、admission/incorporation，以及原生重放 PR-8h target campaign。由于真实 Linux target campaign
-尚未执行，production source verifier 也尚未产生 retained receipt，**当前仍没有一份可签发的 ARL-1
+evidence bundle、具体 PostgreSQL/CAS/Kernel/F9-v2 source verifier、确定性报告、Ed25519 资格 receipt、
+离线重验合同，以及分离的 given-protocol campaign、prepare、issue、keyless audit Linux one-shot
+entrypoint；它要求完整 ARL-0 gates、canonical compiler replay、同一 action 在首个 reservation 前原子预注册
+全部 exact reexecution、all-attempt、预冻结 validator、admission/incorporation，以及原生重放 PR-8h
+target campaign。运行中的 exact reexecution 只通过 signed typed terminal-pending 状态有界等待，最迟在
+SEA admission deadline 停止；资格签发和 audit 时间则在 fresh replay 后取自 pinned PostgreSQL clock，
+deployment JSON 只能给出 24 小时以内的 operation window 与 receipt duration，不能回填或复活 receipt。
+由于真实 Linux target campaign 尚未执行，production source verifier 也尚未产生
+retained receipt，**当前仍没有一份可签发的 ARL-1
 资格 receipt，系统没有晋级 ARL-1**。它也拥有若干 `ARL-2` 所需但未由主控制面贯通的 F8–F11
 原语。没有 `ARL-3` 或 `ARL-4` 证据。
 
@@ -2049,8 +2054,11 @@ campaign receipt，而不是扩张 controller authority。checkpoint 与 externa
 Alembic head 外还必须通过 ORM structural diff，防止 stamped-but-drifted database 假就绪；给定协议
 必须 canonical recompile，scientific-executor node 必须预注册至少两次 exact reexecution，并保留
 all-attempt、预定义 validator、validation/admission/incorporation、reproduction 与确定性 report。独立
-source verifier 与资格 signer 必须 principal/key/policy 分离，最终 receipt 永久限定为 bounded protocol
-execution engineering claim。该 slice 不改变上述顺序：没有真实 PR-8h receipt 时不能签发 ARL-1。
+source verifier 与资格 signer 必须 principal/key/policy 分离，最终 keyless auditor 使用第三个 application
+principal；具体 verifier 会 fresh reopen PostgreSQL、artifact/evidence/Kernel CAS、F9-v2 archive 并重跑
+byte-pinned ARL-0 commands，并在重放完成后用 pinned PostgreSQL clock 生成资格/观察时间。最终 receipt
+永久限定为 bounded protocol execution engineering claim。该
+slice 不改变上述顺序：没有真实 PR-8h receipt 时不能签发 ARL-1。
 
 GPU node 的 deployment threat model 和 onboarding checklist 可以继续独立准备，但直到 PR-4b 的 target-host
 deployment campaign 和 PR-5 的 production composition/deployment campaign 都通过前，不部署逐任务 remote

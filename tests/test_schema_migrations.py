@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import runpy
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -18,7 +19,58 @@ from aletheia.schema_migrations import require_schema_exact
 
 
 def test_repository_has_one_expected_alembic_head():
-    assert expected_schema_revision() == "20260828_0027"
+    assert expected_schema_revision() == "20260828_0029"
+
+
+def test_real_time_endurance_uses_exact_transaction_clock_guards():
+    migration_path = (
+        Path(__file__).parents[1]
+        / "migrations"
+        / "versions"
+        / "20260828_0029_realtime_endurance_transaction_clock.py"
+    )
+    migration = runpy.run_path(str(migration_path))
+    expected_guards = (
+        ("aletheia_validate_research_endurance_gate", "started_at"),
+        ("aletheia_validate_research_endurance_checkpoint", "observed_at"),
+        ("aletheia_validate_research_endurance_report", "completed_at"),
+    )
+    assert migration["_GUARDS"] == expected_guards
+    for _, timestamp_field in expected_guards:
+        assert (
+            migration["_old_guard"](timestamp_field)
+            == f"abs(extract(epoch FROM (clock_timestamp() - NEW.{timestamp_field}))) > 5"
+        )
+        assert (
+            migration["_transaction_guard"](timestamp_field)
+            == f"NEW.{timestamp_field} IS DISTINCT FROM transaction_timestamp()"
+        )
+
+
+def test_arl1_replicate_campaign_replaces_single_sea_per_action_constraint():
+    from sqlalchemy import Index, UniqueConstraint
+
+    from aletheia.observations.persistence import (
+        ResearchScientificExecutionAuthorizationRecord,
+    )
+
+    migration = (
+        Path(__file__).parents[1]
+        / "migrations"
+        / "versions"
+        / "20260828_0028_arl1_replicate_campaign.py"
+    ).read_text()
+    constraints = ResearchScientificExecutionAuthorizationRecord.__table__.constraints
+    indexes = ResearchScientificExecutionAuthorizationRecord.__table__.indexes
+    assert "uq_rsea_source_event" not in {
+        item.name for item in constraints if isinstance(item, UniqueConstraint)
+    }
+    assert "ix_rsea_quest_source_event" in {
+        item.name for item in indexes if isinstance(item, Index)
+    }
+    assert '"uq_rsea_source_event"' in migration
+    assert '"ix_rsea_quest_source_event"' in migration
+    assert "HAVING count(*) > 1" in migration
 
 
 def test_local_execution_foundation_is_fenced_and_not_the_legacy_queue():

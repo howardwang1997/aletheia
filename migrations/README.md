@@ -1,7 +1,7 @@
 # Aletheia database migrations
 
 The database schema is versioned with Alembic. Application startup never creates or alters tables.
-The current repository head is `20260828_0027`.
+The current repository head is `20260828_0029`.
 
 For a fresh database:
 
@@ -22,7 +22,8 @@ adoption or upgrade; `scripts/backup_database.py` records a content hash receipt
 `pg_dump` client is available.
 
 Tests may still use `aletheia.db.create_all()` as an explicit test fixture. Runtime code must call
-`require_schema_current()` and fail closed when the database is empty, behind, or ahead.
+`require_schema_exact()` and fail closed when the database is empty, behind, ahead, or structurally
+different from the ORM-managed head.
 
 Revision `20260814_0003` adds the F8-S1 immutable corpus store. Its knowledge rows and membership
 edges reject SQL `UPDATE` and `DELETE`; corrections, later observations, and new corpus membership
@@ -71,3 +72,16 @@ the concrete custody adapter later requires the exact immutable PR-4 lineage. An
 once. Issuance challenges are immutable: a live purpose/row-scope window is serialized by locking
 its stable authorization, while an expired challenge can be followed by a new row with a fresh
 nonce instead of mutating or permanently reserving that row scope.
+
+Revision `20260828_0028` removes the accidental one-SEA-per-authorization-event limit. One
+authorized action may now preregister several exact scientific replicate slots; authorization,
+slot, execution, attempt, qualification bundle, and qualification grant identities remain unique,
+and the shared source event is indexed for campaign replay. Downgrade refuses a database that has
+already used this multi-replicate capability.
+
+Revision `20260828_0029` makes real-time endurance evidence use PostgreSQL's exact transaction
+timestamp. The three database guards no longer compare a timestamp captured near transaction
+start to the wall clock at trigger execution with a fixed five-second tolerance, so valid
+long-running finalization work cannot fail only because trigger evaluation occurs later. Caller
+clock injection remains forbidden, while accelerated engineering evidence retains its explicit
+test clock.
