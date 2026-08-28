@@ -88,6 +88,28 @@ immediately. A target fixture must therefore be a bounded, pre-registered, long-
 workload whose normal successful output is preserved when the polling node process—not its Docker
 container—is killed.
 
+The checked-in qualification smoke workload now accepts an exact
+`--minimum-runtime-seconds 0..600` hold before it atomically publishes the unchanged deterministic
+output. The target campaign must explicitly select a nonzero bounded value in its signed workload
+argv; the default remains zero so the source change alone cannot be mistaken for a long-running
+campaign execution. The final OCI manifest/config and launch-gate evidence must be regenerated
+after this source enters `main`.
+
+On the selected Ubuntu target, a candidate image containing these exact workload bytes was rebuilt
+and exercised as UID/GID 65534 with a read-only root, no network, all capabilities dropped,
+`no-new-privileges`, a private cgroup namespace, and fixed CPU/memory/PID limits. The two-second
+hold completed in 3.25 wall-clock seconds including container startup and emitted only the expected
+65-byte digest file. The candidate Docker 29 OCI identities are manifest
+`15691f3723dd85571a84ef21ac76022835bc449721dd77e3877f9e59b8352d3e` and config
+`6970da41aff96267571e000ad6fc03483196fe5939a97c56a8c502afe6e98d61`; its root-only OCI archive
+is 58,859,520 bytes with SHA-256
+`4cf922a48a5abbf8f3da46a3ee58c573345ccb4d471b484c234ada60f06c8e17`. The probe used the Moby
+profiles commit `61eaf32614c7c71b60bd8927d3e6a4ffc8ff1f31` default seccomp bytes (SHA-256
+`536529b665dd0972c37bfb569f5d4ac8a53592e7b00752bc39ff063ca9864c74`) and an enforcing,
+qualification-named rendering of its AppArmor template (SHA-256
+`83b965074431575ea2cab6c4d785aa207444a6eaa8b4415fe0c609ba84608b18`). This is a target
+compatibility/build checkpoint, not a PR-8h campaign receipt.
+
 Every completed phase is a canonical append-only journal record. Exact restart reuses recorded
 evidence and revalidates a completed receipt. Root quota generations and terminal subphases have
 their own internal records so a runner crash cannot silently substitute a second scientific slot.
