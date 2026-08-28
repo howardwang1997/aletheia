@@ -36,7 +36,13 @@ from aletheia.execution.assignment_contracts import (
     x25519_public_key_hex,
 )
 from aletheia.execution.qualification_deployment import (
+    EXECUTION_SEQUENCES,
+    EXECUTION_TABLES,
     EXPECTED_EXECUTION_SCHEMA_REVISION,
+    PostgreSQLExecutionObjectOwnerObservation,
+    PostgreSQLExpectedRoutine,
+    PostgreSQLExpectedSequenceConfiguration,
+    PostgreSQLExpectedTrigger,
     PostgreSQLNonExecutionRoutineOwnerObservation,
     QualificationDeploymentSpecV1,
     postgresql_role_privileges_sha256,
@@ -313,6 +319,38 @@ class QualificationPostgreSQLServerIdentityV1(ExecutionModel):
         return canonical_sha256(self)
 
 
+class QualificationPostgreSQLExecutionCatalogProjectionV1(ExecutionModel):
+    """Fresh routine, trigger, sequence, and owner projection from one database snapshot."""
+
+    schema_name: Literal["aletheia.qualification_postgresql_execution_catalog_projection"] = (
+        "aletheia.qualification_postgresql_execution_catalog_projection"
+    )
+    schema_version: Literal[1] = 1
+    routines: tuple[PostgreSQLExpectedRoutine, ...] = Field(min_length=1)
+    triggers: tuple[PostgreSQLExpectedTrigger, ...] = Field(min_length=1)
+    sequences: tuple[PostgreSQLExpectedSequenceConfiguration, ...] = Field(min_length=1)
+    object_owners: tuple[PostgreSQLExecutionObjectOwnerObservation, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _catalog_is_canonical(self) -> "QualificationPostgreSQLExecutionCatalogProjectionV1":
+        keys: tuple[tuple[tuple[object, ...], ...], ...] = (
+            tuple(
+                (item.routine_kind, item.routine_name, item.identity_argument_types)
+                for item in self.routines
+            ),
+            tuple((item.table_name, item.trigger_name) for item in self.triggers),
+            tuple((item.sequence_name,) for item in self.sequences),
+            tuple((item.object_kind, item.object_name) for item in self.object_owners),
+        )
+        if any(values != tuple(sorted(set(values))) for values in keys):
+            raise ValueError("PostgreSQL execution catalog projection is not canonical")
+        return self
+
+    @property
+    def projection_sha256(self) -> str:
+        return canonical_sha256(self)
+
+
 class QualificationPostgreSQLCommissionedStateV1(ExecutionModel):
     """Stable post-transaction projection; observation time is journal metadata."""
 
@@ -359,6 +397,35 @@ class QualificationPostgreSQLCommissionedStateV1(ExecutionModel):
 
     @property
     def state_sha256(self) -> str:
+        return canonical_sha256(self)
+
+
+class QualificationPostgreSQLDeploymentProjectionV1(ExecutionModel):
+    """Atomic read-only deployment projection used by the independent observer."""
+
+    schema_name: Literal["aletheia.qualification_postgresql_deployment_projection"] = (
+        "aletheia.qualification_postgresql_deployment_projection"
+    )
+    schema_version: Literal[1] = 1
+    commissioned_state: QualificationPostgreSQLCommissionedStateV1
+    execution_catalog: QualificationPostgreSQLExecutionCatalogProjectionV1
+    non_execution_public_routine_owners: tuple[PostgreSQLNonExecutionRoutineOwnerObservation, ...]
+    database_time: AwareDatetime
+
+    @model_validator(mode="after")
+    def _projection_is_canonical(self) -> "QualificationPostgreSQLDeploymentProjectionV1":
+        owner_keys = tuple(
+            (item.routine_kind, item.identity, item.owner_role)
+            for item in self.non_execution_public_routine_owners
+        )
+        if owner_keys != tuple(
+            sorted(set(owner_keys))
+        ) or self.database_time.utcoffset() != timedelta(0):
+            raise ValueError("PostgreSQL deployment projection is not canonical or UTC")
+        return self
+
+    @property
+    def projection_sha256(self) -> str:
         return canonical_sha256(self)
 
 
@@ -2536,6 +2603,291 @@ class LinuxQualificationAuthorityCommissioningHost:
             ),
         )
 
+    @staticmethod
+    def _execution_catalog(
+        connection: Connection,
+        spec: QualificationDeploymentSpecV1,
+    ) -> QualificationPostgreSQLExecutionCatalogProjectionV1:
+        routine_rows = tuple(
+            connection.execute(
+                text(
+                    """
+                    SELECT CASE routine.prokind
+                             WHEN 'f' THEN 'function'
+                             WHEN 'p' THEN 'procedure'
+                           END AS routine_kind,
+                           routine.proname AS routine_name,
+                           ARRAY(
+                             SELECT pg_catalog.format_type(argument.type_oid, NULL)
+                               FROM unnest(routine.proargtypes::oid[])
+                                    WITH ORDINALITY AS argument(type_oid, ordinal)
+                              ORDER BY argument.ordinal
+                           ) AS identity_argument_types,
+                           pg_catalog.pg_get_functiondef(routine.oid) AS definition,
+                           language.lanname AS language,
+                           routine.prosecdef AS security_definer,
+                           COALESCE(routine.proconfig, ARRAY[]::text[]) AS configuration,
+                           CASE routine.provolatile
+                             WHEN 'i' THEN 'immutable'
+                             WHEN 's' THEN 'stable'
+                             WHEN 'v' THEN 'volatile'
+                           END AS volatility,
+                           owner.rolname AS owner_role
+                      FROM pg_catalog.pg_proc AS routine
+                      JOIN pg_catalog.pg_namespace AS namespace
+                        ON namespace.oid = routine.pronamespace
+                      JOIN pg_catalog.pg_language AS language
+                        ON language.oid = routine.prolang
+                      JOIN pg_catalog.pg_roles AS owner ON owner.oid = routine.proowner
+                     WHERE namespace.nspname = 'public'
+                       AND routine.prokind IN ('f', 'p')
+                       AND left(routine.proname, :prefix_length) = :prefix
+                     ORDER BY routine_kind, routine_name, identity_argument_types
+                    """
+                ),
+                {
+                    "prefix": spec.postgresql_execution_routine_name_prefix,
+                    "prefix_length": len(spec.postgresql_execution_routine_name_prefix),
+                },
+            ).mappings()
+        )
+        routines: list[PostgreSQLExpectedRoutine] = []
+        routine_owners: list[PostgreSQLExecutionObjectOwnerObservation] = []
+        for row in routine_rows:
+            definition = row["definition"]
+            if not isinstance(definition, str):
+                raise QualificationAuthorityCommissioningError(
+                    "PostgreSQL routine definition is not text"
+                )
+            arguments = tuple(row["identity_argument_types"] or ())
+            routine = PostgreSQLExpectedRoutine(
+                routine_kind=row["routine_kind"],
+                routine_schema="public",
+                execution_owned=True,
+                routine_name=row["routine_name"],
+                identity_argument_types=arguments,
+                definition_sha256=hashlib.sha256(definition.encode("utf-8")).hexdigest(),
+                language=row["language"],
+                security_definer=row["security_definer"],
+                configuration=tuple(sorted(row["configuration"] or ())),
+                volatility=row["volatility"],
+            )
+            routines.append(routine)
+            routine_owners.append(
+                PostgreSQLExecutionObjectOwnerObservation(
+                    object_kind=routine.routine_kind,
+                    object_name=routine.identity,
+                    owner_role=row["owner_role"],
+                )
+            )
+
+        trigger_rows = tuple(
+            connection.execute(
+                text(
+                    """
+                    SELECT table_relation.relname AS table_name,
+                           trigger.tgname AS trigger_name,
+                           function.proname AS function_name,
+                           ARRAY(
+                             SELECT pg_catalog.format_type(argument.type_oid, NULL)
+                               FROM unnest(function.proargtypes::oid[])
+                                    WITH ORDINALITY AS argument(type_oid, ordinal)
+                              ORDER BY argument.ordinal
+                           ) AS function_identity_argument_types,
+                           pg_catalog.pg_get_triggerdef(trigger.oid, false) AS definition,
+                           CASE trigger.tgenabled
+                             WHEN 'O' THEN 'origin'
+                             WHEN 'D' THEN 'disabled'
+                             WHEN 'R' THEN 'replica'
+                             WHEN 'A' THEN 'always'
+                           END AS enabled,
+                           function_namespace.nspname AS function_schema
+                      FROM pg_catalog.pg_trigger AS trigger
+                      JOIN pg_catalog.pg_class AS table_relation
+                        ON table_relation.oid = trigger.tgrelid
+                      JOIN pg_catalog.pg_namespace AS table_namespace
+                        ON table_namespace.oid = table_relation.relnamespace
+                      JOIN pg_catalog.pg_proc AS function
+                        ON function.oid = trigger.tgfoid
+                      JOIN pg_catalog.pg_namespace AS function_namespace
+                        ON function_namespace.oid = function.pronamespace
+                     WHERE table_namespace.nspname = 'public'
+                       AND table_relation.relname::text = ANY(CAST(:table_names AS text[]))
+                       AND NOT trigger.tgisinternal
+                     ORDER BY table_name, trigger_name
+                    """
+                ),
+                {"table_names": list(EXECUTION_TABLES)},
+            ).mappings()
+        )
+        triggers: list[PostgreSQLExpectedTrigger] = []
+        for row in trigger_rows:
+            definition = row["definition"]
+            if row["function_schema"] != "public" or not isinstance(definition, str):
+                raise QualificationAuthorityCommissioningError(
+                    "PostgreSQL execution trigger escaped the public routine namespace"
+                )
+            arguments = tuple(row["function_identity_argument_types"] or ())
+            triggers.append(
+                PostgreSQLExpectedTrigger(
+                    table_name=row["table_name"],
+                    trigger_name=row["trigger_name"],
+                    function_identity=(f"{row['function_name']}({', '.join(arguments)})"),
+                    definition_sha256=hashlib.sha256(definition.encode("utf-8")).hexdigest(),
+                    enabled=row["enabled"],
+                )
+            )
+
+        sequence_rows = tuple(
+            connection.execute(
+                text(
+                    """
+                    SELECT sequence_relation.relname AS sequence_name,
+                           pg_catalog.format_type(sequence.seqtypid, NULL) AS data_type,
+                           CASE sequence_relation.relpersistence
+                             WHEN 'p' THEN 'permanent'
+                             WHEN 'u' THEN 'unlogged'
+                             WHEN 't' THEN 'temporary'
+                           END AS persistence,
+                           sequence.seqstart AS start_value,
+                           sequence.seqmin AS minimum_value,
+                           sequence.seqmax AS maximum_value,
+                           sequence.seqincrement AS increment_by,
+                           sequence.seqcache AS cache_size,
+                           sequence.seqcycle AS cycles,
+                           owned_relation.relname AS owned_by_table,
+                           owned_column.attname AS owned_by_column,
+                           owner.rolname AS owner_role
+                      FROM pg_catalog.pg_class AS sequence_relation
+                      JOIN pg_catalog.pg_namespace AS namespace
+                        ON namespace.oid = sequence_relation.relnamespace
+                      JOIN pg_catalog.pg_sequence AS sequence
+                        ON sequence.seqrelid = sequence_relation.oid
+                      JOIN pg_catalog.pg_roles AS owner
+                        ON owner.oid = sequence_relation.relowner
+                      LEFT JOIN pg_catalog.pg_depend AS dependency
+                        ON dependency.classid = 'pg_catalog.pg_class'::regclass
+                       AND dependency.objid = sequence_relation.oid
+                       AND dependency.objsubid = 0
+                       AND dependency.refclassid = 'pg_catalog.pg_class'::regclass
+                       AND dependency.deptype IN ('a', 'i')
+                      LEFT JOIN pg_catalog.pg_class AS owned_relation
+                        ON owned_relation.oid = dependency.refobjid
+                      LEFT JOIN pg_catalog.pg_attribute AS owned_column
+                        ON owned_column.attrelid = dependency.refobjid
+                       AND owned_column.attnum = dependency.refobjsubid
+                     WHERE namespace.nspname = 'public'
+                       AND sequence_relation.relkind = 'S'
+                       AND sequence_relation.relname::text = ANY(CAST(:sequence_names AS text[]))
+                     ORDER BY sequence_name
+                    """
+                ),
+                {"sequence_names": list(EXECUTION_SEQUENCES)},
+            ).mappings()
+        )
+        sequences = tuple(
+            PostgreSQLExpectedSequenceConfiguration(
+                sequence_name=row["sequence_name"],
+                data_type=row["data_type"],
+                persistence=row["persistence"],
+                start_value=row["start_value"],
+                minimum_value=row["minimum_value"],
+                maximum_value=row["maximum_value"],
+                increment_by=row["increment_by"],
+                cache_size=row["cache_size"],
+                cycles=row["cycles"],
+                owned_by_table=row["owned_by_table"],
+                owned_by_column=row["owned_by_column"],
+            )
+            for row in sequence_rows
+        )
+        relation_owner_rows = tuple(
+            connection.execute(
+                text(
+                    """
+                    SELECT CASE relation.relkind
+                             WHEN 'r' THEN 'table'
+                             WHEN 'p' THEN 'table'
+                             WHEN 'S' THEN 'sequence'
+                           END AS object_kind,
+                           relation.relname AS object_name,
+                           owner.rolname AS owner_role
+                      FROM pg_catalog.pg_class AS relation
+                      JOIN pg_catalog.pg_namespace AS namespace
+                        ON namespace.oid = relation.relnamespace
+                      JOIN pg_catalog.pg_roles AS owner ON owner.oid = relation.relowner
+                     WHERE namespace.nspname = 'public'
+                       AND (
+                         relation.relname::text = ANY(CAST(:table_names AS text[]))
+                         OR relation.relname::text = ANY(CAST(:sequence_names AS text[]))
+                       )
+                       AND relation.relkind IN ('r', 'p', 'S')
+                     ORDER BY object_kind, object_name
+                    """
+                ),
+                {
+                    "table_names": list(EXECUTION_TABLES),
+                    "sequence_names": list(EXECUTION_SEQUENCES),
+                },
+            ).mappings()
+        )
+        database_owner = (
+            connection.execute(
+                text(
+                    """
+                SELECT owner.rolname AS owner_role
+                  FROM pg_catalog.pg_database AS database
+                  JOIN pg_catalog.pg_roles AS owner ON owner.oid = database.datdba
+                 WHERE database.datname = current_database()
+                """
+                )
+            )
+            .mappings()
+            .one()
+        )
+        schema_owner = (
+            connection.execute(
+                text(
+                    """
+                SELECT owner.rolname AS owner_role
+                  FROM pg_catalog.pg_namespace AS namespace
+                  JOIN pg_catalog.pg_roles AS owner ON owner.oid = namespace.nspowner
+                 WHERE namespace.nspname = 'public'
+                """
+                )
+            )
+            .mappings()
+            .one()
+        )
+        owners = tuple(
+            sorted(
+                (
+                    PostgreSQLExecutionObjectOwnerObservation(
+                        object_kind="database",
+                        object_name=spec.postgresql_database,
+                        owner_role=database_owner["owner_role"],
+                    ),
+                    PostgreSQLExecutionObjectOwnerObservation(
+                        object_kind="schema",
+                        object_name=spec.postgresql_schema,
+                        owner_role=schema_owner["owner_role"],
+                    ),
+                    *(
+                        PostgreSQLExecutionObjectOwnerObservation.model_validate(dict(row))
+                        for row in relation_owner_rows
+                    ),
+                    *routine_owners,
+                ),
+                key=lambda item: (item.object_kind, item.object_name),
+            )
+        )
+        return QualificationPostgreSQLExecutionCatalogProjectionV1(
+            routines=tuple(routines),
+            triggers=tuple(triggers),
+            sequences=sequences,
+            object_owners=owners,
+        )
+
     def _state(
         self,
         connection: Connection,
@@ -2727,6 +3079,98 @@ class LinuxQualificationAuthorityCommissioningHost:
         finally:
             engine.dispose()
 
+    @staticmethod
+    def _non_execution_public_routine_owners(
+        connection: Connection,
+        *,
+        execution_prefix: str,
+    ) -> tuple[PostgreSQLNonExecutionRoutineOwnerObservation, ...]:
+        rows = connection.execute(
+            text(
+                """
+                SELECT CASE routine.prokind
+                         WHEN 'f' THEN 'function'
+                         WHEN 'p' THEN 'procedure'
+                       END AS routine_kind,
+                       routine.proname AS routine_name,
+                       ARRAY(
+                         SELECT pg_catalog.format_type(argument.type_oid, NULL)
+                           FROM unnest(routine.proargtypes::oid[])
+                                WITH ORDINALITY AS argument(type_oid, ordinal)
+                          ORDER BY argument.ordinal
+                       ) AS identity_argument_types,
+                       owner.rolname AS owner_role
+                  FROM pg_catalog.pg_proc AS routine
+                  JOIN pg_catalog.pg_namespace AS namespace
+                    ON namespace.oid = routine.pronamespace
+                  JOIN pg_catalog.pg_roles AS owner ON owner.oid = routine.proowner
+                 WHERE namespace.nspname = 'public'
+                   AND routine.prokind IN ('f', 'p')
+                   AND left(routine.proname, :prefix_length) <> :prefix
+                 ORDER BY routine_kind, routine_name,
+                          identity_argument_types, owner_role
+                """
+            ),
+            {
+                "prefix": execution_prefix,
+                "prefix_length": len(execution_prefix),
+            },
+        ).mappings()
+        return tuple(
+            PostgreSQLNonExecutionRoutineOwnerObservation(
+                routine_kind=row["routine_kind"],
+                routine_schema="public",
+                routine_name=row["routine_name"],
+                identity_argument_types=tuple(row["identity_argument_types"]),
+                owner_role=row["owner_role"],
+            )
+            for row in rows
+        )
+
+    def observe_postgresql_deployment_projection(
+        self,
+        intent: QualificationPostgreSQLCommissioningIntent,
+    ) -> QualificationPostgreSQLDeploymentProjectionV1:
+        """Read every signed PostgreSQL observation field from one repeatable snapshot."""
+
+        intent = QualificationPostgreSQLCommissioningIntent.model_validate(
+            intent.model_dump(mode="python")
+        )
+        if intent != qualification_postgresql_commissioning_intent(self.request):
+            raise QualificationAuthorityCommissioningError(
+                "PostgreSQL deployment observation intent differs from request"
+            )
+        engine = create_engine(self._database_url(intent), pool_pre_ping=True, future=True)
+        try:
+            with engine.connect() as connection, connection.begin():
+                connection.exec_driver_sql(
+                    "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+                )
+                state = self._state(connection, intent)
+                spec = self.request.installation_request.deployment_spec
+                catalog = self._execution_catalog(connection, spec)
+                unrelated = self._non_execution_public_routine_owners(
+                    connection,
+                    execution_prefix=spec.postgresql_execution_routine_name_prefix,
+                )
+                database_time = connection.execute(
+                    text("SELECT pg_catalog.clock_timestamp()")
+                ).scalar_one()
+                return QualificationPostgreSQLDeploymentProjectionV1(
+                    commissioned_state=state,
+                    execution_catalog=catalog,
+                    non_execution_public_routine_owners=unrelated,
+                    database_time=database_time,
+                )
+        except QualificationAuthorityCommissioningError:
+            raise
+        except (SQLAlchemyError, ValueError) as exc:
+            raise QualificationAuthorityCommissioningError(
+                "atomic PostgreSQL deployment projection could not be observed"
+            ) from exc
+        finally:
+            engine.dispose()
+
     def observe_non_execution_public_routine_owners(
         self,
         intent: QualificationPostgreSQLCommissioningIntent,
@@ -2747,48 +3191,9 @@ class LinuxQualificationAuthorityCommissioningHost:
                 connection.exec_driver_sql("SET TRANSACTION READ ONLY")
                 self._admin_and_schema(connection, intent)
                 self._require_server_identity(connection)
-                rows = connection.execute(
-                    text(
-                        """
-                        SELECT CASE routine.prokind
-                                 WHEN 'f' THEN 'function'
-                                 WHEN 'p' THEN 'procedure'
-                               END AS routine_kind,
-                               routine.proname AS routine_name,
-                               ARRAY(
-                                 SELECT pg_catalog.format_type(argument.type_oid, NULL)
-                                   FROM unnest(routine.proargtypes::oid[])
-                                        WITH ORDINALITY AS argument(type_oid, ordinal)
-                                  ORDER BY argument.ordinal
-                               ) AS identity_argument_types,
-                               owner.rolname AS owner_role
-                          FROM pg_catalog.pg_proc AS routine
-                          JOIN pg_catalog.pg_namespace AS namespace
-                            ON namespace.oid = routine.pronamespace
-                          JOIN pg_catalog.pg_roles AS owner ON owner.oid = routine.proowner
-                         WHERE namespace.nspname = 'public'
-                           AND routine.prokind IN ('f', 'p')
-                           AND left(routine.proname, :prefix_length) <> :prefix
-                         ORDER BY routine_kind, routine_name,
-                                  identity_argument_types, owner_role
-                        """
-                    ),
-                    {
-                        "prefix": self.request.installation_request.deployment_spec.postgresql_execution_routine_name_prefix,
-                        "prefix_length": len(
-                            self.request.installation_request.deployment_spec.postgresql_execution_routine_name_prefix
-                        ),
-                    },
-                ).mappings()
-                return tuple(
-                    PostgreSQLNonExecutionRoutineOwnerObservation(
-                        routine_kind=row["routine_kind"],
-                        routine_schema="public",
-                        routine_name=row["routine_name"],
-                        identity_argument_types=tuple(row["identity_argument_types"]),
-                        owner_role=row["owner_role"],
-                    )
-                    for row in rows
+                return self._non_execution_public_routine_owners(
+                    connection,
+                    execution_prefix=self.request.installation_request.deployment_spec.postgresql_execution_routine_name_prefix,
                 )
         except QualificationAuthorityCommissioningError:
             raise
