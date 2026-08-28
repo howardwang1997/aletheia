@@ -610,8 +610,10 @@ class ImmutableOCIImageLaunchGateVerifier:
     """Verify the gate from OCI layer bytes and cross-check Docker's loaded identity.
 
     The OCI layout is the manifest/config/rootfs source of truth.  Docker inspection is a second
-    binding: it must report the same config digest and uncompressed layer diff IDs.  Neither image
-    tags nor labels are accepted as rootfs evidence.
+    binding: a legacy graphdriver store must identify the config digest, while Docker's containerd
+    image store must expose an exact manifest descriptor and identify that manifest digest.  Both
+    paths must report the same uncompressed layer diff IDs.  Neither image tags nor labels are
+    accepted as rootfs evidence.
     """
 
     def __init__(
@@ -828,8 +830,21 @@ class ImmutableOCIImageLaunchGateVerifier:
         docker_image_id = docker_inspection.get("Id")
         repo_digests = docker_inspection.get("RepoDigests")
         docker_rootfs = docker_inspection.get("RootFS")
+        docker_descriptor = docker_inspection.get("Descriptor")
+        legacy_graphdriver_identity = (
+            docker_descriptor is None
+            and docker_image_id == f"sha256:{self._policy.image_config_sha256}"
+        )
+        containerd_image_identity = (
+            isinstance(docker_descriptor, dict)
+            and set(docker_descriptor) == {"mediaType", "digest", "size"}
+            and docker_descriptor.get("mediaType") == manifest.get("mediaType")
+            and docker_descriptor.get("digest") == f"sha256:{self._policy.image_manifest_sha256}"
+            and docker_descriptor.get("size") == len(manifest_payload)
+            and docker_image_id == docker_descriptor.get("digest")
+        )
         if (
-            docker_image_id != f"sha256:{self._policy.image_config_sha256}"
+            not (legacy_graphdriver_identity or containerd_image_identity)
             or not isinstance(repo_digests, list)
             or not all(isinstance(item, str) for item in repo_digests)
             or not isinstance(docker_rootfs, dict)
