@@ -114,7 +114,7 @@ def _spec(**updates: object) -> deployment.QualificationDeploymentSpecV1:
             relative_path=path,
             expected_mode=0o555,
         )
-        for path in ("bin", "lib", "lib/python3.12")
+        for path in ("bin", "lib", "lib/python3.12", "lib/python3.12/site-packages")
     )
     python_entries = (
         deployment.QualificationReviewedCodeFile(
@@ -142,7 +142,7 @@ def _spec(**updates: object) -> deployment.QualificationDeploymentSpecV1:
             expected_root_mode=0o555,
         ),
     )
-    python_import_paths = (code_root, f"{python_root}/lib/python3.12")
+    python_import_paths = (code_root, f"{python_root}/lib/python3.12/site-packages")
     service_module = _expected_file(
         "/opt/aletheia/release/aletheia/execution/oci_deployment.py"
     ).model_copy(update={"reviewed_sha256": _sha("reviewed-oci-deployment-module")})
@@ -1017,6 +1017,17 @@ def test_spec_mechanically_binds_each_runner_to_the_exhaustive_code_tree() -> No
         _spec(expected_node_runner=changed)
 
 
+def test_spec_requires_one_reviewed_site_packages_path_after_code_root() -> None:
+    spec = _spec()
+    with pytest.raises(ValidationError, match="code root then one reviewed site-packages"):
+        _spec(
+            expected_python_import_paths=(
+                spec.code_root,
+                f"{spec.reviewed_python_environment.root_path}/lib/python3.12",
+            )
+        )
+
+
 def test_systemd_render_is_deterministic_and_preserves_required_service_boundaries() -> None:
     spec = _spec()
     first = deployment.render_systemd_units(spec)
@@ -1034,7 +1045,7 @@ def test_systemd_render_is_deterministic_and_preserves_required_service_boundari
         )
     )
     assert canonical_sha256(first) == (
-        "6d6777eff356692280c014ba13755ceffaf8ea0f324c27683985d206e4f6abed"
+        "78e1282509ee39e1efb4ff0e41335979d94e70d838c5cffe8c38c6e7e3c0d337"
     )
 
     by_name = {item.unit_name: item.content for item in first}
@@ -1065,6 +1076,11 @@ def test_systemd_render_is_deterministic_and_preserves_required_service_boundari
     assert all(
         f"Environment=PYTHONHOME={spec.reviewed_python_environment.root_path}" in item.content
         and f"Environment=PYTHONPATH={spec.code_root}" in item.content
+        and (
+            "Environment=ALETHEIA_QUALIFICATION_SITE_PACKAGES="
+            f"{spec.expected_python_import_paths[1]}"
+        )
+        in item.content
         and "Environment=PYTHONNOUSERSITE=1" in item.content
         and "UnsetEnvironment=LD_LIBRARY_PATH LD_PRELOAD" in item.content
         for item in first

@@ -15,6 +15,9 @@ The independent observer freshly proves:
 - Linux root, real PID 1 systemd, cgroup v2, synchronized time and a UUID boot identity;
 - the unchanged PR-8f/PR-8g/PR-8b receipt chain, every installed file inode/hash/mode and every
   service-owned root;
+- both exhaustive root-owned code/Python trees, including streamed verification of native objects
+  larger than the control-file limit; every tree file must be a single-link regular file and every
+  directory/file owner, mode, byte length and digest must match the reviewed manifest;
 - exact loaded unit fragments with no drop-ins or pending daemon reload, plus each live process's
   `/proc` UID/GID/groups, argv, Python inode, cwd, required/unset environment and effective,
   permitted, bounding and ambient capability bitmaps;

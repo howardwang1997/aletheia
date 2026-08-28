@@ -11,6 +11,11 @@ the canonical five-process service manifest and the five systemd units rendered 
 reviewed factory entries, role UID/GID, node poll interval, role-readable configuration custody,
 and a byte-pinned root-owned `systemctl` executable.
 
+The five service runners retain Python's `-S -s -P` isolation. Before importing any third-party
+runtime dependency they append exactly one deployment-pinned `site-packages` directory from the
+reviewed Python home, after the standard library is already initialized. They never run `site`,
+`.pth` files or `sitecustomize`, and a site directory injected through `PYTHONPATH` is rejected.
+
 The command is dry-run by default. Mutation requires both `--apply` and the literal acknowledgement
 `INSTALL_QUALIFICATION_ONLY_DISABLED` against one canonical request file and an out-of-band request
 SHA-256. The concrete adapter additionally requires Linux, effective `root:root`, a pre-created

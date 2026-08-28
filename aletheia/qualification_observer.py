@@ -329,6 +329,77 @@ def _read_exact_file(
     return bytes(payload), after
 
 
+def _hash_reviewed_tree_file(
+    path: Path,
+    *,
+    expected_sha256: str,
+    expected_byte_length: int,
+    expected_owner_uid: int,
+    expected_owner_gid: int,
+    expected_mode: int,
+) -> tuple[str, os.stat_result]:
+    """Stream-hash one exhaustive tree entry under exact immutable custody.
+
+    Control/config files remain subject to ``_MAX_FILE_BYTES``.  A reviewed Python environment may
+    legitimately contain larger native objects (for example ``libpython``), so tree entries use
+    their individually frozen byte lengths as the bound and are never accumulated in memory.
+    """
+
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except OSError as exc:
+        raise QualificationObserverError(f"reviewed tree file is unavailable: {path}") from exc
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_nlink != 1
+            or before.st_uid != expected_owner_uid
+            or before.st_gid != expected_owner_gid
+            or stat.S_IMODE(before.st_mode) != expected_mode
+            or before.st_size != expected_byte_length
+        ):
+            raise QualificationObserverError(f"reviewed tree file custody differs: {path}")
+        digest = hashlib.sha256()
+        total = 0
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+            total += len(chunk)
+            if total > expected_byte_length:
+                raise QualificationObserverError(f"reviewed tree file grew while read: {path}")
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+
+    def identity(value: os.stat_result) -> tuple[int, ...]:
+        return (
+            value.st_dev,
+            value.st_ino,
+            value.st_mode,
+            value.st_uid,
+            value.st_gid,
+            value.st_nlink,
+            value.st_size,
+            value.st_mtime_ns,
+            value.st_ctime_ns,
+        )
+
+    resolved = digest.hexdigest()
+    if (
+        identity(before) != identity(after)
+        or total != expected_byte_length
+        or resolved != expected_sha256
+    ):
+        raise QualificationObserverError(f"reviewed tree file changed or differs: {path}")
+    return resolved, after
+
+
 def _pinned_root_file(path: str, *, expected_sha256: str | None = None) -> PinnedRootFile:
     candidate = Path(path)
     payload, metadata = _read_exact_file(candidate, expected_sha256=expected_sha256)
@@ -749,40 +820,70 @@ class LinuxQualificationDeploymentObserver:
             parent_sha256 = host_parent_chain_sha256(root)
         except (OSError, ValueError) as exc:
             raise QualificationObserverError("reviewed tree root is unavailable") from exc
-        directories: list[str] = []
+        if (
+            root.is_symlink()
+            or not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != reviewed.expected_root_owner_uid
+            or metadata.st_gid != reviewed.expected_root_owner_gid
+            or stat.S_IMODE(metadata.st_mode) != reviewed.expected_root_mode
+        ):
+            raise QualificationObserverError("reviewed tree root custody differs")
+
+        expected_directories = {item.relative_path: item for item in reviewed.directories}
+        expected_files = {item.relative_path: item for item in reviewed.entries}
+        directories: list[tuple[str, int]] = []
         files: list[tuple[str, str, int, int]] = []
         for current, names, filenames in os.walk(root, topdown=True, followlinks=False):
             current_path = Path(current)
-            if current_path != root:
-                directories.append(str(current_path.relative_to(root)))
-            for name in (*names, *filenames):
+            names.sort()
+            filenames.sort()
+            for name in names:
                 path = current_path / name
-                if path.is_symlink():
-                    raise QualificationObserverError("reviewed tree contains a symlink")
+                relative = str(path.relative_to(root))
+                expected = expected_directories.get(relative)
+                try:
+                    observed = path.lstat()
+                except OSError as exc:
+                    raise QualificationObserverError(
+                        "reviewed tree directory is unavailable"
+                    ) from exc
+                if (
+                    expected is None
+                    or path.is_symlink()
+                    or not stat.S_ISDIR(observed.st_mode)
+                    or observed.st_uid != expected.expected_owner_uid
+                    or observed.st_gid != expected.expected_owner_gid
+                    or stat.S_IMODE(observed.st_mode) != expected.expected_mode
+                ):
+                    raise QualificationObserverError("reviewed tree directory custody differs")
+                directories.append((relative, stat.S_IMODE(observed.st_mode)))
             for name in filenames:
                 path = current_path / name
-                payload, observed = _read_exact_file(path)
+                relative = str(path.relative_to(root))
+                expected = expected_files.get(relative)
+                if expected is None:
+                    raise QualificationObserverError("reviewed tree contains an unknown file")
+                digest, observed = _hash_reviewed_tree_file(
+                    path,
+                    expected_sha256=expected.reviewed_sha256,
+                    expected_byte_length=expected.byte_length,
+                    expected_owner_uid=expected.expected_owner_uid,
+                    expected_owner_gid=expected.expected_owner_gid,
+                    expected_mode=expected.expected_mode,
+                )
                 files.append(
                     (
-                        str(path.relative_to(root)),
-                        hashlib.sha256(payload).hexdigest(),
-                        len(payload),
+                        relative,
+                        digest,
+                        observed.st_size,
                         stat.S_IMODE(observed.st_mode),
                     )
                 )
-        expected_directories = tuple(
+        expected_directory_projection = tuple(
             (item.relative_path, item.expected_mode) for item in reviewed.directories
         )
-        observed_directories = tuple(
-            sorted(
-                (
-                    relative,
-                    stat.S_IMODE((root / relative).lstat().st_mode),
-                )
-                for relative in directories
-            )
-        )
-        expected_files = tuple(
+        observed_directories = tuple(sorted(directories))
+        expected_file_projection = tuple(
             (
                 item.relative_path,
                 item.reviewed_sha256,
@@ -791,12 +892,17 @@ class LinuxQualificationDeploymentObserver:
             )
             for item in reviewed.entries
         )
-        if observed_directories != expected_directories or tuple(sorted(files)) != expected_files:
+        if (
+            observed_directories != expected_directory_projection
+            or tuple(sorted(files)) != expected_file_projection
+        ):
             raise QualificationObserverError("live reviewed tree differs from exhaustive manifest")
         return QualificationObservedRootCodeTree(
             path=reviewed.root_path,
             device=metadata.st_dev,
             inode=metadata.st_ino,
+            owner_uid=metadata.st_uid,
+            owner_gid=metadata.st_gid,
             mode=stat.S_IMODE(metadata.st_mode),
             parent_chain_sha256=parent_sha256,
             tree_manifest_sha256=reviewed.manifest_sha256,
