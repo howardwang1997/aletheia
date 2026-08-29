@@ -2325,6 +2325,38 @@ def test_optional_engine_inspection_never_treats_ambiguous_response_as_absence(
     assert runtime._engine_inspect("aletheia-q-exact", optional=True) is None  # noqa: SLF001
 
 
+def test_optional_engine_inspection_accepts_only_exact_pinned_docker29_absence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, policy = _request(tmp_path)
+    docker29_template = "error: no such object: {container_name}\n"
+    runtime = _runtime(
+        tmp_path,
+        policy.model_copy(update={"inspect_absence_stderr_template": docker29_template}),
+    )
+    response = {
+        "value": subprocess.CompletedProcess(
+            args=(),
+            returncode=1,
+            stdout=b"[]\n",
+            stderr=b"error: no such object: aletheia-q-exact\n",
+        )
+    }
+    monkeypatch.setattr(runtime, "_invoke_engine", lambda *args, **kwargs: response["value"])
+
+    assert runtime._engine_inspect("aletheia-q-exact", optional=True) is None  # noqa: SLF001
+
+    response["value"] = subprocess.CompletedProcess(
+        args=(),
+        returncode=1,
+        stdout=b"[]\n",
+        stderr=b"Error: No such object: aletheia-q-exact\n",
+    )
+    with pytest.raises(oci_runtime_module.OCIEngineError, match="absence response"):
+        runtime._engine_inspect("aletheia-q-exact", optional=True)  # noqa: SLF001
+
+
 @pytest.mark.parametrize(
     ("returncode", "stdout", "stderr", "error"),
     [
