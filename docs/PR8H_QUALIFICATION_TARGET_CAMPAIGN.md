@@ -69,6 +69,25 @@ argument, interpreter, inode, ownership, mode, or mid-capture drift still fails 
 candidate was stopped before campaign apply and retained only as diagnostic journal/backing-image
 evidence; it is not a campaign receipt.
 
+Generation q, frozen from merge commit `b95ed43fe0dafd98d3670ee8cdbbf037b67017a6`
+after green main CI, then crossed that fd/shebang boundary on the same target. It retained a real
+running Docker container at manifest digest
+`15691f3723dd85571a84ef21ac76022835bc449721dd77e3877f9e59b8352d3e`, a `/dev/loop22` ext4
+output mount, and both durable `engine-launch.json` and `launch-evidence.json` records. Its
+13,856,623-byte campaign request had SHA-256
+`1e045616500a6e34905b5528f6b5ecfd558d6c19704a7d369ad4e539698ee774`.
+
+That candidate still did not produce a campaign receipt. The campaign recorded only the exact
+request, plan and `01-activation.json`, then the independent installed-manifest observation
+failed closed on the root watchdog process. Linux reports the effective primary GID in `Gid` and
+the supplementary list separately in `Groups`; systemd's explicit empty
+`SupplementaryGroups=` therefore produced an empty live list, while the observer incorrectly
+invented the primary GID in that list. No campaign node/outbox/quota/watchdog SIGKILL,
+PostgreSQL-backend termination, final reobservation or deployment-qualified receipt occurred.
+All five q services were stopped and disabled, its exact exited container was removed, its mounts
+were unmounted and `/dev/loop22` was detached; the write-once journal, database rows and backing
+image remain as negative engineering evidence.
+
 PostgreSQL observation no longer copies routine, trigger, sequence or owner claims out of the
 deployment spec.  One `REPEATABLE READ, READ ONLY` snapshot reruns the exhaustive ACL/role gate,
 hashes every live execution routine and non-internal trigger definition, reads each exact sequence
@@ -108,7 +127,7 @@ workload whose normal successful output is preserved when the polling node proce
 container—is killed.
 
 The checked-in qualification smoke workload now accepts an exact
-`--minimum-runtime-seconds 0..600` hold before it atomically publishes the unchanged deterministic
+`--minimum-runtime-seconds 0..3600` hold before it atomically publishes the unchanged deterministic
 output. The target campaign must explicitly select a nonzero bounded value in its signed workload
 argv; the default remains zero so the source change alone cannot be mistaken for a long-running
 campaign execution. The final OCI manifest/config and launch-gate evidence must be regenerated
@@ -188,11 +207,13 @@ receipt into a passing shape.
 
 ## Explicit remaining gate
 
-The selected Linux target is compatible, but its final root-owned tool/code/policy bundle is not
-yet frozen or installed and the destructive command has not run. Therefore no host is currently
-proven deployable, PR-4b remains nondeployable, and `scientific_admission_allowed` is always false
-even in a successful campaign receipt. The next ordered operation is to finish the immutable
-target inputs, then commission, install and run the real campaign—not more controller authority.
+The selected Linux target is compatible and has frozen/installed candidate generations, but none
+has emitted the complete campaign receipt. Therefore no host is currently proven deployable,
+PR-4b remains nondeployable, and `scientific_admission_allowed` is always false even in a
+successful campaign receipt. The next ordered operation is to merge the supplementary-group and
+bounded-runtime fixes, rebuild/re-pin the changed workload image, commission one fresh generation
+with a 1,800-second workload inside a 3,600-second execution lease, and rerun the complete
+campaign—not more controller authority.
 
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the

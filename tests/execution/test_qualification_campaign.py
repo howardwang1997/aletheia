@@ -54,6 +54,38 @@ from .test_qualification_installer import _FakeHost as _InstallationHost
 NOW = datetime(2026, 8, 27, 6, 0, 0, tzinfo=timezone.utc)
 
 
+def test_observer_treats_proc_status_groups_as_supplementary_only() -> None:
+    qualification_observer._verify_process_supplementary_groups(  # noqa: SLF001
+        {"Groups": ""},
+        expected=(),
+        unit_name="qualification-watchdog.service",
+    )
+    qualification_observer._verify_process_supplementary_groups(  # noqa: SLF001
+        {"Groups": "138"},
+        expected=(138,),
+        unit_name="qualification-node.service",
+    )
+
+    with pytest.raises(QualificationObserverError, match="supplementary groups differ"):
+        qualification_observer._verify_process_supplementary_groups(  # noqa: SLF001
+            {"Groups": "0"},
+            expected=(),
+            unit_name="qualification-watchdog.service",
+        )
+    with pytest.raises(QualificationObserverError, match="supplementary groups are unavailable"):
+        qualification_observer._verify_process_supplementary_groups(  # noqa: SLF001
+            {},
+            expected=(),
+            unit_name="qualification-watchdog.service",
+        )
+    with pytest.raises(QualificationObserverError, match="supplementary groups are invalid"):
+        qualification_observer._verify_process_supplementary_groups(  # noqa: SLF001
+            {"Groups": "not-a-gid"},
+            expected=(),
+            unit_name="qualification-watchdog.service",
+        )
+
+
 def test_reviewed_tree_streams_large_files_and_rejects_link_or_owner_drift(
     tmp_path: Path,
 ) -> None:

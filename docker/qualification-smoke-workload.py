@@ -11,7 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 
-_MAXIMUM_MINIMUM_RUNTIME_SECONDS = 600
+_MAXIMUM_MINIMUM_RUNTIME_SECONDS = 3_600
 
 
 def _canonical_relative(value: str) -> str:
@@ -53,7 +53,7 @@ def main() -> None:
         "--minimum-runtime-seconds",
         default=0,
         type=_bounded_runtime_seconds,
-        help="hold the container alive before publishing output (0-600 seconds)",
+        help="hold the container alive before publishing output (0-3600 seconds)",
     )
     arguments = parser.parse_args()
     source = arguments.input_root / arguments.input
