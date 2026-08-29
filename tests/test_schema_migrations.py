@@ -22,7 +22,7 @@ from aletheia.schema_migrations import require_schema_exact
 
 
 def test_repository_has_one_expected_alembic_head():
-    assert expected_schema_revision() == "20260828_0029"
+    assert expected_schema_revision() == "20260829_0030"
 
 
 def test_qualification_deployment_pins_the_repository_alembic_head():
@@ -52,6 +52,18 @@ def test_real_time_endurance_uses_exact_transaction_clock_guards():
             migration["_transaction_guard"](timestamp_field)
             == f"NEW.{timestamp_field} IS DISTINCT FROM transaction_timestamp()"
         )
+
+
+def test_runtime_v2_deferred_validator_uses_frozen_owner_authority():
+    migration_path = (
+        Path(__file__).parents[1]
+        / "migrations"
+        / "versions"
+        / "20260829_0030_execution_runtime_trigger_authority.py"
+    )
+    migration = runpy.run_path(str(migration_path))
+    assert migration["_FUNCTION_IDENTITY"] == "public.aletheia_execution_check_runtime_v2_attempt()"
+    assert migration["_SAFE_SEARCH_PATH"] == "search_path=pg_catalog, public"
 
 
 def test_arl1_replicate_campaign_replaces_single_sea_per_action_constraint():

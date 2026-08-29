@@ -1,7 +1,7 @@
 # Aletheia database migrations
 
 The database schema is versioned with Alembic. Application startup never creates or alters tables.
-The current repository head is `20260828_0029`.
+The current repository head is `20260829_0030`.
 
 For a fresh database:
 
@@ -85,3 +85,10 @@ start to the wall clock at trigger execution with a fixed five-second tolerance,
 long-running finalization work cannot fail only because trigger evaluation occurs later. Caller
 clock injection remains forbidden, while accelerated engineering evidence retains its explicit
 test clock.
+
+Revision `20260829_0030` makes the runtime-v2 deferred completeness trigger execute under the
+no-login execution owner with the exact `pg_catalog, public` search path. Qualification roles keep
+zero direct routine grants, while allocator writes can still invoke the installed trigger's pure
+validation helpers at commit. This closes the target-host failure where a legitimate attempt state
+transition rolled back with `permission denied for function
+aletheia_execution_runtime_v2_json_valid`.
