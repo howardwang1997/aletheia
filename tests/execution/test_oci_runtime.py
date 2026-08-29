@@ -1007,6 +1007,7 @@ def test_engine_inspection_accepts_docker29_inline_seccomp_only_when_semanticall
     "inline",
     [
         '{"defaultAction":"SCMP_ACT_ALLOW"}',
+        '{"defaultAction":"SCMP_ACT_ERRNO","unknown":null}',
         '{"defaultAction":"SCMP_ACT_ERRNO","defaultAction":"SCMP_ACT_ERRNO"}',
         '{"defaultAction":NaN}',
     ],

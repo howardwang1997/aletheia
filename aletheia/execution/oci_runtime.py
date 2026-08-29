@@ -104,6 +104,18 @@ def _strict_json_value(payload: bytes | str, *, label: str) -> object:
         raise ValueError(f"{label} is not UTF-8 JSON") from exc
 
 
+def _canonical_standard_json_bytes(value: object) -> bytes:
+    """Canonicalize arbitrary standard JSON without contract-specific null elision."""
+
+    return json.dumps(
+        value,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
 _DOCKER_MASKED_PATHS = (
     "/proc/acpi",
     "/proc/asound",
@@ -5205,7 +5217,9 @@ class LocalQualificationOCIRuntime:
                     raise OCIEngineError(
                         "OCI inline seccomp projection could not be independently verified"
                     ) from exc
-                if canonical_json_bytes(observed) == canonical_json_bytes(frozen):
+                if _canonical_standard_json_bytes(observed) == _canonical_standard_json_bytes(
+                    frozen
+                ):
                     item = expected_seccomp
             normalized.append(item)
         return tuple(normalized)
