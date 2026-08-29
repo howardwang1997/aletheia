@@ -4934,8 +4934,16 @@ class LocalQualificationOCIRuntime:
             or not isinstance(mounts, list)
         ):
             raise OCIEngineError("OCI inspection lacks config, host config, or mounts")
-        if image_id != f"sha256:{config.image_config_sha256}":
-            raise OCIEngineError("OCI container resolved a different image config digest")
+        # Docker Engine has exposed two closed identities through ContainerInspect.Image:
+        # older releases return the image config digest while Docker 29 returns the
+        # manifest descriptor digest.  Both identities are independently frozen in the
+        # deployment policy; accepting anything outside that exact pair remains fail-closed.
+        frozen_image_ids = {
+            f"sha256:{config.image_config_sha256}",
+            f"sha256:{config.image_manifest_sha256}",
+        }
+        if image_id not in frozen_image_ids:
+            raise OCIEngineError("OCI container resolved outside the frozen image digests")
         expected_environment = {item.name: item.value for item in config.image_environment}
         expected_environment.update({item.name: item.value for item in config.environment})
         observed_environment: dict[str, str] = {}

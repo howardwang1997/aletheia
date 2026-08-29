@@ -4708,13 +4708,17 @@ class QualificationNodeAgent:
                 AttemptPhase.START_REQUESTED,
                 AttemptPhase.START_AUTHORIZED,
                 AttemptPhase.LAUNCH_COMMITTED,
+                AttemptPhase.RECONCILIATION_REQUIRED,
             }
             or state.runtime_preparation != preparation
             or state.runtime_launch_authorization_request != authorization_request
             or state.running_confirmed
             or state.runtime_identity is not None
             or state.node_runtime_launch_receipt is not None
-            or state.launch_committed != (state.phase is AttemptPhase.LAUNCH_COMMITTED)
+            or (
+                state.phase is not AttemptPhase.RECONCILIATION_REQUIRED
+                and state.launch_committed != (state.phase is AttemptPhase.LAUNCH_COMMITTED)
+            )
             or state.attempt_id != reservation.attempt_id
             or state.execution_id != reservation.execution_id
             or state.intent_sha256 != reservation.intent_sha256

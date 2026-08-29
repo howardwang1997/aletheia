@@ -24,6 +24,7 @@ from aletheia.execution.oci_deployment import (
 )
 from aletheia.execution.node_agent import (
     AssignmentRejected,
+    AttemptPhase,
     LocalStateError,
     NodeLeaseRejected,
     NodeLocalStateStore,
@@ -2252,6 +2253,55 @@ def test_historical_pre_runtime_recovery_after_hard_deadline_only_cleans_and_rel
     assert persisted.phase.value == "pre_runtime_released"
 
 
+def test_historical_pre_runtime_recovery_resumes_cleanup_from_reconciliation_state(
+    tmp_path: Path,
+) -> None:
+    harness = _Harness(tmp_path)
+    harness.allocator.crash_after_start_commit = True
+
+    with pytest.raises(SystemExit, match="allocator start commit"):
+        harness.agent.run_once()
+
+    state = harness.state.load_state(harness.reservation.attempt_id)
+    start = harness.allocator._start_authorization
+    assert state is not None and start is not None
+    assert state.phase is AttemptPhase.START_REQUESTED
+    # A failed never-started cleanup can durably retain either side of the local launch
+    # commit.  This reproduces the pre-commit side while preserving the exact DB ticket.
+    state = replace(
+        state,
+        phase=AttemptPhase.RECONCILIATION_REQUIRED,
+        runtime_launch_authorization=start.launch_authorization,
+    )
+    harness.state.save_state(state)
+    harness.clock.current = harness.reservation.hard_deadline + timedelta(minutes=1)
+    harness.clock.monotonic += 16 * 60 * 1_000_000_000
+    recovered_reservation = replace(
+        harness.allocator.current,
+        status="reconciliation_required",
+    )
+    harness.allocator.current = recovered_reservation
+    lineage = HistoricalPreRuntimeRecoveryLineage(
+        runtime_preparation=state.runtime_preparation,
+        runtime_launch_authorization_request=state.runtime_launch_authorization_request,
+        runtime_launch_authorization=start.launch_authorization,
+    )
+
+    recovered = harness.agent.run_assignment(
+        replace(
+            harness.assignment,
+            reservation=recovered_reservation,
+            lease_token=None,
+            historical_pre_runtime_recovery_lineage=lineage,
+        )
+    )
+
+    assert recovered.outcome is NodeRunOutcome.PRE_RUNTIME_RELEASED
+    assert harness.runtime.launch_calls == 0
+    assert harness.runtime.cleanup_calls == 1
+    assert harness.allocator.calls.count("absence") == 1
+
+
 def test_historical_pre_runtime_cleanup_covers_committed_local_launch_gap(
     tmp_path: Path,
 ) -> None:
@@ -2267,6 +2317,11 @@ def test_historical_pre_runtime_cleanup_covers_committed_local_launch_gap(
     assert state.runtime_launch_authorization is not None
     assert state.runtime_identity is None
     assert harness.runtime.launch_calls == 0
+
+    # The first cleanup attempt may fail after the local launch commit and persist a
+    # reconciliation hold.  Historical recovery must remain cleanup-only from that state.
+    state = replace(state, phase=AttemptPhase.RECONCILIATION_REQUIRED)
+    harness.state.save_state(state)
 
     harness.clock.current = harness.reservation.hard_deadline + timedelta(minutes=1)
     harness.clock.monotonic += 16 * 60 * 1_000_000_000

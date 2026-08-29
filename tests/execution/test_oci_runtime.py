@@ -956,6 +956,31 @@ def test_engine_inspection_rejects_weaker_or_expanded_sandbox(
         )
 
 
+@pytest.mark.parametrize("image_identity", ["config", "manifest"])
+def test_engine_inspection_accepts_only_frozen_docker_image_identity_variants(
+    tmp_path: Path,
+    image_identity: str,
+) -> None:
+    request, policy = _request(tmp_path)
+    runtime = _runtime(tmp_path, policy)
+    config = runtime.build_oci_configuration(request=request)
+    inspection = _exact_engine_inspection(runtime, request)
+    inspection["Image"] = (
+        f"sha256:{config.image_config_sha256}"
+        if image_identity == "config"
+        else f"sha256:{config.image_manifest_sha256}"
+    )
+
+    runtime._validate_engine_configuration(inspection, config=config)  # noqa: SLF001
+
+    inspection["Image"] = f"sha256:{_digest('unfrozen-image')}"
+    with pytest.raises(
+        oci_runtime_module.OCIEngineError,
+        match="outside the frozen image digests",
+    ):
+        runtime._validate_engine_configuration(inspection, config=config)  # noqa: SLF001
+
+
 def test_engine_capability_hash_excludes_dynamic_counts_but_requires_security(
     tmp_path: Path,
 ) -> None:
