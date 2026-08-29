@@ -1864,6 +1864,7 @@ def test_quota_attachment_replay_consumes_the_exact_published_time_varying_recor
     monkeypatch.setattr(service, "_trusted_state_owner_uid", lambda: os.geteuid())
     monkeypatch.setattr(service, "_find_existing_loop", lambda path: "/dev/loop7")
     monkeypatch.setattr(service, "_verify_loop_association", lambda **scope: None)
+    monkeypatch.setattr(service, "_seal_loop_device_node", lambda path: None)
 
     class _PowerLoss(BaseException):
         pass
@@ -1902,6 +1903,114 @@ def test_quota_attachment_replay_consumes_the_exact_published_time_varying_recor
         assert recovered == old
         assert recovered.attachment_record_sha256 == old.attachment_record_sha256
     assert final.read_bytes() == canonical_json_bytes(recovered)
+
+
+def test_quota_service_seals_the_exact_reserved_loop_device_node(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = object.__new__(LoopbackOutputQuotaProvisioningService)
+    expected_uid = os.geteuid()
+    expected_gid = os.getegid()
+    monkeypatch.setattr(service, "_trusted_root_service_uid", lambda: expected_uid)
+
+    before = SimpleNamespace(
+        st_mode=stat.S_IFBLK | 0o660,
+        st_uid=expected_uid,
+        st_gid=expected_gid + 1,
+        st_nlink=1,
+        st_dev=10,
+        st_ino=20,
+        st_rdev=os.makedev(7, 22),
+    )
+    sealed = SimpleNamespace(
+        st_mode=stat.S_IFBLK | 0o600,
+        st_uid=expected_uid,
+        st_gid=expected_gid,
+        st_nlink=1,
+        st_dev=before.st_dev,
+        st_ino=before.st_ino,
+        st_rdev=before.st_rdev,
+    )
+    fstats = iter((before, sealed))
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(oci_deployment_module.os, "open", lambda path, flags: 41)
+    monkeypatch.setattr(oci_deployment_module.os, "fstat", lambda descriptor: next(fstats))
+    monkeypatch.setattr(
+        oci_deployment_module.os,
+        "fchown",
+        lambda descriptor, uid, gid: calls.append(("chown", descriptor, uid, gid)),
+    )
+    monkeypatch.setattr(
+        oci_deployment_module.os,
+        "fchmod",
+        lambda descriptor, mode: calls.append(("chmod", descriptor, mode)),
+    )
+    monkeypatch.setattr(
+        oci_deployment_module.os,
+        "close",
+        lambda descriptor: calls.append(("close", descriptor)),
+    )
+    monkeypatch.setattr(Path, "lstat", lambda path: sealed)
+
+    service._seal_loop_device_node("/dev/loop22")  # noqa: SLF001
+
+    assert calls == [
+        ("chown", 41, expected_uid, expected_gid),
+        ("chmod", 41, 0o600),
+        ("close", 41),
+    ]
+
+
+def test_quota_service_rejects_loop_device_node_replacement_while_sealing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = object.__new__(LoopbackOutputQuotaProvisioningService)
+    expected_uid = os.geteuid()
+    expected_gid = os.getegid()
+    monkeypatch.setattr(service, "_trusted_root_service_uid", lambda: expected_uid)
+    sealed = SimpleNamespace(
+        st_mode=stat.S_IFBLK | 0o600,
+        st_uid=expected_uid,
+        st_gid=expected_gid,
+        st_nlink=1,
+        st_dev=10,
+        st_ino=20,
+        st_rdev=os.makedev(7, 22),
+    )
+    replaced = SimpleNamespace(**{**sealed.__dict__, "st_ino": 21})
+    fstats = iter((sealed, sealed))
+    monkeypatch.setattr(oci_deployment_module.os, "open", lambda path, flags: 41)
+    monkeypatch.setattr(oci_deployment_module.os, "fstat", lambda descriptor: next(fstats))
+    monkeypatch.setattr(oci_deployment_module.os, "close", lambda descriptor: None)
+    monkeypatch.setattr(Path, "lstat", lambda path: replaced)
+
+    with pytest.raises(OCIOutputQuotaError, match="sealing did not persist"):
+        service._seal_loop_device_node("/dev/loop22")  # noqa: SLF001
+
+
+def test_quota_service_reverifies_kernel_association_after_sealing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = object.__new__(LoopbackOutputQuotaProvisioningService)
+    calls: list[str] = []
+    monkeypatch.setattr(
+        service,
+        "_verify_loop_association",
+        lambda **scope: calls.append(f"verify:{scope['loop_device']}"),
+    )
+    monkeypatch.setattr(
+        service,
+        "_seal_loop_device_node",
+        lambda path: calls.append(f"seal:{path}"),
+    )
+
+    service._verify_and_seal_loop_association(  # noqa: SLF001
+        loop_device="/dev/loop22",
+        backing_file=Path("/quota.img"),
+        quota_bytes=MINIMUM_LOOP_OUTPUT_FILESYSTEM_BYTES,
+    )
+
+    assert calls == ["verify:/dev/loop22", "seal:/dev/loop22", "verify:/dev/loop22"]
 
 
 def test_sealed_formatted_record_is_promoted_before_any_second_mkfs(
