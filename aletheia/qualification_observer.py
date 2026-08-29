@@ -619,6 +619,34 @@ def _process_nul_values(pid: int, name: Literal["cmdline", "environ"]) -> tuple[
         raise QualificationObserverError(f"service process {name} is unavailable") from exc
 
 
+def _verify_process_supplementary_groups(
+    status: Mapping[str, str],
+    *,
+    expected: tuple[int, ...],
+    unit_name: str,
+) -> None:
+    """Verify Linux's supplementary-group projection without inventing the effective GID.
+
+    ``/proc/<pid>/status`` exposes the kernel supplementary group list in ``Groups``. The
+    effective primary GID is reported separately in ``Gid`` and need not appear in ``Groups``.
+    In particular, systemd's explicit ``SupplementaryGroups=`` produces an empty live list for
+    the root qualification services.
+    """
+
+    if "Groups" not in status:
+        raise QualificationObserverError(
+            f"live process supplementary groups are unavailable: {unit_name}"
+        )
+    try:
+        observed = tuple(sorted(int(value) for value in status["Groups"].split()))
+    except ValueError as exc:
+        raise QualificationObserverError(
+            f"live process supplementary groups are invalid: {unit_name}"
+        ) from exc
+    if len(observed) != len(set(observed)) or observed != tuple(sorted(expected)):
+        raise QualificationObserverError(f"live process supplementary groups differ: {unit_name}")
+
+
 def linux_capability_names_from_hex(value: str) -> tuple[str, ...]:
     """Decode the kernel capability bitmap used by signed live-process observations."""
 
@@ -787,7 +815,11 @@ class LinuxQualificationDeploymentObserver:
             status = _read_process_status(pid)
             uid_values = tuple(int(value) for value in status.get("Uid", "").split())
             gid_values = tuple(int(value) for value in status.get("Gid", "").split())
-            groups = tuple(sorted(int(value) for value in status.get("Groups", "").split()))
+            _verify_process_supplementary_groups(
+                status,
+                expected=identity.supplementary_gids,
+                unit_name=unit_name,
+            )
             expected_capabilities = identity.effective_capabilities
             capabilities = tuple(
                 linux_capability_names_from_hex(status.get(field, ""))
@@ -820,7 +852,6 @@ class LinuxQualificationDeploymentObserver:
             if (
                 uid_values != (identity.effective_uid,) * 4
                 or gid_values != (identity.effective_gid,) * 4
-                or groups != tuple(sorted({identity.effective_gid, *identity.supplementary_gids}))
                 or status.get("NoNewPrivs") != "1"
                 or any(value != expected_capabilities for value in capabilities)
                 or cmdline != identity.exec_start_argvs[0]

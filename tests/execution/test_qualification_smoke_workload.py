@@ -22,12 +22,19 @@ def _module() -> ModuleType:
     return module
 
 
-@pytest.mark.parametrize("value", ("-1", "+1", "01", "601", "1.0", "one"))
+@pytest.mark.parametrize("value", ("-1", "+1", "01", "3601", "1.0", "one"))
 def test_minimum_runtime_rejects_noncanonical_or_unbounded_values(value: str) -> None:
     workload = _module()
 
     with pytest.raises(argparse.ArgumentTypeError, match="minimum runtime seconds"):
         workload._bounded_runtime_seconds(value)  # noqa: SLF001
+
+
+def test_minimum_runtime_accepts_a_bounded_target_campaign_window() -> None:
+    workload = _module()
+
+    assert workload._bounded_runtime_seconds("1800") == 1_800  # noqa: SLF001
+    assert workload._bounded_runtime_seconds("3600") == 3_600  # noqa: SLF001
 
 
 def test_wait_rechecks_the_clock_after_an_early_wakeup() -> None:
