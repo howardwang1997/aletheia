@@ -8,6 +8,7 @@ import os
 import stat
 import sys
 import tarfile
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -59,6 +60,69 @@ from test_oci_runtime import (  # noqa: E402
 
 H0 = "0" * 64
 NOW = datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)
+
+
+def test_loop_filesystem_uuid_is_read_directly_without_udev_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image = tmp_path / "loop.img"
+    filesystem_uuid = uuid.UUID("fff9e109-169a-fd8f-8673-368d8603d25d")
+    payload = bytearray(1024 + 0x78)
+    payload[1024 + 0x38 : 1024 + 0x3A] = b"\x53\xef"
+    payload[1024 + 0x68 : 1024 + 0x78] = filesystem_uuid.bytes
+    image.write_bytes(payload)
+    real_open = os.open
+
+    def open_loop(path: str, flags: int) -> int:
+        assert path == "/dev/loop22"
+        return real_open(image, flags)
+
+    monkeypatch.setattr(oci_deployment_module.os, "open", open_loop)
+    monkeypatch.setattr(oci_deployment_module.stat, "S_ISBLK", lambda _mode: True)
+
+    observed = LoopbackOutputQuotaController._filesystem_uuid_sha256(  # noqa: SLF001
+        source="/dev/loop22",
+        major=0,
+        minor=0,
+    )
+
+    assert observed == hashlib.sha256(str(filesystem_uuid).encode("ascii")).hexdigest()
+
+
+@pytest.mark.parametrize(
+    ("magic", "filesystem_uuid", "message"),
+    [
+        (b"\x00\x00", uuid.UUID(int=1), "superblock"),
+        (b"\x53\xef", uuid.UUID(int=0), "UUID is absent"),
+    ],
+)
+def test_loop_filesystem_uuid_rejects_invalid_ext4_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    magic: bytes,
+    filesystem_uuid: uuid.UUID,
+    message: str,
+) -> None:
+    image = tmp_path / "loop.img"
+    payload = bytearray(1024 + 0x78)
+    payload[1024 + 0x38 : 1024 + 0x3A] = magic
+    payload[1024 + 0x68 : 1024 + 0x78] = filesystem_uuid.bytes
+    image.write_bytes(payload)
+    real_open = os.open
+    monkeypatch.setattr(
+        oci_deployment_module.os,
+        "open",
+        lambda _path, flags: real_open(image, flags),
+    )
+    monkeypatch.setattr(oci_deployment_module.stat, "S_ISBLK", lambda _mode: True)
+
+    with pytest.raises(OCIOutputQuotaError, match=message):
+        LoopbackOutputQuotaController._filesystem_uuid_sha256(  # noqa: SLF001
+            source="/dev/loop22",
+            major=0,
+            minor=0,
+        )
 
 
 def _tar_layer(entries: tuple[tuple[str, bytes | None, int, str], ...]) -> bytes:

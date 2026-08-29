@@ -1410,32 +1410,47 @@ class LoopbackOutputQuotaController:
 
     @staticmethod
     def _filesystem_uuid_sha256(*, source: str, major: int, minor: int) -> str:
-        source_path = Path(source)
+        if re.fullmatch(r"/dev/loop[0-9]+", source) is None:
+            raise OCIOutputQuotaError("filesystem UUID source is not one loop device")
+        descriptor = -1
         try:
-            source_resolved = source_path.resolve(strict=True)
-            metadata = source_resolved.lstat()
-            candidates = tuple(Path("/dev/disk/by-uuid").iterdir())
+            descriptor = os.open(
+                source,
+                os.O_RDONLY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
+            )
+            before = os.fstat(descriptor)
+            # ext4 stores its superblock at byte 1024, with the little-endian magic at
+            # offset 0x38 and the 16-byte filesystem UUID at offset 0x68.  Read that
+            # identity from the already verified loop device itself: udev does not
+            # guarantee that a freshly formatted loop device receives a
+            # /dev/disk/by-uuid symlink before this synchronous provisioning request
+            # must be acknowledged.
+            superblock_prefix = os.pread(descriptor, 0x78, 1024)
+            after = os.fstat(descriptor)
         except OSError as exc:
             raise OCIOutputQuotaError("filesystem UUID identity is unavailable") from exc
-        if (
-            not stat.S_ISBLK(metadata.st_mode)
-            or os.major(metadata.st_rdev) != major
-            or os.minor(metadata.st_rdev) != minor
-        ):
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+        if not stat.S_ISBLK(before.st_mode) or (
+            os.major(before.st_rdev),
+            os.minor(before.st_rdev),
+        ) != (major, minor):
             raise OCIOutputQuotaError("filesystem UUID source differs from loop device")
-        matches: list[str] = []
-        for candidate in candidates:
-            try:
-                if not candidate.is_symlink() or candidate.resolve(strict=True) != source_resolved:
-                    continue
-            except OSError as exc:
-                raise OCIOutputQuotaError("filesystem UUID link is unsafe") from exc
-            if re.fullmatch(r"[0-9a-fA-F-]{8,64}", candidate.name) is None:
-                raise OCIOutputQuotaError("filesystem UUID name is not canonical")
-            matches.append(candidate.name.lower())
-        if len(matches) != 1:
-            raise OCIOutputQuotaError("loop filesystem lacks one exact UUID")
-        return hashlib.sha256(matches[0].encode("ascii")).hexdigest()
+        if (
+            _stat_identity(before) != _stat_identity(after)
+            or before.st_rdev != after.st_rdev
+            or len(superblock_prefix) != 0x78
+            or superblock_prefix[0x38:0x3A] != b"\x53\xef"
+        ):
+            raise OCIOutputQuotaError("loop filesystem superblock identity is unsafe")
+        filesystem_uuid = superblock_prefix[0x68:0x78]
+        if filesystem_uuid == b"\x00" * 16:
+            raise OCIOutputQuotaError("loop filesystem UUID is absent")
+        return hashlib.sha256(str(uuid.UUID(bytes=filesystem_uuid)).encode("ascii")).hexdigest()
 
 
 class PinnedRootFile(ExecutionModel):
@@ -3518,7 +3533,10 @@ class LoopbackOutputQuotaProvisionerClient:
             if peer_pid <= 0 or peer_uid != 0 or peer_gid != 0:
                 raise OCIOutputQuotaError("quota service socket peer is not root")
             connection.sendall(payload)
-            raw = LoopbackOutputQuotaProvisioningService._receive_line(connection)
+            try:
+                raw = LoopbackOutputQuotaProvisioningService._receive_line(connection)
+            except OCIOutputQuotaError as exc:
+                raise OCIOutputQuotaError("quota service closed an incomplete response") from exc
         except (OSError, TimeoutError) as exc:
             raise OCIOutputQuotaError(
                 "independent quota provisioning service is unavailable"
