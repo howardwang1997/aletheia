@@ -3675,10 +3675,13 @@ class PostgreSQLExecutionAllocator:
                     "runtime preparation/request differs from locked attempt authority"
                 )
 
+            # The locked attempt is the serialization point.  This child row is
+            # append-only, so taking a row lock here would require UPDATE authority
+            # that the qualification allocator deliberately does not hold.
             preparation_record = session.execute(
-                select(_ExecutionRuntimePreparationRecord)
-                .where(_ExecutionRuntimePreparationRecord.attempt_id == attempt_id)
-                .with_for_update()
+                select(_ExecutionRuntimePreparationRecord).where(
+                    _ExecutionRuntimePreparationRecord.attempt_id == attempt_id
+                )
             ).scalar_one_or_none()
             preparation_payload = _model_json(preparation)
             if preparation_record is None:
@@ -3868,9 +3871,9 @@ class PostgreSQLExecutionAllocator:
                 error_type=LeaseAuthorityError,
             )
             existing = session.execute(
-                select(_ExecutionRuntimeLaunchReceiptRecord)
-                .where(_ExecutionRuntimeLaunchReceiptRecord.attempt_id == attempt_id)
-                .with_for_update()
+                select(_ExecutionRuntimeLaunchReceiptRecord).where(
+                    _ExecutionRuntimeLaunchReceiptRecord.attempt_id == attempt_id
+                )
             ).scalar_one_or_none()
             if existing is not None:
                 stored_receipt = NodeRuntimeLaunchReceipt.model_validate(
@@ -4099,9 +4102,9 @@ class PostgreSQLExecutionAllocator:
                     "absence proof preparation differs from locked attempt authority"
                 )
             preparation_record = session.execute(
-                select(_ExecutionRuntimePreparationRecord)
-                .where(_ExecutionRuntimePreparationRecord.attempt_id == attempt_id)
-                .with_for_update()
+                select(_ExecutionRuntimePreparationRecord).where(
+                    _ExecutionRuntimePreparationRecord.attempt_id == attempt_id
+                )
             ).scalar_one_or_none()
             if preparation_record is None:
                 if attempt.runtime_preparation_sha256 is not None:
@@ -4156,12 +4159,10 @@ class PostgreSQLExecutionAllocator:
                     raise LeaseAuthorityError("absence proof changed durable preparation")
 
             existing = session.execute(
-                select(_ExecutionPreRuntimeAbsenceDecisionRecord)
-                .where(
+                select(_ExecutionPreRuntimeAbsenceDecisionRecord).where(
                     _ExecutionPreRuntimeAbsenceDecisionRecord.absence_receipt_sha256
                     == receipt.absence_receipt_sha256
                 )
-                .with_for_update()
             ).scalar_one_or_none()
             if existing is not None:
                 if (
@@ -4786,13 +4787,11 @@ class PostgreSQLExecutionAllocator:
 
             runtime_pin = issuer.authority_pin
             existing = session.execute(
-                select(_ExecutionRuntimeTerminationChallengeRecord)
-                .where(
+                select(_ExecutionRuntimeTerminationChallengeRecord).where(
                     _ExecutionRuntimeTerminationChallengeRecord.attempt_id == attempt_id,
                     _ExecutionRuntimeTerminationChallengeRecord.inspection_sequence
                     == inspection_sequence,
                 )
-                .with_for_update()
             ).scalar_one_or_none()
             if existing is not None:
                 challenge = RuntimeTerminationAcceptanceChallenge.model_validate(
@@ -5051,9 +5050,9 @@ class PostgreSQLExecutionAllocator:
             ):
                 raise LeaseAuthorityError("termination acceptance lacks its exact DB challenge")
             existing = session.execute(
-                select(_ExecutionRuntimeTerminationAcceptanceRecord)
-                .where(_ExecutionRuntimeTerminationAcceptanceRecord.attempt_id == attempt_id)
-                .with_for_update()
+                select(_ExecutionRuntimeTerminationAcceptanceRecord).where(
+                    _ExecutionRuntimeTerminationAcceptanceRecord.attempt_id == attempt_id
+                )
             ).scalar_one_or_none()
             if existing is not None:
                 accepted = AcceptedRuntimeTermination.model_validate(
@@ -5369,9 +5368,9 @@ class PostgreSQLExecutionAllocator:
         with self._sessions() as session, session.begin():
             _head, attempt = self._lock_execution_attempt(session, attempt_id)
             accepted_record = session.execute(
-                select(_ExecutionRuntimeTerminationAcceptanceRecord)
-                .where(_ExecutionRuntimeTerminationAcceptanceRecord.attempt_id == attempt_id)
-                .with_for_update()
+                select(_ExecutionRuntimeTerminationAcceptanceRecord).where(
+                    _ExecutionRuntimeTerminationAcceptanceRecord.attempt_id == attempt_id
+                )
             ).scalar_one_or_none()
             now = _database_time(session)
             if accepted_record is None:
@@ -5527,9 +5526,9 @@ class PostgreSQLExecutionAllocator:
         with self._sessions() as session, session.begin():
             _execution_head, attempt = self._lock_execution_attempt(session, attempt_id)
             existing = session.execute(
-                select(_ExecutionQualificationTerminalAcceptanceRecord)
-                .where(_ExecutionQualificationTerminalAcceptanceRecord.attempt_id == attempt_id)
-                .with_for_update()
+                select(_ExecutionQualificationTerminalAcceptanceRecord).where(
+                    _ExecutionQualificationTerminalAcceptanceRecord.attempt_id == attempt_id
+                )
             ).scalar_one_or_none()
             node = session.get(_ExecutionNodeRecord, attempt.node_id)
             if node is None:
@@ -5806,9 +5805,9 @@ class PostgreSQLExecutionAllocator:
                 return None
             execution_head, attempt = self._lock_execution_attempt(session, candidate_id)
             termination_record = session.execute(
-                select(_ExecutionRuntimeTerminationAcceptanceRecord)
-                .where(_ExecutionRuntimeTerminationAcceptanceRecord.attempt_id == candidate_id)
-                .with_for_update()
+                select(_ExecutionRuntimeTerminationAcceptanceRecord).where(
+                    _ExecutionRuntimeTerminationAcceptanceRecord.attempt_id == candidate_id
+                )
             ).scalar_one_or_none()
             now = _database_time(session)
             if termination_record is None:
@@ -6034,12 +6033,10 @@ class PostgreSQLExecutionAllocator:
         with self._sessions() as session, session.begin():
             execution_head, attempt = self._lock_execution_attempt(session, supplied.attempt_id)
             record = session.execute(
-                select(_ExecutionQualificationTerminalAcceptanceRecord)
-                .where(
+                select(_ExecutionQualificationTerminalAcceptanceRecord).where(
                     _ExecutionQualificationTerminalAcceptanceRecord.attempt_id
                     == supplied.attempt_id
                 )
-                .with_for_update()
             ).scalar_one_or_none()
             if record is None:
                 raise LeaseAuthorityError(
