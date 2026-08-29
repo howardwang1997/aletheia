@@ -745,6 +745,15 @@ def test_guarded_byte_loader_executes_exact_supplied_bytes(tmp_path: Path) -> No
     assert module.VALUE == "pinned"
 
 
+def test_guarded_byte_loader_accepts_production_node_composition() -> None:
+    source = REPOSITORY_ROOT / "aletheia/execution/qualification_node_composition.py"
+    module_name = "aletheia.execution.qualification_node_composition"
+
+    module = load_guarded_source_bytes(module_name, source, source.read_bytes())
+
+    assert module.compose_node_service.__module__ == module_name
+
+
 def test_guarded_file_loader_preserves_three_reviewed_call_sites(tmp_path: Path) -> None:
     from aletheia.domains.materials.matbench_task import MaterialsBandGapPlugin
     from aletheia.domains.molecules.plugin import MoleculePropertyPlugin
