@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import fcntl
 import hashlib
+import json
 import os
 import stat
 import subprocess
@@ -978,6 +979,56 @@ def test_engine_inspection_accepts_only_frozen_docker_image_identity_variants(
         oci_runtime_module.OCIEngineError,
         match="outside the frozen image digests",
     ):
+        runtime._validate_engine_configuration(inspection, config=config)  # noqa: SLF001
+
+
+def test_engine_inspection_accepts_docker29_inline_seccomp_only_when_semantically_exact(
+    tmp_path: Path,
+) -> None:
+    request, policy = _request(tmp_path)
+    runtime = _runtime(tmp_path, policy)
+    runtime._ensure_seccomp_copy()  # noqa: SLF001
+    config = runtime.build_oci_configuration(request=request)
+    inspection = _exact_engine_inspection(runtime, request)
+    host_config = inspection["HostConfig"]
+    assert isinstance(host_config, dict)
+    source = json.loads(Path(policy.seccomp_profile_path).read_bytes())
+    inline = json.dumps(source, separators=(",", ":"), sort_keys=False)
+    host_config["SecurityOpt"] = [
+        "no-new-privileges=true",
+        f"seccomp={inline}",
+        f"apparmor={config.apparmor_profile}",
+    ]
+
+    runtime._validate_engine_configuration(inspection, config=config)  # noqa: SLF001
+
+
+@pytest.mark.parametrize(
+    "inline",
+    [
+        '{"defaultAction":"SCMP_ACT_ALLOW"}',
+        '{"defaultAction":"SCMP_ACT_ERRNO","defaultAction":"SCMP_ACT_ERRNO"}',
+        '{"defaultAction":NaN}',
+    ],
+)
+def test_engine_inspection_rejects_nonexact_or_ambiguous_inline_seccomp(
+    tmp_path: Path,
+    inline: str,
+) -> None:
+    request, policy = _request(tmp_path)
+    runtime = _runtime(tmp_path, policy)
+    runtime._ensure_seccomp_copy()  # noqa: SLF001
+    config = runtime.build_oci_configuration(request=request)
+    inspection = _exact_engine_inspection(runtime, request)
+    host_config = inspection["HostConfig"]
+    assert isinstance(host_config, dict)
+    host_config["SecurityOpt"] = [
+        "no-new-privileges=true",
+        f"seccomp={inline}",
+        f"apparmor={config.apparmor_profile}",
+    ]
+
+    with pytest.raises(oci_runtime_module.OCIEngineError, match="seccomp|enforcement"):
         runtime._validate_engine_configuration(inspection, config=config)  # noqa: SLF001
 
 

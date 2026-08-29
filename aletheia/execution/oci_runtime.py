@@ -78,6 +78,32 @@ def _durable_runtime_checkpoint(phase: str, path: Path) -> None:
     """Unit-test fault boundary for runtime directory/publication durability."""
 
 
+def _strict_json_value(payload: bytes | str, *, label: str) -> object:
+    """Decode one bounded, duplicate-free standard JSON value."""
+
+    def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        value: dict[str, object] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError(f"{label} repeats a JSON key")
+            value[key] = item
+        return value
+
+    def reject_constant(value: str) -> object:
+        raise ValueError(f"{label} contains non-standard JSON constant {value}")
+
+    if len(payload) > _MAX_JOURNAL_BYTES:
+        raise ValueError(f"{label} exceeds the bounded JSON limit")
+    try:
+        return json.loads(
+            payload,
+            object_pairs_hook=unique_object,
+            parse_constant=reject_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{label} is not UTF-8 JSON") from exc
+
+
 _DOCKER_MASKED_PATHS = (
     "/proc/acpi",
     "/proc/asound",
@@ -5018,9 +5044,9 @@ class LocalQualificationOCIRuntime:
             isinstance(item, str) for item in raw_security_options
         ):
             raise OCIEngineError("OCI security options are absent or untyped")
-        normalized_security_options = tuple(
-            "no-new-privileges=true" if item == "no-new-privileges:true" else item
-            for item in raw_security_options
+        normalized_security_options = self._normalize_engine_security_options(
+            raw_security_options,
+            config=config,
         )
         expected_security_options = {
             "no-new-privileges=true",
@@ -5142,6 +5168,47 @@ class LocalQualificationOCIRuntime:
             or int(host_config.get("PidsLimit") or 0) != config.pids_limit
         ):
             raise OCIEngineError("OCI engine enforcement differs from deterministic config")
+
+    def _normalize_engine_security_options(
+        self,
+        raw_security_options: list[object],
+        *,
+        config: OCIConfiguration,
+    ) -> tuple[str, ...]:
+        """Normalize only independently verified Docker inspection variants.
+
+        Docker 29 expands a seccomp file option into inline compact JSON in ContainerInspect.
+        Older engines preserve the exact file path.  The inline form is equivalent only when it
+        is duplicate-free standard JSON and canonicalizes to the freshly rehashed, runtime-owned
+        copy of the deployment-pinned profile.
+        """
+
+        expected_seccomp = f"seccomp={config.seccomp_profile_path}"
+        normalized: list[str] = []
+        for raw_item in raw_security_options:
+            if not isinstance(raw_item, str):
+                raise OCIEngineError("OCI security options contain a non-string value")
+            item = "no-new-privileges=true" if raw_item == "no-new-privileges:true" else raw_item
+            if item.startswith("seccomp=") and item != expected_seccomp:
+                inline_payload = item.removeprefix("seccomp=")
+                try:
+                    frozen_payload = self._load_verified_seccomp_copy()
+                    frozen = _strict_json_value(
+                        frozen_payload,
+                        label="deployment-pinned seccomp profile",
+                    )
+                    observed = _strict_json_value(
+                        inline_payload,
+                        label="Docker inline seccomp profile",
+                    )
+                except (OCIProductionCapabilityError, ValueError) as exc:
+                    raise OCIEngineError(
+                        "OCI inline seccomp projection could not be independently verified"
+                    ) from exc
+                if canonical_json_bytes(observed) == canonical_json_bytes(frozen):
+                    item = expected_seccomp
+            normalized.append(item)
+        return tuple(normalized)
 
     def _run_engine(
         self,
@@ -5389,7 +5456,7 @@ class LocalQualificationOCIRuntime:
             self._fsync_directory(policy_root)
         self._verify_seccomp_copy()
 
-    def _verify_seccomp_copy(self) -> None:
+    def _load_verified_seccomp_copy(self) -> bytes:
         try:
             descriptor = os.open(
                 self._seccomp_copy_path,
@@ -5409,10 +5476,16 @@ class LocalQualificationOCIRuntime:
             ):
                 raise OCIProductionCapabilityError("runtime-owned seccomp copy custody is unsafe")
             digest = hashlib.sha256()
+            payload = bytearray()
             while True:
                 chunk = os.read(descriptor, 1024 * 1024)
                 if not chunk:
                     break
+                if len(payload) + len(chunk) > _MAX_JOURNAL_BYTES:
+                    raise OCIProductionCapabilityError(
+                        "runtime-owned seccomp copy exceeds its bounded size"
+                    )
+                payload.extend(chunk)
                 digest.update(chunk)
             if digest.hexdigest() != self._policy.seccomp_profile_sha256 or self._stat_identity(
                 before
@@ -5420,8 +5493,12 @@ class LocalQualificationOCIRuntime:
                 raise OCIProductionCapabilityError(
                     "runtime-owned seccomp copy differs from deployment policy"
                 )
+            return bytes(payload)
         finally:
             os.close(descriptor)
+
+    def _verify_seccomp_copy(self) -> None:
+        self._load_verified_seccomp_copy()
 
     def _expected_launch_gate_attestation_sha256(self) -> str:
         authority = self._runtime_control_authority

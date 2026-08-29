@@ -772,6 +772,29 @@ class ImmutableOCIImageLaunchGateVerifier:
         platform_os, platform_arch = self._policy.oci_platform.split("/", 1)
         if config.get("os") != platform_os or config.get("architecture") != platform_arch:
             raise OCIImageAttestationError("OCI config platform differs from deployment policy")
+        raw_runtime_config = config.get("config")
+        if raw_runtime_config is None:
+            raw_runtime_config = {}
+        if not isinstance(raw_runtime_config, dict):
+            raise OCIImageAttestationError("OCI image runtime config is not one object")
+        raw_environment = raw_runtime_config.get("Env")
+        if raw_environment is None:
+            raw_environment = []
+        if not isinstance(raw_environment, list):
+            raise OCIImageAttestationError("OCI image environment is not one typed list")
+        image_environment: dict[str, str] = {}
+        for item in raw_environment:
+            if not isinstance(item, str) or "=" not in item:
+                raise OCIImageAttestationError("OCI image environment contains an invalid entry")
+            name, value = item.split("=", 1)
+            if name in image_environment:
+                raise OCIImageAttestationError("OCI image environment repeats a variable")
+            image_environment[name] = value
+        expected_image_environment = {
+            item.name: item.value for item in self._policy.image_environment
+        }
+        if image_environment != expected_image_environment:
+            raise OCIImageAttestationError("OCI image environment differs from deployment policy")
         rootfs = config.get("rootfs")
         if not isinstance(rootfs, dict) or rootfs.get("type") != "layers":
             raise OCIImageAttestationError("OCI config rootfs is not one layer chain")

@@ -161,6 +161,7 @@ def _image_fixture(
     tmp_path: Path,
     *,
     extra_layers: tuple[bytes, ...] = (),
+    image_environment: tuple[tuple[str, str], ...] = (),
 ) -> tuple[
     DeploymentPinnedOCIPolicy,
     PinnedOCIImageLayout,
@@ -196,6 +197,7 @@ def _image_fixture(
     config_payload = json.dumps(
         {
             "architecture": "amd64",
+            "config": {"Env": [f"{name}={value}" for name, value in image_environment]},
             "os": "linux",
             "rootfs": {"type": "layers", "diff_ids": diff_ids},
         },
@@ -245,6 +247,9 @@ def _image_fixture(
             "image_reference": (f"registry.invalid/aletheia/qualifier@sha256:{manifest_sha256}"),
             "image_manifest_sha256": manifest_sha256,
             "image_config_sha256": config_sha256,
+            "image_environment": [
+                {"name": name, "value": value} for name, value in image_environment
+            ],
             "launch_gate_executable_sha256": hashlib.sha256(gate_bytes).hexdigest(),
         }
     )
@@ -309,6 +314,38 @@ def test_launch_gate_verifier_hashes_manifest_config_layers_and_gate(
     verifier = _verifier(monkeypatch, policy=policy, pin=pin, docker=docker)
 
     assert _verify_gate(verifier) == verifier._expected_evidence_sha256()  # noqa: SLF001
+
+
+def test_launch_gate_verifier_binds_pinned_image_environment_to_oci_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = (("LANG", "C.UTF-8"), ("PATH", "/usr/bin:/bin"))
+    policy, pin, docker, _ = _image_fixture(
+        tmp_path,
+        image_environment=environment,
+    )
+    verifier = _verifier(monkeypatch, policy=policy, pin=pin, docker=docker)
+
+    assert _verify_gate(verifier) == verifier._expected_evidence_sha256()  # noqa: SLF001
+
+    changed_payload = policy.model_dump(mode="python")
+    changed_payload["image_environment"] = [
+        {"name": "LANG", "value": "C.UTF-8"},
+        {"name": "PATH", "value": "/usr/local/bin:/usr/bin:/bin"},
+    ]
+    changed_policy = DeploymentPinnedOCIPolicy.model_validate(changed_payload)
+    changed_pin_payload = pin.model_dump(mode="python")
+    changed_pin_payload["policy_sha256"] = changed_policy.policy_sha256
+    changed_pin = PinnedOCIImageLayout.model_validate(changed_pin_payload)
+    changed_verifier = _verifier(
+        monkeypatch,
+        policy=changed_policy,
+        pin=changed_pin,
+        docker=docker,
+    )
+
+    with pytest.raises(OCIImageAttestationError, match="environment differs"):
+        _verify_gate(changed_verifier)
 
 
 def test_launch_gate_verifier_accepts_docker_containerd_manifest_identity(
