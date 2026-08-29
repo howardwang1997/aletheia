@@ -1531,6 +1531,72 @@ def test_cleanup_before_any_engine_submission_is_exact_idempotent_absence(
     )
 
 
+def test_cleanup_before_launch_journal_is_exact_idempotent_absence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request, policy = _request(tmp_path)
+    clock = _Clock()
+    runtime = _runtime(tmp_path, policy, clock=clock)
+    preparation = runtime.prepare(request=request)
+    authorization_request, authorization = _launch_authorization(preparation)
+    root = _runtime_root(tmp_path)
+
+    probe_calls = 0
+
+    def _probe(*, request):  # type: ignore[no-untyped-def]
+        nonlocal probe_calls
+        probe_calls += 1
+        if probe_calls == 1:
+            raise OCIProductionCapabilityError("synthetic prelaunch capability failure")
+        return _capability(runtime, request)
+
+    monkeypatch.setattr(
+        runtime,
+        "probe_production_capability",
+        _probe,
+    )
+    monkeypatch.setattr(runtime, "_engine_inspect", lambda *args, **kwargs: None)
+
+    with pytest.raises(OCIProductionCapabilityError, match="prelaunch capability failure"):
+        runtime.ensure_started(
+            request=request,
+            preparation=preparation,
+            authorization_request=authorization_request,
+            authorization=authorization,
+        )
+    assert not (root / "launch-pending.json").exists()
+
+    evidence = runtime.cleanup_never_started(
+        request=request,
+        preparation=preparation,
+        authorization_request=authorization_request,
+        authorization=authorization,
+    )
+    clock.wall += timedelta(minutes=5)
+    clock.boottime += 300_000_000_000
+    replay = runtime.cleanup_never_started(
+        request=request,
+        preparation=preparation,
+        authorization_request=authorization_request,
+        authorization=authorization,
+    )
+
+    assert evidence.state is RuntimeInspectionState.ABSENT
+    assert replay.state is RuntimeInspectionState.ABSENT
+    assert replay.prelaunch_absence_journal_sha256 == evidence.prelaunch_absence_journal_sha256
+    pending = runtime._load_required(  # noqa: SLF001
+        root / "cleanup" / "absence-1-pending.json",
+        oci_runtime_module._NeverStartedCleanupPending,  # noqa: SLF001
+    )
+    assert pending.launch_pending is None
+    assert pending.launch_gate_authorization is None
+    assert pending.production_capability is None
+    assert pending.deadline_watchdog is None
+    assert pending.create_submission is None
+    assert not (root / "launch-pending.json").exists()
+
+
 def test_cleanup_exact_created_pid_zero_retires_watchdog_then_deletes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

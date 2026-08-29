@@ -946,7 +946,7 @@ class _NeverStartedCleanupPending(ExecutionModel):
     authorization_request_sha256: str = Field(pattern=_SHA256_PATTERN)
     authorization: RuntimeLaunchAuthorization
     runtime_launch_authorization_sha256: str = Field(pattern=_SHA256_PATTERN)
-    launch_pending: _LaunchPending
+    launch_pending: _LaunchPending | None = None
     launch_gate_authorization: _LaunchGateAuthorizationJournal | None = None
     production_capability: OCIProductionCapability | None = None
     deadline_watchdog: _DeadlineWatchdogJournal | None = None
@@ -965,14 +965,29 @@ class _NeverStartedCleanupPending(ExecutionModel):
             or self.runtime_launch_authorization_sha256 != self.authorization.authorization_sha256
             or self.authorization.authorization_request_sha256
             != self.authorization_request.request_sha256
-            or self.launch_pending.authorization_request_sha256
+            or (self.deadline_watchdog is None)
+            != (self.watchdog_retirement_evidence_sha256 is None)
+        ):
+            raise ValueError("OCI never-started cleanup changed its exact launch generation")
+        if self.launch_pending is None:
+            if any(
+                phase is not None
+                for phase in (
+                    self.launch_gate_authorization,
+                    self.production_capability,
+                    self.deadline_watchdog,
+                    self.create_submission,
+                    self.container_id,
+                )
+            ):
+                raise ValueError("OCI cleanup without a launch journal has a later launch phase")
+        elif (
+            self.launch_pending.authorization_request_sha256
             != self.authorization_request.request_sha256
             or self.launch_pending.runtime_launch_authorization_sha256
             != self.authorization.authorization_sha256
             or self.launch_pending.runtime_request_sha256 != self.runtime_request_sha256
             or self.launch_pending.oci_config_sha256 != self.oci_config_sha256
-            or (self.deadline_watchdog is None)
-            != (self.watchdog_retirement_evidence_sha256 is None)
         ):
             raise ValueError("OCI never-started cleanup changed its exact launch generation")
         if self.container_id is not None and (
@@ -2306,11 +2321,12 @@ class LocalQualificationOCIRuntime:
                     inspected_monotonic_ns=self._clock.monotonic_ns(),
                     identity=None,
                 )
-            launch_pending = self._load_required(
+            launch_pending = self._load_model(
                 runtime_root / "launch-pending.json",
                 _LaunchPending,
+                optional=True,
             )
-            if (
+            if launch_pending is not None and (
                 launch_pending.runtime_request_sha256 != request.runtime_request_sha256
                 or launch_pending.oci_config_sha256 != config.oci_config_sha256
                 or launch_pending.authorization_request_sha256
@@ -2383,7 +2399,20 @@ class LocalQualificationOCIRuntime:
                     authorization=authorization,
                 )
             if (
-                (stored_capability is not None and gate is None)
+                (
+                    launch_pending is None
+                    and any(
+                        phase is not None
+                        for phase in (
+                            gate,
+                            stored_capability,
+                            watchdog,
+                            create_submission,
+                            start_submission,
+                        )
+                    )
+                )
+                or (stored_capability is not None and gate is None)
                 or (watchdog is not None and (gate is None or stored_capability is None))
                 or (
                     create_submission is not None
