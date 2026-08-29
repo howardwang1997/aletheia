@@ -1141,6 +1141,70 @@ class _FenceRebindPending(ExecutionModel):
         return self
 
 
+class _ObservedWorkloadInvocation(ExecutionModel):
+    """Exact live process form produced by one fd-based launch-gate exec.
+
+    Linux preserves ``argv`` for an fd-exec of an ELF binary.  For a shebang script it instead
+    starts the interpreter with ``/dev/fd/<n>`` followed by the logical workload arguments.  The
+    latter is still an exact launch only when that inherited descriptor contains the pinned
+    workload bytes and the live interpreter is the exact file selected inside the container
+    rootfs by the pinned shebang.
+    """
+
+    schema_name: Literal["aletheia.observed_workload_invocation"] = (
+        "aletheia.observed_workload_invocation"
+    )
+    schema_version: Literal[1] = 1
+    kind: Literal["direct_binary", "fd_shebang_script"]
+    logical_executable_sha256: str = Field(pattern=_SHA256_PATTERN)
+    logical_argv_sha256: str = Field(pattern=_SHA256_PATTERN)
+    observed_argv: tuple[str, ...]
+    proc_executable_sha256: str = Field(pattern=_SHA256_PATTERN)
+    proc_executable_device: int = Field(ge=0)
+    proc_executable_inode: int = Field(ge=1)
+    script_fd: int | None = Field(default=None, ge=3)
+    script_device: int | None = Field(default=None, ge=0)
+    script_inode: int | None = Field(default=None, ge=1)
+    shebang_interpreter_path: str | None = None
+
+    @model_validator(mode="after")
+    def _invocation_union_is_closed(self) -> "_ObservedWorkloadInvocation":
+        if not self.observed_argv or any(
+            not item or "\x00" in item or "\n" in item or "\r" in item
+            for item in self.observed_argv
+        ):
+            raise ValueError("observed workload argv is empty or non-canonical")
+        script_fields = (
+            self.script_fd,
+            self.script_device,
+            self.script_inode,
+            self.shebang_interpreter_path,
+        )
+        if self.kind == "direct_binary":
+            if any(item is not None for item in script_fields):
+                raise ValueError("direct workload invocation carries shebang-only evidence")
+            if self.proc_executable_sha256 != self.logical_executable_sha256:
+                raise ValueError("direct workload process differs from its executable pin")
+        else:
+            if any(item is None for item in script_fields):
+                raise ValueError("fd shebang invocation omitted exact script/interpreter evidence")
+            if len(self.observed_argv) < 2:
+                raise ValueError("fd shebang invocation omitted its interpreter/fd argv")
+            interpreter = Path(self.shebang_interpreter_path or "")
+            if (
+                not interpreter.is_absolute()
+                or str(interpreter) != self.shebang_interpreter_path
+                or self.observed_argv[0] != self.shebang_interpreter_path
+                or self.observed_argv[1] != f"/dev/fd/{self.script_fd}"
+            ):
+                raise ValueError("fd shebang invocation has a non-canonical interpreter or fd")
+        return self
+
+    @property
+    def invocation_sha256(self) -> str:
+        return canonical_sha256(self)
+
+
 class _EngineLaunchJournal(ExecutionModel):
     preparation_sha256: str = Field(pattern=_SHA256_PATTERN)
     runtime_launch_authorization_sha256: str = Field(pattern=_SHA256_PATTERN)
@@ -4383,20 +4447,39 @@ class LocalQualificationOCIRuntime:
             start_ticks = int(fields[19])
         except (IndexError, ValueError) as exc:
             raise OCIEngineError("Linux process stat lacks a start-time identity") from exc
-        expected_cmdline = (
-            b"\x00".join(os.fsencode(item) for item in request.launch_spec.argv) + b"\x00"
+        workload_argv_sha256 = canonical_sha256(
+            {
+                "schema": "aletheia.linux_process_argv.v2",
+                "argv": request.launch_spec.argv,
+            }
         )
-        if proc_cmdline != expected_cmdline:
-            raise OCIEngineError("OCI launch gate has not execved the exact pinned workload argv")
-        workload_executable_sha256 = self._rehash_proc_executable(pid)
-        if workload_executable_sha256 != self._policy.executable_sha256:
-            raise OCIEngineError("OCI launch gate has not execved the pinned workload executable")
+        workload_invocation = self._observe_workload_invocation(
+            pid=pid,
+            logical_argv=request.launch_spec.argv,
+            logical_argv_sha256=workload_argv_sha256,
+            proc_cmdline=proc_cmdline,
+        )
+        workload_executable_sha256 = workload_invocation.logical_executable_sha256
+        cgroup_limits_sha256 = self._verify_cgroup_v2_enforcement(
+            request=request,
+            container_id=container_id,
+            proc_cgroup=proc_cgroup,
+        )
         try:
             final_proc_stat = proc_stat_path.read_text()
+            final_proc_cmdline = proc_cmdline_path.read_bytes()
         except OSError as exc:
             raise OCIEngineError(
                 "OCI workload changed while exact process evidence was captured"
             ) from exc
+        final_invocation = self._observe_workload_invocation(
+            pid=pid,
+            logical_argv=request.launch_spec.argv,
+            logical_argv_sha256=workload_argv_sha256,
+            proc_cmdline=final_proc_cmdline,
+        )
+        if final_invocation != workload_invocation:
+            raise OCIEngineError("OCI workload invocation changed during identity capture")
         final_suffix = final_proc_stat.rsplit(") ", 1)
         try:
             final_start_ticks = int(final_suffix[1].split()[19])
@@ -4404,17 +4487,6 @@ class LocalQualificationOCIRuntime:
             raise OCIEngineError("Linux process stat changed during identity capture") from exc
         if final_start_ticks != start_ticks:
             raise OCIEngineError("OCI PID was reused during exact identity capture")
-        workload_argv_sha256 = canonical_sha256(
-            {
-                "schema": "aletheia.linux_process_argv.v2",
-                "argv": request.launch_spec.argv,
-            }
-        )
-        cgroup_limits_sha256 = self._verify_cgroup_v2_enforcement(
-            request=request,
-            container_id=container_id,
-            proc_cgroup=proc_cgroup,
-        )
         started_monotonic_lower_bound_ns = start_ticks * 1_000_000_000 // int(clock_ticks)
         started_monotonic_upper_bound_exclusive_ns = (
             (start_ticks + 1) * 1_000_000_000 + int(clock_ticks) - 1
@@ -4485,31 +4557,211 @@ class LocalQualificationOCIRuntime:
             observed_monotonic_ns=observed_monotonic_ns,
         )
 
+    def _observe_workload_invocation(
+        self,
+        *,
+        pid: int,
+        logical_argv: tuple[str, ...],
+        logical_argv_sha256: str,
+        proc_cmdline: bytes,
+    ) -> _ObservedWorkloadInvocation:
+        if not logical_argv:
+            raise OCIEngineError("OCI workload argv is empty during process observation")
+        logical_executable = Path(logical_argv[0])
+        if (
+            not logical_executable.is_absolute()
+            or str(logical_executable) != logical_argv[0]
+            or os.path.normpath(logical_argv[0]) != logical_argv[0]
+            or logical_argv[0] == "/"
+        ):
+            raise OCIEngineError("OCI workload executable path is not canonical and absolute")
+        mount_targets = tuple(
+            Path(item)
+            for item in (
+                self._policy.input_mount_target,
+                self._policy.output_mount_target,
+                self._policy.scratch_mount_target,
+                self._policy.control_mount_target,
+            )
+        )
+        if any(
+            logical_executable == target or target in logical_executable.parents
+            for target in mount_targets
+        ):
+            raise OCIEngineError("OCI workload executable is hidden by a runtime mount")
+        proc_root_executable = Path(f"/proc/{pid}/root") / logical_executable.relative_to("/")
+        expected_cmdline = b"\x00".join(os.fsencode(item) for item in logical_argv) + b"\x00"
+        proc_executable = Path(f"/proc/{pid}/exe")
+        if proc_cmdline == expected_cmdline:
+            executable_sha256, executable_stat, _ = self._rehash_proc_file(
+                proc_executable,
+                label="OCI workload executable",
+            )
+            root_executable_sha256, root_executable_stat, _ = self._rehash_proc_file(
+                proc_root_executable,
+                label="OCI pinned-rootfs workload executable",
+            )
+            if (
+                executable_sha256 != self._policy.executable_sha256
+                or root_executable_sha256 != executable_sha256
+                or self._stat_identity(root_executable_stat) != self._stat_identity(executable_stat)
+                or root_executable_stat.st_nlink != 1
+                or root_executable_stat.st_uid not in {0, self._policy.workload_uid}
+                or root_executable_stat.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+                or not root_executable_stat.st_mode & stat.S_IXUSR
+            ):
+                raise OCIEngineError(
+                    "OCI launch gate has not execved the pinned rootfs workload executable"
+                )
+            return _ObservedWorkloadInvocation(
+                kind="direct_binary",
+                logical_executable_sha256=executable_sha256,
+                logical_argv_sha256=logical_argv_sha256,
+                observed_argv=logical_argv,
+                proc_executable_sha256=executable_sha256,
+                proc_executable_device=executable_stat.st_dev,
+                proc_executable_inode=executable_stat.st_ino,
+            )
+
+        if not proc_cmdline.endswith(b"\x00") or b"\x00\x00" in proc_cmdline:
+            raise OCIEngineError("OCI workload process argv is not canonical NUL framing")
+        observed_parts = tuple(proc_cmdline[:-1].split(b"\x00"))
+        if len(observed_parts) != len(logical_argv) + 1:
+            raise OCIEngineError("OCI launch gate has not execved the exact pinned workload argv")
+        try:
+            interpreter_from_cmdline = observed_parts[0].decode("ascii")
+            descriptor_argument = observed_parts[1].decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise OCIEngineError("OCI shebang interpreter argv is not canonical ASCII") from exc
+        descriptor_match = re.fullmatch(r"/dev/fd/([1-9][0-9]*)", descriptor_argument)
+        if descriptor_match is None or tuple(observed_parts[2:]) != tuple(
+            os.fsencode(item) for item in logical_argv[1:]
+        ):
+            raise OCIEngineError("OCI launch gate has not execved the exact pinned workload argv")
+        script_fd = int(descriptor_match.group(1))
+        if script_fd < 3:
+            raise OCIEngineError("OCI shebang workload uses an invalid inherited descriptor")
+        script_sha256, script_stat, script_prefix = self._rehash_proc_file(
+            Path(f"/proc/{pid}/fd/{script_fd}"),
+            label="OCI inherited workload script",
+            prefix_bytes=4096,
+        )
+        root_script_sha256, root_script_stat, _ = self._rehash_proc_file(
+            proc_root_executable,
+            label="OCI pinned-rootfs workload script",
+        )
+        if (
+            script_sha256 != self._policy.executable_sha256
+            or root_script_sha256 != script_sha256
+            or self._stat_identity(root_script_stat) != self._stat_identity(script_stat)
+            or script_stat.st_nlink != 1
+            or script_stat.st_uid not in {0, self._policy.workload_uid}
+            or script_stat.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+            or not script_stat.st_mode & stat.S_IXUSR
+        ):
+            raise OCIEngineError("OCI inherited workload script differs from its executable pin")
+        line_end = script_prefix.find(b"\n")
+        if line_end < 3 or line_end > 255 or not script_prefix.startswith(b"#!"):
+            raise OCIEngineError("OCI pinned workload script has an unsupported shebang")
+        shebang = script_prefix[2:line_end]
+        if any(character in shebang for character in (b" ", b"\t", b"\r", b"\x00")):
+            raise OCIEngineError("OCI pinned workload shebang must select one exact interpreter")
+        try:
+            interpreter_path = shebang.decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise OCIEngineError("OCI pinned workload shebang is not canonical ASCII") from exc
+        interpreter = Path(interpreter_path)
+        if (
+            not interpreter.is_absolute()
+            or str(interpreter) != interpreter_path
+            or os.path.normpath(interpreter_path) != interpreter_path
+            or interpreter_path == "/"
+            or interpreter_from_cmdline != interpreter_path
+            or any(
+                interpreter == target or target in interpreter.parents for target in mount_targets
+            )
+        ):
+            raise OCIEngineError("OCI live interpreter differs from the pinned workload shebang")
+        proc_root_interpreter = Path(f"/proc/{pid}/root") / interpreter.relative_to("/")
+        proc_executable_sha256, proc_executable_stat, _ = self._rehash_proc_file(
+            proc_executable,
+            label="OCI shebang interpreter executable",
+        )
+        root_interpreter_sha256, root_interpreter_stat, _ = self._rehash_proc_file(
+            proc_root_interpreter,
+            label="OCI pinned-rootfs shebang interpreter",
+        )
+        if (
+            self._stat_identity(proc_executable_stat) != self._stat_identity(root_interpreter_stat)
+            or proc_executable_sha256 != root_interpreter_sha256
+            or root_interpreter_stat.st_uid != 0
+            or root_interpreter_stat.st_nlink != 1
+            or root_interpreter_stat.st_dev != root_script_stat.st_dev
+            or root_interpreter_stat.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+            or not root_interpreter_stat.st_mode & stat.S_IXUSR
+        ):
+            raise OCIEngineError(
+                "OCI live shebang interpreter differs from the pinned read-only rootfs"
+            )
+        observed_argv = (
+            interpreter_path,
+            descriptor_argument,
+            *logical_argv[1:],
+        )
+        return _ObservedWorkloadInvocation(
+            kind="fd_shebang_script",
+            logical_executable_sha256=script_sha256,
+            logical_argv_sha256=logical_argv_sha256,
+            observed_argv=observed_argv,
+            proc_executable_sha256=proc_executable_sha256,
+            proc_executable_device=proc_executable_stat.st_dev,
+            proc_executable_inode=proc_executable_stat.st_ino,
+            script_fd=script_fd,
+            script_device=script_stat.st_dev,
+            script_inode=script_stat.st_ino,
+            shebang_interpreter_path=interpreter_path,
+        )
+
     @staticmethod
-    def _rehash_proc_executable(pid: int) -> str:
-        path = Path(f"/proc/{pid}/exe")
+    def _rehash_proc_file(
+        path: Path,
+        *,
+        label: str,
+        prefix_bytes: int = 0,
+    ) -> tuple[str, os.stat_result, bytes]:
         try:
             descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
         except OSError as exc:
-            raise OCIEngineError("OCI workload executable is unavailable for exact rehash") from exc
+            raise OCIEngineError(f"{label} is unavailable for exact rehash") from exc
         try:
             before = os.fstat(descriptor)
             if not stat.S_ISREG(before.st_mode):
-                raise OCIEngineError("OCI workload executable is not a regular file")
+                raise OCIEngineError(f"{label} is not a regular file")
             digest = hashlib.sha256()
+            prefix = bytearray()
             while True:
                 chunk = os.read(descriptor, 1024 * 1024)
                 if not chunk:
                     break
                 digest.update(chunk)
+                if len(prefix) < prefix_bytes:
+                    prefix.extend(chunk[: prefix_bytes - len(prefix)])
             after = os.fstat(descriptor)
             if LocalQualificationOCIRuntime._stat_identity(before) != (
                 LocalQualificationOCIRuntime._stat_identity(after)
             ):
-                raise OCIEngineError("OCI workload executable changed while rehashed")
-            return digest.hexdigest()
+                raise OCIEngineError(f"{label} changed while rehashed")
+            return digest.hexdigest(), before, bytes(prefix)
         finally:
             os.close(descriptor)
+
+    @staticmethod
+    def _rehash_proc_executable(pid: int) -> str:
+        digest, _, _ = LocalQualificationOCIRuntime._rehash_proc_file(
+            Path(f"/proc/{pid}/exe"),
+            label="OCI workload executable",
+        )
+        return digest
 
     def _verify_cgroup_v2_enforcement(
         self,

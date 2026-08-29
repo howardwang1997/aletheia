@@ -7,6 +7,8 @@ import json
 import os
 import stat
 import subprocess
+import sys
+import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1424,6 +1426,7 @@ def test_post_start_pre_journal_crash_recovers_actual_start_from_historical_tick
     started_at = authorization.issued_at + timedelta(microseconds=1)
     started_monotonic_ns = authorization_request.requested_monotonic_ns + 1_000
     started_monotonic_upper_ns = started_monotonic_ns + 1_000
+    workload_argv_sha256 = runtime._expected_workload_argv_sha256(plan)  # noqa: SLF001
     journal = oci_runtime_module._EngineLaunchJournal(  # noqa: SLF001
         preparation_sha256=preparation.preparation_sha256,
         runtime_launch_authorization_sha256=authorization.authorization_sha256,
@@ -1457,7 +1460,7 @@ def test_post_start_pre_journal_crash_recovers_actual_start_from_historical_tick
         proc_cgroup_sha256=_digest("recovered-proc-cgroup"),
         cgroup_limits_sha256=_digest("recovered-cgroup-limits"),
         workload_executable_sha256=policy.executable_sha256,
-        workload_argv_sha256=runtime._expected_workload_argv_sha256(plan),  # noqa: SLF001
+        workload_argv_sha256=workload_argv_sha256,
         started_at=started_at,
         started_monotonic_lower_bound_ns=started_monotonic_ns,
         started_monotonic_upper_bound_exclusive_ns=started_monotonic_upper_ns,
@@ -2152,6 +2155,17 @@ def test_launch_evidence_requires_gate_to_exec_exact_pinned_workload(
     original_read_text = Path.read_text
     original_read_bytes = Path.read_bytes
     original_stat = Path.stat
+    executable_stat = SimpleNamespace(
+        st_dev=65,
+        st_ino=1208806,
+        st_size=14472,
+        st_mtime_ns=1,
+        st_ctime_ns=2,
+        st_mode=stat.S_IFREG | 0o555,
+        st_nlink=1,
+        st_uid=policy.workload_uid,
+        st_gid=policy.workload_gid,
+    )
 
     def _read_text(path: Path, *args, **kwargs):  # type: ignore[no-untyped-def]
         if str(path) == f"/proc/{pid}/stat":
@@ -2176,8 +2190,8 @@ def test_launch_evidence_requires_gate_to_exec_exact_pinned_workload(
     monkeypatch.setattr(oci_runtime_module.os, "sysconf", lambda name: 100)
     monkeypatch.setattr(
         runtime,
-        "_rehash_proc_executable",
-        lambda observed_pid: policy.executable_sha256,
+        "_rehash_proc_file",
+        lambda path, **kwargs: (policy.executable_sha256, executable_stat, b""),
     )
     monkeypatch.setattr(
         runtime,
@@ -2229,6 +2243,230 @@ def test_launch_evidence_requires_gate_to_exec_exact_pinned_workload(
         plan,
         journal,
     )
+
+
+def test_workload_observation_accepts_exact_linux_fd_shebang_form(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request, policy = _request(tmp_path)
+    runtime = _runtime(tmp_path, policy)
+    plan = runtime._coerce_request(request)  # noqa: SLF001
+    argv_sha256 = runtime._expected_workload_argv_sha256(plan)  # noqa: SLF001
+    pid = 4242
+    script_stat = SimpleNamespace(
+        st_dev=65,
+        st_ino=1213845,
+        st_size=2687,
+        st_mtime_ns=1,
+        st_ctime_ns=2,
+        st_mode=stat.S_IFREG | 0o555,
+        st_nlink=1,
+        st_uid=0,
+        st_gid=0,
+    )
+    interpreter_stat = SimpleNamespace(
+        st_dev=65,
+        st_ino=1208806,
+        st_size=14472,
+        st_mtime_ns=3,
+        st_ctime_ns=4,
+        st_mode=stat.S_IFREG | 0o755,
+        st_nlink=1,
+        st_uid=0,
+        st_gid=0,
+    )
+    interpreter_sha256 = _digest("python-interpreter")
+
+    def _rehash(path: Path, **kwargs):  # type: ignore[no-untyped-def]
+        del kwargs
+        if str(path) == f"/proc/{pid}/fd/3":
+            return (
+                policy.executable_sha256,
+                script_stat,
+                b"#!/usr/local/bin/python3\nprint('workload')\n",
+            )
+        if str(path) == f"/proc/{pid}/root/opt/qualifier/bin/run":
+            return policy.executable_sha256, script_stat, b""
+        if str(path) in {
+            f"/proc/{pid}/exe",
+            f"/proc/{pid}/root/usr/local/bin/python3",
+        }:
+            return interpreter_sha256, interpreter_stat, b""
+        raise AssertionError(f"unexpected proc path: {path}")
+
+    monkeypatch.setattr(runtime, "_rehash_proc_file", _rehash)
+    proc_cmdline = (
+        b"\x00".join(
+            (
+                b"/usr/local/bin/python3",
+                b"/dev/fd/3",
+                *(os.fsencode(item) for item in plan.launch_spec.argv[1:]),
+            )
+        )
+        + b"\x00"
+    )
+
+    observed = runtime._observe_workload_invocation(  # noqa: SLF001
+        pid=pid,
+        logical_argv=plan.launch_spec.argv,
+        logical_argv_sha256=argv_sha256,
+        proc_cmdline=proc_cmdline,
+    )
+
+    assert observed.kind == "fd_shebang_script"
+    assert observed.logical_executable_sha256 == policy.executable_sha256
+    assert observed.logical_argv_sha256 == argv_sha256
+    assert observed.observed_argv == (
+        "/usr/local/bin/python3",
+        "/dev/fd/3",
+        *plan.launch_spec.argv[1:],
+    )
+    assert observed.proc_executable_sha256 == interpreter_sha256
+    assert observed.script_fd == 3
+    assert observed.script_device == script_stat.st_dev
+    assert observed.script_inode == script_stat.st_ino
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["script_hash", "interpreter_identity", "argv", "shebang_argument"],
+)
+def test_workload_observation_rejects_inexact_fd_shebang_forms(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    request, policy = _request(tmp_path)
+    runtime = _runtime(tmp_path, policy)
+    plan = runtime._coerce_request(request)  # noqa: SLF001
+    argv_sha256 = runtime._expected_workload_argv_sha256(plan)  # noqa: SLF001
+    pid = 4242
+    script_stat = SimpleNamespace(
+        st_dev=65,
+        st_ino=1213845,
+        st_size=2687,
+        st_mtime_ns=1,
+        st_ctime_ns=2,
+        st_mode=stat.S_IFREG | 0o555,
+        st_nlink=1,
+        st_uid=0,
+        st_gid=0,
+    )
+    interpreter_stat = SimpleNamespace(
+        st_dev=65,
+        st_ino=1208806,
+        st_size=14472,
+        st_mtime_ns=3,
+        st_ctime_ns=4,
+        st_mode=stat.S_IFREG | 0o755,
+        st_nlink=1,
+        st_uid=0,
+        st_gid=0,
+    )
+    wrong_interpreter_stat = SimpleNamespace(**{**vars(interpreter_stat), "st_ino": 999})
+
+    def _rehash(path: Path, **kwargs):  # type: ignore[no-untyped-def]
+        del kwargs
+        if str(path) == f"/proc/{pid}/fd/3":
+            prefix = (
+                b"#!/usr/local/bin/python3 -I\n"
+                if mutation == "shebang_argument"
+                else b"#!/usr/local/bin/python3\n"
+            )
+            digest = H0 if mutation == "script_hash" else policy.executable_sha256
+            return digest, script_stat, prefix
+        if str(path) == f"/proc/{pid}/root/opt/qualifier/bin/run":
+            return policy.executable_sha256, script_stat, b""
+        if str(path) == f"/proc/{pid}/exe":
+            return _digest("interpreter"), interpreter_stat, b""
+        if str(path) == f"/proc/{pid}/root/usr/local/bin/python3":
+            metadata = (
+                wrong_interpreter_stat if mutation == "interpreter_identity" else interpreter_stat
+            )
+            return _digest("interpreter"), metadata, b""
+        raise AssertionError(f"unexpected proc path: {path}")
+
+    monkeypatch.setattr(runtime, "_rehash_proc_file", _rehash)
+    tail = tuple(os.fsencode(item) for item in plan.launch_spec.argv[1:])
+    if mutation == "argv":
+        tail = (*tail[:-1], b"changed")
+    proc_cmdline = b"\x00".join((b"/usr/local/bin/python3", b"/dev/fd/3", *tail)) + b"\x00"
+
+    with pytest.raises(oci_runtime_module.OCIEngineError):
+        runtime._observe_workload_invocation(  # noqa: SLF001
+            pid=pid,
+            logical_argv=plan.launch_spec.argv,
+            logical_argv_sha256=argv_sha256,
+            proc_cmdline=proc_cmdline,
+        )
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux" or os.execve not in os.supports_fd,
+    reason="requires Linux fd-exec and procfs",
+)
+def test_linux_proc_observation_matches_real_fd_exec_of_shebang_script(tmp_path: Path) -> None:
+    interpreter = Path("/usr/bin/python3")
+    try:
+        interpreter_stat = interpreter.stat()
+    except OSError:
+        pytest.skip("system Python interpreter is unavailable")
+    if interpreter_stat.st_uid != 0 or interpreter_stat.st_mode & 0o022 or os.geteuid() == 0:
+        pytest.skip("test requires a root-owned interpreter and an unprivileged workload uid")
+    script = tmp_path / "workload.py"
+    script.write_text(f"#!{interpreter}\nimport time\ntime.sleep(30)\n")
+    script.chmod(0o555)
+    script_sha256 = hashlib.sha256(script.read_bytes()).hexdigest()
+    logical_argv = (str(script), "--exact-token")
+    request, original_policy = _request(tmp_path)
+    policy = original_policy.model_copy(
+        update={
+            "executable_sha256": script_sha256,
+            "workload_uid": os.geteuid(),
+        }
+    )
+    runtime = _runtime(tmp_path, policy)
+    child = os.fork()
+    if child == 0:
+        descriptor = os.open(script, os.O_RDONLY)
+        os.set_inheritable(descriptor, True)
+        os.execve(descriptor, logical_argv, {"PYTHONDONTWRITEBYTECODE": "1"})
+        raise AssertionError("fd exec returned")
+    try:
+        proc_cmdline_path = Path(f"/proc/{child}/cmdline")
+        proc_cmdline = b""
+        for _ in range(200):
+            try:
+                proc_cmdline = proc_cmdline_path.read_bytes()
+            except OSError:
+                proc_cmdline = b""
+            if b"/dev/fd/" in proc_cmdline:
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("child never reached the Linux fd-shebang process form")
+        observed = runtime._observe_workload_invocation(  # noqa: SLF001
+            pid=child,
+            logical_argv=logical_argv,
+            logical_argv_sha256=canonical_sha256(
+                {"schema": "aletheia.linux_process_argv.v2", "argv": logical_argv}
+            ),
+            proc_cmdline=proc_cmdline,
+        )
+        assert observed.kind == "fd_shebang_script"
+        assert observed.logical_executable_sha256 == script_sha256
+        assert observed.shebang_interpreter_path == str(interpreter)
+        assert (
+            observed.proc_executable_sha256
+            == hashlib.sha256(Path(f"/proc/{child}/exe").read_bytes()).hexdigest()
+        )
+    finally:
+        try:
+            os.kill(child, 15)
+        except ProcessLookupError:
+            pass
+        os.waitpid(child, 0)
 
 
 @pytest.mark.parametrize(
