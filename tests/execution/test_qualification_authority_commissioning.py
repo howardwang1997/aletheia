@@ -1042,6 +1042,7 @@ def test_live_role_privilege_projection_is_exact(
                 "is_grantable": False,
             }
             for table_name in (
+                "alembic_version",
                 "execution_outbox",
                 "execution_qualification_terminal_outbox",
             )

@@ -70,6 +70,7 @@ _CUSTODY_ROOT_PURPOSES = (
 )
 
 EXPECTED_EXECUTION_SCHEMA_REVISION = "20260829_0030"
+POSTGRESQL_SCHEMA_REVISION_TABLE = "alembic_version"
 
 EXECUTION_TABLES = (
     "execution_assignment_envelopes",
@@ -1446,6 +1447,7 @@ def render_postgresql_acl(spec: QualificationDeploymentSpecV1) -> bytes:
     all_tables = _table_list(EXECUTION_TABLES)
     updates = _table_list(ALLOCATOR_UPDATE_TABLES)
     all_sequences = _sequence_list(EXECUTION_SEQUENCES)
+    schema_revision_table = f"public.{_quoted_identifier(POSTGRESQL_SCHEMA_REVISION_TABLE)}"
     table_literals = _sql_literal_list(EXECUTION_TABLES)
     sequence_literals = _sql_literal_list(EXECUTION_SEQUENCES)
     routine_literals = ", ".join(
@@ -1503,6 +1505,10 @@ def render_postgresql_acl(spec: QualificationDeploymentSpecV1) -> bytes:
         f"REVOKE ALL PRIVILEGES ON SCHEMA public FROM PUBLIC, {allocator}, {outbox};",
         f"GRANT USAGE ON SCHEMA public TO {allocator}, {outbox};",
         f"REVOKE ALL PRIVILEGES ON {all_tables} FROM PUBLIC, {allocator}, {outbox};",
+        (
+            f"REVOKE ALL PRIVILEGES ON TABLE {schema_revision_table} "
+            f"FROM PUBLIC, {allocator}, {outbox};"
+        ),
         f"REVOKE ALL PRIVILEGES ON SEQUENCE {all_sequences} FROM PUBLIC, {allocator}, {outbox};",
         *(
             f"ALTER TABLE public.{_quoted_identifier(table)} OWNER TO {owner};"
@@ -1557,6 +1563,7 @@ def render_postgresql_acl(spec: QualificationDeploymentSpecV1) -> bytes:
         "END",
         "$aletheia_column_acl$;",
         f"GRANT SELECT, INSERT ON {all_tables} TO {allocator};",
+        f"GRANT SELECT ON TABLE {schema_revision_table} TO {allocator}, {outbox};",
         f"GRANT UPDATE ON {updates} TO {allocator};",
         f"GRANT USAGE ON SEQUENCE {all_sequences} TO {allocator};",
         (
@@ -1818,7 +1825,7 @@ def postgresql_role_privileges_sha256(
             "database_temporary": (),
             "schema_usage": (spec.postgresql_schema,),
             "schema_create": (),
-            "table_select": EXECUTION_TABLES,
+            "table_select": (POSTGRESQL_SCHEMA_REVISION_TABLE, *EXECUTION_TABLES),
             "table_insert": EXECUTION_TABLES,
             "table_update": ALLOCATOR_UPDATE_TABLES,
             "column_update": (),
@@ -1841,6 +1848,7 @@ def postgresql_role_privileges_sha256(
             "schema_usage": (spec.postgresql_schema,),
             "schema_create": (),
             "table_select": (
+                POSTGRESQL_SCHEMA_REVISION_TABLE,
                 "execution_outbox",
                 "execution_qualification_terminal_outbox",
             ),
@@ -3754,6 +3762,7 @@ __all__ = [
     "ObservedNativeDependency",
     "ObservedNativeDependencyClosure",
     "POSTGRESQL_DANGEROUS_BUILTIN_ROLES",
+    "POSTGRESQL_SCHEMA_REVISION_TABLE",
     "PostgreSQLExpectedRoutine",
     "PostgreSQLExpectedSequenceConfiguration",
     "PostgreSQLExpectedTrigger",

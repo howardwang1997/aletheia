@@ -1219,11 +1219,19 @@ def test_postgresql_acl_is_deterministic_explicit_and_contains_no_secret() -> No
     second = deployment.render_postgresql_acl(spec)
     assert first == second
     assert hashlib.sha256(first).hexdigest() == (
-        "ece5c444d9abc39c25d637de07d26e1e6d97d9200cc5ac3c1b54f6c6bd783c85"
+        "2fe77e0375d9700df17ba4ba95ea91bb77d9aa455b92211c59d296f96a860e34"
     )
     text = first.decode()
     assert text.count("ALTER TABLE public.") == 27
     assert "GRANT SELECT, INSERT ON" in text
+    assert (
+        'REVOKE ALL PRIVILEGES ON TABLE public."alembic_version" '
+        'FROM PUBLIC, "aletheia_exec_allocator", "aletheia_exec_outbox";'
+    ) in text
+    assert (
+        'GRANT SELECT ON TABLE public."alembic_version" '
+        'TO "aletheia_exec_allocator", "aletheia_exec_outbox";'
+    ) in text
     assert "GRANT UPDATE ON" in text
     assert (
         'GRANT USAGE ON SEQUENCE public."execution_budget_events_event_id_seq" '
