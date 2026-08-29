@@ -1371,7 +1371,8 @@ class LoopbackOutputQuotaController:
             or os.minor(source_metadata.st_rdev) != minor
             or source_metadata.st_uid != 0
             or source_metadata.st_gid != 0
-            or source_metadata.st_mode & 0o022
+            or source_metadata.st_nlink != 1
+            or stat.S_IMODE(source_metadata.st_mode) != 0o600
         ):
             raise OCIOutputQuotaError("loop block-device node custody is unsafe")
         backing = Path("/") / self._unescape_mountinfo(backing_text).lstrip("/")
@@ -2669,7 +2670,7 @@ class LoopbackOutputQuotaProvisioningService:
                 or stored.backing_file_identity_sha256 != backing_identity
             ):
                 raise OCIOutputQuotaError("loop attachment changed during recovery")
-            self._verify_loop_association(
+            self._verify_and_seal_loop_association(
                 loop_device=stored.loop_device,
                 backing_file=Path(intent.backing_file),
                 quota_bytes=intent.block_device_capacity_bytes,
@@ -2687,7 +2688,7 @@ class LoopbackOutputQuotaProvisioningService:
                 loop_device = completed.stdout.decode("ascii").strip()
             except UnicodeDecodeError as exc:
                 raise OCIOutputQuotaError("losetup response is not ASCII") from exc
-        self._verify_loop_association(
+        self._verify_and_seal_loop_association(
             loop_device=loop_device,
             backing_file=Path(intent.backing_file),
             quota_bytes=intent.block_device_capacity_bytes,
@@ -2851,7 +2852,7 @@ class LoopbackOutputQuotaProvisioningService:
             or receipt.mount_options != tuple(sorted(mount["mount_options"]))
         ):
             raise OCIOutputQuotaError("live provisioned quota mount differs from receipt")
-        self._verify_loop_association(
+        self._verify_and_seal_loop_association(
             loop_device=str(mount["source"]),
             backing_file=Path(self._deployment.backing_root)
             / f"{_attempt_workspace_key(receipt.infrastructure_attempt_id)}.img",
@@ -2912,6 +2913,89 @@ class LoopbackOutputQuotaProvisioningService:
         if len(matches) > 1:
             raise OCIOutputQuotaError("backing file has multiple loop associations")
         return matches[0] if matches else None
+
+    def _verify_and_seal_loop_association(
+        self,
+        *,
+        loop_device: str,
+        backing_file: Path,
+        quota_bytes: int,
+    ) -> None:
+        """Bind the verified reserved loop node to the root service alone.
+
+        Linux commonly publishes loop block nodes as ``root:disk 0660``.  The quota service
+        reserves one node for an exact root-owned backing file, so leaving the device writable by
+        a host group would let an unrelated process mutate the mounted scientific output behind
+        the filesystem.  Verify the kernel association before mutation, seal that exact inode,
+        then verify the association again before publishing or replaying authority.
+        """
+
+        self._verify_loop_association(
+            loop_device=loop_device,
+            backing_file=backing_file,
+            quota_bytes=quota_bytes,
+        )
+        self._seal_loop_device_node(loop_device)
+        self._verify_loop_association(
+            loop_device=loop_device,
+            backing_file=backing_file,
+            quota_bytes=quota_bytes,
+        )
+
+    def _seal_loop_device_node(self, loop_device: str) -> None:
+        if re.fullmatch(r"/dev/loop[0-9]+", loop_device) is None:
+            raise OCIOutputQuotaError("loop association returned a non-loop device")
+        path = Path(loop_device)
+        descriptor = -1
+        try:
+            descriptor = os.open(
+                path,
+                os.O_RDONLY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
+            )
+            before = os.fstat(descriptor)
+            expected_uid = self._trusted_root_service_uid()
+            expected_gid = os.getegid()
+            if (
+                not stat.S_ISBLK(before.st_mode)
+                or before.st_uid != expected_uid
+                or before.st_nlink != 1
+            ):
+                raise OCIOutputQuotaError("loop block-device node cannot be sealed safely")
+            if before.st_gid != expected_gid:
+                os.fchown(descriptor, expected_uid, expected_gid)
+            if stat.S_IMODE(before.st_mode) != 0o600:
+                os.fchmod(descriptor, 0o600)
+            after = os.fstat(descriptor)
+        except OCIOutputQuotaError:
+            raise
+        except OSError as exc:
+            raise OCIOutputQuotaError("loop block-device node cannot be sealed safely") from exc
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+        try:
+            observed = path.lstat()
+        except OSError as exc:
+            raise OCIOutputQuotaError("sealed loop block-device node is unavailable") from exc
+        if (
+            not stat.S_ISBLK(after.st_mode)
+            or (after.st_dev, after.st_ino, after.st_rdev)
+            != (before.st_dev, before.st_ino, before.st_rdev)
+            or after.st_uid != expected_uid
+            or after.st_gid != expected_gid
+            or after.st_nlink != 1
+            or stat.S_IMODE(after.st_mode) != 0o600
+            or (observed.st_dev, observed.st_ino, observed.st_rdev)
+            != (after.st_dev, after.st_ino, after.st_rdev)
+            or observed.st_uid != expected_uid
+            or observed.st_gid != expected_gid
+            or observed.st_nlink != 1
+            or stat.S_IMODE(observed.st_mode) != 0o600
+        ):
+            raise OCIOutputQuotaError("loop block-device node sealing did not persist")
 
     @staticmethod
     def _verify_loop_association(*, loop_device: str, backing_file: Path, quota_bytes: int) -> None:
