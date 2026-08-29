@@ -5352,8 +5352,8 @@ class SystemdDeadlineWatchdogController:
             return OCIWatchdogCleanupQuiescence(
                 cleanup_evidence_sha256=derived,
                 decision=response["terminal_decision"],
-                service_quiescence_record_sha256=(response["cleanup_quiescence_record_sha256"]),
-                container_id=response["cleanup_container_id"],
+                service_quiescence_record_sha256=(response.get("cleanup_quiescence_record_sha256")),
+                container_id=response.get("cleanup_container_id"),
             )
         except (KeyError, TypeError, ValidationError, ValueError) as exc:
             raise OCIWatchdogError("watchdog cleanup response has no typed quiescence") from exc
@@ -5449,56 +5449,76 @@ class SystemdDeadlineWatchdogController:
         terminal_decision = response.get("terminal_decision")
         quiescence_sha256 = response.get("cleanup_quiescence_record_sha256")
         cleanup_container_id = response.get("cleanup_container_id")
-        retirement_shape_is_valid = (
-            operation != "retire"
-            and terminal_decision is None
-            and quiescence_sha256 is None
-            and cleanup_container_id is None
-        ) or (
-            operation == "retire"
-            and (
-                (
-                    terminal_decision == "retired"
-                    and quiescence_sha256 is None
-                    and cleanup_container_id is None
-                )
-                or (
-                    terminal_decision == "fired_absent"
-                    and isinstance(quiescence_sha256, str)
-                    and _SHA256.fullmatch(quiescence_sha256) is not None
-                    and cleanup_container_id is None
-                )
-                or (
-                    terminal_decision == "fired_stopped"
-                    and isinstance(quiescence_sha256, str)
-                    and _SHA256.fullmatch(quiescence_sha256) is not None
-                    and isinstance(cleanup_container_id, str)
-                    and _CONTAINER_ID.fullmatch(cleanup_container_id) is not None
-                )
+        common_keys = {
+            "schema",
+            "operation",
+            "deployment_sha256",
+            "service_pid",
+            "service_boot_id",
+            "managed_by_systemd",
+        }
+        authority_keys = {"evidence_sha256", "job_sha256"}
+        if operation == "health":
+            expected_keys = common_keys
+            terminal_shape_is_valid = (
+                evidence is None
+                and expected_job_sha256 is None
+                and terminal_decision is None
+                and quiescence_sha256 is None
+                and cleanup_container_id is None
             )
-        )
+        elif operation == "arm":
+            expected_keys = common_keys | authority_keys
+            terminal_shape_is_valid = (
+                terminal_decision is None
+                and quiescence_sha256 is None
+                and cleanup_container_id is None
+            )
+        elif terminal_decision == "retired":
+            expected_keys = common_keys | authority_keys | {"terminal_decision"}
+            terminal_shape_is_valid = quiescence_sha256 is None and cleanup_container_id is None
+        elif terminal_decision == "fired_absent":
+            expected_keys = (
+                common_keys
+                | authority_keys
+                | {
+                    "terminal_decision",
+                    "cleanup_quiescence_record_sha256",
+                }
+            )
+            terminal_shape_is_valid = (
+                isinstance(quiescence_sha256, str)
+                and _SHA256.fullmatch(quiescence_sha256) is not None
+                and cleanup_container_id is None
+            )
+        elif terminal_decision == "fired_stopped":
+            expected_keys = (
+                common_keys
+                | authority_keys
+                | {
+                    "terminal_decision",
+                    "cleanup_quiescence_record_sha256",
+                    "cleanup_container_id",
+                }
+            )
+            terminal_shape_is_valid = (
+                isinstance(quiescence_sha256, str)
+                and _SHA256.fullmatch(quiescence_sha256) is not None
+                and isinstance(cleanup_container_id, str)
+                and _CONTAINER_ID.fullmatch(cleanup_container_id) is not None
+            )
+        else:
+            expected_keys = set()
+            terminal_shape_is_valid = False
         if (
-            set(response)
-            != {
-                "schema",
-                "operation",
-                "deployment_sha256",
-                "service_pid",
-                "service_boot_id",
-                "managed_by_systemd",
-                "evidence_sha256",
-                "job_sha256",
-                "terminal_decision",
-                "cleanup_quiescence_record_sha256",
-                "cleanup_container_id",
-            }
+            set(response) != expected_keys
             or response.get("schema") != "aletheia.systemd_oci_watchdog_response.v1"
             or response.get("operation") != operation
             or response.get("deployment_sha256") != self._deployment.deployment_sha256
             or response.get("managed_by_systemd") is not True
             or response.get("evidence_sha256") != evidence
             or response.get("job_sha256") != expected_job_sha256
-            or not retirement_shape_is_valid
+            or not terminal_shape_is_valid
         ):
             raise OCIWatchdogError("watchdog service attestation differs from deployment scope")
 

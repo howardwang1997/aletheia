@@ -385,9 +385,10 @@ class DeploymentPinnedOCIPolicy(ExecutionModel):
     runtime_binary_mode: int = Field(ge=0, le=0o7777)
     runtime_binary_parent_chain_sha256: str = Field(pattern=_SHA256_PATTERN)
     engine_endpoint: Literal["unix:///var/run/docker.sock"] = "unix:///var/run/docker.sock"
-    inspect_absence_stderr_template: Literal["Error: No such object: {container_name}\n"] = (
-        "Error: No such object: {container_name}\n"
-    )
+    inspect_absence_stderr_template: Literal[
+        "Error: No such object: {container_name}\n",
+        "error: no such object: {container_name}\n",
+    ] = "Error: No such object: {container_name}\n"
     image_reference: str = Field(min_length=1, max_length=1024)
     image_manifest_sha256: str = Field(pattern=_SHA256_PATTERN)
     image_config_sha256: str = Field(pattern=_SHA256_PATTERN)

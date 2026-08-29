@@ -466,19 +466,25 @@ def test_root_service_health_attestations_bind_peer_boot_and_deployment(
         policy=policy,
         deployment=_watchdog_deployment(tmp_path, policy),
     )
-    watchdog_response = {
-        "schema": "aletheia.systemd_oci_watchdog_response.v1",
-        "operation": "health",
-        "deployment_sha256": watchdog._deployment.deployment_sha256,  # noqa: SLF001
-        "service_pid": 456,
-        "service_boot_id": "boot.health",
-        "managed_by_systemd": True,
-        "evidence_sha256": None,
-        "job_sha256": None,
-        "terminal_decision": None,
-        "cleanup_quiescence_record_sha256": None,
-        "cleanup_container_id": None,
-    }
+    watchdog_response = json.loads(
+        canonical_json_bytes(
+            {
+                "schema": "aletheia.systemd_oci_watchdog_response.v1",
+                "operation": "health",
+                "deployment_sha256": watchdog._deployment.deployment_sha256,  # noqa: SLF001
+                "service_pid": 456,
+                "service_boot_id": "boot.health",
+                "managed_by_systemd": True,
+                "evidence_sha256": None,
+                "job_sha256": None,
+                "terminal_decision": None,
+                "cleanup_quiescence_record_sha256": None,
+                "cleanup_container_id": None,
+            }
+        )
+    )
+    assert "evidence_sha256" not in watchdog_response
+    assert "terminal_decision" not in watchdog_response
     monkeypatch.setattr(watchdog, "_request", lambda request: watchdog_response)
     monkeypatch.setattr(watchdog, "_current_boot_id", lambda: "boot.health")
     assert watchdog.verify_service_health() == canonical_sha256(watchdog_response)
@@ -989,9 +995,9 @@ def test_fired_prelaunch_watchdog_acknowledges_exact_quiescence_for_cold_cleanup
         payload = dict(raw)
         operation = payload.pop("operation")
         if operation == "arm":
-            return service.arm(payload)
+            return json.loads(canonical_json_bytes(service.arm(payload)))
         if operation == "retire":
-            return service.retire(payload)
+            return json.loads(canonical_json_bytes(service.retire(payload)))
         raise AssertionError(f"unexpected watchdog operation: {operation}")
 
     monkeypatch.setattr(controller, "_request", _direct_request)
@@ -1247,8 +1253,6 @@ def test_watchdog_client_rejects_wrong_job_and_impossible_quiescence_union(
         "evidence_sha256": H0,
         "job_sha256": H0,
         "terminal_decision": "retired",
-        "cleanup_quiescence_record_sha256": None,
-        "cleanup_container_id": None,
     }
     if mutation == "wrong-job":
         response["job_sha256"] = "1" * 64
