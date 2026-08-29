@@ -25,6 +25,7 @@ from aletheia.execution.oci_deployment import (
     PinnedOCIImageLayout,
     PinnedRootExecutable,
     PinnedRootFile,
+    PreinstalledOutputWorkspaceRootPin,
     SystemdWatchdogDeploymentPin,
 )
 from aletheia.execution.runtime_v2_contracts import PinnedOutputWorkspaceRoot
@@ -2923,6 +2924,29 @@ def _quota_persistent_projection(
     )
 
 
+def _preinstalled_workspace_root_matches_live(
+    expected: PreinstalledOutputWorkspaceRootPin,
+    observed: PinnedOutputWorkspaceRoot,
+) -> bool:
+    return (
+        expected.path,
+        expected.device,
+        expected.inode,
+        expected.owner_uid,
+        expected.owner_gid,
+        expected.mode,
+        expected.parent_chain_sha256,
+    ) == (
+        observed.path,
+        observed.device,
+        observed.inode,
+        observed.owner_uid,
+        observed.owner_gid,
+        observed.mode,
+        observed.parent_chain_sha256,
+    )
+
+
 def _watchdog_persistent_projection(
     deployment: SystemdWatchdogDeploymentPin,
 ) -> dict[str, object]:
@@ -3261,20 +3285,21 @@ def _observation_blockers(
     )
     quota = observation.quota_deployment
     quota_module = service_modules.get(spec.expected_quota_service_module.path)
-    quota_unit = unit_files.get(str(Path(spec.systemd_unit_root) / spec.quota_unit_name))
     quota_ok = (
         observation.quota_service_systemd_verified
         and quota.deployment_id == f"{spec.deployment_id}:quota"
         and quota.systemd_unit_name == spec.quota_unit_name
         and quota.workspace_root == spec.output_workspace_root
-        and quota.workspace_root_pin == observation.output_workspace_root
+        and _preinstalled_workspace_root_matches_live(
+            quota.workspace_root_pin,
+            observation.output_workspace_root,
+        )
         and quota.backing_root == spec.quota_backing_root
         and quota.state_root == spec.quota_state_root
         and quota.socket_path == spec.quota_socket_path
         and quota.allowed_client_uid == spec.node_uid
         and quota.allowed_client_gid == spec.node_gid
         and quota.provisioner_policy_sha256 == spec.output_quota_policy_sha256
-        and quota.systemd_unit == quota_unit
         and quota.service_executable == observation.python_executable
         and _installed_file_matches(spec.expected_losetup_executable, quota.losetup)
         and _installed_file_matches(spec.expected_mkfs_ext4_executable, quota.mkfs)
@@ -3299,7 +3324,6 @@ def _observation_blockers(
     )
     watchdog = observation.watchdog_deployment
     watchdog_module = service_modules.get(spec.expected_watchdog_service_module.path)
-    watchdog_unit = unit_files.get(str(Path(spec.systemd_unit_root) / spec.watchdog_unit_name))
     watchdog_ok = (
         observation.watchdog_service_systemd_verified
         and watchdog.deployment_id == f"{spec.deployment_id}:watchdog"
@@ -3311,7 +3335,6 @@ def _observation_blockers(
         and watchdog.allowed_client_uid == spec.node_uid
         and watchdog.allowed_client_gid == spec.node_gid
         and watchdog.maximum_active_jobs == spec.maximum_active_watchdog_jobs
-        and watchdog.systemd_unit == watchdog_unit
         and watchdog.service_executable == observation.python_executable
         and watchdog_module is not None
         and _service_module_matches_nested_pin(

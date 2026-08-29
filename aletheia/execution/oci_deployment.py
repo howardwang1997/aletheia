@@ -1576,15 +1576,19 @@ def _in_exact_systemd_unit(cgroup_payload: str, unit_name: str) -> bool:
 
 
 class SharedOutputWorkspaceDeploymentPin(ExecutionModel):
-    """Exact pre-bind custody for the root-owned shared output workspace service."""
+    """Exact pre-installable custody for the root-owned shared workspace service.
+
+    The unit name is frozen here, while exact installed fragment bytes and inode custody belong to
+    the installation receipt and independent deployment observation.  Embedding that future inode
+    here would make an honest commissioning request impossible to construct before installation.
+    """
 
     schema_name: Literal["aletheia.shared_output_workspace_deployment"] = (
         "aletheia.shared_output_workspace_deployment"
     )
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     deployment_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$")
     systemd_unit_name: str
-    systemd_unit: PinnedRootFile
     service_executable: PinnedRootExecutable
     mount: PinnedRootExecutable
     service_module_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -1614,8 +1618,6 @@ class SharedOutputWorkspaceDeploymentPin(ExecutionModel):
     def _paths_and_unit_are_closed(self) -> "SharedOutputWorkspaceDeploymentPin":
         if _WORKSPACE_SYSTEMD_UNIT.fullmatch(self.systemd_unit_name) is None:
             raise ValueError("workspace systemd unit name is not deployment-scoped")
-        if Path(self.systemd_unit.path).name != self.systemd_unit_name:
-            raise ValueError("workspace unit file does not match its unit name")
         source = _canonical_absolute_path(self.source_root, label="workspace source root")
         target = _canonical_absolute_path(self.target_root, label="workspace target root")
         if source == target or source in target.parents or target in source.parents:
@@ -1728,11 +1730,6 @@ class SharedOutputWorkspaceService:
             raise OCISharedWorkspaceError(
                 "workspace service is not its root-owned systemd deployment"
             )
-        _verify_root_file_pin(
-            self._deployment.systemd_unit,
-            label="workspace systemd unit file",
-            error_type=OCISharedWorkspaceError,
-        )
         _verify_root_process_executable(
             self._deployment.service_executable,
             error_type=OCISharedWorkspaceError,
@@ -1887,17 +1884,49 @@ class SharedOutputWorkspaceService:
             raise OCISharedWorkspaceError("workspace target differs from exact source bind")
 
 
+class PreinstalledOutputWorkspaceRootPin(ExecutionModel):
+    """Expected post-bind workspace custody without a future kernel mount identity.
+
+    Commissioning happens while the target is still the empty root-owned underlay.  The workspace
+    one-shot later bind-mounts the already pinned source inode and the kernel allocates a mount ID
+    at that point.  Runtime composition must observe that live ID instead of inventing it here.
+    """
+
+    schema_name: Literal["aletheia.preinstalled_output_workspace_root_pin"] = (
+        "aletheia.preinstalled_output_workspace_root_pin"
+    )
+    schema_version: Literal[1] = 1
+    path: str = Field(min_length=2, max_length=4096)
+    device: int = Field(ge=0)
+    inode: int = Field(ge=1)
+    owner_uid: Literal[0] = 0
+    owner_gid: int = Field(ge=1, le=2**31 - 1)
+    mode: Literal[0o1730] = 0o1730
+    parent_chain_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    live_mount_identity_required: Literal[True] = True
+    qualification_only: Literal[True] = True
+
+    @model_validator(mode="after")
+    def _path_is_canonical(self) -> "PreinstalledOutputWorkspaceRootPin":
+        _canonical_absolute_path(self.path, label="preinstalled output workspace root")
+        return self
+
+
 class LoopbackQuotaProvisionerDeploymentPin(ExecutionModel):
-    """Closed root-service deployment for output loop-filesystem provisioning."""
+    """Closed pre-installable root-service inputs for output quota provisioning.
+
+    Exact systemd fragment evidence is deliberately outside this config so the config/manifest can
+    be frozen while the unit target is still absent.
+    """
 
     schema_name: Literal["aletheia.loopback_output_quota_provisioner_deployment"] = (
         "aletheia.loopback_output_quota_provisioner_deployment"
     )
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     deployment_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$")
     systemd_unit_name: str
     workspace_root: str = Field(min_length=2, max_length=4096)
-    workspace_root_pin: PinnedOutputWorkspaceRoot
+    workspace_root_pin: PreinstalledOutputWorkspaceRootPin
     backing_root: str = Field(min_length=2, max_length=4096)
     state_root: str = Field(min_length=2, max_length=4096)
     socket_path: str = Field(min_length=2, max_length=4096)
@@ -1911,7 +1940,6 @@ class LoopbackQuotaProvisionerDeploymentPin(ExecutionModel):
         ge=MINIMUM_LOOP_OUTPUT_FILESYSTEM_BYTES,
         le=MINIMUM_LOOP_OUTPUT_FILESYSTEM_BYTES,
     )
-    systemd_unit: PinnedRootFile
     service_executable: PinnedRootExecutable
     losetup: PinnedRootExecutable
     mkfs: PinnedRootExecutable
@@ -1945,8 +1973,6 @@ class LoopbackQuotaProvisionerDeploymentPin(ExecutionModel):
             is None
         ):
             raise ValueError("quota provisioner systemd unit name is not deployment-scoped")
-        if Path(self.systemd_unit.path).name != self.systemd_unit_name:
-            raise ValueError("quota provisioner unit file does not match its unit name")
         if (
             self.workspace_root != self.workspace_root_pin.path
             or self.allowed_client_gid != self.workspace_root_pin.owner_gid
@@ -1973,6 +1999,70 @@ class LoopbackQuotaProvisionerDeploymentPin(ExecutionModel):
     @property
     def deployment_sha256(self) -> str:
         return canonical_sha256(self)
+
+
+def _observe_live_output_workspace_root(
+    expected: PreinstalledOutputWorkspaceRootPin,
+) -> PinnedOutputWorkspaceRoot:
+    """Resolve the kernel-assigned shared mount identity against pre-install custody."""
+
+    expected = PreinstalledOutputWorkspaceRootPin.model_validate(expected.model_dump(mode="python"))
+    path = Path(expected.path)
+    descriptor = -1
+    try:
+        if path.resolve(strict=True) != path:
+            raise OCIOutputQuotaError("output workspace root traverses a symlink")
+        descriptor = os.open(
+            path,
+            getattr(os, "O_PATH", os.O_RDONLY)
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        metadata = os.fstat(descriptor)
+    except OSError as exc:
+        raise OCIOutputQuotaError("output workspace root is unavailable") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    try:
+        lines = Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines()
+        matches = tuple(
+            parsed
+            for line in lines
+            if (parsed := SharedOutputWorkspaceService._parse_mountinfo(line))["mountpoint"]
+            == expected.path
+        )
+    except (OSError, UnicodeError, ValueError, OCISharedWorkspaceError) as exc:
+        raise OCIOutputQuotaError("output workspace mount identity is unavailable") from exc
+    if len(matches) != 1:
+        raise OCIOutputQuotaError("output workspace lacks one exact mount identity")
+    mount = matches[0]
+    mount_id = mount["mount_id"]
+    optional = mount["optional_fields"]
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != expected.owner_uid
+        or metadata.st_gid != expected.owner_gid
+        or stat.S_IMODE(metadata.st_mode) != expected.mode
+        or metadata.st_dev != expected.device
+        or metadata.st_ino != expected.inode
+        or host_parent_chain_sha256(path) != expected.parent_chain_sha256
+        or isinstance(mount_id, bool)
+        or not isinstance(mount_id, int)
+        or mount_id < 1
+        or not isinstance(optional, tuple)
+        or not any(str(value).startswith("shared:") for value in optional)
+    ):
+        raise OCIOutputQuotaError("output workspace differs from pre-install custody")
+    return PinnedOutputWorkspaceRoot(
+        path=expected.path,
+        device=expected.device,
+        inode=expected.inode,
+        mount_id=mount_id,
+        owner_gid=expected.owner_gid,
+        mode=expected.mode,
+        parent_chain_sha256=expected.parent_chain_sha256,
+    )
 
 
 class _QuotaProvisioningIntent(ExecutionModel):
@@ -2164,6 +2254,9 @@ class LoopbackOutputQuotaProvisioningService:
                 os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
             )
             workspace_metadata = os.fstat(workspace_descriptor)
+            live_workspace = _observe_live_output_workspace_root(
+                self._deployment.workspace_root_pin
+            )
             mount = self._find_mount(workspace)
             if (
                 not stat.S_ISDIR(workspace_metadata.st_mode)
@@ -2174,7 +2267,7 @@ class LoopbackOutputQuotaProvisioningService:
                 or workspace_metadata.st_dev != self._deployment.workspace_root_pin.device
                 or workspace_metadata.st_ino != self._deployment.workspace_root_pin.inode
                 or mount is None
-                or mount["mount_id"] != self._deployment.workspace_root_pin.mount_id
+                or mount["mount_id"] != live_workspace.mount_id
                 or host_parent_chain_sha256(workspace)
                 != self._deployment.workspace_root_pin.parent_chain_sha256
             ):
@@ -2945,11 +3038,6 @@ class LoopbackOutputQuotaProvisioningService:
             != self._deployment.service_module_parent_chain_sha256
         ):
             raise OCIOutputQuotaError("quota service is not its root-owned systemd deployment")
-        _verify_root_file_pin(
-            self._deployment.systemd_unit,
-            label="quota systemd unit file",
-            error_type=OCIOutputQuotaError,
-        )
         _verify_root_process_executable(
             self._deployment.service_executable,
             error_type=OCIOutputQuotaError,
@@ -2965,6 +3053,7 @@ class LoopbackOutputQuotaProvisioningService:
             label="quota workspace root",
             error_type=OCIOutputQuotaError,
         )
+        _observe_live_output_workspace_root(self._deployment.workspace_root_pin)
         for path, device, inode, mode, parent_chain, label in (
             (
                 Path(self._deployment.backing_root),
@@ -3211,7 +3300,7 @@ class LoopbackOutputQuotaProvisionerClient:
 
     @property
     def output_workspace_root_pin(self) -> PinnedOutputWorkspaceRoot:
-        return self._deployment.workspace_root_pin
+        return _observe_live_output_workspace_root(self._deployment.workspace_root_pin)
 
     @property
     def minimum_output_quota_bytes(self) -> int:
@@ -3364,16 +3453,19 @@ class LoopbackOutputQuotaProvisionerClient:
 
 
 class SystemdWatchdogDeploymentPin(ExecutionModel):
-    """Exact independently supervised watchdog service deployment."""
+    """Pre-installable inputs for the independently supervised watchdog service.
+
+    The live unit fragment is verified by the installed-manifest observer after installation; it
+    cannot be self-pinned by inode inside the earlier commissioning config.
+    """
 
     schema_name: Literal["aletheia.systemd_oci_watchdog_deployment"] = (
         "aletheia.systemd_oci_watchdog_deployment"
     )
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     deployment_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$")
     policy_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     systemd_unit_name: str
-    systemd_unit: PinnedRootFile
     service_executable: PinnedRootExecutable
     service_module_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     service_module_device: int = Field(ge=0)
@@ -3404,8 +3496,6 @@ class SystemdWatchdogDeploymentPin(ExecutionModel):
     def _paths_and_unit_are_closed(self) -> "SystemdWatchdogDeploymentPin":
         if _SYSTEMD_UNIT.fullmatch(self.systemd_unit_name) is None:
             raise ValueError("watchdog systemd unit name is not deployment-scoped")
-        if Path(self.systemd_unit.path).name != self.systemd_unit_name:
-            raise ValueError("watchdog unit file does not match its unit name")
         journal = _canonical_absolute_path(self.journal_root, label="watchdog journal root")
         state = _canonical_absolute_path(self.state_root, label="watchdog state root")
         socket_path = _canonical_absolute_path(self.socket_path, label="watchdog socket")
@@ -4655,11 +4745,6 @@ class DurableDeadlineWatchdogService:
             != self._deployment.service_module_parent_chain_sha256
         ):
             raise OCIWatchdogError("watchdog is not running in its pinned systemd service")
-        _verify_root_file_pin(
-            self._deployment.systemd_unit,
-            label="watchdog systemd unit file",
-            error_type=OCIWatchdogError,
-        )
         _verify_root_process_executable(
             self._deployment.service_executable,
             error_type=OCIWatchdogError,
@@ -5349,6 +5434,7 @@ __all__ = [
     "PinnedOCIImageLayout",
     "PinnedRootExecutable",
     "PinnedRootFile",
+    "PreinstalledOutputWorkspaceRootPin",
     "SharedOutputWorkspaceDeploymentPin",
     "SharedOutputWorkspaceService",
     "SystemdDeadlineWatchdogController",

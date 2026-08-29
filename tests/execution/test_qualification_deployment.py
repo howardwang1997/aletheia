@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -15,6 +16,7 @@ from aletheia.execution.oci_deployment import (
     PinnedOCIImageLayout,
     PinnedRootExecutable,
     PinnedRootFile,
+    PreinstalledOutputWorkspaceRootPin,
     SystemdWatchdogDeploymentPin,
 )
 from aletheia.execution.runtime_v2_contracts import PinnedOutputWorkspaceRoot
@@ -42,6 +44,19 @@ def _expected_executable(path: str) -> deployment.QualificationExpectedRootExecu
         path=path,
         reviewed_sha256=_sha(path),
         expected_mode=0o555,
+    )
+
+
+def _preinstalled_workspace_root(
+    live: PinnedOutputWorkspaceRoot,
+) -> PreinstalledOutputWorkspaceRootPin:
+    return PreinstalledOutputWorkspaceRootPin(
+        path=live.path,
+        device=live.device,
+        inode=live.inode,
+        owner_gid=live.owner_gid,
+        mode=live.mode,
+        parent_chain_sha256=live.parent_chain_sha256,
     )
 
 
@@ -426,7 +441,6 @@ def _observation(
         _root_file(item.path, sha256=item.content_sha256, inode=100 + index)
         for index, item in enumerate(units)
     )
-    unit_by_name = {item.unit_name: pin for item, pin in zip(units, unit_pins, strict=True)}
     python = _root_executable(spec.python_executable, inode=200)
     python_environment = deployment.QualificationObservedRootCodeTree(
         path=spec.reviewed_python_environment.root_path,
@@ -522,7 +536,7 @@ def _observation(
         deployment_id=f"{spec.deployment_id}:quota",
         systemd_unit_name=spec.quota_unit_name,
         workspace_root=spec.output_workspace_root,
-        workspace_root_pin=workspace,
+        workspace_root_pin=_preinstalled_workspace_root(workspace),
         backing_root=spec.quota_backing_root,
         state_root=spec.quota_state_root,
         socket_path=spec.quota_socket_path,
@@ -530,7 +544,6 @@ def _observation(
         allowed_client_gid=spec.node_gid,
         provisioner_policy_sha256=spec.output_quota_policy_sha256,
         provisioner_principal_id="principal:qualification-quota",
-        systemd_unit=unit_by_name[spec.quota_unit_name],
         service_executable=python,
         losetup=losetup,
         mkfs=mkfs,
@@ -554,7 +567,6 @@ def _observation(
         deployment_id=f"{spec.deployment_id}:watchdog",
         policy_sha256=spec.oci_policy_sha256,
         systemd_unit_name=spec.watchdog_unit_name,
-        systemd_unit=unit_by_name[spec.watchdog_unit_name],
         service_executable=python,
         service_module_sha256=service_module.sha256,
         service_module_device=service_module.device,
@@ -1179,6 +1191,28 @@ def test_effective_loaded_systemd_state_drift_fails_closed(monkeypatch, identity
     assert report.ready_for_opt_in_campaign is False
 
 
+def test_installed_unit_file_custody_remains_independently_verified(monkeypatch) -> None:
+    spec = _spec()
+    manifest, _observer, pin = _freeze(monkeypatch, spec=spec)
+    current = _observation(spec, observed_at=NOW + timedelta(seconds=1))
+    changed_units = tuple(
+        item.model_copy(update={"sha256": _sha("changed-installed-unit")})
+        if Path(item.path).name == spec.quota_unit_name
+        else item
+        for item in current.systemd_unit_files
+    )
+    changed = current.model_copy(update={"systemd_unit_files": changed_units})
+    report = _verify(
+        monkeypatch,
+        manifest,
+        _Observer(_sign_observation(changed, pin, spec=spec)),
+        pin,
+        verified_at=NOW + timedelta(seconds=2),
+    )
+    assert "systemd:unit-bytes-or-custody-drift" in report.blockers
+    assert report.ready_for_opt_in_campaign is False
+
+
 def test_postgresql_acl_is_deterministic_explicit_and_contains_no_secret() -> None:
     spec = _spec()
     first = deployment.render_postgresql_acl(spec)
@@ -1493,7 +1527,7 @@ def test_legitimate_reboot_and_new_shared_mount_namespace_can_remain_ready(monke
             "custody_roots": rebooted_custody_roots,
             "quota_deployment": current_boot.quota_deployment.model_copy(
                 update={
-                    "workspace_root_pin": current_workspace,
+                    "workspace_root_pin": _preinstalled_workspace_root(current_workspace),
                     "socket_parent_device": 122,
                     "socket_parent_inode": 1308,
                     "socket_parent_parent_chain_sha256": _sha("quota-socket-parent-after-reboot"),
@@ -1569,9 +1603,6 @@ def test_same_boot_dynamic_identity_changes_fail_closed(
         )
         updates = {
             "output_workspace_root": workspace,
-            "quota_deployment": current.quota_deployment.model_copy(
-                update={"workspace_root_pin": workspace}
-            ),
         }
     elif mutation == "quota_socket":
         updates = {
@@ -2260,20 +2291,6 @@ def test_drifted_observation_cannot_be_frozen(monkeypatch) -> None:
                         update={
                             "losetup": observed.quota_deployment.losetup.model_copy(
                                 update={"sha256": _sha("arbitrary-losetup")}
-                            )
-                        }
-                    )
-                }
-            ),
-            "quota:deployment-drift",
-        ),
-        (
-            lambda observed: observed.model_copy(
-                update={
-                    "quota_deployment": observed.quota_deployment.model_copy(
-                        update={
-                            "systemd_unit": observed.quota_deployment.systemd_unit.model_copy(
-                                update={"sha256": _sha("self-reported-unit")}
                             )
                         }
                     )

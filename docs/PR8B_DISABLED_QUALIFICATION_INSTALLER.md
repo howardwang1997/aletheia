@@ -37,6 +37,14 @@ marker does not invoke reload again. The final receipt remains
 `qualification_only=true`, `scientific_admission_allowed=false`, and
 `deployment_qualified=false`.
 
+Root-service configs intentionally contain only their deployment-scoped unit names. They cannot
+contain a future unit inode or content digest: the files are absent during commissioning and their
+rendered bytes contain the final manifest digest. Exact unit bytes and inodes instead enter
+authority here, in this post-publication receipt, and are independently reobserved by PR-8h.
+The same phase boundary applies to the shared workspace's kernel mount ID: commissioning pins the
+future bind's source inode and target parent custody, while the running quota/node services and
+PR-8h independently resolve the ID allocated when the workspace unit performs the bind.
+
 ## Explicit non-capabilities
 
 This installer does not create Linux users/groups or custody roots, install code/Python/native tools,
