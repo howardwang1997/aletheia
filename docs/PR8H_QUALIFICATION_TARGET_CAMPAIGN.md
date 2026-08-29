@@ -1,7 +1,7 @@
 # PR-8h independent observer and qualification target campaign
 
 - Status: observer/campaign source complete; no target-host campaign receipt exists
-- Date: 2026-08-29
+- Date: 2026-08-30
 
 ## What this slice closes
 
@@ -55,6 +55,19 @@ uses a separate 256 MiB streaming ceiling with before/after inode and parent-cha
 while ordinary configs, keys and control records retain their 16 MiB bounded reader.  This closes
 two target-compatibility blockers without weakening either custody boundary.  It does not freeze
 the final deployment manifest, install the units or create qualification evidence.
+
+A later generation-p pre-campaign execution reached a real running container and loop-backed ext4
+output mount, then exposed a Linux fd-exec detail that synthetic process fixtures had missed.  An
+fd-based `execve` of a shebang script presents the live process as
+`<interpreter> /dev/fd/<n> <logical arguments>` rather than preserving the script path as argv[0].
+The runtime now accepts only two closed live forms: an exact direct-binary argv/executable pair, or
+that exact Linux fd/shebang transformation.  The second form freshly rehashes the inherited script
+descriptor against the workload pin, derives one argument-free absolute interpreter from the
+pinned shebang, requires `/proc/<pid>/exe` to be the same inode and bytes as that interpreter under
+the container rootfs, and repeats the complete observation after cgroup verification.  Script,
+argument, interpreter, inode, ownership, mode, or mid-capture drift still fails closed.  The failed
+candidate was stopped before campaign apply and retained only as diagnostic journal/backing-image
+evidence; it is not a campaign receipt.
 
 PostgreSQL observation no longer copies routine, trigger, sequence or owner claims out of the
 deployment spec.  One `REPEATABLE READ, READ ONLY` snapshot reruns the exhaustive ACL/role gate,
