@@ -300,6 +300,7 @@ def _prepared(
     inventory_accelerator_count: int | None = None,
     retryable: bool = False,
     artifact_quota_bytes: int | None = None,
+    initial_assignment_lease_seconds: int | None = None,
 ) -> _Prepared:
     case = (
         _accelerator_qualification_case(
@@ -529,6 +530,7 @@ def _prepared(
         allocator_principal_id="principal:allocator",
         max_inventory_ttl_seconds=30,
         heartbeat_extension_seconds=15,
+        initial_assignment_lease_seconds=initial_assignment_lease_seconds,
     )
     monkeypatch.setattr(allocator_module, "_database_time", lambda _session: case.observed_at)
     return _Prepared(
@@ -599,6 +601,18 @@ def test_atomic_admission_is_exactly_idempotent_and_token_is_one_time(monkeypatc
     )
     assert opened.lease_token == first.lease_token
     assert opened.lease_token_sha256 == first.snapshot.lease_token_sha256
+    monkeypatch.setattr(
+        allocator_module,
+        "_database_time",
+        lambda _session: first.snapshot.lease_expires_at,
+    )
+    assert (
+        prepared.allocator.pull_sealed_assignment(
+            node_id=prepared.manifest.node_id,
+            node_manifest_sha256=prepared.manifest.manifest_sha256,
+        )
+        is None
+    )
     with session_factory()() as session:
         attempt = session.get(_ExecutionAttemptRecord, first.snapshot.attempt_id)
         envelope_record = session.execute(

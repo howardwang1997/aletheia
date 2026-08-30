@@ -1,7 +1,7 @@
 # Aletheia database migrations
 
 The database schema is versioned with Alembic. Application startup never creates or alters tables.
-The current repository head is `20260829_0030`.
+The current repository head is `20260831_0031`.
 
 For a fresh database:
 
@@ -92,3 +92,9 @@ zero direct routine grants, while allocator writes can still invoke the installe
 validation helpers at commit. This closes the target-host failure where a legitimate attempt state
 transition rolled back with `permission denied for function
 aletheia_execution_runtime_v2_json_valid`.
+
+Revision `20260831_0031` permits exactly one lease contraction when a still-unlaunched attempt
+moves from `reserved` to `starting`. The new expiry must be carried by the append-only runtime
+launch authorization written in the same transaction, and the resource lease must match the
+contracted attempt exactly. This separates a bounded campaign pre-launch window from the short
+runtime heartbeat window without allowing arbitrary lease rollback.

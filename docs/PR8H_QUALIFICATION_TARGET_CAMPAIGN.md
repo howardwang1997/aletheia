@@ -183,6 +183,40 @@ were stopped and disabled, the exact exited container was removed, both output m
 and the workspace bind were unmounted, and `/dev/loop22` was detached. The database rows, runtime
 journal and quota backing image remain retained as negative engineering evidence.
 
+Generation v, frozen from merge commit `f59a73aa2ebdb7f5c9d2c5c0c93cba60a118471f`
+after green pull-request and main CI, reached the real campaign apply boundary. Its deterministic
+source archive had SHA-256
+`d682dc39976ba11a1636d25357c19a9ca4b38ead44a45698666bfea9c1041d9a`; the
+release-freeze receipt had SHA-256
+`83a02b3b724fb8896742fe3accc6cd6c4e3098fdeaa740342fcb4886249ba7bc`.
+Execution `exe_e3bf691fcc1c7fa198ae52c23e7b6ed6`, attempt
+`iat_4a8e418ce853fcf7eb3815aa77745ea2` and scientific slot
+`sos_6fe31740731b0c51f553a5123bb63f73` were atomically preregistered. The campaign
+request and plan had SHA-256
+`41b7c593efc26c4e0006a501324bdcc512a0d1114b5a5b7952098ffe5370197c` and
+`e1c5b759d8fda7e2d922db6f72d12efb052c3253d1d037492c849126fdfd6acb`.
+
+The generation-v registration allocator used the ordinary 15-second heartbeat extension for its
+initial reservation. Request generation, plan review and the apply runner's independent observer
+preparation necessarily took much longer, so the DB lease had expired before systemd activated
+the node. `pull_sealed_assignment()` still selected the raw envelope because it checked only the
+envelope hard deadline. The node correctly rejected the expired reservation, restarted under
+systemd, and disappeared while the observer read its `/proc` maps; apply failed before the
+installed-manifest phase. Its exact stderr file has SHA-256
+`b38d4477630fe8029ac0863550927faf2f350310e3743f570fd4033a58d5659d`.
+No service SIGKILL phase, campaign loop/ext4 mount, workload container or PostgreSQL backend
+termination occurred. All generation-v units were stopped and disabled and its workspace bind was
+unmounted; the database rows and first journal records remain retained as negative evidence, while
+the older loop and container evidence was not modified.
+
+The repair separates the frozen `initial_assignment_lease_seconds` from the runtime heartbeat
+extension. Raw sealed delivery now also requires the attempt lease and hard deadline to be live at
+the database clock. At the first exact `reserved -> starting` runtime authorization, allocator
+possession of the lease token atomically contracts both attempt and resource expiry to the short
+heartbeat window. Alembic revision `20260831_0031` permits that contraction only when the same
+transaction has written the exact append-only launch authorization carrying the new expiry; every
+unbound attempt or resource rollback remains rejected by PostgreSQL.
+
 PostgreSQL observation no longer copies routine, trigger, sequence or owner claims out of the
 deployment spec.  One `REPEATABLE READ, READ ONLY` snapshot reruns the exhaustive ACL/role gate,
 hashes every live execution routine and non-internal trigger definition, reads each exact sequence
@@ -260,6 +294,12 @@ root-group-owned mode `0400`; bind its file digest and derived public key ID in
 the three execution keys commissioned by PR-8g—and must never be copied into a service config or
 the canonical request bytes.
 
+The dedicated qualification registration service must also freeze an explicit
+`initial_assignment_lease_seconds` that covers registration through deterministic campaign apply
+startup, while remaining inside the signed execution hard deadline. This is not the node heartbeat
+interval: the node service retains its short `heartbeat_extension_seconds`, and revision `0031`
+contracts to that value when it issues the first runtime launch authorization.
+
 ```console
 sudo /opt/aletheia/python/bin/python -S -s -P \
   /opt/aletheia/source/scripts/run-qualification-target-campaign.py \
@@ -305,9 +345,10 @@ receipt into a passing shape.
 The selected Linux target is compatible and has frozen/installed candidate generations, but none
 has emitted the complete campaign receipt. Therefore no host is currently proven deployable,
 PR-4b remains nondeployable, and `scientific_admission_allowed` is always false even in a
-successful campaign receipt. The next ordered operation is to merge the primary-GID normalization
-fix, commission one fresh generation with a 1,800-second workload inside a 3,600-second execution
-lease, and rerun the complete campaign—not more controller authority.
+successful campaign receipt. The next ordered operation is to merge the pre-launch lease fix,
+commission one entirely fresh generation with an explicit bounded initial-assignment window, a
+short runtime heartbeat, and a 1,800-second workload inside its signed execution deadline, then
+rerun the complete campaign—not more controller authority.
 
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the

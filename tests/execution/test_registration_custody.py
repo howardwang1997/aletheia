@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 import sys
 from pathlib import Path
 
@@ -52,11 +53,13 @@ def test_registration_custody_composes_public_verifiers_and_unsigned_allocator(
     tmp_path: Path,
 ) -> None:
     config = _config(monkeypatch, tmp_path)
+    config = config.model_copy(update={"initial_assignment_lease_seconds": 2400})
 
     composition = compose_qualification_execution_registration(config)
 
     assert composition.allocator.runtime_control_issuance_enabled is False
     assert composition.allocator.runtime_control_verification_enabled is True
+    assert composition.allocator._initial_assignment_lease == timedelta(seconds=2400)
     assert composition.allocator._artifact_resolver._artifact_store.read_only is True
     assert composition.qualification_authority.pin == (
         config.qualification_custody.qualification_authority_pin
@@ -84,5 +87,10 @@ def test_registration_custody_rejects_role_overlap_or_mutation_expansion(
 
     payload = config.model_dump(mode="python")
     payload["execution_launch_allowed"] = True
+    with pytest.raises(ValidationError):
+        QualificationExecutionRegistrationConfig.model_validate(payload)
+
+    payload = config.model_dump(mode="python")
+    payload["initial_assignment_lease_seconds"] = 7201
     with pytest.raises(ValidationError):
         QualificationExecutionRegistrationConfig.model_validate(payload)

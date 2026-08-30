@@ -63,6 +63,7 @@ class QualificationExecutionRegistrationConfig(BaseModel):
     allowed_rate_card_sha256s: tuple[str, ...] = Field(min_length=1)
     allowed_currency_codes: tuple[str, ...] = Field(min_length=1)
     allocator_principal_id: str = Field(pattern=_IDENTITY_PATTERN)
+    initial_assignment_lease_seconds: int = Field(default=15, ge=1, le=7200)
     prepared_at: AwareDatetime
     qualification_admission_and_reservation_allowed: Literal[True] = True
     sea_registration_allowed: Literal[True] = True
@@ -305,6 +306,7 @@ def compose_qualification_execution_registration(
         runtime_control_authority=PinnedRuntimeControlVerificationAuthority(
             config.runtime_control_authority_pin
         ),
+        initial_assignment_lease_seconds=config.initial_assignment_lease_seconds,
     )
     if allocator.runtime_control_issuance_enabled:
         raise ValueError("execution registration composition unexpectedly loaded a runtime signer")

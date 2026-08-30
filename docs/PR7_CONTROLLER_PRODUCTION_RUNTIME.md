@@ -81,7 +81,7 @@ deployment-specific):
   "role": "delivery_reconciler",
   "process_principal_id": "principal.controller.delivery_reconciler",
   "database_url_sha256": "<sha256-of-exact-configured-dsn>",
-  "schema_revision": "20260829_0030",
+  "schema_revision": "20260831_0031",
   "scientific_authority": false,
   "kernel_command_authority": false,
   "observation_admission_authority": false

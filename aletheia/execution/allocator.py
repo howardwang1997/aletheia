@@ -1002,6 +1002,7 @@ class PostgreSQLExecutionAllocator:
         max_inventory_ttl_seconds: int = 30,
         max_runtime_inspection_ttl_seconds: int = 30,
         heartbeat_extension_seconds: int = 15,
+        initial_assignment_lease_seconds: int | None = None,
         max_runtime_launch_authorization_seconds: int = 30,
         max_runtime_proof_age_seconds: int = 30,
         artifact_submission_grace_seconds: int = 3600,
@@ -1010,6 +1011,10 @@ class PostgreSQLExecutionAllocator:
             max_inventory_ttl_seconds < 1
             or max_runtime_inspection_ttl_seconds < 1
             or heartbeat_extension_seconds < 1
+            or (
+                initial_assignment_lease_seconds is not None
+                and initial_assignment_lease_seconds < 1
+            )
             or not 1 <= max_runtime_launch_authorization_seconds <= 60
             or not 1 <= max_runtime_proof_age_seconds <= 60
             or artifact_submission_grace_seconds < 1
@@ -1117,6 +1122,13 @@ class PostgreSQLExecutionAllocator:
         self._max_runtime_inspection_ttl = timedelta(seconds=max_runtime_inspection_ttl_seconds)
         self._max_runtime_inspection_age_seconds = max_runtime_inspection_ttl_seconds
         self._heartbeat_extension = timedelta(seconds=heartbeat_extension_seconds)
+        self._initial_assignment_lease = timedelta(
+            seconds=(
+                heartbeat_extension_seconds
+                if initial_assignment_lease_seconds is None
+                else initial_assignment_lease_seconds
+            )
+        )
         self._max_runtime_launch_authorization_seconds = max_runtime_launch_authorization_seconds
         self._max_runtime_proof_age_seconds = max_runtime_proof_age_seconds
         self._artifact_submission_grace = timedelta(seconds=artifact_submission_grace_seconds)
@@ -1974,7 +1986,7 @@ class PostgreSQLExecutionAllocator:
             fencing_epoch = fencing_base + 1
             raw_token = secrets.token_urlsafe(32)
             token_hash = _token_sha256(raw_token)
-            lease_expires_at = min(now + self._heartbeat_extension, hard_deadline)
+            lease_expires_at = min(now + self._initial_assignment_lease, hard_deadline)
             resource_request = intent.resource_request
             lease_payload = {
                 "schema_name": "aletheia.local_resource_lease",
@@ -3302,6 +3314,8 @@ class PostgreSQLExecutionAllocator:
                     _ExecutionAttemptRecord.node_id == node_id,
                     _ExecutionAttemptRecord.status.in_(ACTIVE_ATTEMPT_STATES),
                     _ExecutionAttemptRecord.node_runtime_launch_receipt_sha256.is_(None),
+                    _ExecutionAttemptRecord.lease_expires_at > now,
+                    _ExecutionAttemptRecord.hard_deadline > now,
                     _ExecutionAssignmentEnvelopeRecord.expires_at > now,
                 )
                 .order_by(
@@ -3749,10 +3763,26 @@ class PostgreSQLExecutionAllocator:
             if attempt.node_runtime_launch_receipt_sha256 is not None:
                 raise LeaseAuthorityError("already-launched attempt cannot be reauthorized")
 
+            # Registration may deliberately reserve enough time for a bounded external
+            # campaign to render, review and apply its frozen plan before this node starts.
+            # Possession of the exact lease token at this serialization point converts that
+            # pre-launch window into the ordinary short heartbeat window.  Updating both rows
+            # in the same transaction preserves the deferred attempt/resource authority guard.
+            heartbeat_lease_expires_at = min(
+                now + self._heartbeat_extension,
+                attempt.hard_deadline,
+            )
+            runtime_lease_expires_at = (
+                heartbeat_lease_expires_at
+                if attempt.status == "reserved"
+                else max(attempt.lease_expires_at, heartbeat_lease_expires_at)
+            )
+            if runtime_lease_expires_at <= now:
+                raise LeaseAuthorityError("runtime heartbeat window is empty")
             runtime_pin = issuer.authority_pin
             expires_at = min(
                 now + timedelta(seconds=self._max_runtime_launch_authorization_seconds),
-                attempt.lease_expires_at,
+                runtime_lease_expires_at,
                 attempt.hard_deadline,
                 runtime_pin.active_until,
             )
@@ -3764,7 +3794,7 @@ class PostgreSQLExecutionAllocator:
                     preparation=preparation,
                     admission_sha256=attempt.admission_sha256,
                     qualification_grant_sha256=attempt.grant_sha256,
-                    lease_expires_at=attempt.lease_expires_at,
+                    lease_expires_at=runtime_lease_expires_at,
                     hard_deadline=attempt.hard_deadline,
                     issued_at=now,
                     expires_at=expires_at,
@@ -3790,7 +3820,7 @@ class PostgreSQLExecutionAllocator:
                 or authorization.qualification_grant_sha256 != attempt.grant_sha256
                 or authorization.issued_at != now
                 or authorization.expires_at != expires_at
-                or authorization.lease_expires_at != attempt.lease_expires_at
+                or authorization.lease_expires_at != runtime_lease_expires_at
                 or authorization.hard_deadline != attempt.hard_deadline
             ):
                 raise LeaseAuthorityError("runtime launch ticket differs from requested DB scope")
@@ -3821,12 +3851,16 @@ class PostgreSQLExecutionAllocator:
                 )
             )
             session.flush()
+            attempt.heartbeat_at = now
+            attempt.lease_expires_at = runtime_lease_expires_at
             attempt.runtime_preparation_sha256 = preparation.preparation_sha256
             attempt.runtime_launch_authorization_count = sequence
             attempt.latest_runtime_launch_authorization_sha256 = authorization.authorization_sha256
             attempt.status = "starting"
             attempt.state_version += 1
             attempt.updated_at = now
+            resource.heartbeat_at = now
+            resource.lease_expires_at = runtime_lease_expires_at
             session.flush()
             return RuntimeStartCommit(
                 snapshot=self._snapshot(session, attempt),
