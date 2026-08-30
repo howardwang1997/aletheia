@@ -54,34 +54,58 @@ from .test_qualification_installer import _FakeHost as _InstallationHost
 NOW = datetime(2026, 8, 27, 6, 0, 0, tzinfo=timezone.utc)
 
 
-def test_observer_treats_proc_status_groups_as_supplementary_only() -> None:
+def test_observer_normalizes_optional_primary_gid_in_proc_status_groups() -> None:
     qualification_observer._verify_process_supplementary_groups(  # noqa: SLF001
         {"Groups": ""},
         expected=(),
+        effective_gid=0,
         unit_name="qualification-watchdog.service",
     )
     qualification_observer._verify_process_supplementary_groups(  # noqa: SLF001
         {"Groups": "138"},
         expected=(138,),
+        effective_gid=2101,
         unit_name="qualification-node.service",
+    )
+    qualification_observer._verify_process_supplementary_groups(  # noqa: SLF001
+        {"Groups": "138 2101"},
+        expected=(138,),
+        effective_gid=2101,
+        unit_name="qualification-node.service",
+    )
+    qualification_observer._verify_process_supplementary_groups(  # noqa: SLF001
+        {"Groups": "0"},
+        expected=(),
+        effective_gid=0,
+        unit_name="qualification-watchdog.service",
     )
 
     with pytest.raises(QualificationObserverError, match="supplementary groups differ"):
         qualification_observer._verify_process_supplementary_groups(  # noqa: SLF001
-            {"Groups": "0"},
+            {"Groups": "999"},
             expected=(),
+            effective_gid=0,
             unit_name="qualification-watchdog.service",
+        )
+    with pytest.raises(QualificationObserverError, match="supplementary groups differ"):
+        qualification_observer._verify_process_supplementary_groups(  # noqa: SLF001
+            {"Groups": "138 138 2101"},
+            expected=(138,),
+            effective_gid=2101,
+            unit_name="qualification-node.service",
         )
     with pytest.raises(QualificationObserverError, match="supplementary groups are unavailable"):
         qualification_observer._verify_process_supplementary_groups(  # noqa: SLF001
             {},
             expected=(),
+            effective_gid=0,
             unit_name="qualification-watchdog.service",
         )
     with pytest.raises(QualificationObserverError, match="supplementary groups are invalid"):
         qualification_observer._verify_process_supplementary_groups(  # noqa: SLF001
             {"Groups": "not-a-gid"},
             expected=(),
+            effective_gid=0,
             unit_name="qualification-watchdog.service",
         )
 

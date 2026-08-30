@@ -108,6 +108,37 @@ process observation in a bounded window. Container/PID/start drift, configuratio
 wrong same-shape argv, disappearance, or timeout still fails closed; recovery never constructs
 launch authority from an ambiguous already-started process.
 
+Generation s, frozen from merge commit `ee7d56516569d71d3670c7d454798640a4912532`
+after both pull-request and main CI passed, proved that transition on the real target. Its
+deterministic source archive had SHA-256
+`2f2fffa45808ee78af832fd955b2ee201701cf3125848f299274698c395e8745` and its
+release-freeze receipt had SHA-256
+`91ff529aabaa94c193db880510784ea84e47801ae8e5f7bb3e4cafac9178650e`.
+Execution `exe_2b2d6f2d9a40ad294db19d0a2420458d`, attempt
+`iat_7895385d67243bab36084b6055d0ea0f` and scientific slot
+`sos_190a84fdb192b421492d1d5c89d03471` reached durable `running` state without a
+node restart. Container `7b1e3790f63b4583886254e057e3a59ccbccf0c3ffe9bb95efc30f332c82c3e1`
+published both launch records; `engine-launch.json` had SHA-256
+`a0fd91bbd43440e2edf3aa7c941463642befe52b06edc46d6a0612d581a93e36` and bound
+the exact pinned workload executable.
+
+The generation-s campaign request and plan had SHA-256
+`2b990769782b20a642a101d596aae6fbc2211fe6d6c6be44ee11825e122d7066` and
+`61258b1e8fb741ff0a683bfe032bfba445d0c72ebc1c9ca08a471e8653e82211`.
+Activation completed and was durably recorded, but installed-manifest observation then exposed a
+second supplementary-group representation: for the node, systemd's explicit Docker group caused
+Linux to report `Groups: 138 2101`, where `2101` was the already separately verified effective
+primary GID. Empty supplementary-group root services on the same host continued to report an empty
+`Groups` list. The observer failed closed before phase 02; no service SIGKILL, campaign loop/ext4
+mount or PostgreSQL backend termination occurred. All five services were stopped and disabled,
+the exact container removed, all generation-s mounts unmounted and `/dev/loop22` detached; the
+backing image, request, activation journal and database rows remain negative engineering evidence.
+
+Process-group verification now accepts neither representation by guesswork. It parses a unique
+kernel group list, removes only the effective primary GID that is independently required in all
+four `Gid` fields, and then compares the remaining closed set exactly with the frozen supplementary
+GIDs. Any duplicate or any other additional/missing GID still fails closed.
+
 PostgreSQL observation no longer copies routine, trigger, sequence or owner claims out of the
 deployment spec.  One `REPEATABLE READ, READ ONLY` snapshot reruns the exhaustive ACL/role gate,
 hashes every live execution routine and non-internal trigger definition, reads each exact sequence
@@ -230,9 +261,9 @@ receipt into a passing shape.
 The selected Linux target is compatible and has frozen/installed candidate generations, but none
 has emitted the complete campaign receipt. Therefore no host is currently proven deployable,
 PR-4b remains nondeployable, and `scientific_admission_allowed` is always false even in a
-successful campaign receipt. The next ordered operation is to merge the bounded launch-gate exec
-transition fix, commission one fresh generation with a 1,800-second workload inside a
-3,600-second execution lease, and rerun the complete campaign—not more controller authority.
+successful campaign receipt. The next ordered operation is to merge the primary-GID normalization
+fix, commission one fresh generation with a 1,800-second workload inside a 3,600-second execution
+lease, and rerun the complete campaign—not more controller authority.
 
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the

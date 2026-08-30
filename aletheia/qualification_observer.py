@@ -623,14 +623,17 @@ def _verify_process_supplementary_groups(
     status: Mapping[str, str],
     *,
     expected: tuple[int, ...],
+    effective_gid: int,
     unit_name: str,
 ) -> None:
-    """Verify Linux's supplementary-group projection without inventing the effective GID.
+    """Verify Linux's supplementary-group projection modulo its effective GID.
 
     ``/proc/<pid>/status`` exposes the kernel supplementary group list in ``Groups``. The
-    effective primary GID is reported separately in ``Gid`` and need not appear in ``Groups``.
-    In particular, systemd's explicit ``SupplementaryGroups=`` produces an empty live list for
-    the root qualification services.
+    effective primary GID is reported separately in ``Gid`` and may or may not also appear in
+    ``Groups``: systemd's empty ``SupplementaryGroups=`` produced an empty list on the target,
+    while its explicit Docker group caused ``initgroups`` to retain the primary GID too. Because
+    the four exact ``Gid`` values are verified independently, that optional duplicate grants no
+    additional group authority and is removed before comparing the closed supplementary set.
     """
 
     if "Groups" not in status:
@@ -638,12 +641,15 @@ def _verify_process_supplementary_groups(
             f"live process supplementary groups are unavailable: {unit_name}"
         )
     try:
-        observed = tuple(sorted(int(value) for value in status["Groups"].split()))
+        raw_observed = tuple(sorted(int(value) for value in status["Groups"].split()))
     except ValueError as exc:
         raise QualificationObserverError(
             f"live process supplementary groups are invalid: {unit_name}"
         ) from exc
-    if len(observed) != len(set(observed)) or observed != tuple(sorted(expected)):
+    if len(raw_observed) != len(set(raw_observed)):
+        raise QualificationObserverError(f"live process supplementary groups differ: {unit_name}")
+    observed = tuple(value for value in raw_observed if value != effective_gid)
+    if observed != tuple(sorted(expected)):
         raise QualificationObserverError(f"live process supplementary groups differ: {unit_name}")
 
 
@@ -818,6 +824,7 @@ class LinuxQualificationDeploymentObserver:
             _verify_process_supplementary_groups(
                 status,
                 expected=identity.supplementary_gids,
+                effective_gid=identity.effective_gid,
                 unit_name=unit_name,
             )
             expected_capabilities = identity.effective_capabilities
