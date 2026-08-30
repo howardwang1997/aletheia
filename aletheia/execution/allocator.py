@@ -4003,19 +4003,27 @@ class PostgreSQLExecutionAllocator:
                 for item in device_leases:
                     item.state = "reconciliation_required"
                 if entering_reconciliation:
-                    self._append_budget_event(
-                        session,
-                        reservation_id=reservation.reservation_id,
-                        authorization_sha256=reservation.authorization_sha256,
-                        event_type="reconciliation_required",
-                        reserved_delta_microunits=0,
-                        spent_delta_microunits=0,
-                        recorded_at=now,
-                        details={
-                            "reason": "historical_runtime_launch_recovery",
-                            "node_runtime_launch_receipt_sha256": (receipt.launch_receipt_sha256),
-                        },
-                    )
+                    # The attempt already carries the accepted launch identity here, but its
+                    # version increment is intentionally applied with the final status below.
+                    # Looking up the prior budget event must not autoflush that intermediate
+                    # attempt row: the DB guard requires every mutation and state_version + 1
+                    # to arrive in one UPDATE.
+                    with session.no_autoflush:
+                        self._append_budget_event(
+                            session,
+                            reservation_id=reservation.reservation_id,
+                            authorization_sha256=reservation.authorization_sha256,
+                            event_type="reconciliation_required",
+                            reserved_delta_microunits=0,
+                            spent_delta_microunits=0,
+                            recorded_at=now,
+                            details={
+                                "reason": "historical_runtime_launch_recovery",
+                                "node_runtime_launch_receipt_sha256": (
+                                    receipt.launch_receipt_sha256
+                                ),
+                            },
+                        )
                 attempt.status = "reconciliation_required"
                 attempt.reconciliation_reason = "lease_expired"
             else:

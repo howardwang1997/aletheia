@@ -34,6 +34,7 @@ from aletheia.execution.node_agent import (
 )
 from aletheia.execution.persistence import (
     _ExecutionAttemptRecord,
+    _ExecutionBudgetEventRecord,
     _ExecutionBudgetReservationRecord,
     _ExecutionOutboxRecord,
     _ExecutionQualificationTerminalAcceptanceRecord,
@@ -52,6 +53,7 @@ from aletheia.execution.runtime_contracts import (
 from aletheia.execution.runtime_v2_contracts import (
     AcceptedQualificationTerminalSubmission,
     MINIMUM_LOOP_OUTPUT_FILESYSTEM_BYTES,
+    NodeRuntimeLaunchReceipt,
     OutputQuotaProvisioningReceipt,
     PinnedRuntimeControlVerificationAuthority,
     PinnedInputPath,
@@ -256,6 +258,155 @@ def _verification_only_allocator(
         allocator_principal_id=allocator._allocator_principal_id,
         runtime_control_authority=runtime_authority,
     )
+
+
+def test_expired_lease_launch_receipt_enters_reconciliation_atomically(
+    monkeypatch, tmp_path
+) -> None:
+    prepared, allocator, adapter, agent, _runtime, state, claim = _running_v2(
+        monkeypatch,
+        tmp_path,
+        start=False,
+    )
+    captured: list[NodeRuntimeLaunchReceipt] = []
+
+    def crash_before_allocator_acceptance(
+        *, node_runtime_launch_receipt: NodeRuntimeLaunchReceipt, **_scope: object
+    ) -> None:
+        captured.append(node_runtime_launch_receipt)
+        raise SystemExit("crash before allocator launch acceptance")
+
+    monkeypatch.setattr(adapter, "mark_running", crash_before_allocator_acceptance)
+    with pytest.raises(SystemExit, match="allocator launch acceptance"):
+        agent.run_once()
+
+    local = state.load_state(claim.snapshot.attempt_id)
+    assert local is not None
+    assert local.phase.value == "launch_committed"
+    assert local.runtime_identity is not None
+    assert local.node_runtime_launch_receipt == captured[0]
+    assert claim.lease_token is not None
+
+    # Reproduce the target-host boundary: the engine start and signed node receipt are
+    # durable, but the short lease expires immediately before the DB acceptance call.
+    # The launch remains valid historical evidence and must atomically move every hold
+    # into reconciliation without an intermediate attempt-row autoflush.
+    monkeypatch.setattr(
+        allocator_module,
+        "_database_time",
+        lambda _session: claim.snapshot.lease_expires_at,
+    )
+    committed = allocator.accept_runtime_launch(
+        attempt_id=claim.snapshot.attempt_id,
+        lease_token=claim.lease_token,
+        fencing_epoch=claim.snapshot.fencing_epoch,
+        node_runtime_launch_receipt=captured[0],
+    )
+
+    assert committed.replayed is False
+    assert committed.snapshot.status == "reconciliation_required"
+    assert committed.snapshot.lease_expires_at == claim.snapshot.lease_expires_at
+    sessions = session_factory()
+    with sessions() as session:
+        attempt = session.get(_ExecutionAttemptRecord, claim.snapshot.attempt_id)
+        assert attempt is not None
+        assert attempt.status == "reconciliation_required"
+        assert attempt.reconciliation_reason == "lease_expired"
+        assert attempt.node_runtime_launch_receipt_sha256 == captured[0].launch_receipt_sha256
+        assert attempt.runtime_identity_sha256 == (
+            captured[0].launch_evidence.runtime_identity_sha256
+        )
+        resource = session.execute(
+            select(_ExecutionResourceLeaseRecord).where(
+                _ExecutionResourceLeaseRecord.attempt_id == attempt.attempt_id
+            )
+        ).scalar_one()
+        reservation = session.execute(
+            select(_ExecutionBudgetReservationRecord).where(
+                _ExecutionBudgetReservationRecord.attempt_id == attempt.attempt_id
+            )
+        ).scalar_one()
+        recovery_event = session.execute(
+            select(_ExecutionBudgetEventRecord)
+            .where(
+                _ExecutionBudgetEventRecord.reservation_id == reservation.reservation_id,
+                _ExecutionBudgetEventRecord.event_type == "reconciliation_required",
+            )
+            .order_by(_ExecutionBudgetEventRecord.sequence)
+        ).scalar_one()
+        assert resource.state == "reconciliation_required"
+        assert reservation.state == "reconciliation_required"
+        assert recovery_event.payload_json["details"] == {
+            "reason": "historical_runtime_launch_recovery",
+            "node_runtime_launch_receipt_sha256": captured[0].launch_receipt_sha256,
+        }
+
+
+def test_node_resubmits_local_receipt_through_expired_lease_reconciliation(
+    monkeypatch, tmp_path
+) -> None:
+    prepared, allocator, adapter, agent, runtime, state, claim = _running_v2(
+        monkeypatch,
+        tmp_path,
+        start=False,
+    )
+    original_mark_running = adapter.mark_running
+
+    def crash_before_allocator_acceptance(**_scope: object) -> None:
+        raise SystemExit("crash before allocator launch acceptance")
+
+    monkeypatch.setattr(adapter, "mark_running", crash_before_allocator_acceptance)
+    with pytest.raises(SystemExit, match="allocator launch acceptance"):
+        agent.run_once()
+
+    local = state.load_state(claim.snapshot.attempt_id)
+    assert local is not None and local.node_runtime_launch_receipt is not None
+    assert local.phase.value == "launch_committed"
+    assert runtime.launch_calls == 1
+    monkeypatch.setattr(adapter, "mark_running", original_mark_running)
+    elapsed = claim.snapshot.lease_expires_at - runtime.clock.current
+    runtime.clock.current = claim.snapshot.lease_expires_at
+    runtime.clock.monotonic += int(elapsed.total_seconds() * 1_000_000_000)
+    monkeypatch.setattr(
+        allocator_module,
+        "_database_time",
+        lambda _session: claim.snapshot.lease_expires_at,
+    )
+
+    recovered = agent.run_once()
+
+    assert recovered.outcome is NodeRunOutcome.ADOPTED
+    assert recovered.node_runtime_launch_receipt == local.node_runtime_launch_receipt
+    assert runtime.launch_calls == 1
+    sessions = session_factory()
+    with sessions() as session:
+        attempt = session.get(_ExecutionAttemptRecord, claim.snapshot.attempt_id)
+        assert attempt is not None
+        assert attempt.status == "running"
+        assert attempt.node_runtime_launch_receipt_sha256 == (
+            local.node_runtime_launch_receipt.launch_receipt_sha256
+        )
+        assert attempt.fencing_epoch == claim.snapshot.fencing_epoch + 1
+        resource = session.execute(
+            select(_ExecutionResourceLeaseRecord).where(
+                _ExecutionResourceLeaseRecord.attempt_id == attempt.attempt_id
+            )
+        ).scalar_one()
+        reservation = session.execute(
+            select(_ExecutionBudgetReservationRecord).where(
+                _ExecutionBudgetReservationRecord.attempt_id == attempt.attempt_id
+            )
+        ).scalar_one()
+        event_types = tuple(
+            session.execute(
+                select(_ExecutionBudgetEventRecord.event_type)
+                .where(_ExecutionBudgetEventRecord.reservation_id == reservation.reservation_id)
+                .order_by(_ExecutionBudgetEventRecord.sequence)
+            ).scalars()
+        )
+        assert resource.state == "held"
+        assert reservation.state == "held"
+        assert event_types == ("reserved", "reconciliation_required", "adopted")
 
 
 def test_public_key_only_allocator_can_admit_but_cannot_issue_runtime_controls(
