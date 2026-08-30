@@ -139,7 +139,13 @@ class _OutputQuotaProvisioner:
         )
 
 
-def _running_v2(monkeypatch, tmp_path, *, start: bool = True):
+def _running_v2(
+    monkeypatch,
+    tmp_path,
+    *,
+    start: bool = True,
+    initial_assignment_lease_seconds: int | None = None,
+):
     prepared = _prepared(
         monkeypatch,
         artifact_quota_bytes=MINIMUM_LOOP_OUTPUT_FILESYSTEM_BYTES,
@@ -173,6 +179,7 @@ def _running_v2(monkeypatch, tmp_path, *, start: bool = True):
         runtime_control_issuer=issuer,
         max_inventory_ttl_seconds=30,
         heartbeat_extension_seconds=15,
+        initial_assignment_lease_seconds=initial_assignment_lease_seconds,
         artifact_submission_grace_seconds=3600,
     )
     allocator.register_node(prepared.manifest.node_id)
@@ -239,6 +246,77 @@ def _running_v2(monkeypatch, tmp_path, *, start: bool = True):
     if start:
         assert agent.run_once().outcome is NodeRunOutcome.RUNNING
     return prepared, allocator, adapter, agent, runtime, state, claim
+
+
+def test_delayed_initial_assignment_contracts_to_runtime_heartbeat_window(
+    monkeypatch, tmp_path
+) -> None:
+    prepared, allocator, _adapter, agent, runtime, _state, claim = _running_v2(
+        monkeypatch,
+        tmp_path,
+        start=False,
+        initial_assignment_lease_seconds=120,
+    )
+    delayed_start = prepared.observed_at + timedelta(seconds=60)
+    assert claim.snapshot.lease_expires_at == prepared.observed_at + timedelta(seconds=120)
+    runtime.clock.current = delayed_start
+    monkeypatch.setattr(allocator_module, "_database_time", lambda _session: delayed_start)
+
+    result = agent.run_once()
+
+    assert result.outcome is NodeRunOutcome.RUNNING
+    with session_factory()() as session:
+        attempt = session.get(_ExecutionAttemptRecord, claim.snapshot.attempt_id)
+        resource = session.execute(
+            select(_ExecutionResourceLeaseRecord).where(
+                _ExecutionResourceLeaseRecord.attempt_id == claim.snapshot.attempt_id
+            )
+        ).scalar_one()
+        assert attempt is not None
+        assert attempt.lease_expires_at == delayed_start + timedelta(seconds=15)
+        assert attempt.lease_expires_at < claim.snapshot.lease_expires_at
+        assert resource.lease_expires_at == attempt.lease_expires_at
+
+
+def test_database_rejects_unbound_attempt_and_resource_lease_contraction(
+    monkeypatch, tmp_path
+) -> None:
+    _prepared_case, _allocator, _adapter, _agent, _runtime, _state, claim = _running_v2(
+        monkeypatch,
+        tmp_path,
+        start=False,
+        initial_assignment_lease_seconds=120,
+    )
+    sessions = session_factory()
+
+    with pytest.raises(DBAPIError, match="attempt clock/heartbeat/lease expiry is non-monotonic"):
+        with sessions() as session, session.begin():
+            session.execute(
+                text(
+                    "UPDATE execution_attempts "
+                    "SET state_version = state_version + 1, "
+                    "updated_at = updated_at + interval '1 microsecond', "
+                    "heartbeat_at = heartbeat_at + interval '1 microsecond', "
+                    "lease_expires_at = lease_expires_at - interval '1 second' "
+                    "WHERE attempt_id = :attempt_id"
+                ),
+                {"attempt_id": claim.snapshot.attempt_id},
+            )
+
+    with pytest.raises(
+        DBAPIError,
+        match="resource lease heartbeat/expiry is non-monotonic or past deadline",
+    ):
+        with sessions() as session, session.begin():
+            session.execute(
+                text(
+                    "UPDATE execution_resource_leases "
+                    "SET heartbeat_at = heartbeat_at + interval '1 microsecond', "
+                    "lease_expires_at = lease_expires_at - interval '1 second' "
+                    "WHERE attempt_id = :attempt_id"
+                ),
+                {"attempt_id": claim.snapshot.attempt_id},
+            )
 
 
 def _verification_only_allocator(

@@ -26,7 +26,10 @@ certify its own host would collapse the authority boundary.
    opaque pins. Post-installation typed projections are separately pinned; they do not feed back
    into the original deployment hash.
 4. Campaign apply requires an explicit literal acknowledgement, one root-owned canonical request,
-   a bounded deadline and one pre-registered qualification-only scientific execution.
+   a bounded deadline and one pre-registered qualification-only scientific execution. Its
+   explicitly frozen initial-assignment lease may cover deterministic request/plan/apply startup;
+   the first exact runtime launch authorization contracts it atomically to the ordinary heartbeat
+   interval before any engine launch.
 5. The outbox is stopped before the selected attempt becomes terminal. The node process is killed,
    one immutable successful v2 terminal row must commit, the outbox is restarted to publish a
    canonical spool envelope, then its process is killed and the same inode/bytes must survive.

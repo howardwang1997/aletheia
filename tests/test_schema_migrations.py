@@ -22,7 +22,7 @@ from aletheia.schema_migrations import require_schema_exact
 
 
 def test_repository_has_one_expected_alembic_head():
-    assert expected_schema_revision() == "20260829_0030"
+    assert expected_schema_revision() == "20260831_0031"
 
 
 def test_qualification_deployment_pins_the_repository_alembic_head():
@@ -64,6 +64,24 @@ def test_runtime_v2_deferred_validator_uses_frozen_owner_authority():
     migration = runpy.run_path(str(migration_path))
     assert migration["_FUNCTION_IDENTITY"] == "public.aletheia_execution_check_runtime_v2_attempt()"
     assert migration["_SAFE_SEARCH_PATH"] == "search_path=pg_catalog, public"
+
+
+def test_prelaunch_lease_contraction_requires_exact_runtime_authority():
+    migration_path = (
+        Path(__file__).parents[1]
+        / "migrations"
+        / "versions"
+        / "20260831_0031_prelaunch_lease_contraction.py"
+    )
+    migration = runpy.run_path(str(migration_path))
+    attempt_guard = migration["_ATTEMPT_CONTRACTION_GUARD"]
+    resource_guard = migration["_RESOURCE_CONTRACTION_GUARD"]
+    assert "OLD.status = 'reserved'" in attempt_guard
+    assert "NEW.status = 'starting'" in attempt_guard
+    assert "execution_runtime_launch_authorizations" in attempt_guard
+    assert "authorization_json->>'lease_expires_at'" in attempt_guard
+    assert "attempt_row.lease_expires_at = NEW.lease_expires_at" in resource_guard
+    assert "launch_row.authorization_sha256" in resource_guard
 
 
 def test_arl1_replicate_campaign_replaces_single_sea_per_action_constraint():

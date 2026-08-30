@@ -53,12 +53,13 @@ a read-only transaction and reconstructs those direct privilege hashes, so later
 be mistaken for the original receipt. The PostgreSQL system identifier, version number, database
 OID/name and encoding are checked before mutation and retained in the receipt.
 
-The deployment target pins the repository's unique Alembic head `20260829_0030`. Revision `0027`
+The deployment target pins the repository's unique Alembic head `20260831_0031`. Revision `0027`
 adds the PR-5 scientific-controller persistence, `0028` permits the preregistered replicate
 campaigns required by ARL-1, `0029` closes real-time endurance transaction-clock custody, and
 `0030` gives the runtime-v2 deferred validator exact no-login owner authority without granting
-application roles direct routine execution. Commissioning rejects any older or newer database
-revision. A repository regression test requires
+application roles direct routine execution. Revision `0031` binds the one permitted pre-launch
+lease contraction to the exact append-only runtime launch authority and matching resource lease.
+Commissioning rejects any older or newer database revision. A repository regression test requires
 this deployment pin to remain equal to the unique Alembic head.
 
 Plan and apply use the checked-in wrapper. Apply additionally requires the exact acknowledgement
