@@ -2245,6 +2245,210 @@ def test_launch_evidence_requires_gate_to_exec_exact_pinned_workload(
     )
 
 
+def test_initial_launch_waits_for_same_pid_to_cross_gate_exec_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request, policy = _request(tmp_path)
+    runtime = _runtime(tmp_path, policy)
+    preparation = runtime.prepare(request=request)
+    plan = runtime._coerce_request(request)  # noqa: SLF001
+    config = runtime.build_oci_configuration(request=plan)
+    inspection: dict[str, object] = {
+        "Id": "f" * 64,
+        "State": {
+            "Running": True,
+            "Pid": 4242,
+            "StartedAt": "2026-08-24T13:00:00.000000000Z",
+        },
+    }
+    expected = object()
+    captures: list[dict[str, object]] = []
+    refreshes: list[str] = []
+    validations: list[dict[str, object]] = []
+    sleeps: list[float] = []
+
+    def _capture(**scope):  # type: ignore[no-untyped-def]
+        captures.append(scope["inspection"])
+        if len(captures) < 3:
+            raise oci_runtime_module._OCIWorkloadExecPending(  # noqa: SLF001
+                "launch gate is still running"
+            )
+        return expected
+
+    def _inspect(name: str, *, optional: bool):  # type: ignore[no-untyped-def]
+        assert name == config.container_name and optional is False
+        refreshes.append(name)
+        return inspection
+
+    monkeypatch.setattr(runtime, "_launch_journal", _capture)
+    monkeypatch.setattr(runtime, "_engine_inspect", _inspect)
+    monkeypatch.setattr(
+        runtime,
+        "_validate_engine_configuration",
+        lambda observed, *, config: validations.append(observed),
+    )
+    monkeypatch.setattr(oci_runtime_module.time, "sleep", sleeps.append)
+
+    observed = runtime._capture_initial_launch_journal(  # noqa: SLF001
+        request=plan,
+        preparation=preparation,
+        config=config,
+        inspection=inspection,
+        authorization_sha256=_digest("authorization"),
+        production_capability_sha256=_digest("capability"),
+        launch_gate_authorization_journal_sha256=_digest("gate-journal"),
+        deadline_watchdog_journal_sha256=_digest("deadline-watchdog"),
+        create_submission_journal_sha256=_digest("create-submission"),
+        start_submission_journal_sha256=_digest("start-submission"),
+    )
+
+    assert observed is expected
+    assert captures == [inspection, inspection, inspection]
+    assert refreshes == [config.container_name, config.container_name]
+    assert validations == [inspection, inspection]
+    assert sleeps == [
+        oci_runtime_module._WORKLOAD_EXEC_OBSERVATION_INTERVAL_SECONDS,  # noqa: SLF001
+        oci_runtime_module._WORKLOAD_EXEC_OBSERVATION_INTERVAL_SECONDS,  # noqa: SLF001
+    ]
+
+
+def test_initial_launch_exec_wait_rejects_changed_pid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request, policy = _request(tmp_path)
+    runtime = _runtime(tmp_path, policy)
+    preparation = runtime.prepare(request=request)
+    plan = runtime._coerce_request(request)  # noqa: SLF001
+    config = runtime.build_oci_configuration(request=plan)
+    inspection: dict[str, object] = {
+        "Id": "f" * 64,
+        "State": {
+            "Running": True,
+            "Pid": 4242,
+            "StartedAt": "2026-08-24T13:00:00.000000000Z",
+        },
+    }
+    changed: dict[str, object] = {
+        **inspection,
+        "State": {
+            "Running": True,
+            "Pid": 4243,
+            "StartedAt": "2026-08-24T13:00:00.000000000Z",
+        },
+    }
+    monkeypatch.setattr(
+        runtime,
+        "_launch_journal",
+        lambda **scope: (_ for _ in ()).throw(  # type: ignore[misc]
+            oci_runtime_module._OCIWorkloadExecPending(  # noqa: SLF001
+                "launch gate is still running"
+            )
+        ),
+    )
+    monkeypatch.setattr(runtime, "_engine_inspect", lambda *args, **kwargs: changed)
+    monkeypatch.setattr(runtime, "_validate_engine_configuration", lambda *args, **kwargs: None)
+    monkeypatch.setattr(oci_runtime_module.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(oci_runtime_module.OCIEngineError, match="identity changed"):
+        runtime._capture_initial_launch_journal(  # noqa: SLF001
+            request=plan,
+            preparation=preparation,
+            config=config,
+            inspection=inspection,
+            authorization_sha256=_digest("authorization"),
+            production_capability_sha256=_digest("capability"),
+            launch_gate_authorization_journal_sha256=_digest("gate-journal"),
+            deadline_watchdog_journal_sha256=_digest("deadline-watchdog"),
+            create_submission_journal_sha256=_digest("create-submission"),
+            start_submission_journal_sha256=_digest("start-submission"),
+        )
+
+
+def test_initial_launch_exec_wait_is_bounded_and_does_not_retry_other_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request, policy = _request(tmp_path)
+    runtime = _runtime(tmp_path, policy)
+    preparation = runtime.prepare(request=request)
+    plan = runtime._coerce_request(request)  # noqa: SLF001
+    config = runtime.build_oci_configuration(request=plan)
+    inspection: dict[str, object] = {
+        "Id": "f" * 64,
+        "State": {
+            "Running": True,
+            "Pid": 4242,
+            "StartedAt": "2026-08-24T13:00:00.000000000Z",
+        },
+    }
+    captures = 0
+    refreshes = 0
+
+    def _pending(**scope):  # type: ignore[no-untyped-def]
+        nonlocal captures
+        del scope
+        captures += 1
+        raise oci_runtime_module._OCIWorkloadExecPending(  # noqa: SLF001
+            "launch gate is still running"
+        )
+
+    def _inspect(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal refreshes
+        del args, kwargs
+        refreshes += 1
+        return inspection
+
+    monkeypatch.setattr(oci_runtime_module, "_WORKLOAD_EXEC_OBSERVATION_ATTEMPTS", 3)
+    monkeypatch.setattr(oci_runtime_module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(runtime, "_launch_journal", _pending)
+    monkeypatch.setattr(runtime, "_engine_inspect", _inspect)
+    monkeypatch.setattr(runtime, "_validate_engine_configuration", lambda *args, **kwargs: None)
+
+    with pytest.raises(oci_runtime_module.OCIEngineError, match="bounded observation window"):
+        runtime._capture_initial_launch_journal(  # noqa: SLF001
+            request=plan,
+            preparation=preparation,
+            config=config,
+            inspection=inspection,
+            authorization_sha256=_digest("authorization"),
+            production_capability_sha256=_digest("capability"),
+            launch_gate_authorization_journal_sha256=_digest("gate-journal"),
+            deadline_watchdog_journal_sha256=_digest("deadline-watchdog"),
+            create_submission_journal_sha256=_digest("create-submission"),
+            start_submission_journal_sha256=_digest("start-submission"),
+        )
+    assert captures == 3
+    assert refreshes == 2
+
+    monkeypatch.setattr(
+        runtime,
+        "_launch_journal",
+        lambda **scope: (_ for _ in ()).throw(
+            oci_runtime_module.OCIEngineError("inexact live workload")
+        ),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_engine_inspect",
+        lambda *args, **kwargs: pytest.fail("non-transition errors must not be retried"),
+    )
+    with pytest.raises(oci_runtime_module.OCIEngineError, match="inexact live workload"):
+        runtime._capture_initial_launch_journal(  # noqa: SLF001
+            request=plan,
+            preparation=preparation,
+            config=config,
+            inspection=inspection,
+            authorization_sha256=_digest("authorization"),
+            production_capability_sha256=_digest("capability"),
+            launch_gate_authorization_journal_sha256=_digest("gate-journal"),
+            deadline_watchdog_journal_sha256=_digest("deadline-watchdog"),
+            create_submission_journal_sha256=_digest("create-submission"),
+            start_submission_journal_sha256=_digest("start-submission"),
+        )
+
+
 def test_workload_observation_accepts_exact_linux_fd_shebang_form(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -88,6 +88,26 @@ All five q services were stopped and disabled, its exact exited container was re
 were unmounted and `/dev/loop22` was detached; the write-once journal, database rows and backing
 image remain as negative engineering evidence.
 
+Generation r, frozen from merge commit `7973d12ffff80e9cae89c7a983fa6411b07fcb3c`
+after green main CI, incorporated the supplementary-group fix and reached the next real launch
+boundary. Its Docker manifest digest was
+`6f3fd86d94122c9830b80fb64fda2bbf90fad5ff410d86a657200d7c9f00b977`; its
+release-freeze receipt was
+`2c79d79324e9722a3c1b143b2e3961d5e0021ad88010ebcd8f475dd39e956da3`.
+The exact container started on `/dev/loop22`, crossed into the pinned fd/shebang workload and
+remained alive, but the node captured launch evidence in the narrow interval after Docker reported
+`Running=true` and before the launch gate completed `execve`. The observer therefore saw the
+launch-gate argv, rejected it, and did not publish `engine-launch.json` or
+`launch-evidence.json`. No campaign request/apply or destructive fault phase ran. The five services
+were stopped and disabled, the container removed, all generation-r mounts unmounted and
+`/dev/loop22` detached; its write-once database and journal evidence remains retained.
+
+Initial launch capture now treats only that exact same-container, same-PID and same-`StartedAt`
+argv-length transition as transient. It reruns full engine-configuration validation and fresh
+process observation in a bounded window. Container/PID/start drift, configuration drift, a
+wrong same-shape argv, disappearance, or timeout still fails closed; recovery never constructs
+launch authority from an ambiguous already-started process.
+
 PostgreSQL observation no longer copies routine, trigger, sequence or owner claims out of the
 deployment spec.  One `REPEATABLE READ, READ ONLY` snapshot reruns the exhaustive ACL/role gate,
 hashes every live execution routine and non-internal trigger definition, reads each exact sequence
@@ -210,10 +230,9 @@ receipt into a passing shape.
 The selected Linux target is compatible and has frozen/installed candidate generations, but none
 has emitted the complete campaign receipt. Therefore no host is currently proven deployable,
 PR-4b remains nondeployable, and `scientific_admission_allowed` is always false even in a
-successful campaign receipt. The next ordered operation is to merge the supplementary-group and
-bounded-runtime fixes, rebuild/re-pin the changed workload image, commission one fresh generation
-with a 1,800-second workload inside a 3,600-second execution lease, and rerun the complete
-campaign—not more controller authority.
+successful campaign receipt. The next ordered operation is to merge the bounded launch-gate exec
+transition fix, commission one fresh generation with a 1,800-second workload inside a
+3,600-second execution lease, and rerun the complete campaign—not more controller authority.
 
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the
