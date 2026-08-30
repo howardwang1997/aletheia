@@ -139,6 +139,50 @@ kernel group list, removes only the effective primary GID that is independently 
 four `Gid` fields, and then compares the remaining closed set exactly with the frozen supplementary
 GIDs. Any duplicate or any other additional/missing GID still fails closed.
 
+Generation t, frozen from merge commit `9f746e870d5e043dad374adda26c1797ca296a05`
+after green pull-request and main CI, proved the corrected process-group projection and reached a
+later database transaction boundary. Its deterministic source archive had SHA-256
+`52283e8abc37d8039131953ea35309b6f74287e43e651c45b643a15b34e4a5e0`; its
+release-freeze receipt had SHA-256
+`5db2b8a63233dc3e9316cdf06a8cc2fab98e9316f91d391f1a05d7256a84087a`.
+Execution `exe_883d041449b5a658b94f548e5940ac93`, attempt
+`iat_09100ab7295c81ec0fd2068be4846c29` and scientific slot
+`sos_e7a33223d98bfe4e4f4d22c5ea6f1d33` launched container
+`bdb1c148bd754c6bb3cb9f13b5b0ba4cc8ba11bdee72d35320b0e77777a585d7` from OCI
+manifest `6f3fd86d94122c9830b80fb64fda2bbf90fad5ff410d86a657200d7c9f00b977`.
+The node durably published `engine-launch.json` and `launch-evidence.json` with SHA-256
+`1c13baf118c67e8860b53b913aa567ca25b4b379ab0d2d8f18b3ccd0567ee2b0` and
+`61a8da71c4cfd37cbc9b5ab605b863adeedd149bc784812bd6a2cb108aef7684`. The
+workload ran for the selected 1,800-second hold, exited zero and left the 65-byte
+`result.sha256` with file SHA-256
+`25e0da1d2cdaf722dfac6969bfde0c165e85f9a06b8db407ac18a18c7eec2547`.
+
+That successful engine run still did not become a campaign. When the allocator accepted the
+node-signed launch receipt after the short lease boundary, `accept_runtime_launch()` first dirtied
+the attempt's runtime-identity columns and then queried the previous budget event. SQLAlchemy's
+query-triggered autoflush sent that intermediate attempt row to PostgreSQL before the final
+`state_version + 1`; the database guard correctly rejected it with `execution attempt
+state_version must advance exactly once` and rolled the transaction back. The node retained the
+actual launch receipt while the database retained only pre-runtime authority. On restart, the
+cleanup-only delivery rejected that already-started local shape instead of resubmitting the exact
+receipt, producing 98 systemd restarts before the service was stopped.
+
+The fix keeps the budget-event lookup inside `Session.no_autoflush`, so runtime identity,
+reconciliation state and the version increment reach the guard in one update. Cold recovery now
+also permits only a fully reverified node-local launch receipt to cross the historical pre-runtime
+delivery: it resubmits those same signed bytes without another engine start and, after lease
+expiry, uses the existing fenced adoption path. Pure recovery tests and a fresh PostgreSQL target
+test cover both live and expired-lease cases, including exactly one runtime start and the ordered
+`reserved -> reconciliation_required -> adopted` budget events.
+
+No generation-t campaign request, plan, apply, service SIGKILL phase, campaign loop/ext4 mount or
+PostgreSQL-backend termination occurred. Its operator template also retained an `s1` release-path
+suffix while all generation-t frozen files consistently bound those bytes; this was not the
+transaction failure, but a later generation must use a matching release suffix. All five units
+were stopped and disabled, the exact exited container was removed, both output mount projections
+and the workspace bind were unmounted, and `/dev/loop22` was detached. The database rows, runtime
+journal and quota backing image remain retained as negative engineering evidence.
+
 PostgreSQL observation no longer copies routine, trigger, sequence or owner claims out of the
 deployment spec.  One `REPEATABLE READ, READ ONLY` snapshot reruns the exhaustive ACL/role gate,
 hashes every live execution routine and non-internal trigger definition, reads each exact sequence

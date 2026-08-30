@@ -2205,6 +2205,71 @@ def test_crash_after_db_start_commit_replays_durable_exact_nonce_and_ticket(
     assert harness.runtime.launch_calls == 1
 
 
+@pytest.mark.parametrize(
+    ("acceptance_requires_adoption", "expected_outcome"),
+    (
+        (False, NodeRunOutcome.RUNNING),
+        (True, NodeRunOutcome.ADOPTED),
+    ),
+)
+def test_historical_pre_runtime_delivery_resubmits_exact_local_launch_receipt(
+    monkeypatch,
+    tmp_path: Path,
+    acceptance_requires_adoption: bool,
+    expected_outcome: NodeRunOutcome,
+) -> None:
+    harness = _Harness(tmp_path)
+    original_mark_running = harness.allocator.mark_running
+
+    def crash_before_allocator_acceptance(**_scope: object) -> NodeReservation:
+        raise SystemExit("crash before allocator launch acceptance")
+
+    monkeypatch.setattr(
+        harness.allocator,
+        "mark_running",
+        crash_before_allocator_acceptance,
+    )
+    with pytest.raises(SystemExit, match="allocator launch acceptance"):
+        harness.agent.run_once()
+
+    state = harness.state.load_state(harness.reservation.attempt_id)
+    assert state is not None
+    assert state.phase is AttemptPhase.LAUNCH_COMMITTED
+    assert state.launch_committed is True
+    assert state.running_confirmed is False
+    assert state.runtime_identity is not None
+    assert state.node_runtime_launch_receipt is not None
+    assert harness.allocator.current.status == "starting"
+    assert harness.runtime.launch_calls == 1
+
+    monkeypatch.setattr(harness.allocator, "mark_running", original_mark_running)
+    if acceptance_requires_adoption:
+        harness.allocator.reconcile_on.add("mark_running")
+    lineage = HistoricalPreRuntimeRecoveryLineage(
+        runtime_preparation=state.runtime_preparation,
+        runtime_launch_authorization_request=state.runtime_launch_authorization_request,
+        runtime_launch_authorization=state.runtime_launch_authorization,
+    )
+    recovery_assignment = replace(
+        harness.assignment,
+        reservation=harness.allocator.current,
+        lease_token=None,
+        historical_pre_runtime_recovery_lineage=lineage,
+    )
+
+    recovered = harness.agent.run_assignment(recovery_assignment)
+
+    assert recovered.outcome is expected_outcome
+    assert harness.runtime.launch_calls == 1
+    assert harness.allocator.last_launch_receipt == state.node_runtime_launch_receipt
+    assert harness.allocator.calls.count("running") == 1
+    assert harness.allocator.calls.count("adopt") == int(acceptance_requires_adoption)
+    persisted = harness.state.load_state(harness.reservation.attempt_id)
+    assert persisted is not None
+    assert persisted.running_confirmed is True
+    assert persisted.phase is AttemptPhase.RUNNING
+
+
 def test_historical_pre_runtime_recovery_after_hard_deadline_only_cleans_and_releases(
     tmp_path: Path,
 ) -> None:

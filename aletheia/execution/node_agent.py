@@ -3133,7 +3133,40 @@ class QualificationNodeAgent:
                 if state.runtime_identity is not None:
                     self._validate_runtime_identity(state.runtime_identity, request=request)
 
-            if historical_pre_runtime_lineage is not None:
+            if (
+                historical_pre_runtime_lineage is not None
+                and state.node_runtime_launch_receipt is not None
+            ):
+                # The allocator cannot observe a node-local receipt whose acceptance transaction
+                # failed or whose response was lost.  A cleanup-only delivery still proves the
+                # exact DB ticket; after the recovered-state signature check above, resubmitting
+                # this already-durable receipt records history but cannot launch another runtime.
+                try:
+                    snapshot = self._allocator.mark_running(
+                        attempt_id=attempt_id,
+                        lease_token=token,
+                        fencing_epoch=state.fencing_epoch,
+                        node_runtime_launch_receipt=state.node_runtime_launch_receipt,
+                    )
+                    reservation = self._validate_allocator_response(
+                        snapshot,
+                        baseline=reservation,
+                        expected_statuses=frozenset({"running", "reconciliation_required"}),
+                        expected_fencing_epoch=state.fencing_epoch,
+                        expected_lease_token_sha256=state.lease_token_sha256,
+                        require_live_authority=snapshot.status == "running",
+                        operation="historical_local_launch_acceptance",
+                    )
+                except NodeLeaseRejected:
+                    return self._local_reconciliation(
+                        state=state,
+                        reason="historical_local_launch_acceptance_lost_authority",
+                    )
+
+            if (
+                historical_pre_runtime_lineage is not None
+                and state.node_runtime_launch_receipt is None
+            ):
                 cleaned = self._cleanup_never_started(request=request, state=state)
                 if cleaned.state is RuntimeInspectionState.ABSENT:
                     return self._pre_runtime_absence_result(
@@ -4686,7 +4719,7 @@ class QualificationNodeAgent:
         reservation: NodeReservation,
         grant: EngineeringQualificationGrant,
     ) -> _AttemptState:
-        """Durably recover one DB-committed ticket strictly as cleanup evidence."""
+        """Recover one DB ticket for cleanup or exact local-launch receipt resubmission."""
 
         preparation = lineage.runtime_preparation
         authorization_request = lineage.runtime_launch_authorization_request
@@ -4702,22 +4735,38 @@ class QualificationNodeAgent:
             raise AssignmentRejected(
                 "historical pre-runtime launch authorization is invalid"
             ) from exc
+        local_launch_recorded = state.runtime_identity is not None
         if (
-            state.phase
-            not in {
-                AttemptPhase.START_REQUESTED,
-                AttemptPhase.START_AUTHORIZED,
-                AttemptPhase.LAUNCH_COMMITTED,
-                AttemptPhase.RECONCILIATION_REQUIRED,
-            }
-            or state.runtime_preparation != preparation
+            state.runtime_preparation != preparation
             or state.runtime_launch_authorization_request != authorization_request
             or state.running_confirmed
-            or state.runtime_identity is not None
-            or state.node_runtime_launch_receipt is not None
+            or (state.runtime_identity is None) != (state.node_runtime_launch_receipt is None)
             or (
-                state.phase is not AttemptPhase.RECONCILIATION_REQUIRED
-                and state.launch_committed != (state.phase is AttemptPhase.LAUNCH_COMMITTED)
+                local_launch_recorded
+                and (
+                    state.phase
+                    not in {
+                        AttemptPhase.LAUNCH_COMMITTED,
+                        AttemptPhase.RECONCILIATION_REQUIRED,
+                    }
+                    or not state.launch_committed
+                )
+            )
+            or (
+                not local_launch_recorded
+                and (
+                    state.phase
+                    not in {
+                        AttemptPhase.START_REQUESTED,
+                        AttemptPhase.START_AUTHORIZED,
+                        AttemptPhase.LAUNCH_COMMITTED,
+                        AttemptPhase.RECONCILIATION_REQUIRED,
+                    }
+                    or (
+                        state.phase is not AttemptPhase.RECONCILIATION_REQUIRED
+                        and state.launch_committed != (state.phase is AttemptPhase.LAUNCH_COMMITTED)
+                    )
+                )
             )
             or state.attempt_id != reservation.attempt_id
             or state.execution_id != reservation.execution_id
