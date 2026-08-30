@@ -26,6 +26,7 @@ from aletheia.execution.allocator import (
 from aletheia.execution.node_agent import (
     NodeLocalStateStore,
     NodeRunOutcome,
+    NodeTerminalDisposition,
     PinnedArtifactPath,
     PinnedEnvironmentVariable,
     PinnedLaunchRegistry,
@@ -635,6 +636,57 @@ def test_runtime_v2_terminal_acceptance_recovery_and_outbox_are_atomic(
         terminal_reader.load_verified_qualification_terminal_source(
             execution_id=claim.snapshot.execution_id,
             attempt_id=claim.snapshot.attempt_id,
+        )
+
+
+def test_expired_running_lease_uses_recovery_only_authority_to_commit_terminal(
+    monkeypatch, tmp_path
+) -> None:
+    _prepared_case, _allocator, _adapter, agent, runtime, _state, claim = _running_v2(
+        monkeypatch,
+        tmp_path,
+    )
+    runtime.finish(exit_code=0)
+    sessions = session_factory()
+    with sessions() as session:
+        running = session.get(_ExecutionAttemptRecord, claim.snapshot.attempt_id)
+        assert running is not None and running.status == "running"
+        lease_expires_at = running.lease_expires_at
+        state_version = running.state_version
+
+    expired_at = lease_expires_at + timedelta(milliseconds=141)
+    elapsed = expired_at - runtime.clock.current
+    runtime.clock.current = expired_at
+    runtime.clock.monotonic += int(elapsed.total_seconds() * 1_000_000_000)
+    monkeypatch.setattr(allocator_module, "_database_time", lambda _session: expired_at)
+
+    result = agent.run_once()
+
+    assert result.outcome is NodeRunOutcome.COLLECTED
+    assert result.terminal_disposition is NodeTerminalDisposition.PROCESS_SUCCEEDED
+    assert result.accepted_runtime_termination is not None
+    with sessions() as session:
+        committed = session.get(_ExecutionAttemptRecord, claim.snapshot.attempt_id)
+        assert committed is not None
+        assert committed.status == "verifying"
+        assert committed.state_version > state_version
+        assert committed.accepted_runtime_termination_sha256 == (
+            result.accepted_runtime_termination.accepted_termination_sha256
+        )
+        assert committed.accepted_terminal_submission_sha256 is not None
+        terminal_acceptance = session.execute(
+            select(_ExecutionQualificationTerminalAcceptanceRecord).where(
+                _ExecutionQualificationTerminalAcceptanceRecord.attempt_id == committed.attempt_id
+            )
+        ).scalar_one()
+        assert terminal_acceptance.accepted_terminal_submission_sha256 == (
+            committed.accepted_terminal_submission_sha256
+        )
+        assert (
+            session.scalar(
+                select(func.count()).select_from(_ExecutionQualificationTerminalOutboxRecord)
+            )
+            == 0
         )
 
 

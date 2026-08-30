@@ -2913,6 +2913,55 @@ def test_historical_recovery_grant_never_authorizes_prepare_or_launch(
     assert launched.runtime.rebind_calls == 0
 
 
+def test_historical_recovery_collects_existing_runtime_after_live_lease_expires(
+    tmp_path: Path,
+) -> None:
+    harness = _Harness(tmp_path)
+    assert harness.agent.run_once().outcome is NodeRunOutcome.RUNNING
+    state = harness.state.load_state(harness.reservation.attempt_id)
+    assert state is not None
+    assert state.node_runtime_launch_receipt is not None
+    harness.runtime.finish(exit_code=0)
+
+    reservation = replace(harness.allocator.current, status="running")
+    harness.allocator.current = reservation
+    harness.clock.current = reservation.lease_expires_at + timedelta(milliseconds=141)
+    harness.clock.monotonic += int(timedelta(minutes=10, milliseconds=141).total_seconds() * 1e9)
+    with pytest.raises(AssignmentRejected, match="exact allocator/grant authority"):
+        harness.agent.run_assignment(replace(harness.assignment, reservation=reservation))
+    recovery = issue_historical_runtime_recovery_grant(
+        pin=_runtime_control_pin(),
+        private_key=RUNTIME_CONTROL_PRIVATE_KEY,
+        admission_sha256=reservation.admission_sha256,
+        qualification_grant_sha256=harness.case.grant.grant_sha256,
+        intent_sha256=harness.intent.intent_sha256,
+        execution_id=harness.intent.execution_id,
+        infrastructure_attempt_id=reservation.attempt_id,
+        runtime_preparation_sha256=state.runtime_preparation.preparation_sha256,
+        node_runtime_launch_receipt_sha256=(
+            state.node_runtime_launch_receipt.launch_receipt_sha256
+        ),
+        admitted_at=NOW,
+        hard_deadline=reservation.hard_deadline,
+        issued_at=harness.clock.now(),
+        recovery_expires_at=reservation.hard_deadline + timedelta(hours=4),
+    )
+    assignment = replace(
+        harness.assignment,
+        reservation=reservation,
+        lease_token=None,
+        historical_recovery_grant=recovery,
+    )
+
+    result = harness.agent.run_assignment(assignment)
+
+    assert result.outcome is NodeRunOutcome.COLLECTED
+    assert result.terminal_disposition is NodeTerminalDisposition.PROCESS_SUCCEEDED
+    assert result.accepted_runtime_termination is not None
+    assert harness.runtime.launch_calls == 1
+    assert harness.runtime.rebind_calls == 0
+
+
 def test_historical_recovery_replays_db_accepted_hash_after_local_save_crash(
     tmp_path: Path,
 ) -> None:

@@ -3738,12 +3738,12 @@ class QualificationNodeAgent:
             > self._runtime_control_authority.pin.active_until
             or not now < reservation.hard_deadline + self._artifact_completion_grace
             or (
-                historical_pre_runtime is None
+                not recovery_only_assignment
                 and reservation.status not in {"reconciliation_required", "terminated", "verifying"}
                 and not now < reservation.lease_expires_at
             )
             or (
-                historical_pre_runtime is None
+                not recovery_only_assignment
                 and reservation.status not in {"reconciliation_required", "terminated", "verifying"}
                 and not now < reservation.hard_deadline
             )
