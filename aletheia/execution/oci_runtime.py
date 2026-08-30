@@ -72,6 +72,8 @@ _IMAGE_REFERENCE = re.compile(
 )
 _MAX_JOURNAL_BYTES = 8 * 1024 * 1024
 _ENGINE_OUTPUT_LIMIT = 8 * 1024 * 1024
+_WORKLOAD_EXEC_OBSERVATION_ATTEMPTS = 101
+_WORKLOAD_EXEC_OBSERVATION_INTERVAL_SECONDS = 0.02
 
 
 def _durable_runtime_checkpoint(phase: str, path: Path) -> None:
@@ -190,6 +192,10 @@ class OCIProductionCapabilityError(OCIRuntimeError):
 
 class OCIEngineError(OCIRuntimeError):
     """The pinned OCI engine failed or returned non-exact evidence."""
+
+
+class _OCIWorkloadExecPending(OCIEngineError):
+    """The exact container PID is still crossing the launch-gate exec boundary."""
 
 
 class OCIRuntimeClock(Protocol):
@@ -2285,9 +2291,10 @@ class LocalQualificationOCIRuntime:
                 runtime_root / "deadline-watchdog.json",
                 _DeadlineWatchdogJournal,
             )
-            journal = self._launch_journal(
+            journal = self._capture_initial_launch_journal(
                 request=request,
                 preparation=preparation,
+                config=config,
                 inspection=inspection,
                 authorization_sha256=authorization_sha256,
                 production_capability_sha256=capability.capability_sha256,
@@ -4401,6 +4408,82 @@ class LocalQualificationOCIRuntime:
             ended_monotonic_ns=ended_monotonic_ns,
         )
 
+    @staticmethod
+    def _running_engine_process_scope(
+        inspection: dict[str, object],
+    ) -> tuple[str, int, str]:
+        container_id = inspection.get("Id")
+        state = inspection.get("State")
+        if (
+            not isinstance(container_id, str)
+            or re.fullmatch(r"[0-9a-f]{64}", container_id) is None
+            or not isinstance(state, dict)
+            or state.get("Running") is not True
+        ):
+            raise OCIEngineError("OCI exec transition lost the exact running container")
+        pid = state.get("Pid")
+        started_at = state.get("StartedAt")
+        if not isinstance(pid, int) or pid < 1 or not isinstance(started_at, str):
+            raise OCIEngineError("OCI exec transition omitted exact PID/start evidence")
+        return container_id, pid, started_at
+
+    def _capture_initial_launch_journal(
+        self,
+        *,
+        request: OCIExecutionPlan,
+        preparation: RuntimePreparation,
+        config: OCIConfiguration,
+        inspection: dict[str, object],
+        authorization_sha256: str,
+        production_capability_sha256: str,
+        launch_gate_authorization_journal_sha256: str,
+        deadline_watchdog_journal_sha256: str,
+        create_submission_journal_sha256: str,
+        start_submission_journal_sha256: str,
+    ) -> _EngineLaunchJournal:
+        """Wait briefly for one already-started gate PID to exec the pinned workload.
+
+        Docker returns from ``start`` as soon as the container process exists.  The immutable
+        launch gate still needs a small scheduling window to verify its signed ticket and execve
+        the workload.  Only the typed argv-length transition is retryable, and every retry
+        revalidates the full engine configuration plus the immutable container/PID/start scope.
+        """
+
+        process_scope = self._running_engine_process_scope(inspection)
+        current = inspection
+        for attempt in range(_WORKLOAD_EXEC_OBSERVATION_ATTEMPTS):
+            try:
+                return self._launch_journal(
+                    request=request,
+                    preparation=preparation,
+                    inspection=current,
+                    authorization_sha256=authorization_sha256,
+                    production_capability_sha256=production_capability_sha256,
+                    launch_gate_authorization_journal_sha256=(
+                        launch_gate_authorization_journal_sha256
+                    ),
+                    deadline_watchdog_journal_sha256=(deadline_watchdog_journal_sha256),
+                    create_submission_journal_sha256=create_submission_journal_sha256,
+                    start_submission_journal_sha256=start_submission_journal_sha256,
+                )
+            except _OCIWorkloadExecPending as exc:
+                if attempt + 1 == _WORKLOAD_EXEC_OBSERVATION_ATTEMPTS:
+                    raise OCIEngineError(
+                        "OCI launch gate did not exec the exact pinned workload "
+                        "within the bounded observation window"
+                    ) from exc
+            time.sleep(_WORKLOAD_EXEC_OBSERVATION_INTERVAL_SECONDS)
+            refreshed = self._engine_inspect(config.container_name, optional=False)
+            if refreshed is None:  # pragma: no cover - optional=False cannot return absence
+                raise OCIEngineError("OCI process disappeared during exec transition")
+            self._validate_engine_configuration(refreshed, config=config)
+            if self._running_engine_process_scope(refreshed) != process_scope:
+                raise OCIEngineError(
+                    "OCI container/PID/start identity changed during exec transition"
+                )
+            current = refreshed
+        raise AssertionError("bounded OCI exec observation loop did not terminate")
+
     def _launch_journal(
         self,
         *,
@@ -4627,7 +4710,9 @@ class LocalQualificationOCIRuntime:
             raise OCIEngineError("OCI workload process argv is not canonical NUL framing")
         observed_parts = tuple(proc_cmdline[:-1].split(b"\x00"))
         if len(observed_parts) != len(logical_argv) + 1:
-            raise OCIEngineError("OCI launch gate has not execved the exact pinned workload argv")
+            raise _OCIWorkloadExecPending(
+                "OCI launch gate has not execved the exact pinned workload argv"
+            )
         try:
             interpreter_from_cmdline = observed_parts[0].decode("ascii")
             descriptor_argument = observed_parts[1].decode("ascii")
