@@ -708,6 +708,78 @@ def test_concrete_observer_uses_one_live_postgresql_catalog_snapshot(
     assert projection["postgresql_execution_object_owners"] == live_catalog.object_owners
 
 
+def test_live_artifact_check_reuses_prepared_graph_outside_freshness_window(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    request, _manifest, _preflight = _request_and_evidence(monkeypatch, tmp_path)
+    observer = LinuxQualificationDeploymentObserver(request.observer_config)
+    prepared = observer._prepare_observation_scope()  # noqa: SLF001
+    commissioning_files = {
+        item.installed_file.path: item.installed_file
+        for item in request.observer_config.commissioning_receipt.artifact_completions
+    }
+    installation_files = {
+        item.installed_file.path: item.installed_file
+        for item in request.observer_config.installation_receipt.artifact_completions
+    }
+    observer._authority_host = SimpleNamespace(  # noqa: SLF001
+        observe_artifact=lambda artifact: commissioning_files[artifact.target_path]
+    )
+
+    def observe_installed(path: str, *, expected_sha256: str):
+        installed = installation_files[path]
+        assert expected_sha256 == installed.content_sha256
+        return SimpleNamespace(
+            path=installed.path,
+            sha256=installed.content_sha256,
+            device=installed.device,
+            inode=installed.inode,
+            owner_uid=installed.owner_uid,
+            owner_gid=installed.owner_gid,
+            mode=installed.mode,
+        )
+
+    monkeypatch.setattr(qualification_observer, "_pinned_root_file", observe_installed)
+
+    def forbidden_graph_rebuild(*_args, **_kwargs):
+        raise AssertionError("deterministic authority graph rebuilt inside live artifact check")
+
+    monkeypatch.setattr(
+        qualification_observer,
+        "build_qualification_authority_commissioning_plan",
+        forbidden_graph_rebuild,
+    )
+    monkeypatch.setattr(
+        qualification_observer,
+        "verify_qualification_installation_receipt",
+        forbidden_graph_rebuild,
+    )
+    monkeypatch.setattr(
+        qualification_observer,
+        "qualification_authority_bundle_sha256",
+        forbidden_graph_rebuild,
+    )
+    monkeypatch.setattr(
+        qualification_observer,
+        "expected_qualification_systemd_service_identities",
+        forbidden_graph_rebuild,
+    )
+    monkeypatch.setattr(
+        qualification_observer,
+        "render_systemd_units",
+        forbidden_graph_rebuild,
+    )
+    monkeypatch.setattr(
+        qualification_observer,
+        "render_postgresql_acl",
+        forbidden_graph_rebuild,
+    )
+
+    observer._verify_live_artifacts(prepared)  # noqa: SLF001
+    assert observer._prepare_observation_scope() is prepared  # noqa: SLF001
+
+
 def test_concrete_observer_signs_only_the_frozen_call_scope(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

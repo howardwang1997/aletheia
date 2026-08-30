@@ -16,6 +16,7 @@ import stat
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
@@ -54,6 +55,7 @@ from aletheia.execution.runtime_v2_contracts import PinnedOutputWorkspaceRoot
 from aletheia.execution.schemas import ExecutionModel, canonical_json_bytes, canonical_sha256
 from aletheia.qualification_authority_commissioning import (
     LinuxQualificationAuthorityCommissioningHost,
+    QualificationAuthorityCommissioningPlanV1,
     QualificationAuthorityCommissioningReceiptV1,
     QualificationAuthorityCommissioningRequestV1,
     build_qualification_authority_commissioning_plan,
@@ -61,6 +63,7 @@ from aletheia.qualification_authority_commissioning import (
     verify_qualification_authority_commissioning_receipt,
 )
 from aletheia.qualification_installer import (
+    QualificationInstallationPlanV1,
     QualificationInstallationReceiptV1,
     verify_qualification_installation_receipt,
 )
@@ -273,6 +276,20 @@ class QualificationLinuxObserverConfigV1(ExecutionModel):
     @property
     def config_sha256(self) -> str:
         return canonical_sha256(self)
+
+
+@dataclass(frozen=True)
+class _PreparedQualificationObservationScope:
+    """Deterministic frozen graph work that must not consume the live evidence window."""
+
+    commissioning_plan: QualificationAuthorityCommissioningPlanV1
+    installation_plan: QualificationInstallationPlanV1
+    systemd_identities: tuple[QualificationSystemdServiceIdentityObservation, ...]
+    rendered_units: tuple[RenderedSystemdUnit, ...]
+    postgresql_acl: bytes
+    authority_bundle_sha256: str
+    launch_gate_verifier: ImmutableOCIImageLaunchGateVerifier
+    launch_gate_evidence_sha256: str
 
 
 def _read_exact_file(
@@ -678,6 +695,37 @@ class LinuxQualificationDeploymentObserver:
         self.spec = self.request.installation_request.deployment_spec
         self._systemctl = self.request.installation_request.systemctl_executable
         self._authority_host = LinuxQualificationAuthorityCommissioningHost(self.request)
+        self._prepared_scope: _PreparedQualificationObservationScope | None = None
+
+    def _prepare_observation_scope(self) -> _PreparedQualificationObservationScope:
+        """Compute immutable expected state once, before any live observation timestamp."""
+
+        if self._prepared_scope is not None:
+            return self._prepared_scope
+        node_config = self.request.node_config
+        verifier = ImmutableOCIImageLaunchGateVerifier(
+            policy=node_config.oci_policy,
+            runtime_control_authority=node_config.runtime_control_authority_pin,
+            image_layout=node_config.image_layout,
+        )
+        prepared = _PreparedQualificationObservationScope(
+            commissioning_plan=build_qualification_authority_commissioning_plan(self.request),
+            installation_plan=verify_qualification_installation_receipt(
+                self.request.installation_request,
+                self.config.installation_receipt,
+            ),
+            systemd_identities=expected_qualification_systemd_service_identities(self.spec),
+            rendered_units=render_systemd_units(self.spec),
+            postgresql_acl=render_postgresql_acl(self.spec),
+            authority_bundle_sha256=qualification_authority_bundle_sha256(
+                self.request,
+                self.config.commissioning_receipt,
+            ),
+            launch_gate_verifier=verifier,
+            launch_gate_evidence_sha256=verifier._expected_evidence_sha256(),  # noqa: SLF001
+        )
+        self._prepared_scope = prepared
+        return prepared
 
     def _require_environment(self) -> None:
         if sys.platform != "linux" or os.geteuid() != 0 or os.getegid() != 0:
@@ -699,10 +747,9 @@ class LinuxQualificationDeploymentObserver:
         ):
             raise QualificationObserverError("host is not real systemd/cgroup-v2 Linux")
 
-    def _verify_live_artifacts(self) -> None:
-        commissioning_plan = build_qualification_authority_commissioning_plan(self.request)
+    def _verify_live_artifacts(self, prepared: _PreparedQualificationObservationScope) -> None:
         for artifact, completion in zip(
-            commissioning_plan.artifacts,
+            prepared.commissioning_plan.artifacts,
             self.config.commissioning_receipt.artifact_completions,
             strict=True,
         ):
@@ -710,12 +757,8 @@ class LinuxQualificationDeploymentObserver:
                 raise QualificationObserverError(
                     f"commissioned artifact changed after receipt: {artifact.artifact_key}"
                 )
-        installation_plan = verify_qualification_installation_receipt(
-            self.request.installation_request,
-            self.config.installation_receipt,
-        )
         for artifact, completion in zip(
-            installation_plan.artifacts,
+            prepared.installation_plan.artifacts,
             self.config.installation_receipt.artifact_completions,
             strict=True,
         ):
@@ -769,12 +812,10 @@ class LinuxQualificationDeploymentObserver:
         return result
 
     def _service_processes(
-        self,
+        self, prepared: _PreparedQualificationObservationScope
     ) -> tuple[tuple[QualificationSystemdServiceIdentityObservation, ...], dict[str, int]]:
         spec = self.spec
-        expected = {
-            item.unit_name: item for item in expected_qualification_systemd_service_identities(spec)
-        }
+        expected = {item.unit_name: item for item in prepared.systemd_identities}
         pids: dict[str, int] = {}
         observed_identities: list[QualificationSystemdServiceIdentityObservation] = []
         for unit_name, identity in expected.items():
@@ -1217,9 +1258,13 @@ class LinuxQualificationDeploymentObserver:
 
     def _observe_live(self) -> QualificationLinuxDeploymentObservation:
         self._require_environment()
+        # Request/receipt graph validation takes tens of seconds for a real deployment.  It is
+        # deterministic prerequisite work, not a live host reading, so finish and cache it before
+        # starting the externally enforced freshness window.
+        prepared = self._prepare_observation_scope()
         started_at = datetime.now(timezone.utc)
-        self._verify_live_artifacts()
-        systemd_identities, pids = self._service_processes()
+        self._verify_live_artifacts(prepared)
+        systemd_identities, pids = self._service_processes(prepared)
         docker, docker_pid = self._docker_projection()
         if docker != self.config.docker_security_projection:
             raise QualificationObserverError("live Docker security projection drifted")
@@ -1257,20 +1302,14 @@ class LinuxQualificationDeploymentObserver:
             for pid in (pids[spec.quota_unit_name], pids[spec.node_unit_name], docker_pid)
         )
         node_config = self.request.node_config
-        verifier = ImmutableOCIImageLaunchGateVerifier(
-            policy=node_config.oci_policy,
-            runtime_control_authority=node_config.runtime_control_authority_pin,
-            image_layout=node_config.image_layout,
-        )
-        expected_gate_evidence = verifier._expected_evidence_sha256()  # noqa: SLF001
-        verifier.verify_immutable_launch_gate(
+        prepared.launch_gate_verifier.verify_immutable_launch_gate(
             image_reference=node_config.oci_policy.image_reference,
             image_manifest_sha256=spec.image_manifest_sha256,
             image_config_sha256=spec.image_config_sha256,
             launch_gate_path=node_config.oci_policy.launch_gate_path,
             launch_gate_executable_sha256=spec.launch_gate_executable_sha256,
             launch_gate_protocol_sha256=spec.launch_gate_protocol_sha256,
-            expected_evidence_sha256=expected_gate_evidence,
+            expected_evidence_sha256=prepared.launch_gate_evidence_sha256,
         )
         entrypoints = tuple(
             sorted(
@@ -1287,12 +1326,11 @@ class LinuxQualificationDeploymentObserver:
                 key=lambda item: item.path,
             )
         )
-        units = render_systemd_units(spec)
         unit_files = tuple(
             sorted(
                 (
                     _pinned_root_file(item.path, expected_sha256=item.content_sha256)
-                    for item in units
+                    for item in prepared.rendered_units
                 ),
                 key=lambda item: item.path,
             )
@@ -1361,10 +1399,7 @@ class LinuxQualificationDeploymentObserver:
             "loaded_apparmor_profile_name": spec.apparmor_profile_name,
             "apparmor_profile_enforcing": self._apparmor_enforcing(spec.apparmor_profile_name),
             "agent_implementation_sha256": spec.agent_implementation_sha256,
-            "authority_bundle_sha256": qualification_authority_bundle_sha256(
-                self.request,
-                self.config.commissioning_receipt,
-            ),
+            "authority_bundle_sha256": prepared.authority_bundle_sha256,
             "output_workspace_root": workspace_pin,
             "oci_image_layout": node_config.image_layout,
             "loaded_image_manifest_sha256": spec.image_manifest_sha256,
@@ -1433,10 +1468,11 @@ class LinuxQualificationDeploymentObserver:
         """Freshly observe and sign one exact deployment without mutating it."""
 
         frozen_spec = QualificationDeploymentSpecV1.model_validate(spec.model_dump(mode="python"))
+        prepared = self._prepare_observation_scope()
         if (
             frozen_spec != self.spec
-            or rendered_units != render_systemd_units(self.spec)
-            or postgresql_acl != render_postgresql_acl(self.spec)
+            or rendered_units != prepared.rendered_units
+            or postgresql_acl != prepared.postgresql_acl
         ):
             raise QualificationObserverError("observer call differs from its frozen config")
         observation = self._observe_live()
