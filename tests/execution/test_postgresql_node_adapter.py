@@ -716,6 +716,15 @@ def test_heartbeat_uses_public_allocator_method_and_maps_lease_rejection(tmp_pat
             fencing_epoch=snapshot.fencing_epoch,
         )
     assert "must-not-reflect" not in str(caught.value)
+    assert (
+        caught.value.allocator_rejection_sha256
+        == hashlib.sha256(
+            b"ALETHEIA_NODE_ALLOCATOR_REJECTION_V1\x00"
+            b"heartbeat\x00"
+            b"LeaseAuthorityError\x00"
+            b"must-not-reflect-raw-token"
+        ).hexdigest()
+    )
 
 
 def test_only_the_exact_allocator_proof_code_becomes_refresh_authority(tmp_path) -> None:

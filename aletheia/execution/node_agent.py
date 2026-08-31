@@ -196,6 +196,20 @@ class LocalStateError(NodeAgentError):
 class NodeLeaseRejected(NodeAgentError):
     """Allocator adapter signal that the supplied raw token or fence is no longer current."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        allocator_rejection_sha256: str | None = None,
+    ) -> None:
+        if allocator_rejection_sha256 is not None and (
+            len(allocator_rejection_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in allocator_rejection_sha256)
+        ):
+            raise ValueError("allocator rejection diagnostic must be lowercase SHA-256")
+        self.allocator_rejection_sha256 = allocator_rejection_sha256
+        super().__init__(message)
+
 
 class RuntimeRejected(NodeAgentError):
     """A runtime returned identity or inspection evidence outside the pinned request."""
@@ -2882,6 +2896,8 @@ class NodeRunResult:
     terminal_submission: QualificationTerminalSubmission | None = None
     node_execution_receipt: NodeExecutionReceipt | None = None
     terminal_disposition: NodeTerminalDisposition | None = None
+    reconciliation_reason: str | None = None
+    allocator_rejection_sha256: str | None = None
 
 
 class QualificationNodeAgent:
@@ -5640,19 +5656,28 @@ class QualificationNodeAgent:
             runtime_identity=state.runtime_identity,
         )
 
-    def _local_reconciliation(self, *, state: _AttemptState, reason: str) -> NodeRunResult:
+    def _local_reconciliation(
+        self,
+        *,
+        state: _AttemptState,
+        reason: str,
+        allocator_rejection_sha256: str | None = None,
+    ) -> NodeRunResult:
         """Retain local evidence without minting a release-capable prelaunch receipt."""
 
         if not reason:
             raise ValueError("local reconciliation reason must be nonempty")
         state = replace(state, phase=AttemptPhase.RECONCILIATION_REQUIRED)
-        self._state.save_state(state)
+        if self._state.load_state(state.attempt_id) != state:
+            self._state.save_state(state)
         return NodeRunResult(
             outcome=NodeRunOutcome.RECONCILIATION_REQUIRED,
             attempt_id=state.attempt_id,
             runtime_preparation=state.runtime_preparation,
             runtime_identity=state.runtime_identity,
             node_runtime_launch_receipt=state.node_runtime_launch_receipt,
+            reconciliation_reason=reason,
+            allocator_rejection_sha256=allocator_rejection_sha256,
         )
 
     def _retain_reconciliation(
@@ -6365,10 +6390,11 @@ class QualificationNodeAgent:
                     ):
                         raise
                     refresh_previous = observation
-                except NodeLeaseRejected:
+                except NodeLeaseRejected as exc:
                     return self._local_reconciliation(
                         state=state,
                         reason="runtime termination challenge lost exact fence authority",
+                        allocator_rejection_sha256=exc.allocator_rejection_sha256,
                     )
 
             if refresh_previous is not None:
@@ -6402,10 +6428,11 @@ class QualificationNodeAgent:
                     raise RuntimeRejected(
                         "fresh terminal proof generation was rejected without replay authority"
                     ) from exc
-                except NodeLeaseRejected:
+                except NodeLeaseRejected as exc:
                     return self._local_reconciliation(
                         state=state,
                         reason="refreshed termination challenge lost exact fence authority",
+                        allocator_rejection_sha256=exc.allocator_rejection_sha256,
                     )
 
             if accepted is None:

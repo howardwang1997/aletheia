@@ -15,7 +15,7 @@ from pydantic import ValidationError
 import aletheia.execution.qualification_node_service as node_service
 import aletheia.execution.oci_deployment as oci_deployment
 from aletheia.execution.assignment_contracts import node_transport_key_id
-from aletheia.execution.node_agent import PinnedLaunchSpec
+from aletheia.execution.node_agent import NodeRunOutcome, NodeRunResult, PinnedLaunchSpec
 from aletheia.execution.oci_deployment import (
     OCIOutputQuotaError,
     LoopbackOutputQuotaProvisionerClient,
@@ -525,6 +525,7 @@ def test_worker_loop_stops_only_at_tick_boundary() -> None:
             self.calls += 1
             assert self.loop is not None
             self.loop.stop()
+            return NodeRunResult(outcome=NodeRunOutcome.IDLE)
 
     worker = FakeWorker()
     loop = QualificationNodeWorkerLoop(worker)
@@ -535,6 +536,65 @@ def test_worker_loop_stops_only_at_tick_boundary() -> None:
     assert worker.calls == 1
     with pytest.raises(QualificationNodeCompositionError, match="outside"):
         QualificationNodeWorkerLoop(worker).run(poll_milliseconds=49)
+
+
+def test_worker_loop_reports_once_and_backs_off_identical_reconciliation(capsys) -> None:
+    diagnostic = "a" * 64
+
+    class FakeStop:
+        def __init__(self) -> None:
+            self.stopped = False
+            self.waits: list[float] = []
+
+        def is_set(self) -> bool:
+            return self.stopped
+
+        def set(self) -> None:
+            self.stopped = True
+
+        def wait(self, seconds: float) -> None:
+            self.waits.append(seconds)
+
+    class FakeWorker(QualificationExecutionWorker):
+        def __init__(self) -> None:
+            self.calls = 0
+            self.loop: QualificationNodeWorkerLoop | None = None
+
+        def tick(self) -> NodeRunResult:
+            self.calls += 1
+            assert self.loop is not None
+            if self.calls == 5:
+                self.loop.stop()
+            return NodeRunResult(
+                outcome=NodeRunOutcome.RECONCILIATION_REQUIRED,
+                attempt_id="iat_" + "1" * 32,
+                reconciliation_reason="runtime termination challenge lost exact fence authority",
+                allocator_rejection_sha256=diagnostic,
+            )
+
+    worker = FakeWorker()
+    loop = QualificationNodeWorkerLoop(worker)
+    stop = FakeStop()
+    loop._stop = stop  # noqa: SLF001 - deterministic wait-port fixture
+    worker.loop = loop
+
+    loop.run(poll_milliseconds=50)
+
+    assert worker.calls == 5
+    assert stop.waits == [0.05, 0.1, 0.2, 0.4, 0.8]
+    emitted = capsys.readouterr().out.splitlines()
+    assert len(emitted) == 1
+    receipt = json.loads(emitted[0])
+    assert receipt == {
+        "allocator_rejection_sha256": diagnostic,
+        "attempt_id": "iat_" + "1" * 32,
+        "qualification_only": True,
+        "reason": "runtime termination challenge lost exact fence authority",
+        "retry_backoff_max_milliseconds": 30_000,
+        "schema_name": "aletheia.qualification_node_reconciliation_status",
+        "schema_version": 1,
+        "scientific_admission_allowed": False,
+    }
 
 
 def test_quota_client_requests_independent_root_verification(
