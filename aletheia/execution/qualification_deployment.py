@@ -747,7 +747,7 @@ class QualificationDeploymentSpecV1(ExecutionModel):
 
     worker_poll_milliseconds: int = Field(default=250, ge=50, le=60_000)
     maximum_active_watchdog_jobs: int = Field(default=4096, ge=1, le=1_000_000)
-    maximum_observation_duration_seconds: int = Field(default=10, ge=1, le=60)
+    maximum_observation_duration_seconds: int = Field(default=10, ge=1, le=300)
     observation_ttl_seconds: int = Field(default=30, ge=1, le=300)
     automatic_installation: Literal[False] = False
     automatic_start: Literal[False] = False

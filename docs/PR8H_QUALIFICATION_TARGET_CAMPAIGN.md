@@ -1,7 +1,7 @@
 # PR-8h independent observer and qualification target campaign
 
 - Status: observer/campaign source complete; no target-host campaign receipt exists
-- Date: 2026-08-30
+- Date: 2026-08-31
 
 ## What this slice closes
 
@@ -216,6 +216,39 @@ possession of the lease token atomically contracts both attempt and resource exp
 heartbeat window. Alembic revision `20260831_0031` permits that contraction only when the same
 transaction has written the exact append-only launch authorization carrying the new expiry; every
 unbound attempt or resource rollback remains rejected by PostgreSQL.
+
+Generation w, frozen from merge commit `1a9fde2dc0e7ad6aec104390a912513f73b9a78b`
+after green pull-request and main CI, proved that lease repair on the real target. Its deterministic
+source archive had SHA-256
+`cf44ac59fdbd43266bb4a00d1f0f071957e91cb0400771dc777ed5f23d3a7dea`; its
+release-freeze receipt had SHA-256
+`c529866bcba8ac93f3c262eb64762b83bede913fa3300f72aac4fca77058cb98`.
+Execution `exe_8d07017297ea17b5cd8b5e64b98c0dc8`, attempt
+`iat_16a768fb98dab7464a20596ab0eeda12` and scientific slot
+`sos_e59816303024d353b7f77717c0e620fd` launched successfully. The database atomically moved the
+attempt from the 3,600-second pre-launch lease into the ordinary heartbeat window at its first
+runtime launch authorization, then retained a healthy running attempt under repeated short lease
+extensions.
+
+The generation-w campaign request and plan had SHA-256
+`cdbf81312cb9928bc972e37b0e9929ab7eab0f92b230205d1951eb6fa0124369` and
+`64cbed6de41a27fe2e3984cfe55740848ba524ea85e3b5d27b221f2a49fc417e`.
+Activation completed and the real loop-backed ext4 runtime started, but the independently bounded
+installed-manifest observation then exposed an undersized source contract: the deployment spec
+allowed at most 60 seconds even though exhaustive rehashing covers the root-owned code and Python
+trees, loaded native objects, process state, Docker state and the complete PostgreSQL catalog.
+Both the initial apply and one exact journal resume failed closed at the same phase with identical
+stderr SHA-256
+`b054fb378a963ddba189afa9bf7a8b466ae5486bcf33b68b20cb9a87e3375df3`.
+Neither run wrote `02-installed-manifest.json`, and neither entered the campaign SIGKILL or
+PostgreSQL-backend-termination phases. These are retained negative engineering results, not a
+campaign receipt.
+
+The observation remains bounded, but its closed upper limit is now five minutes rather than one.
+A target request must explicitly select that budget and an observation TTL at least as large;
+duration still cannot exceed TTL, TTL remains capped at five minutes, and the independent campaign
+deadline remains the outer bound. Synthetic regression tests accept exactly 300 seconds and reject
+both 301 seconds and any duration that exceeds its signed TTL.
 
 PostgreSQL observation no longer copies routine, trigger, sequence or owner claims out of the
 deployment spec.  One `REPEATABLE READ, READ ONLY` snapshot reruns the exhaustive ACL/role gate,

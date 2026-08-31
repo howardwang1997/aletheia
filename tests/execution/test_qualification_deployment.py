@@ -874,6 +874,26 @@ def test_spec_is_closed_hashed_and_cannot_grant_scientific_authority() -> None:
         _spec(scientific_admission_allowed=True)
 
 
+def test_spec_allows_a_bounded_five_minute_target_observation() -> None:
+    spec = _spec(
+        maximum_observation_duration_seconds=300,
+        observation_ttl_seconds=300,
+    )
+    assert spec.maximum_observation_duration_seconds == 300
+    assert spec.observation_ttl_seconds == 300
+
+    with pytest.raises(ValidationError, match="less than or equal to 300"):
+        _spec(
+            maximum_observation_duration_seconds=301,
+            observation_ttl_seconds=300,
+        )
+    with pytest.raises(ValidationError, match="duration cannot exceed signed observation TTL"):
+        _spec(
+            maximum_observation_duration_seconds=300,
+            observation_ttl_seconds=299,
+        )
+
+
 @pytest.mark.parametrize(
     ("updates", "message"),
     (
