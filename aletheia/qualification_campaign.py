@@ -1553,7 +1553,7 @@ class LinuxQualificationTargetCampaignHost:
         if pid_before <= 1 or before["ActiveState"] != "active" or before["SubState"] != "running":
             raise QualificationCampaignError(f"service is not running before kill: {unit_name}")
         killed_at = datetime.now(timezone.utc)
-        self._systemctl("kill", "--kill-whom=main", "--signal=KILL", unit_name)
+        self._systemctl("kill", "--kill-who=main", "--signal=KILL", unit_name)
         while datetime.now(timezone.utc) < self._deadline:
             current = self._show(unit_name, "MainPID", "ActiveState", "SubState")
             try:

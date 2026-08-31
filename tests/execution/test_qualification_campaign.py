@@ -941,6 +941,48 @@ def test_attempt_projection_sql_parses_on_ci_postgresql() -> None:
     assert row is None
 
 
+def test_service_kill_uses_systemd_249_compatible_kill_who_option(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = object.__new__(campaign.LinuxQualificationTargetCampaignHost)
+    object.__setattr__(
+        host,
+        "request",
+        SimpleNamespace(poll_milliseconds=1),
+    )
+    object.__setattr__(
+        host,
+        "_deadline",
+        datetime.now(timezone.utc) + timedelta(seconds=5),
+    )
+    observations = iter(
+        (
+            {"MainPID": "4100", "ActiveState": "active", "SubState": "running"},
+            {"MainPID": "4101", "ActiveState": "active", "SubState": "running"},
+        )
+    )
+    invocations: list[tuple[str, ...]] = []
+    monkeypatch.setattr(host, "_show", lambda _unit, *_properties: next(observations))
+    monkeypatch.setattr(
+        host,
+        "_systemctl",
+        lambda *arguments: invocations.append(arguments) or "",
+    )
+
+    receipt = host._kill_and_wait("qualification-node.service")  # noqa: SLF001
+
+    assert invocations == [
+        (
+            "kill",
+            "--kill-who=main",
+            "--signal=KILL",
+            "qualification-node.service",
+        )
+    ]
+    assert receipt.pid_before == 4100
+    assert receipt.pid_after == 4101
+
+
 def test_campaign_request_loader_requires_digest_custody_and_unique_canonical_json(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
