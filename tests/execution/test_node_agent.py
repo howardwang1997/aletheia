@@ -1180,6 +1180,11 @@ class _Allocator:
     ) -> RuntimeTerminationAcceptanceChallenge:
         self._authority(attempt_id, lease_token, fencing_epoch)
         assert termination_evidence.state is RuntimeInspectionState.TERMINATED
+        if "challenge" in self.reconcile_on:
+            raise NodeLeaseRejected(
+                "central termination challenge held",
+                allocator_rejection_sha256="d" * 64,
+            )
         existing_challenge = self.challenge_history.get(inspection_sequence)
         if existing_challenge is not None:
             assert existing_challenge.runtime_preparation_sha256 == (
@@ -2551,6 +2556,34 @@ def test_terminal_and_adoption_mutations_validate_normal_reconciliation_response
     resumed = adoption.agent.run_assignment(adoption.replay_assignment())
     assert resumed.outcome is NodeRunOutcome.ADOPTED
     assert adoption.allocator.current.fencing_epoch == 3
+
+
+def test_terminal_challenge_reconciliation_is_diagnostic_and_does_not_rewrite_state(
+    tmp_path: Path,
+) -> None:
+    harness = _Harness(tmp_path)
+    assert harness.agent.run_once().outcome is NodeRunOutcome.RUNNING
+    harness.runtime.finish(exit_code=0)
+    harness.allocator.reconcile_on.add("challenge")
+
+    first = harness.agent.run_assignment(harness.replay_assignment())
+
+    assert first.outcome is NodeRunOutcome.RECONCILIATION_REQUIRED
+    assert first.reconciliation_reason == (
+        "runtime termination challenge lost exact fence authority"
+    )
+    assert first.allocator_rejection_sha256 == "d" * 64
+    state_path = (
+        harness.state.root
+        / "attempts"
+        / f"{hashlib.sha256(harness.reservation.attempt_id.encode()).hexdigest()}.json"
+    )
+    first_identity = (state_path.stat().st_ino, state_path.stat().st_mtime_ns)
+
+    second = harness.agent.run_assignment(harness.replay_assignment())
+
+    assert second == first
+    assert (state_path.stat().st_ino, state_path.stat().st_mtime_ns) == first_identity
 
 
 def test_fresh_launch_gap_replays_idempotent_start_without_forging_absent_exit(

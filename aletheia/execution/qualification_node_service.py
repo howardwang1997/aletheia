@@ -42,6 +42,7 @@ from aletheia.execution.authority_registry import (
 from aletheia.execution.input_materializer import LocalCASInputMaterializer
 from aletheia.execution.input_resolver import LocalVerifiedInputArtifactResolver
 from aletheia.execution.node_agent import (
+    NodeRunOutcome,
     NodeLocalStateStore,
     PinnedLaunchRegistry,
     PinnedLaunchSpec,
@@ -375,6 +376,8 @@ class QualificationNodeWorkerLoop:
             raise TypeError("qualification node loop requires the concrete execution worker")
         self._worker = worker
         self._stop = threading.Event()
+        self._last_reconciliation_key: tuple[str | None, str | None, str | None] | None = None
+        self._reconciliation_repeats = 0
 
     def stop(self) -> None:
         self._stop.set()
@@ -383,9 +386,45 @@ class QualificationNodeWorkerLoop:
         if isinstance(poll_milliseconds, bool) or not 50 <= poll_milliseconds <= 60_000:
             raise QualificationNodeCompositionError("node poll interval is outside 50..60000 ms")
         interval_seconds = poll_milliseconds / 1000
+        reconciliation_ceiling_seconds = max(30.0, interval_seconds)
         while not self._stop.is_set():
-            self._worker.tick()
-            self._stop.wait(interval_seconds)
+            result = self._worker.tick()
+            delay_seconds = interval_seconds
+            if result.outcome is NodeRunOutcome.RECONCILIATION_REQUIRED:
+                key = (
+                    result.attempt_id,
+                    result.reconciliation_reason,
+                    result.allocator_rejection_sha256,
+                )
+                if key == self._last_reconciliation_key:
+                    self._reconciliation_repeats += 1
+                else:
+                    self._last_reconciliation_key = key
+                    self._reconciliation_repeats = 0
+                    receipt = {
+                        "schema_name": "aletheia.qualification_node_reconciliation_status",
+                        "schema_version": 1,
+                        "attempt_id": result.attempt_id,
+                        "reason": result.reconciliation_reason,
+                        "allocator_rejection_sha256": result.allocator_rejection_sha256,
+                        "retry_backoff_max_milliseconds": int(
+                            reconciliation_ceiling_seconds * 1000
+                        ),
+                        "qualification_only": True,
+                        "scientific_admission_allowed": False,
+                    }
+                    print(
+                        canonical_json_bytes(receipt).decode("utf-8"),
+                        flush=True,
+                    )
+                delay_seconds = min(
+                    reconciliation_ceiling_seconds,
+                    interval_seconds * (2 ** min(self._reconciliation_repeats, 16)),
+                )
+            else:
+                self._last_reconciliation_key = None
+                self._reconciliation_repeats = 0
+            self._stop.wait(delay_seconds)
 
 
 def _absolute_path(value: str, *, label: str) -> Path:

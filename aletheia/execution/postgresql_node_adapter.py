@@ -8,6 +8,8 @@ It never imports persistence records, opens a database session, or holds a signi
 
 from __future__ import annotations
 
+import hashlib
+
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Protocol, TypeVar
@@ -1098,7 +1100,18 @@ class PostgreSQLNodeAllocatorAdapter(NodeAllocatorPort):
             raise NodeLeaseRejected(f"allocator rejected {operation} authority") from exc
         except LeaseAuthorityError as exc:
             # Do not relay allocator text: it must never accidentally reflect raw credential input.
-            raise NodeLeaseRejected(f"allocator rejected {operation} authority") from exc
+            diagnostic = hashlib.sha256(
+                b"ALETHEIA_NODE_ALLOCATOR_REJECTION_V1\x00"
+                + operation.encode("utf-8")
+                + b"\x00"
+                + type(exc).__qualname__.encode("utf-8")
+                + b"\x00"
+                + str(exc).encode("utf-8")
+            ).hexdigest()
+            raise NodeLeaseRejected(
+                f"allocator rejected {operation} authority",
+                allocator_rejection_sha256=diagnostic,
+            ) from exc
 
 
 __all__ = [

@@ -488,6 +488,65 @@ def test_node_resubmits_local_receipt_through_expired_lease_reconciliation(
         assert event_types == ("reserved", "reconciliation_required", "adopted")
 
 
+def test_adopted_runtime_can_commit_terminal_under_rotated_fence(monkeypatch, tmp_path) -> None:
+    prepared, allocator, _adapter, agent, runtime, _state, claim = _running_v2(
+        monkeypatch,
+        tmp_path,
+    )
+    sessions = session_factory()
+    with sessions() as session:
+        running = session.get(_ExecutionAttemptRecord, claim.snapshot.attempt_id)
+        assert running is not None and running.status == "running"
+        expired_at = running.lease_expires_at
+
+    elapsed = expired_at - runtime.clock.current
+    runtime.clock.current = expired_at
+    runtime.clock.monotonic += int(elapsed.total_seconds() * 1_000_000_000)
+    monkeypatch.setattr(allocator_module, "_database_time", lambda _session: expired_at)
+    reconciled = allocator.reconcile_expired()
+    assert len(reconciled) == 1
+    assert reconciled[0].status == "reconciliation_required"
+
+    adopted = agent.run_once()
+
+    assert adopted.outcome is NodeRunOutcome.ADOPTED
+    assert adopted.adoption_receipt is not None
+    assert adopted.adoption_receipt.previous_fencing_epoch == claim.snapshot.fencing_epoch
+    assert adopted.adoption_receipt.new_fencing_epoch == claim.snapshot.fencing_epoch + 1
+    assert runtime.launch_calls == 1
+    assert runtime.rebind_calls == 1
+
+    runtime.clock.current += timedelta(seconds=1)
+    runtime.clock.monotonic += 1_000_000_000
+    monkeypatch.setattr(
+        allocator_module,
+        "_database_time",
+        lambda _session: runtime.clock.current,
+    )
+    runtime.finish(exit_code=0)
+
+    collected = agent.run_once()
+
+    assert collected.outcome is NodeRunOutcome.COLLECTED
+    assert collected.terminal_disposition is NodeTerminalDisposition.PROCESS_SUCCEEDED
+    assert collected.runtime_termination_challenge is not None
+    assert collected.runtime_termination_challenge.fencing_epoch == (
+        claim.snapshot.fencing_epoch + 1
+    )
+    assert collected.accepted_runtime_termination is not None
+    assert collected.accepted_terminal_submission is not None
+    assert runtime.launch_calls == 1
+    with sessions() as session:
+        committed = session.get(_ExecutionAttemptRecord, claim.snapshot.attempt_id)
+        assert committed is not None
+        assert committed.status == "verifying"
+        assert committed.fencing_epoch == claim.snapshot.fencing_epoch + 1
+        assert committed.runtime_termination_challenge_count == 1
+        assert committed.accepted_runtime_termination_sha256 == (
+            collected.accepted_runtime_termination.accepted_termination_sha256
+        )
+
+
 def test_public_key_only_allocator_can_admit_but_cannot_issue_runtime_controls(
     monkeypatch,
 ) -> None:

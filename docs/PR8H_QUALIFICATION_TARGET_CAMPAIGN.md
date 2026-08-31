@@ -250,6 +250,26 @@ duration still cannot exceed TTL, TTL remains capped at five minutes, and the in
 deadline remains the outer bound. Synthetic regression tests accept exactly 300 seconds and reject
 both 301 seconds and any duration that exceeds its signed TTL.
 
+The retained generation-w runtime later exited zero and was adopted under fencing epoch 2 after
+its heartbeat expired, but it still could not be promoted into campaign evidence. The node had a
+durable sequence-2 terminal observation while PostgreSQL retained sequence 1 and no termination
+challenge. A standard 30-second recovery run left the attempt projection and challenge count
+unchanged. A bounded host trace then showed the worker repeatedly revalidating the same input and
+terminal evidence, rewriting the same reconciliation state and retrying the rejected challenge
+every 250 ms. The adapter deliberately hid the allocator's rejection text. It also discarded every
+safe way to distinguish one rejection from another, turning a fail-closed decision into a silent
+high-I/O hot loop.
+
+The node boundary now carries only an irreversible SHA-256 diagnostic of the allocator exception
+type and text; raw allocator text and lease credentials remain unavailable to the service log. The
+service emits one canonical reconciliation status per distinct attempt/reason/diagnostic tuple,
+backs identical results off exponentially to a 30-second ceiling, and does not atomically rewrite
+an already-identical reconciliation state. A fresh PostgreSQL regression also proves that a real
+running attempt can expire, be adopted under a rotated fence and then commit its terminal
+challenge and acceptance without launching a second runtime. These changes make another target
+failure bounded and mechanically distinguishable; they do not turn generation w into a passing
+campaign.
+
 PostgreSQL observation no longer copies routine, trigger, sequence or owner claims out of the
 deployment spec.  One `REPEATABLE READ, READ ONLY` snapshot reruns the exhaustive ACL/role gate,
 hashes every live execution routine and non-internal trigger definition, reads each exact sequence
@@ -378,10 +398,11 @@ receipt into a passing shape.
 The selected Linux target is compatible and has frozen/installed candidate generations, but none
 has emitted the complete campaign receipt. Therefore no host is currently proven deployable,
 PR-4b remains nondeployable, and `scientific_admission_allowed` is always false even in a
-successful campaign receipt. The next ordered operation is to merge the pre-launch lease fix,
-commission one entirely fresh generation with an explicit bounded initial-assignment window, a
-short runtime heartbeat, and a 1,800-second workload inside its signed execution deadline, then
-rerun the complete campaign—not more controller authority.
+successful campaign receipt. The next ordered operation is to merge the bounded five-minute
+observation and reconciliation-liveness fixes, commission one entirely fresh generation from the
+resulting green main commit with an explicit bounded initial-assignment window, a short runtime
+heartbeat and a 1,800-second workload inside its signed execution deadline, then rerun the complete
+campaign—not more controller authority.
 
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the
