@@ -270,6 +270,42 @@ challenge and acceptance without launching a second runtime. These changes make 
 failure bounded and mechanically distinguishable; they do not turn generation w into a passing
 campaign.
 
+Generation x, frozen from merge commit `3e13ebcdd4de193502124245869c934581b18464`
+after green pull-request and main CI, proved the five-minute installed-manifest budget on the real
+target and exposed an earlier Linux exec-observation race. Its deterministic source archive had
+SHA-256 `928d8605b35d2ad19e3e64d59325d036e281214bdc8f03bd4782b3306a617d58`;
+its release-freeze receipt had SHA-256
+`f4bb157935f1111a85b2be4011f9026fe255499f94898855040702a585c1ebd0`.
+Execution `exe_227940543ad2e4f87e38e492ee308382`, attempt
+`iat_6b3affbb5805bec7da0f00a630707cba` and scientific slot
+`sos_37c30e43bf8ee80413ff58bd877744ef` were atomically preregistered. The campaign
+request and plan had SHA-256
+`d59e2990eca3542939bc126802a1054b54153e4fd7df79d040a237cf498a5c0a` and
+`504099b24125236f6d89df380ede5405ace125719ef512da75e766e1ffdfa2c7`.
+
+Activation completed, and the exhaustive independently signed installed-manifest observation
+finished inside the selected 300-second budget. Its 6,980,508-byte journal record had SHA-256
+`3adfd4dbf18d1f19877ff21c71866ebf1b92cd7136ec8e2c76d54e9b43e63c7d`.
+The node nevertheless failed before accepting runtime launch evidence. During the same-PID
+launch-gate `execve` transition, one `/proc/<pid>/cmdline` read lacked canonical NUL framing and
+was treated as an immediate hard error. After systemd restarted the node, the cold-recovery policy
+correctly refused to manufacture pre-runtime authority for the already-started container. The
+campaign therefore stopped at the running-attempt projection boundary with stderr SHA-256
+`3be5cd5cfca7d784698dbe7d8e3250bdead91149de68873ee9159fbdb9e55034`.
+No campaign service SIGKILL, campaign loop/ext4 mount or PostgreSQL backend termination ran.
+
+The exact retained container later exposed a stable 175-byte, NUL-terminated fd-shebang argv for
+the pinned workload; those bytes have SHA-256
+`b53ccf9d08721bda706ce4c81f5b84cb851e86b4f3cb83b0e48c15b51945dc88`,
+and the corresponding node journal has SHA-256
+`cba74b77046df03b48aba5540b208a745e16625e5ddfa1510905d7336f0ab036`.
+The initial-launch observer now treats non-canonical cmdline framing only as an uncommitted,
+bounded transition. Every retry revalidates the exact container ID, PID, start identity and full
+engine configuration; no transient bytes are accepted, and a persistent malformed projection
+still fails when the bounded window expires. All five generation-x units were stopped and
+disabled, the exact container removed, its mounts unmounted and `/dev/loop23` detached; database,
+journal, backing-image and framing evidence remain retained.
+
 PostgreSQL observation no longer copies routine, trigger, sequence or owner claims out of the
 deployment spec.  One `REPEATABLE READ, READ ONLY` snapshot reruns the exhaustive ACL/role gate,
 hashes every live execution routine and non-internal trigger definition, reads each exact sequence
