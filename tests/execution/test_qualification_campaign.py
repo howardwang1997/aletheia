@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -10,6 +11,9 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import ValidationError
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 import aletheia.execution.qualification_deployment as deployment
 import aletheia.qualification_authority_commissioning as commissioning
@@ -893,6 +897,48 @@ def test_request_and_plan_hashes_are_canonical(
             canonical_json_bytes(request)
         )
     )
+
+
+def test_attempt_projection_sql_uses_a_nonreserved_authorization_alias() -> None:
+    assert " AS authorization" not in campaign._ATTEMPT_PROJECTION_SQL  # noqa: SLF001
+    assert (
+        "research_scientific_execution_authorizations AS sea" in campaign._ATTEMPT_PROJECTION_SQL  # noqa: SLF001
+    )
+    assert "sea.authorization_sha256" in campaign._ATTEMPT_PROJECTION_SQL  # noqa: SLF001
+
+
+def test_attempt_projection_sql_parses_on_ci_postgresql() -> None:
+    raw_url = os.environ.get("ALETHEIA_DATABASE_URL", "")
+    if not raw_url:
+        pytest.skip("requires the migrated CI PostgreSQL database")
+    try:
+        database_url = make_url(raw_url)
+    except (ArgumentError, TypeError, ValueError):
+        pytest.skip("requires the migrated CI PostgreSQL database")
+    if (
+        database_url.get_backend_name() != "postgresql"
+        or database_url.host not in {"localhost", "127.0.0.1", "::1"}
+        or database_url.database != "aletheia_ci"
+    ):
+        pytest.skip("requires the migrated loopback aletheia_ci database")
+
+    database = create_engine(database_url, pool_pre_ping=True, future=True)
+    try:
+        with database.connect() as connection, connection.begin():
+            row = (
+                connection.execute(
+                    text(campaign._ATTEMPT_PROJECTION_SQL),  # noqa: SLF001
+                    {
+                        "execution_id": "missing-campaign-execution",
+                        "attempt_id": "missing-campaign-attempt",
+                    },
+                )
+                .mappings()
+                .one_or_none()
+            )
+    finally:
+        database.dispose()
+    assert row is None
 
 
 def test_campaign_request_loader_requires_digest_custody_and_unique_canonical_json(
