@@ -2014,7 +2014,7 @@ class LinuxQualificationTargetCampaignHost:
         intent = message.qualification_bundle.intent
         if (
             authorization.authorization_sha256 != registration.authorization_sha256
-            or row["authorization_json"] != authorization.model_dump(mode="json")
+            or row["authorization_json"] != authorization.model_dump(mode="json", exclude_none=True)
             or intent.execution_id != registration.execution_id
             or intent.infrastructure_attempt.infrastructure_attempt_id != registration.attempt_id
             or intent.intent_sha256 != row["intent_sha256"]
