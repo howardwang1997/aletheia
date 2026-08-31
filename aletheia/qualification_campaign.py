@@ -73,6 +73,37 @@ _MAX_CHILD_BYTES = 4 * 1024 * 1024
 _OPT_IN_CONFIRMATION = "RUN_QUALIFICATION_TARGET_CAMPAIGN"
 _ADMIN_DATABASE_URL_ENV = "ALETHEIA_QUALIFICATION_ADMIN_DATABASE_URL"
 
+# Keep this statement executable by PostgreSQL itself, not only by SQLite-backed
+# test doubles.  AUTHORIZATION is a reserved PostgreSQL keyword and therefore
+# must not be used as an unquoted relation alias.
+_ATTEMPT_PROJECTION_SQL = """
+    SELECT attempt.status, attempt.intent_sha256, attempt.admission_sha256,
+           attempt.grant_sha256, attempt.bundle_sha256, attempt.node_id,
+           attempt.hard_deadline, attempt.accepted_terminal_submission_sha256,
+           attempt.terminal_deadline_expiration_sha256,
+           envelope.node_manifest_sha256,
+           envelope.resource_lease_sha256,
+           sea.authorization_sha256,
+           sea.quest_id,
+           sea.scientific_slot_id,
+           sea.action_sha256,
+           sea.qualification_bundle_sha256,
+           sea.qualification_grant_sha256,
+           sea.authorization_json,
+           sea.authorized_at,
+           sea.expires_at,
+           sea.observation_admission_deadline,
+           sea.registered_at
+      FROM execution_attempts AS attempt
+      JOIN execution_assignment_envelopes AS envelope
+        ON envelope.attempt_id = attempt.attempt_id
+      JOIN research_scientific_execution_authorizations AS sea
+        ON sea.execution_id = attempt.execution_id
+       AND sea.attempt_id = attempt.attempt_id
+     WHERE attempt.execution_id = :execution_id
+       AND attempt.attempt_id = :attempt_id
+"""
+
 
 class QualificationCampaignError(RuntimeError):
     """The campaign request, target, recovery, or evidence failed closed."""
@@ -1954,35 +1985,7 @@ class LinuxQualificationTargetCampaignHost:
             with engine.connect() as connection, connection.begin():
                 row = (
                     connection.execute(
-                        text(
-                            """
-                        SELECT attempt.status, attempt.intent_sha256, attempt.admission_sha256,
-                               attempt.grant_sha256, attempt.bundle_sha256, attempt.node_id,
-                               attempt.hard_deadline, attempt.accepted_terminal_submission_sha256,
-                               attempt.terminal_deadline_expiration_sha256,
-                               envelope.node_manifest_sha256,
-                               envelope.resource_lease_sha256,
-                               authorization.authorization_sha256,
-                               authorization.quest_id,
-                               authorization.scientific_slot_id,
-                               authorization.action_sha256,
-                               authorization.qualification_bundle_sha256,
-                               authorization.qualification_grant_sha256,
-                               authorization.authorization_json,
-                               authorization.authorized_at,
-                               authorization.expires_at,
-                               authorization.observation_admission_deadline,
-                               authorization.registered_at
-                          FROM execution_attempts AS attempt
-                          JOIN execution_assignment_envelopes AS envelope
-                            ON envelope.attempt_id = attempt.attempt_id
-                          JOIN research_scientific_execution_authorizations AS authorization
-                            ON authorization.execution_id = attempt.execution_id
-                           AND authorization.attempt_id = attempt.attempt_id
-                         WHERE attempt.execution_id = :execution_id
-                           AND attempt.attempt_id = :attempt_id
-                        """
-                        ),
+                        text(_ATTEMPT_PROJECTION_SQL),
                         {
                             "execution_id": registration.execution_id,
                             "attempt_id": registration.attempt_id,

@@ -306,6 +306,40 @@ still fails when the bounded window expires. All five generation-x units were st
 disabled, the exact container removed, its mounts unmounted and `/dev/loop23` detached; database,
 journal, backing-image and framing evidence remain retained.
 
+Generation y, frozen from merge commit `0cf3c8ea43f5ce13e7fd6335d480b6b123c266de`
+after green pull-request and main CI, proved that bounded exec observation on the real target and
+then exposed a PostgreSQL-only parser defect in the campaign runner. Its deterministic source
+archive had SHA-256 `357d375e90e904d301e74f190e5c418616b614e51414aa20804dcdbe8fa4a51b`;
+its release-freeze receipt had SHA-256
+`0e2f631560d8fb8841332d0d5656168f0eefe891fb57d776c65d4790ac9ff449`.
+Execution `exe_045560c2976ba8381f266bb25b1afcce`, attempt
+`iat_6986670bf6a5d50326fd6808dff4ac23` and scientific slot
+`sos_7ccdde4ce202d51037ac555d6b140863` were atomically preregistered. The campaign
+request and canonical plan had SHA-256
+`26746ca0ca3d14114eeeca631d4b981faaf4c84778bc5d86b5e9632d71b75cc0` and
+`3c2f9b7a331825c2561488f1b33f6a356ad30c4ec8e34f7495b623682f08e090`.
+
+Activation completed with journal SHA-256
+`535971b28196fdf3f77ed44d3d4890c1a15145a7d15f08d175b82d54a3b217cd`, and the
+6,980,508-byte installed-manifest record completed inside the five-minute bound with SHA-256
+`34350d02c245ae4ec4530cb6acc5a2fdeafad4dc90b403fca03d5b4e02bddb35`.
+The node remained on its original MainPID with zero systemd restarts, retained local phase
+`running`, and the exact 1,800-second container remained live. This is the target behavior that
+generation x could not establish; no transient cmdline bytes were admitted.
+
+The campaign then failed before its first deliberate process kill because its attempt-projection
+SQL used PostgreSQL's reserved `AUTHORIZATION` keyword as an unquoted relation alias. PostgreSQL
+17 rejected `authorization.authorization_sha256` at parse time, while the adapter reduced that
+`SQLAlchemyError` to the expected fail-closed `campaign attempt projection is unavailable` text.
+On the retained rows, the otherwise identical query with the non-reserved alias `sea` returned
+exactly the running attempt, authorization and scientific slot. The repair freezes that statement
+in one source constant, uses `sea` throughout, and adds both a source-level alias regression and a
+real migrated PostgreSQL CI parse/execute test. No node/outbox/quota/watchdog SIGKILL, campaign
+loop/ext4 probe or PostgreSQL backend termination ran. All five generation-y units were stopped
+and disabled, the exact container was removed, its three mount projections were unmounted and
+`/dev/loop23` was detached. The database, 16 MiB backing image, node journal and root-only SQL
+diagnostic archive remain retained as negative engineering evidence.
+
 PostgreSQL observation no longer copies routine, trigger, sequence or owner claims out of the
 deployment spec.  One `REPEATABLE READ, READ ONLY` snapshot reruns the exhaustive ACL/role gate,
 hashes every live execution routine and non-internal trigger definition, reads each exact sequence
@@ -434,11 +468,11 @@ receipt into a passing shape.
 The selected Linux target is compatible and has frozen/installed candidate generations, but none
 has emitted the complete campaign receipt. Therefore no host is currently proven deployable,
 PR-4b remains nondeployable, and `scientific_admission_allowed` is always false even in a
-successful campaign receipt. The next ordered operation is to merge the bounded five-minute
-observation and reconciliation-liveness fixes, commission one entirely fresh generation from the
-resulting green main commit with an explicit bounded initial-assignment window, a short runtime
-heartbeat and a 1,800-second workload inside its signed execution deadline, then rerun the complete
-campaign—not more controller authority.
+successful campaign receipt. The next ordered operation is to merge the PostgreSQL reserved-alias
+repair after its pull-request and main CI are green, commission one entirely fresh generation from
+that merge commit with the already-proven five-minute observation budget, explicit bounded
+initial-assignment window, short runtime heartbeat and 1,800-second workload, then rerun the
+complete campaign—not more controller authority.
 
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the
