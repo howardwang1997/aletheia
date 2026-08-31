@@ -4445,8 +4445,11 @@ class LocalQualificationOCIRuntime:
 
         Docker returns from ``start`` as soon as the container process exists.  The immutable
         launch gate still needs a small scheduling window to verify its signed ticket and execve
-        the workload.  Only the typed argv-length transition is retryable, and every retry
-        revalidates the full engine configuration plus the immutable container/PID/start scope.
+        the workload.  Only an uncommitted argv transition is retryable: either the typed
+        gate-to-workload argv-length change or a transient non-canonical ``/proc`` framing read
+        while Linux commits that same-PID exec.  Every retry revalidates the full engine
+        configuration plus the immutable container/PID/start scope, and no transient bytes are
+        ever accepted as launch evidence.
         """
 
         process_scope = self._running_engine_process_scope(inspection)
@@ -4707,7 +4710,15 @@ class LocalQualificationOCIRuntime:
             )
 
         if not proc_cmdline.endswith(b"\x00") or b"\x00\x00" in proc_cmdline:
-            raise OCIEngineError("OCI workload process argv is not canonical NUL framing")
+            # proc(5) may expose an empty or partial cmdline while execve replaces the
+            # argument region of this exact process.  This is not evidence: the bounded
+            # initial-launch loop must revalidate the immutable container/PID/start scope and
+            # obtain one complete canonical read before any launch journal can be committed.
+            # Callers outside that loop still receive an OCIEngineError because the private
+            # transition type is a strict subclass.
+            raise _OCIWorkloadExecPending(
+                "OCI workload process argv framing is not stable during exec transition"
+            )
         observed_parts = tuple(proc_cmdline[:-1].split(b"\x00"))
         if len(observed_parts) != len(logical_argv) + 1:
             raise _OCIWorkloadExecPending(

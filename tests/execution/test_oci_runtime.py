@@ -2533,6 +2533,34 @@ def test_workload_observation_accepts_exact_linux_fd_shebang_form(
 
 
 @pytest.mark.parametrize(
+    "proc_cmdline",
+    (
+        b"",
+        b"/usr/local/bin/python3",
+        b"/usr/local/bin/python3\x00\x00/dev/fd/3\x00",
+    ),
+)
+def test_workload_observation_marks_uncommitted_proc_argv_framing_pending(
+    tmp_path: Path,
+    proc_cmdline: bytes,
+) -> None:
+    request, policy = _request(tmp_path)
+    runtime = _runtime(tmp_path, policy)
+    plan = runtime._coerce_request(request)  # noqa: SLF001
+
+    with pytest.raises(
+        oci_runtime_module._OCIWorkloadExecPending,  # noqa: SLF001
+        match="framing is not stable during exec transition",
+    ):
+        runtime._observe_workload_invocation(  # noqa: SLF001
+            pid=4242,
+            logical_argv=plan.launch_spec.argv,
+            logical_argv_sha256=runtime._expected_workload_argv_sha256(plan),  # noqa: SLF001
+            proc_cmdline=proc_cmdline,
+        )
+
+
+@pytest.mark.parametrize(
     "mutation",
     ["script_hash", "interpreter_identity", "argv", "shebang_argument"],
 )
