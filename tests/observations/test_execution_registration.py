@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+import aletheia.qualification_campaign as qualification_campaign
 from aletheia.execution.allocator import PostgreSQLExecutionAllocator
 from aletheia.observations import execution_registration as registration_module
 from aletheia.observations.execution_registration import (
@@ -21,11 +22,84 @@ from aletheia.observations.execution_registration import (
 from aletheia.observations.persistence import (
     ResearchScientificExecutionAuthorizationRecord,
 )
+from aletheia.observations.store import ScientificExecutionAuthorizationWrite
 from persistence_test_support import sqlite_observation_engine
 
 _OBSERVATION_TESTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(_OBSERVATION_TESTS))
 from test_scientific_bridge import _bridge_case, _replicate_bridge_cases  # noqa: E402
+
+
+def test_target_campaign_accepts_the_canonical_persisted_authorization_projection() -> None:
+    case = _bridge_case()
+    authorization = case.authorization
+    message = authorization.message
+    binding = message.action_protocol_binding
+    intent = message.qualification_bundle.intent
+    registered_at = message.authorized_at + timedelta(microseconds=1)
+    reservation_sha256 = "b" * 64
+    persisted = ScientificExecutionAuthorizationWrite.from_contract(
+        authorization,
+        registered_at=registered_at,
+    )
+    registration = qualification_campaign.AtomicScientificExecutionRegistrationReceipt(
+        authorization_sha256=authorization.authorization_sha256,
+        quest_id=binding.action.quest_id,
+        scientific_slot_id=message.scientific_slot_id,
+        action_sha256=binding.action.object_sha256,
+        execution_id=intent.execution_id,
+        attempt_id=intent.infrastructure_attempt.infrastructure_attempt_id,
+        qualification_bundle_sha256=message.qualification_bundle.bundle_sha256,
+        qualification_grant_sha256=message.qualification_grant.grant_sha256,
+        registered_at=registered_at,
+        qualification_admission_sha256=case.qualification_admission_sha256,
+        resource_reservation_sha256=reservation_sha256,
+        reserved_at=registered_at + timedelta(microseconds=1),
+    )
+    node_id = "node:campaign-persisted-authorization"
+    node_manifest_sha256 = "c" * 64
+    host = object.__new__(qualification_campaign.LinuxQualificationTargetCampaignHost)
+    object.__setattr__(
+        host,
+        "request",
+        SimpleNamespace(execution=SimpleNamespace(registration_receipt=registration)),
+    )
+    object.__setattr__(
+        host,
+        "spec",
+        SimpleNamespace(node_id=node_id, node_manifest_sha256=node_manifest_sha256),
+    )
+    row = {
+        "status": "reserved",
+        "intent_sha256": intent.intent_sha256,
+        "admission_sha256": registration.qualification_admission_sha256,
+        "grant_sha256": registration.qualification_grant_sha256,
+        "bundle_sha256": registration.qualification_bundle_sha256,
+        "node_id": node_id,
+        "hard_deadline": registered_at + timedelta(hours=1),
+        "accepted_terminal_submission_sha256": None,
+        "terminal_deadline_expiration_sha256": None,
+        "node_manifest_sha256": node_manifest_sha256,
+        "resource_lease_sha256": reservation_sha256,
+        "authorization_sha256": registration.authorization_sha256,
+        "quest_id": registration.quest_id,
+        "scientific_slot_id": registration.scientific_slot_id,
+        "action_sha256": registration.action_sha256,
+        "qualification_bundle_sha256": registration.qualification_bundle_sha256,
+        "qualification_grant_sha256": registration.qualification_grant_sha256,
+        "authorization_json": persisted.authorization_json,
+        "authorized_at": message.authorized_at,
+        "expires_at": message.expires_at,
+        "observation_admission_deadline": message.observation_admission_deadline,
+        "registered_at": registered_at,
+    }
+
+    assert persisted.authorization_json == authorization.model_dump(
+        mode="json",
+        exclude_none=True,
+    )
+    assert persisted.authorization_json != authorization.model_dump(mode="json")
+    host._verify_attempt_projection(row)  # noqa: SLF001
 
 
 class _Allocator(PostgreSQLExecutionAllocator):
