@@ -17,7 +17,9 @@ from aletheia.execution.runtime_v2_contracts import (
     QualificationTerminalDeadlineExpiration,
     RuntimeControlAuthorityPin,
     RuntimeControlAuthorityVerifier,
+    RuntimeInspectionEvidence,
     RuntimeLaunchAuthorization,
+    RuntimeTerminationAcceptanceChallenge,
     issue_accepted_qualification_terminal_submission,
     issue_accepted_runtime_termination,
     issue_historical_runtime_recovery_grant,
@@ -108,7 +110,25 @@ class PinnedRuntimeControlIssuanceAuthority:
             **scope,
         )
 
-    def issue_termination_challenge(self, *, preparation, launch_receipt, **scope):
+    def issue_termination_challenge(
+        self,
+        *,
+        preparation,
+        launch_receipt,
+        termination_evidence,
+        inspection_sequence,
+        node_inventory_sha256,
+        resource_lease_sha256,
+        fencing_epoch,
+        lease_token_sha256,
+        hard_deadline,
+        artifact_submission_deadline,
+        challenged_at,
+        expires_at,
+    ) -> RuntimeTerminationAcceptanceChallenge:
+        evidence = RuntimeInspectionEvidence.model_validate(
+            termination_evidence.model_dump(mode="python")
+        )
         return issue_runtime_termination_acceptance_challenge(
             pin=self._pin,
             private_key=self._private_key,
@@ -119,7 +139,16 @@ class PinnedRuntimeControlIssuanceAuthority:
             runtime_preparation_sha256=preparation.preparation_sha256,
             node_runtime_launch_receipt_sha256=launch_receipt.launch_receipt_sha256,
             runtime_identity_sha256=launch_receipt.launch_evidence.runtime_identity_sha256,
-            **scope,
+            runtime_inspection_evidence_sha256=evidence.inspection_sha256,
+            inspection_sequence=inspection_sequence,
+            node_inventory_sha256=node_inventory_sha256,
+            resource_lease_sha256=resource_lease_sha256,
+            fencing_epoch=fencing_epoch,
+            lease_token_sha256=lease_token_sha256,
+            hard_deadline=hard_deadline,
+            artifact_submission_deadline=artifact_submission_deadline,
+            challenged_at=challenged_at,
+            expires_at=expires_at,
         )
 
     def issue_accepted_termination(self, **scope) -> AcceptedRuntimeTermination:

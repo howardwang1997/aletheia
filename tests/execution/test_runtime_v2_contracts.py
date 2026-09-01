@@ -19,6 +19,7 @@ from aletheia.execution.runtime_contracts import (
     qualification_key_id,
     verify_worker_node_enrollment,
 )
+from aletheia.execution.runtime_control_issuance import PinnedRuntimeControlIssuanceAuthority
 from aletheia.execution.runtime_v2_contracts import (
     AcceptedRuntimeTermination,
     InputMaterializationEntry,
@@ -943,6 +944,24 @@ def test_fresh_termination_acceptance_precedes_artifact_and_node_receipt_work() 
         challenged_at=NOW + timedelta(seconds=9),
         expires_at=NOW + timedelta(seconds=30),
     )
+    concrete_challenge = PinnedRuntimeControlIssuanceAuthority(
+        pin=control_pin,
+        private_key=RUNTIME_CONTROL_PRIVATE_KEY,
+    ).issue_termination_challenge(
+        preparation=preparation,
+        launch_receipt=launch_receipt,
+        termination_evidence=terminal_evidence,
+        inspection_sequence=1,
+        node_inventory_sha256=_digest("runtime-v2-inventory"),
+        resource_lease_sha256=_digest("runtime-v2-resource-lease"),
+        fencing_epoch=preparation.fencing_epoch,
+        lease_token_sha256=preparation.lease_token_sha256,
+        hard_deadline=NOW + timedelta(minutes=5),
+        artifact_submission_deadline=NOW + timedelta(hours=1),
+        challenged_at=NOW + timedelta(seconds=9),
+        expires_at=NOW + timedelta(seconds=30),
+    )
+    assert concrete_challenge == challenge
     assert challenge.challenge_id == canonical_sha256(
         challenge.model_dump(mode="json", exclude={"challenge_id", "signature_ed25519_hex"})
     )
