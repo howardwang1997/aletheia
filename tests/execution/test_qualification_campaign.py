@@ -983,6 +983,118 @@ def test_service_kill_uses_systemd_249_compatible_kill_who_option(
     assert receipt.pid_after == 4101
 
 
+def test_post_kill_quota_replay_waits_for_transient_socket_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = object.__new__(campaign.LinuxQualificationTargetCampaignHost)
+    object.__setattr__(host, "request", SimpleNamespace(poll_milliseconds=1))
+    object.__setattr__(host, "_deadline", datetime.now(timezone.utc) + timedelta(seconds=5))
+    expected = object()
+    ready = {
+        "quota_health_sha256": _sha("quota-ready"),
+        "watchdog_health_sha256": _sha("watchdog-ready"),
+        "provisioning_receipt": {"exact": "replay"},
+    }
+    outcomes: list[object] = [
+        campaign._QualificationIdentityProbeFailure(  # noqa: SLF001
+            error_type="OCIOutputQuotaError",
+            detail="independent quota provisioning service is unavailable",
+        ),
+        campaign._QualificationIdentityProbeFailure(  # noqa: SLF001
+            error_type="OCIWatchdogError",
+            detail="independent watchdog service is unavailable",
+        ),
+        ready,
+    ]
+    calls: list[object] = []
+    sleeps: list[float] = []
+
+    def replay(value):
+        calls.append(value)
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(host, "_run_quota_child", replay)
+    monkeypatch.setattr(campaign.time, "sleep", sleeps.append)
+
+    assert host._run_quota_child_after_restart(expected) == ready  # noqa: SLF001
+    assert calls == [expected, expected, expected]
+    assert len(sleeps) == 2
+
+
+def test_post_kill_quota_replay_does_not_retry_integrity_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = object.__new__(campaign.LinuxQualificationTargetCampaignHost)
+    object.__setattr__(host, "request", SimpleNamespace(poll_milliseconds=1))
+    object.__setattr__(host, "_deadline", datetime.now(timezone.utc) + timedelta(seconds=5))
+    failure = campaign._QualificationIdentityProbeFailure(  # noqa: SLF001
+        error_type="OCIWatchdogError",
+        detail="watchdog response differs from socket peer identity",
+    )
+    calls = 0
+    sleeps: list[float] = []
+
+    def replay(_expected):
+        nonlocal calls
+        calls += 1
+        raise failure
+
+    monkeypatch.setattr(host, "_run_quota_child", replay)
+    monkeypatch.setattr(campaign.time, "sleep", sleeps.append)
+
+    with pytest.raises(campaign.QualificationCampaignError, match="socket peer identity"):
+        host._run_quota_child_after_restart(object())  # noqa: SLF001
+    assert calls == 1
+    assert sleeps == []
+
+
+def test_root_service_campaign_uses_readiness_retry_after_both_kills(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    request, manifest, preflight = _request_and_evidence(monkeypatch, tmp_path)
+    reference = _FakeCampaignHost(request, manifest, preflight).root
+    expected = reference.quota_campaign.provisioning_receipt
+    host = object.__new__(campaign.LinuxQualificationTargetCampaignHost)
+    object.__setattr__(host, "request", request)
+    object.__setattr__(host, "spec", manifest.spec)
+    before = {
+        "quota_health_sha256": reference.quota_campaign.quota_health_before_sha256,
+        "watchdog_health_sha256": reference.quota_campaign.watchdog_health_before_sha256,
+        "provisioning_receipt": expected.model_dump(mode="json"),
+    }
+    after = {
+        "quota_health_sha256": reference.quota_campaign.quota_health_after_sha256,
+        "watchdog_health_sha256": reference.quota_campaign.watchdog_health_after_sha256,
+        "provisioning_receipt": expected.model_dump(mode="json"),
+    }
+    kills = {item.unit_name: item for item in reference.service_kills}
+    readiness_calls: list[OutputQuotaProvisioningReceipt] = []
+    records: dict[str, bytes] = {}
+
+    monkeypatch.setattr(host, "read_record", lambda _name: None)
+    monkeypatch.setattr(host, "_run_quota_child", lambda value: before if value is None else after)
+    monkeypatch.setattr(host, "_loop_source", lambda _root: reference.quota_campaign.loop_device)
+    monkeypatch.setattr(host, "_kill_and_wait", lambda unit: kills[unit])
+    monkeypatch.setattr(
+        host,
+        "_run_quota_child_after_restart",
+        lambda value: readiness_calls.append(value) or after,
+    )
+    monkeypatch.setattr(host, "write_record_once", records.__setitem__)
+    monkeypatch.setattr(host, "_revalidate_root_service_campaign", lambda _evidence: None)
+
+    result = host.run_root_service_campaign()
+
+    assert readiness_calls == [expected]
+    assert result.quota_campaign.provisioning_receipt == expected
+    assert result.service_kills == reference.service_kills
+    assert set(records) == {"06-root-result.json"}
+
+
 def test_campaign_request_loader_requires_digest_custody_and_unique_canonical_json(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -1,7 +1,7 @@
 # PR-8h independent observer and qualification target campaign
 
 - Status: observer/campaign source complete; no target-host campaign receipt exists
-- Date: 2026-08-31
+- Date: 2026-09-01
 
 ## What this slice closes
 
@@ -340,6 +340,67 @@ and disabled, the exact container was removed, its three mount projections were 
 `/dev/loop23` was detached. The database, 16 MiB backing image, node journal and root-only SQL
 diagnostic archive remain retained as negative engineering evidence.
 
+Generation `20260901a`, frozen from merge commit
+`8386fb527075f13532974b08b9e6766e0a1f2511`, proved the later persisted-SEA repair and exposed a
+systemd-version compatibility defect in the first destructive node kill. Execution
+`exe_fe40510d18d615211bac47369cdfa458`, attempt
+`iat_704688c3f5a9a0d4c7977710edab1e0a` and slot
+`sos_698891ea720a97b89dc6fa2b3c1bf0ad` were registered for campaign request SHA-256
+`ecc59c2c3a489415cb5fe4751617f9962e004e1693d46c9a7619a3bea111943b`. Activation, the
+6,980,508-byte installed-manifest observation and outbox quiescence were durably recorded, but
+systemd 249 rejected the newer `--kill-whom=main` spelling before sending a signal. The 111-byte
+stderr had SHA-256 `9585fbd45386144ddd3245b616d0e1665500c1d0e00b55a1c4d40dc8ec4f5340`.
+No node-kill record was written. The runner now uses the systemd-249-compatible
+`--kill-who=main` spelling and freezes that argv in a regression test.
+
+Generation `20260901b`, frozen from merge commit
+`7afb64ddbc8329ced9aeb92b5996c02b0bacc8b5`, then proved the real node SIGKILL/restart and retained
+the full 1,800-second workload, but exposed a concrete termination-challenge construction defect.
+Its execution `exe_7eaedc87b0571da7c43af1b02eafe2a5`, attempt
+`iat_ad8ede9e91b7e4607878bd8920a5569d` and slot
+`sos_333e9059a8d533ed1f4cd0718c056207` were bound to request SHA-256
+`93ac4023b9b24514a7e409f2d480c4effaf7763acf0a96009ff05e48dcf0a75e`. The journal reached
+`03-node-kill.json` with SHA-256
+`1ac11a087746fdbb49a7a2f40bb9a4884b90eddfe7d3df44594ab7001c6baeb0`, but the production issuer
+omitted the required runtime-inspection evidence hash when constructing the closed challenge.
+The allocator therefore failed closed and no terminal-campaign record was admitted. Merge commit
+`e4cbe435d03a82f09d1ea3ef8eee1c291321d5ca` binds that exact evidence hash and adds a concrete
+issuer regression.
+
+Generation `20260901c`, frozen from that merge after both pull-request and main CI passed, proved
+the repaired terminal path and reached the root-service recovery boundary. Its reproducible source
+archive had SHA-256
+`6f07ab573efa3efb3f872de49e690eb3e919f400ce5e4938c11f63516fae3cf9`; the release-freeze receipt
+had SHA-256 `3b4555789da2ff74bab6b82cdd624fcd2f8676683a61c82697cb537a99fae77d`.
+Execution `exe_03399f896c7faa2714b542f769eadc59`, attempt
+`iat_3b3ab9aa0c73b7342299fb0afa6deec9` and slot
+`sos_b87d81a4b901b845e29252ed38c27f63` were bound to request and plan SHA-256
+`fb6b779647e800f9af318e4775a19900e5e175c0f3b056ad1d5725a221d5a583` and
+`f59a412d828cfd0daa2f43e4442c72efc15b967c6f3c2e170988ad8557a1c61e`.
+
+The exact rootful-Docker workload ran from `2026-09-01T02:57:53Z` through
+`2026-09-01T03:27:54Z` and exited zero after the selected 1,800 seconds. The installed-manifest
+record, terminal campaign, node peer and outbox peer records had SHA-256
+`dbabecb6402757352ffbf8af847aa768f7737c9dd5125dbe9f98a99c782982c5`,
+`a2c3b3e2b94107d2859e4c598dba1764c3dba6d88c4c4af2bfff7c052a76c939`,
+`efccd7b4fe577b9ad9a8e388639c2407ccb065a58bbbbf7cd37191ed15f79c55` and
+`557c00cf4f803606975db9edf5f474a497c9a55551c23a6b99799298355d150d`. Both node and outbox
+SIGKILL recovery therefore completed before the runner created the real `/dev/loop27` ext4 quota
+generation and killed the quota/watchdog processes.
+
+That later phase exposed a service-readiness race, not an integrity failure. systemd reported the
+restarted quota and watchdog units active at `03:28:04Z` and `03:28:06Z`, while their application
+startup receipts appeared at `03:28:06.846Z` and `03:28:08.213Z`. The node-UID replay attempted
+the watchdog socket at `03:28:08.120Z`, 93 milliseconds before the service became ready, and
+failed closed with stderr SHA-256
+`b0f63e0e9e8024958396cd8c257a5ae28be57e438efa940f487293009e6d6603`. No
+`06-root-services.json`, PostgreSQL-backend-kill record, final reobservation or campaign receipt was
+written. Post-kill replay now retains the child exception type and retries only the two exact
+quota/watchdog `service is unavailable` results until the already-frozen campaign deadline.
+Peer identity, response shape, deployment scope, durable receipt and every other error remain
+immediate fail-closed outcomes. Generation-c journals, mounts, database rows and service logs are
+retained as negative engineering evidence, not deployment qualification.
+
 PostgreSQL observation no longer copies routine, trigger, sequence or owner claims out of the
 deployment spec.  One `REPEATABLE READ, READ ONLY` snapshot reruns the exhaustive ACL/role gate,
 hashes every live execution routine and non-internal trigger definition, reads each exact sequence
@@ -468,7 +529,7 @@ receipt into a passing shape.
 The selected Linux target is compatible and has frozen/installed candidate generations, but none
 has emitted the complete campaign receipt. Therefore no host is currently proven deployable,
 PR-4b remains nondeployable, and `scientific_admission_allowed` is always false even in a
-successful campaign receipt. The next ordered operation is to merge the PostgreSQL reserved-alias
+successful campaign receipt. The next ordered operation is to merge the root-service readiness
 repair after its pull-request and main CI are green, commission one entirely fresh generation from
 that merge commit with the already-proven five-minute observation budget, explicit bounded
 initial-assignment window, short runtime heartbeat and 1,800-second workload, then rerun the
