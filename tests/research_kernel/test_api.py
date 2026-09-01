@@ -321,7 +321,8 @@ def _configure_custody(
     trust_path = tmp_path / "trust-root.json"
     registry_path = tmp_path / "genesis-policies.json"
     cas_root = tmp_path / "cas"
-    cas_root.mkdir()
+    cas_root.mkdir(mode=0o700)
+    cas_root.chmod(0o700)
     trust_bytes = trust_root.model_dump_json().encode("utf-8")
     registry_bytes = json.dumps(
         {
