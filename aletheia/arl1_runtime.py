@@ -283,8 +283,16 @@ class ARL1CampaignRuntimeConfigV1(KernelModel):
                 raise ValueError(f"ARL-1 RPC service {name} changed its authority closure")
             if not pin.valid_from <= self.prepared_at < pin.expires_at:
                 raise ValueError("ARL-1 RPC receipt key is not active at preparation")
-            if pin.peer_uid != self.process_uid or pin.peer_gid != self.process_gid:
-                raise ValueError("ARL-1 RPC peer identity differs from its process")
+            if (
+                pin.peer_uid == self.process_uid
+                or pin.peer_gid != self.process_gid
+                or pin.socket_owner_uid != pin.peer_uid
+                or pin.socket_group_gid != self.process_gid
+                or pin.socket_mode != 0o660
+            ):
+                raise ValueError(
+                    "ARL-1 RPC server peer must be UID-separated and share the campaign socket GID"
+                )
             primary = _PRIMARY_ROLES.get(name)
             if primary is not None:
                 binding = by_role[primary]

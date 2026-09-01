@@ -30,6 +30,7 @@ from aletheia.research_controller.external_rpc import (
     ControllerWorkerRPCOperation,
     ControllerWorkerRPCServicePin,
 )
+from aletheia.research_controller_rpc_runtime import ControllerWorkerRPCServerDeployment
 from aletheia.research_controller.step_executor import ControllerStepAuthorityRole
 from aletheia.research_kernel.schemas import canonical_json_bytes
 
@@ -72,6 +73,20 @@ def _campaign_only_pin(pin: ControllerWorkerRPCServicePin) -> ControllerWorkerRP
     )
 
 
+def _external_server_pin(
+    pin: ControllerWorkerRPCServicePin,
+    *,
+    server_uid: int,
+) -> ControllerWorkerRPCServicePin:
+    return ControllerWorkerRPCServicePin.model_validate(
+        {
+            **pin.model_dump(mode="python", exclude={"service_id"}),
+            "socket_owner_uid": server_uid,
+            "peer_uid": server_uid,
+        }
+    )
+
+
 def _runtime_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     worker, controller_manifest = _worker_config(monkeypatch, tmp_path)
     bindings = {
@@ -79,13 +94,32 @@ def _runtime_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         for adapter in worker.adapter_set_manifest.adapters
         for binding in adapter.authorities
     }
+    server_uid = os.geteuid() + 1
     services = ARL1CampaignRPCServiceSetV1(
-        execution_registration=_campaign_only_pin(worker.rpc_services.execution_registration),
-        raw_run_source=worker.rpc_services.raw_run_source,
-        database_observation=worker.rpc_services.database_observation,
-        independent_validation=worker.rpc_services.independent_validation,
-        independent_admission=worker.rpc_services.independent_admission,
-        atomic_admission=worker.rpc_services.atomic_admission,
+        execution_registration=_external_server_pin(
+            _campaign_only_pin(worker.rpc_services.execution_registration),
+            server_uid=server_uid,
+        ),
+        raw_run_source=_external_server_pin(
+            worker.rpc_services.raw_run_source,
+            server_uid=server_uid,
+        ),
+        database_observation=_external_server_pin(
+            worker.rpc_services.database_observation,
+            server_uid=server_uid,
+        ),
+        independent_validation=_external_server_pin(
+            worker.rpc_services.independent_validation,
+            server_uid=server_uid,
+        ),
+        independent_admission=_external_server_pin(
+            worker.rpc_services.independent_admission,
+            server_uid=server_uid,
+        ),
+        atomic_admission=_external_server_pin(
+            worker.rpc_services.atomic_admission,
+            server_uid=server_uid,
+        ),
     )
     archive_root = tmp_path / "arl1-runtime-archive"
     archive_root.mkdir(mode=0o700)
@@ -184,6 +218,83 @@ def test_keyless_runtime_composes_only_campaign_rpc_surface(
     assert ControllerWorkerRPCOperation.MATERIALIZE_ACTION_PROPOSAL not in observed
     assert ControllerWorkerRPCOperation.ISSUE_EXECUTION_AUTHORIZATION not in observed
     assert ControllerWorkerRPCOperation.DERIVE_CONTINUATION not in observed
+
+
+@pytest.mark.parametrize(
+    ("updates", "message"),
+    (
+        (
+            {"peer_uid": os.geteuid(), "socket_owner_uid": os.geteuid()},
+            "UID-separated",
+        ),
+        (
+            {
+                "peer_gid": os.getegid() + 1,
+                "socket_group_gid": os.getegid() + 1,
+            },
+            "campaign socket GID",
+        ),
+        ({"socket_mode": 0o600}, "campaign socket GID"),
+    ),
+)
+def test_runtime_rejects_unreachable_or_same_uid_rpc_server_peer(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    updates: dict[str, int],
+    message: str,
+) -> None:
+    config, _controller_manifest = _runtime_config(monkeypatch, tmp_path)
+    payload = config.model_dump(mode="python", exclude={"configuration_id"})
+    pin = payload["rpc_services"]["raw_run_source"]
+    pin.pop("service_id", None)
+    pin.update(updates)
+
+    with pytest.raises(ValueError, match=message):
+        ARL1CampaignRuntimeConfigV1.model_validate(payload)
+
+
+def test_runtime_peer_identity_can_form_one_service_per_process_deployment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config, _controller_manifest = _runtime_config(monkeypatch, tmp_path)
+    pin = config.rpc_services.raw_run_source
+    repository_root = Path(__file__).resolve().parents[2]
+    factory = (repository_root / "aletheia/research_controller_raw_run_source_runtime.py").resolve()
+    socket_parent = Path(pin.socket_path).parent
+    socket_parent_metadata = socket_parent.stat()
+
+    deployment = ControllerWorkerRPCServerDeployment(
+        service_pin=pin,
+        controller_id=config.controller_id,
+        controller_manifest_sha256=config.controller_manifest_sha256,
+        worker_process_principal_id=config.process_principal_id,
+        worker_peer_uid=config.process_uid,
+        worker_peer_gid=config.process_gid,
+        process_uid=pin.peer_uid,
+        process_gid=pin.peer_gid,
+        socket_parent_path=str(socket_parent),
+        socket_parent_owner_uid=pin.peer_uid,
+        socket_parent_owner_gid=pin.peer_gid,
+        socket_parent_mode=0o710,
+        socket_parent_device_id=socket_parent_metadata.st_dev,
+        socket_parent_inode=socket_parent_metadata.st_ino,
+        receipt_private_key_path=str((tmp_path / "raw-run-receipt.key").resolve()),
+        receipt_private_key_sha256=_sha("raw-run-receipt-key"),
+        reviewed_code_root=str(repository_root),
+        composition_factory_module="aletheia.research_controller_raw_run_source_runtime",
+        composition_factory_attribute="build_raw_run_source_rpc_service",
+        composition_factory_source_path=str(factory),
+        composition_factory_source_sha256=hashlib.sha256(factory.read_bytes()).hexdigest(),
+        composition_config_path=str((tmp_path / "raw-run-config.json").resolve()),
+        composition_config_file_sha256=_sha("raw-run-config"),
+        prepared_at=config.prepared_at,
+    )
+
+    assert deployment.process_uid == pin.peer_uid
+    assert deployment.worker_peer_uid == config.process_uid
+    assert deployment.worker_peer_uid != deployment.process_uid
+    assert deployment.worker_peer_gid == deployment.process_gid == config.process_gid
 
 
 def test_runtime_manifest_freshly_binds_config_and_request(
