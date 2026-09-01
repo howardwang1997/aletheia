@@ -97,7 +97,7 @@ def build_f9_v2_validation_rpc_service(*, deployment, configuration_bytes):
         group_gid: int = Field(ge=1, le=2**31 - 1)
         device_id: int = Field(ge=0)
         inode: int = Field(gt=0)
-        directory_mode: Literal[0o700] = 0o700
+        directory_mode: Literal[0o700, 0o750] = 0o700
         validator_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
         read_only: Literal[False] = False
         campaign_publication_allowed: Literal[True] = True
@@ -444,6 +444,8 @@ def build_f9_v2_validation_rpc_service(*, deployment, configuration_bytes):
         or key_pin.file_sha256 == deployment.receipt_private_key_sha256
         or key_pin.owner_uid != deployment.process_uid
         or key_pin.owner_gid != deployment.process_gid
+        or config.validation_archive.owner_uid != deployment.process_uid
+        or config.validation_archive.group_gid != deployment.process_gid
     ):
         raise ValueError("independent F9-v2 validation config differs from deployment or authority")
 

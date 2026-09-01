@@ -64,6 +64,9 @@ from aletheia.observations.scientific_bridge import (
     ScientificBridgeRole,
 )
 from aletheia.research_controller.step_executor import ControllerStepAuthorityRole
+from aletheia.research_controller.worker_composition import (
+    require_effective_read_only_directory,
+)
 from aletheia.research_kernel.policy import ed25519_key_id, ed25519_public_key_hex
 from aletheia.research_kernel.schemas import KernelModel, canonical_json_bytes, canonical_sha256
 from aletheia.research_store.cas import FilesystemResearchArchive
@@ -279,15 +282,18 @@ class ARL1F9V2ArchiveReadConfigV1(KernelModel):
     group_gid: int = Field(ge=0)
     device_id: int = Field(ge=0)
     inode: int = Field(gt=0)
-    directory_mode: Literal[0o700] = 0o700
+    directory_mode: Literal[0o700, 0o750] = 0o700
     validator_manifest_sha256: str = Field(pattern=_SHA256_PATTERN)
     validator_authority_pin: ScientificBridgeAuthorityPin
     read_only: Literal[True] = True
 
     @model_validator(mode="after")
-    def _archive_is_private_and_canonical(self) -> "ARL1F9V2ArchiveReadConfigV1":
+    def _archive_is_closed_and_canonical(self) -> "ARL1F9V2ArchiveReadConfigV1":
         _canonical_absolute_path(self.root, label="ARL-1 F9-v2 archive")
-        if self.validator_authority_pin.role is not ScientificBridgeRole.OBSERVATION_VALIDATOR:
+        if (
+            self.directory_mode & 0o022
+            or self.validator_authority_pin.role is not ScientificBridgeRole.OBSERVATION_VALIDATOR
+        ):
             raise ValueError("ARL-1 F9-v2 archive custody or validator role is invalid")
         return self
 
@@ -751,6 +757,18 @@ def compose_arl1_evidence_verifier(
 
     config = ARL1EvidenceVerifierRuntimeConfigV1.model_validate(config.model_dump(mode="python"))
     campaign = config.campaign_runtime
+    campaign.kernel_reader.require_effective_read_only(
+        process_uid=os.geteuid(),
+        process_gid=os.getegid(),
+    )
+    require_effective_read_only_directory(
+        owner_uid=config.validation_archive.owner_uid,
+        group_gid=config.validation_archive.group_gid,
+        directory_mode=config.validation_archive.directory_mode,
+        process_uid=os.geteuid(),
+        process_gid=os.getegid(),
+        label="ARL-1 F9-v2 validation archive",
+    )
     if (
         campaign.database_url_sha256
         != hashlib.sha256(get_settings().database_url.encode("utf-8")).hexdigest()

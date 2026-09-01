@@ -107,7 +107,7 @@ def _fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         "cas": (tmp_path / "atomic-admission-kernel-cas").resolve(),
     }
     for label, path in roots.items():
-        mode = 0o750 if label == "socket" else 0o700
+        mode = 0o750 if label in {"socket", "cas"} else 0o700
         path.mkdir(mode=mode)
         path.chmod(mode)
 
@@ -307,6 +307,18 @@ def test_checked_in_atomic_admission_factory_owns_exact_database_and_kernel_keys
             assert isinstance(kernel_store, ResearchKernelStore)
             assert isinstance(kernel_store._archive, FilesystemResearchArchive)
             assert kernel_store._archive.read_only is False
+            snapshot = b'{"shared_custody_probe":true}'
+            snapshot_sha256 = hashlib.sha256(snapshot).hexdigest()
+            archived = kernel_store._archive.archive_snapshot(
+                quest_id=case.authorization.message.action_protocol_binding.action.quest_id,
+                stream_version=1,
+                snapshot_sha256=snapshot_sha256,
+                payload=snapshot,
+            )
+            target = kernel_store._archive.root / archived.storage_key
+            assert stat.S_IMODE((kernel_store._archive.root / "sha256").stat().st_mode) == 0o750
+            assert stat.S_IMODE(target.parent.stat().st_mode) == 0o750
+            assert stat.S_IMODE(target.stat().st_mode) == 0o440
             assert isinstance(kernel_authority, ExactObservationKernelAuthority)
             assert isinstance(verification, ObservationAdmissionVerificationContext)
             assert verification.database_private_key == DATABASE_PRIVATE_KEY

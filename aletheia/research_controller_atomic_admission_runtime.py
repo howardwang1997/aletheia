@@ -99,7 +99,7 @@ def build_atomic_admission_rpc_service(*, deployment, configuration_bytes):
         cas_group_gid: int = Field(ge=0, le=2**31 - 1)
         cas_device_id: int = Field(ge=0)
         cas_inode: int = Field(gt=0)
-        cas_directory_mode: Literal[0o700] = 0o700
+        cas_directory_mode: Literal[0o700, 0o750] = 0o700
         max_object_bytes: int = Field(ge=1, le=1024**3)
         read_only: Literal[False] = False
         snapshot_archive_write_allowed: Literal[True] = True
@@ -689,6 +689,8 @@ def build_atomic_admission_rpc_service(*, deployment, configuration_bytes):
             cas_path,
             max_object_bytes=config.kernel.max_object_bytes,
             read_only=False,
+            directory_mode=config.kernel.cas_directory_mode,
+            object_mode=0o440 if config.kernel.cas_directory_mode == 0o750 else 0o400,
         ),
     )
     action_authority = PostgreSQLResearchActionAuthorityAdapter(kernel_store)

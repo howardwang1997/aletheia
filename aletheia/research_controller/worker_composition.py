@@ -161,6 +161,33 @@ class ControllerWorkerRPCServiceSet(ControllerModel):
         return canonical_sha256(self)
 
 
+def require_effective_read_only_directory(
+    *,
+    owner_uid: int,
+    group_gid: int,
+    directory_mode: int,
+    process_uid: int,
+    process_gid: int,
+    label: str,
+) -> None:
+    """Prove one exact primary identity can read/traverse, but cannot mutate, a root."""
+
+    if min(owner_uid, group_gid, process_uid, process_gid) < 0:
+        raise ValueError(f"{label} identity is invalid")
+    if process_uid == 0:
+        raise ValueError(f"{label} cannot be effectively read-only for a privileged process")
+    if directory_mode < 0 or directory_mode > 0o777:
+        raise ValueError(f"{label} mode is invalid")
+    if process_uid == owner_uid:
+        permissions = (directory_mode >> 6) & 0o7
+    elif process_gid == group_gid:
+        permissions = (directory_mode >> 3) & 0o7
+    else:
+        permissions = directory_mode & 0o7
+    if permissions & 0o5 != 0o5 or permissions & 0o2:
+        raise ValueError(f"{label} is not effectively read-only for the process identity")
+
+
 class ResearchKernelReadOnlyConfig(ControllerModel):
     """Public trust root and immutable filesystem custody used only for replay audit."""
 
@@ -193,9 +220,23 @@ class ResearchKernelReadOnlyConfig(ControllerModel):
         ):
             raise ValueError("Research Kernel CAS root must be canonical and absolute")
         readable = any(self.cas_directory_mode & mask == mask for mask in (0o500, 0o050, 0o005))
-        if self.cas_directory_mode & 0o222 or not readable:
-            raise ValueError("Research Kernel CAS root must be a readable non-writable directory")
+        if self.cas_directory_mode & 0o022 or not readable:
+            raise ValueError(
+                "Research Kernel CAS root must be readable and not group/world writable"
+            )
         return self
+
+    def require_effective_read_only(self, *, process_uid: int, process_gid: int) -> None:
+        """Prove one exact process can read/traverse, but cannot mutate, this CAS root."""
+
+        require_effective_read_only_directory(
+            owner_uid=self.cas_owner_uid,
+            group_gid=self.cas_group_gid,
+            directory_mode=self.cas_directory_mode,
+            process_uid=process_uid,
+            process_gid=process_gid,
+            label="Research Kernel CAS",
+        )
 
     @property
     def config_sha256(self) -> str:
@@ -544,6 +585,10 @@ def compose_research_controller_worker_service(
     if kernel_store is not None:
         store = kernel_store
     else:
+        config.kernel_reader.require_effective_read_only(
+            process_uid=os.geteuid(),
+            process_gid=os.getegid(),
+        )
         cas_path = Path(config.kernel_reader.cas_root)
         try:
             if cas_path.resolve(strict=True) != cas_path:
@@ -738,5 +783,6 @@ __all__ = [
     "controller_step_adapter_source_sha256",
     "controller_step_rpc_configuration_sha256",
     "load_research_controller_worker_runtime_config",
+    "require_effective_read_only_directory",
     "validate_worker_deployment_binding",
 ]

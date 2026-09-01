@@ -5,7 +5,7 @@ import json
 import os
 import stat
 import sys
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -100,6 +100,42 @@ def _kernel_reader(tmp_path: Path, prepared_at) -> ResearchKernelReadOnlyConfig:
         cas_directory_mode=stat.S_IMODE(metadata.st_mode),
         max_object_bytes=1024**2,
     )
+
+
+def test_kernel_reader_shared_custody_is_read_only_only_for_the_distinct_group_reader(
+    tmp_path: Path,
+) -> None:
+    reader = _kernel_reader(tmp_path, datetime(2026, 8, 28, tzinfo=timezone.utc))
+    writer_uid = os.geteuid() + 10_000
+    shared = ResearchKernelReadOnlyConfig.model_validate(
+        {
+            **reader.model_dump(mode="python"),
+            "cas_owner_uid": writer_uid,
+            "cas_group_gid": os.getegid(),
+            "cas_directory_mode": 0o750,
+        }
+    )
+
+    shared.require_effective_read_only(
+        process_uid=os.geteuid(),
+        process_gid=os.getegid(),
+    )
+    with pytest.raises(ValueError, match="not effectively read-only"):
+        shared.require_effective_read_only(process_uid=writer_uid, process_gid=os.getegid())
+    with pytest.raises(ValueError, match="not effectively read-only"):
+        shared.require_effective_read_only(
+            process_uid=os.geteuid(),
+            process_gid=os.getegid() + 10_000,
+        )
+    with pytest.raises(ValueError, match="privileged process"):
+        shared.require_effective_read_only(process_uid=0, process_gid=os.getegid())
+    with pytest.raises(ValidationError, match="not group/world writable"):
+        ResearchKernelReadOnlyConfig.model_validate(
+            {
+                **shared.model_dump(mode="python"),
+                "cas_directory_mode": 0o770,
+            }
+        )
 
 
 _STEP_ROLES = {

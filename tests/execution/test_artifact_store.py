@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import stat
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -152,6 +153,12 @@ def test_read_only_store_requires_frozen_layout_and_blocks_mutation(tmp_path: Pa
     (output / "result.bin").write_bytes(b"retained")
     manifest = _quarantine(writer, intent, output)
     receipts = writer.verify_manifest(intent=intent, manifest=manifest)
+    for path in writer.root.rglob("*"):
+        if path.is_dir():
+            path.chmod(0o750)
+        elif stat.S_IMODE(path.stat().st_mode) == 0o400:
+            path.chmod(0o440)
+    writer.root.chmod(0o750)
     reader = LocalArtifactStore(
         writer.root,
         verifier_principal_id=writer.verifier_principal_id,
@@ -160,6 +167,9 @@ def test_read_only_store_requires_frozen_layout_and_blocks_mutation(tmp_path: Pa
     )
 
     assert reader.read_only is True
+    assert (
+        stat.S_IMODE(_cas_path(writer, manifest.entries[0].content_sha256).stat().st_mode) == 0o440
+    )
     assert reader.load_manifest(manifest_sha256=manifest.manifest_sha256) == manifest
     assert (
         reader.load_verified_receipt(verified_receipt_sha256=receipts[0].verified_receipt_sha256)
