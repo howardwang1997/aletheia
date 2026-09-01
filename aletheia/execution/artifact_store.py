@@ -217,8 +217,10 @@ class LocalArtifactStore:
             raise ArtifactStoreError(f"{label} is not a regular file")
         if metadata.st_nlink != 1:
             raise ArtifactStoreError(f"{label} must not be hard-linked")
-        if require_immutable_mode and stat.S_IMODE(metadata.st_mode) != 0o400:
-            raise ArtifactStoreError(f"{label} must have immutable 0400 mode")
+        if require_immutable_mode and stat.S_IMODE(metadata.st_mode) not in {0o400, 0o440}:
+            raise ArtifactStoreError(
+                f"{label} must have immutable 0400 or group-readable 0440 mode"
+            )
 
     @staticmethod
     def _open_relative_file(root_descriptor: int, relative_path: str) -> int:

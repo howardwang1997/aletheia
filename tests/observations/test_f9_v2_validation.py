@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import os
+import stat
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -211,6 +212,10 @@ def test_f9_v2_service_signs_archives_and_bridges_exact_negative_observation(
     assert committed.campaign.message.request.prediction_sha256s
     assert assessor.calls == [raw_run.raw_run_sha256]
 
+    for path in archive.root.rglob("*"):
+        if path.is_dir():
+            path.chmod(0o500)
+    archive.root.chmod(0o500)
     reader = WriteOnceF9V2ValidationCampaignArchive(
         archive.root,
         validator_manifest_sha256=case.authorization.message.validator_manifest_sha256,
@@ -223,6 +228,64 @@ def test_f9_v2_service_signs_archives_and_bridges_exact_negative_observation(
             campaign=committed.campaign,
             raw_run=raw_run,
             committed_at=challenge_at,
+        )
+
+
+def test_shared_f9_archive_seals_group_read_campaign_before_atomic_publication(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    case = _f9_case(monkeypatch)
+    raw_run = _raw_run(case)
+    start = raw_run.assembled_at + timedelta(minutes=1)
+    root = tmp_path / "shared-f9-v2-campaigns"
+    root.mkdir(mode=0o750)
+    root.chmod(0o750)
+    archive = WriteOnceF9V2ValidationCampaignArchive(
+        root,
+        validator_manifest_sha256=case.authorization.message.validator_manifest_sha256,
+        validator_authority_pin=case.validator_pin,
+    )
+
+    campaign_sha256 = _service(
+        archive=archive,
+        assessor=_Assessor(),
+        case=case,
+        clock=_Clock([start, start + timedelta(seconds=1), start + timedelta(seconds=2)]),
+    ).prepare_validation_campaign(raw_run=raw_run)
+    assert campaign_sha256 is not None
+    target = root / "raw-runs" / raw_run.raw_run_sha256[:2] / f"{raw_run.raw_run_sha256}.json"
+    assert stat.S_IMODE((root / "raw-runs").stat().st_mode) == 0o750
+    assert stat.S_IMODE(target.parent.stat().st_mode) == 0o750
+    assert stat.S_IMODE(target.stat().st_mode) == 0o440
+    assert target.stat().st_nlink == 1
+
+    with pytest.raises(F9V2ValidationError, match="writable or inaccessible"):
+        WriteOnceF9V2ValidationCampaignArchive(
+            root,
+            validator_manifest_sha256=case.authorization.message.validator_manifest_sha256,
+            validator_authority_pin=case.validator_pin,
+            read_only=True,
+        )
+    monkeypatch.setattr(os, "geteuid", lambda: target.stat().st_uid + 10_000)
+    reader = WriteOnceF9V2ValidationCampaignArchive(
+        root,
+        validator_manifest_sha256=case.authorization.message.validator_manifest_sha256,
+        validator_authority_pin=case.validator_pin,
+        read_only=True,
+    )
+    assert (
+        reader.load_committed_campaign(
+            raw_run=raw_run,
+            observed_at=start + timedelta(seconds=3),
+        ).campaign_sha256
+        == campaign_sha256
+    )
+    target.parent.chmod(0o770)
+    with pytest.raises(F9V2ValidationError, match="parent chain became unsafe"):
+        reader.load_committed_campaign(
+            raw_run=raw_run,
+            observed_at=start + timedelta(seconds=3),
         )
 
 

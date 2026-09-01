@@ -43,6 +43,18 @@ floor before installing anything; qualification, legacy-evaluation and sandbox s
 the patched cryptography, pydantic-settings and Torch floors. A static regression gate prevents the
 audited vulnerable pins from returning.
 
+The live Research Kernel CAS and F9-v2 campaign archive now support one closed shared-custody
+layout for UID-separated services: only the designated writer owns a `0750` tree, every published
+object is sealed `0440`, and readers must have a different non-root UID with the exact shared
+primary GID. Startup derives the process's effective owner/group/other permissions and refuses a
+reader that is writable or cannot traverse the root. Parent directories and objects are freshly
+checked for stable inode ownership, exact modes, symlinks and group/world write bits on every read.
+Publication writes and fsyncs private staging bytes before a per-object lock and atomic rename make
+the single-link object visible. The artifact verifier separately accepts `0440` only as immutable
+group-readable data; it does not grant artifact mutation. These rules enable cross-service replay
+without making the validator, database bridge, admission service, controller or qualification
+auditor a peer writer.
+
 ## What is and is not complete
 
 The qualification contract, compiler replay, target-campaign replay, independent verifier,
@@ -108,6 +120,18 @@ conda run -n aletheia pytest -q \
   tests/research_controller/test_worker_composition.py \
   tests/test_schema_migrations.py \
   tests/execution/test_qualification_campaign.py
+```
+
+Run the shared-custody and UID-separation regression gates:
+
+```bash
+conda run -n aletheia pytest -q \
+  tests/research_store/test_cas.py \
+  tests/execution/test_artifact_store.py \
+  tests/observations/test_f9_v2_validation.py \
+  tests/research_controller/test_worker_composition.py \
+  tests/research_controller/test_f9_v2_validation_rpc_runtime.py \
+  tests/research_controller/test_atomic_admission_rpc_runtime.py
 ```
 
 Audit the resolved Python environment and the separately frozen legacy-evaluation image

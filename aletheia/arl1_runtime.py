@@ -322,6 +322,10 @@ class ARL1CampaignRuntimeConfigV1(KernelModel):
             != self.qualification_reader.artifact_verifier_principal_id
         ):
             raise ValueError("ARL-1 process or custody authority separation differs")
+        self.kernel_reader.require_effective_read_only(
+            process_uid=self.process_uid,
+            process_gid=self.process_gid,
+        )
         campaign_source = _canonical_absolute_path(
             self.campaign_implementation_source_path,
             label="ARL-1 campaign implementation",

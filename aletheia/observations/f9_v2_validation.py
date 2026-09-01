@@ -11,6 +11,7 @@ from __future__ import annotations
 import fcntl
 import os
 import re
+import secrets
 import stat
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -531,13 +532,48 @@ class WriteOnceF9V2ValidationCampaignArchive:
             candidate.mkdir(parents=True, exist_ok=True, mode=0o700)
         metadata = candidate.lstat()
         if candidate.is_symlink() or not stat.S_ISDIR(metadata.st_mode) or metadata.st_mode & 0o022:
-            raise F9V2ValidationError("F9-v2 archive root must be a private directory")
+            raise F9V2ValidationError("F9-v2 archive root must be a closed directory")
+        root_mode = stat.S_IMODE(metadata.st_mode)
+        if read_only and os.geteuid() == 0:
+            raise F9V2ValidationError(
+                "read-only F9-v2 archive cannot run under a privileged process"
+            )
+        if read_only and not any(root_mode & mask == mask for mask in (0o500, 0o050, 0o005)):
+            raise F9V2ValidationError("read-only F9-v2 archive root is not traversable")
+        if read_only:
+            if metadata.st_uid == os.geteuid():
+                effective_mode = (root_mode >> 6) & 0o7
+            elif metadata.st_gid == os.getegid():
+                effective_mode = (root_mode >> 3) & 0o7
+            else:
+                effective_mode = root_mode & 0o7
+            if effective_mode & 0o5 != 0o5 or effective_mode & 0o2:
+                raise F9V2ValidationError(
+                    "read-only F9-v2 archive is writable or inaccessible to this process"
+                )
+        if not read_only and (
+            root_mode not in {0o700, 0o750}
+            or metadata.st_uid != os.geteuid()
+            or metadata.st_gid != os.getegid()
+        ):
+            raise F9V2ValidationError(
+                "writable F9-v2 archive must be process-owned private or shared-read custody"
+            )
         self.root = candidate.resolve(strict=True)
         self.validator_manifest_sha256 = validator_manifest_sha256
         self.validator_authority_pin = ScientificBridgeAuthorityPin.model_validate(
             validator_authority_pin.model_dump(mode="python")
         )
         self.read_only = bool(read_only)
+        self._directory_mode = root_mode
+        self._object_mode = root_mode & 0o444
+        self._root_identity = (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_uid,
+            metadata.st_gid,
+            root_mode,
+        )
 
     def publish_campaign(
         self,
@@ -680,12 +716,31 @@ class WriteOnceF9V2ValidationCampaignArchive:
         return target
 
     def _prepare_parent(self, target: Path, *, create: bool) -> bool:
+        try:
+            root_metadata = self.root.lstat()
+        except OSError as exc:
+            raise F9V2ValidationError("F9-v2 archive root is unavailable") from exc
+        if (
+            self.root.is_symlink()
+            or not stat.S_ISDIR(root_metadata.st_mode)
+            or (
+                root_metadata.st_dev,
+                root_metadata.st_ino,
+                root_metadata.st_uid,
+                root_metadata.st_gid,
+                stat.S_IMODE(root_metadata.st_mode),
+            )
+            != self._root_identity
+        ):
+            raise F9V2ValidationError("F9-v2 archive root custody changed")
         current = self.root
         for component in target.parent.relative_to(self.root).parts:
             current /= component
+            created = False
             if create:
                 try:
-                    current.mkdir(mode=0o700)
+                    current.mkdir(mode=self._directory_mode)
+                    created = True
                 except FileExistsError:
                     pass
             try:
@@ -694,10 +749,24 @@ class WriteOnceF9V2ValidationCampaignArchive:
                 if not create:
                     return False
                 raise F9V2ValidationError("F9-v2 archive parent chain is missing") from exc
+            if created:
+                descriptor = os.open(
+                    current,
+                    os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+                )
+                try:
+                    os.fchmod(descriptor, self._directory_mode)
+                    os.fsync(descriptor)
+                    metadata = os.fstat(descriptor)
+                finally:
+                    os.close(descriptor)
             if (
                 current.is_symlink()
                 or not stat.S_ISDIR(metadata.st_mode)
+                or metadata.st_uid != self._root_identity[2]
+                or metadata.st_gid != self._root_identity[3]
                 or metadata.st_mode & 0o022
+                or stat.S_IMODE(metadata.st_mode) != self._directory_mode
             ):
                 raise F9V2ValidationError("F9-v2 archive parent chain became unsafe")
         return True
@@ -708,14 +777,19 @@ class WriteOnceF9V2ValidationCampaignArchive:
             return self._publish_once_locked(target=target, payload=payload)
 
     def _publish_once_locked(self, *, target: Path, payload: bytes) -> bytes:
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
         try:
-            descriptor = os.open(target, flags, 0o400)
-        except FileExistsError:
+            target.lstat()
+        except FileNotFoundError:
+            pass
+        else:
             return self._read_regular(target)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        staging = target.with_name(f".{target.name}.{secrets.token_hex(16)}.tmp")
+        try:
+            descriptor = os.open(staging, flags, 0o600)
         except OSError as exc:
             raise F9V2ValidationError("F9-v2 archive refused campaign publication") from exc
-        committed = False
+        staged = False
         try:
             offset = 0
             view = memoryview(payload)
@@ -724,22 +798,31 @@ class WriteOnceF9V2ValidationCampaignArchive:
                 if written <= 0:
                     raise F9V2ValidationError("F9-v2 archive write made no progress")
                 offset += written
+            os.fchmod(descriptor, self._object_mode)
             os.fsync(descriptor)
-            os.fchmod(descriptor, 0o400)
-            committed = True
+            staged = True
         finally:
             os.close(descriptor)
-            if not committed:
+            if not staged:
                 try:
-                    target.unlink()
+                    staging.unlink()
                 except FileNotFoundError:
                     pass
+        try:
+            os.rename(staging, target)
+        except OSError as exc:
+            raise F9V2ValidationError("F9-v2 archive could not publish campaign bytes") from exc
+        finally:
+            try:
+                staging.unlink()
+            except FileNotFoundError:
+                pass
         parent = os.open(target.parent, os.O_RDONLY)
         try:
             os.fsync(parent)
         finally:
             os.close(parent)
-        return payload
+        return self._read_regular(target)
 
     @contextmanager
     def _publication_lock(self, target: Path, *, exclusive: bool) -> Iterator[None]:
@@ -788,7 +871,11 @@ class WriteOnceF9V2ValidationCampaignArchive:
             if (
                 not stat.S_ISREG(before.st_mode)
                 or before.st_nlink != 1
-                or stat.S_IMODE(before.st_mode) != 0o400
+                or before.st_uid != self._root_identity[2]
+                or before.st_gid != self._root_identity[3]
+                or stat.S_IMODE(before.st_mode) & 0o222
+                or not stat.S_IMODE(before.st_mode) & 0o444
+                or stat.S_IMODE(before.st_mode) != self._object_mode
                 or before.st_size < 1
                 or before.st_size > _MAX_ARCHIVE_BYTES
             ):

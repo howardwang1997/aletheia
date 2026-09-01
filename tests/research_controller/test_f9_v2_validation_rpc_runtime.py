@@ -140,7 +140,7 @@ def _fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         (config_root, 0o700),
         (receipt_secret_root, 0o700),
         (validator_secret_root, 0o700),
-        (validation_archive_root, 0o700),
+        (validation_archive_root, 0o750),
     ):
         path.mkdir(mode=mode)
         path.chmod(mode)
