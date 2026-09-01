@@ -109,6 +109,26 @@ class QualificationCampaignError(RuntimeError):
     """The campaign request, target, recovery, or evidence failed closed."""
 
 
+class _QualificationIdentityProbeFailure(QualificationCampaignError):
+    """Typed child failure retained for narrowly scoped recovery decisions."""
+
+    def __init__(self, *, error_type: str, detail: str) -> None:
+        self.error_type = error_type
+        self.detail = detail
+        super().__init__(f"identity probe failed closed: {error_type}:{detail}")
+
+
+_TRANSIENT_ROOT_SERVICE_FAILURES = frozenset(
+    {
+        (
+            "OCIOutputQuotaError",
+            "independent quota provisioning service is unavailable",
+        ),
+        ("OCIWatchdogError", "independent watchdog service is unavailable"),
+    }
+)
+
+
 class QualificationCampaignExecutionExpectationV1(ExecutionModel):
     """One pre-reserved real execution whose node recovery and terminal path are exercised."""
 
@@ -1486,6 +1506,13 @@ class LinuxQualificationTargetCampaignHost:
             or not isinstance(result["ok"], dict)
         ):
             reason = result.get("error") if isinstance(result, dict) else "invalid"
+            if isinstance(result, dict) and set(result) == {"error"} and isinstance(reason, str):
+                error_type, separator, detail = reason.partition(":")
+                if separator and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", error_type):
+                    raise _QualificationIdentityProbeFailure(
+                        error_type=error_type,
+                        detail=detail,
+                    )
             raise QualificationCampaignError(f"identity probe failed closed: {reason}")
         return result["ok"]
 
@@ -1669,6 +1696,28 @@ class LinuxQualificationTargetCampaignHost:
             operation=lambda: self._quota_child(expected),
         )
 
+    def _run_quota_child_after_restart(
+        self,
+        expected: OutputQuotaProvisioningReceipt,
+    ) -> Mapping[str, object]:
+        """Wait for post-SIGKILL socket readiness without retrying integrity failures."""
+
+        last_unavailable: _QualificationIdentityProbeFailure | None = None
+        while datetime.now(timezone.utc) < self._deadline:
+            try:
+                return self._run_quota_child(expected)
+            except _QualificationIdentityProbeFailure as exc:
+                if (exc.error_type, exc.detail) not in _TRANSIENT_ROOT_SERVICE_FAILURES:
+                    raise
+                last_unavailable = exc
+            remaining = (self._deadline - datetime.now(timezone.utc)).total_seconds()
+            if remaining <= 0:
+                break
+            time.sleep(min(self.request.poll_milliseconds / 1000, remaining))
+        raise QualificationCampaignError(
+            "root services did not become healthy before the campaign deadline"
+        ) from last_unavailable
+
     def run_root_service_campaign(self) -> QualificationRootServiceCampaignEvidenceV1:
         existing = _load_record(
             self,
@@ -1693,7 +1742,7 @@ class LinuxQualificationTargetCampaignHost:
                 key=lambda item: item.unit_name,
             )
         )
-        after = self._run_quota_child(receipt)
+        after = self._run_quota_child_after_restart(receipt)
         try:
             replayed = OutputQuotaProvisioningReceipt.model_validate(after["provisioning_receipt"])
             quota_campaign = QualificationQuotaCampaignReceiptV1(
