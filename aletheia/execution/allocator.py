@@ -2633,7 +2633,22 @@ class PostgreSQLExecutionAllocator:
                 )
             ).scalar_one_or_none()
             node = session.get(_ExecutionNodeRecord, attempt.node_id)
-            if admission is None or terminal_record is None or node is None:
+            if admission is None or node is None:
+                raise AdmissionConflict("qualification run durable lineage is incomplete")
+            if terminal_record is None:
+                # A preregistered attempt is a legitimate typed-pending source only while its
+                # durable lifecycle can still produce terminal material.  Terminal states with a
+                # missing acceptance row remain corruption, rather than being retried until the
+                # scientific admission deadline.
+                if attempt.status in {
+                    "reserved",
+                    "starting",
+                    "running",
+                    "reconciliation_required",
+                    "terminated",
+                    "verifying",
+                }:
+                    return None
                 raise AdmissionConflict("qualification run durable lineage is incomplete")
             try:
                 bundle = EngineeringQualificationBundle.model_validate(admission.bundle_json)

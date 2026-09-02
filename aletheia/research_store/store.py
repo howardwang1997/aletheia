@@ -1373,13 +1373,33 @@ class ResearchKernelStore:
         *,
         expected_scope_binding: ResearchScopeBinding | None = None,
     ) -> ResearchReplayAudit:
-        """Recompute and verify an entire Quest chain, CAS catalog, snapshots, and receipts."""
+        """Read and verify an entire Quest chain without acquiring a write-capable row lock.
+
+        This historical verification path is intentionally usable by a SELECT-only principal.
+        A concurrent append can make the independently read projections disagree, in which case
+        ``_audit_stream`` fails closed.  Callers that must serialize a following mutation use
+        ``audit_in_session`` instead.
+        """
 
         with session_scope() as session:
-            return self.audit_in_session(
+            head = session.scalar(
+                select(_ResearchQuestStreamRecord).where(
+                    _ResearchQuestStreamRecord.quest_id == quest_id
+                )
+            )
+            if head is None:
+                raise ResearchQuestNotFound(f"unknown Quest stream: {quest_id}")
+            if (
+                expected_scope_binding is not None
+                and _scope_from_head(head) != expected_scope_binding
+            ):
+                raise ResearchStoreError("requested scope does not match the frozen Quest binding")
+            return _audit_stream(
                 session,
-                quest_id,
-                expected_scope_binding=expected_scope_binding,
+                head=head,
+                archive=self._archive,
+                trust_root=self._trust_root,
+                expected_policy=self._expected_policy(quest_id),
             )
 
     def audit_in_session(
