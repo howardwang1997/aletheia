@@ -421,10 +421,14 @@ run exists, and the allocator correctly retained reconciliation rather than trea
 Docker exit as absence.
 
 The source repair adds only a closed recovery form for that timing race. It requires the immutable
-start-submission journal, complete frozen container inspection, entrypoint start at or after the
-signed expiry, exact exit `126`, PID zero, no restart, and independent root-watchdog revalidation of
-the same stopped inspection before container removal. Earlier start, any other exit code, restart,
-configuration drift, missing container evidence, or a real launch journal remains fail-closed. The
+start-submission journal and historical complete container-inspection hash, entrypoint start at or
+after the signed expiry, exact exit `126`, PID zero and no restart. Before container removal the
+independent root watchdog revalidates the same ID/name, closed process state and timestamps plus the
+complete frozen OCI enforcement projection, including a fresh hash of the runtime-owned seccomp
+copy. The historical full-inspection hash remains immutable evidence, but unrelated current Docker
+metadata is not required to remain byte-identical. Earlier start, any other exit code, restart,
+configuration or timestamp drift, missing container evidence, or a real launch journal remains
+fail-closed. The
 first target replay of merge `b7d6eba` exposed a separate liveness defect: the allocator reused the
 artifact-submission deadline as the selector bound for a row that provably never acquired runtime
 identity, so `20260902f` was no longer delivered after `hard_deadline + artifact grace` and retained
@@ -444,8 +448,11 @@ watchdog deployment. Its one-shot worker can pull only that named attempt, canno
 work, cannot launch or reauthorize, rejects any local launch receipt/runtime identity, and can
 produce only a release decision with no replacement authority. A pre-expiry node-signed pending
 receipt remains immutable generation 1; recovery appends a fresh generation 2 that explicitly
-supersedes it. Target commissioning and execution remain pending until this source is merged,
-frozen from `main`, migrated and reverified. See
+supersedes it. PR #139 was subsequently merged, frozen, installed and migrated on the target. Its
+first two one-shot cleanup invocations made no container-removal or database-release mutation: the
+first found the independently supervised services inactive, and the second exposed the byte-wide
+Docker inspection replay defect described above. A narrow stable-semantics follow-up must now be
+merged, frozen and target-replayed under a newly commissioned, non-reused cleanup key. See
 [PR-8j attempt-scoped cleanup recovery](PR8J_ATTEMPT_SCOPED_PRE_RUNTIME_CLEANUP.md).
 
 ## Destructive campaign and evidence order

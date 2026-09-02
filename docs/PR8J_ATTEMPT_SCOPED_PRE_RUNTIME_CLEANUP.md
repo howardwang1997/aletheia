@@ -1,6 +1,7 @@
 # PR-8j attempt-scoped pre-runtime cleanup recovery
 
-- Status: source and focused tests complete; target commissioning/apply pending
+- Status: source merged and target commissioned; recovery remains paused on a separately exposed
+  watchdog quiescence replay defect
 - Scope: release one retained never-started qualification attempt after its source node key expired
 - Scientific authority: none
 
@@ -63,6 +64,30 @@ allocator call.
 
 The retained target attempt and its loop/ext4 hold are negative engineering evidence until steps
 1–6 complete. This recovery is not a PR-8h campaign receipt and cannot qualify ARL-1 by itself.
+
+## 2026-09-03 target checkpoint
+
+PR #139 merged as `61ccd9dddaaef0945b946b68223250159c43e849`; its deterministic source
+archive was installed read-only on the qualification target and the qualification database was
+upgraded from `0031` to `0032`. The attempt-scoped authority was commissioned entirely on the
+target. Its private key was neither exported nor printed, and that expired authority will not be
+reused.
+
+Two one-shot cleanup invocations both failed before container removal or database release and are
+retained as negative engineering evidence. The second invocation reconstructed the exact immutable
+watchdog armed/terminal/pending chain and the same stopped container identity, exit `126`, PID zero,
+no restart and exact start/finish timestamps. It then exposed that the watchdog compared the hash
+of the *entire current* Docker `ContainerInspect` object with the historical inspection hash.
+Docker-maintained, non-security metadata can change while the frozen configuration and process
+identity remain unchanged, so this byte-wide replay comparison prevented liveness.
+
+The follow-up keeps the historical full-inspection hash immutable but does not treat unrelated
+current metadata as security authority. Runtime and watchdog now share the same exhaustive frozen
+OCI enforcement verifier, freshly rehash the runtime-owned seccomp copy, and independently require
+the exact container ID/name, closed process-state fields, exit `126`, PID zero, no restart and the
+historical start/finish timestamps. Configuration, state or timestamp drift still fails before a
+quiescence acknowledgement or container removal. This source change must merge, be frozen into a
+new release and pass the same target replay before the retained attempt can be released.
 
 ## Focused verification
 

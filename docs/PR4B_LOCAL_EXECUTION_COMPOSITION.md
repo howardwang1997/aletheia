@@ -126,11 +126,13 @@ closure is not proof of every kernel/host failure mode or a substitute for targe
   submission grace has elapsed, historical pre-runtime recovery remains deliverable only to
   finish cleanup/release; it cannot prepare or launch work. That liveness rule does not extend the
   bounded recovery window for a runtime that actually launched or for terminal artifacts;
-- a submitted Docker start is still eligible for pre-workload cleanup only when the full frozen
-  inspection proves that the pinned launch gate itself began at or after ticket expiry, exited with
-  its reserved rejection code `126`, has PID zero and no restart, and the root watchdog
-  independently revalidates the same stopped container before removal. This does not create a
-  runtime identity, engineering success, or scientific evidence;
+- a submitted Docker start is still eligible for pre-workload cleanup only when its immutable
+  historical inspection proves that the pinned launch gate itself began at or after ticket expiry,
+  exited with its reserved rejection code `126`, has PID zero and no restart. Before removal the
+  root watchdog independently revalidates the same container ID/name, exact state/timestamps and
+  exhaustive frozen OCI enforcement semantics, including a fresh seccomp-copy hash. Unrelated
+  current Docker metadata may drift without replacing the historical full-inspection evidence.
+  This does not create a runtime identity, engineering success, or scientific evidence;
 - after an engine mutation may have started a process, absence is not inferred. An ambiguous or
   unknown runtime retains reconciliation and its evidence; it never releases authority or starts a
   duplicate;

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import fcntl
 import hashlib
 import io
@@ -1152,9 +1153,16 @@ def test_sealed_retirement_pending_wins_deadline_race_before_any_kill(
 
 @pytest.mark.parametrize(
     "watchdog_observation",
-    ["absent", "blocked_create", "created", "expired_gate"],
+    [
+        "absent",
+        "blocked_create",
+        "created",
+        "expired_gate",
+        "expired_gate_config_drift",
+        "expired_gate_timestamp_drift",
+    ],
 )
-def test_fired_preworkload_watchdog_acknowledges_exact_quiescence_for_cold_cleanup(
+def test_fired_preworkload_watchdog_validates_exact_quiescence_for_cold_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     watchdog_observation: str,
@@ -1189,8 +1197,8 @@ def test_fired_preworkload_watchdog_acknowledges_exact_quiescence_for_cold_clean
     config = runtime.build_oci_configuration(request=request)
     created["Name"] = f"/{config.container_name}"
     expired_gate["Name"] = f"/{config.container_name}"
-    create_submitted = watchdog_observation in {"blocked_create", "created", "expired_gate"}
-    start_submitted = watchdog_observation == "expired_gate"
+    create_submitted = watchdog_observation != "absent"
+    start_submitted = watchdog_observation.startswith("expired_gate")
     _seed_pending_launch_generation(
         runtime,
         runtime_root=_runtime_root(tmp_path),
@@ -1208,7 +1216,7 @@ def test_fired_preworkload_watchdog_acknowledges_exact_quiescence_for_cold_clean
     )
     observed_container = expired_gate if start_submitted else created
     initial_inspection = (
-        observed_container if watchdog_observation in {"created", "expired_gate"} else None
+        observed_container if watchdog_observation == "created" or start_submitted else None
     )
     current_inspection = {"value": initial_inspection}
     monkeypatch.setattr(
@@ -1228,6 +1236,28 @@ def test_fired_preworkload_watchdog_acknowledges_exact_quiescence_for_cold_clean
     assert service._recover_firing_intent(armed) is None  # noqa: SLF001
     if watchdog_observation == "blocked_create":
         current_inspection["value"] = created
+    if start_submitted:
+        # Docker may rewrite unrelated inspection metadata after the immutable expired-gate
+        # observation was journaled.  The watchdog must ignore that byte-level drift while still
+        # revalidating every frozen enforcement field and exact process-state timestamp.
+        replay_inspection = copy.deepcopy(observed_container)
+        replay_inspection["GraphDriver"] = {
+            "Data": {"MergedDir": "/engine-maintained/non-security-metadata"},
+            "Name": "overlay2",
+        }
+        assert canonical_sha256(replay_inspection) != canonical_sha256(observed_container)
+        if watchdog_observation == "expired_gate_config_drift":
+            host_config = replay_inspection["HostConfig"]
+            assert isinstance(host_config, dict)
+            host_config["Memory"] = int(host_config["Memory"]) + 1
+        if watchdog_observation == "expired_gate_timestamp_drift":
+            state = replay_inspection["State"]
+            assert isinstance(state, dict)
+            finished_at = datetime.fromisoformat(str(state["FinishedAt"]).replace("Z", "+00:00"))
+            state["FinishedAt"] = (
+                (finished_at + timedelta(microseconds=1)).isoformat().replace("+00:00", "Z")
+            )
+        current_inspection["value"] = replay_inspection
     monkeypatch.setattr(service, "_deadline_reached", lambda armed, now: True)
 
     # Cold node restart: the service's immutable fired terminal is acknowledged as quiescent,
@@ -1257,6 +1287,36 @@ def test_fired_preworkload_watchdog_acknowledges_exact_quiescence_for_cold_clean
 
     monkeypatch.setattr(restarted, "_engine_inspect", _inspect)
     monkeypatch.setattr(restarted, "_remove_created_container", _remove)
+    if watchdog_observation in {
+        "expired_gate_config_drift",
+        "expired_gate_timestamp_drift",
+    }:
+        expected_error = (
+            "differs from frozen OCI enforcement"
+            if watchdog_observation == "expired_gate_config_drift"
+            else "changed exact process timestamps"
+        )
+        with pytest.raises(
+            OCIWatchdogError,
+            match=expected_error,
+        ):
+            restarted.cleanup_never_started(
+                request=request,
+                preparation=preparation,
+                authorization_request=authorization_request,
+                authorization=authorization,
+            )
+        assert present["value"] is True
+        assert deleted == []
+        assert service._load_terminal(armed) is not None  # noqa: SLF001
+        assert (
+            service._recover_watchdog_record(  # noqa: SLF001
+                service._cleanup_quiescence_path(armed),  # noqa: SLF001
+                oci_deployment_module._WatchdogCleanupQuiescenceRecord,  # noqa: SLF001
+            )
+            is None
+        )
+        return
     evidence = restarted.cleanup_never_started(
         request=request,
         preparation=preparation,
@@ -1280,6 +1340,20 @@ def test_fired_preworkload_watchdog_acknowledges_exact_quiescence_for_cold_clean
     )
     assert completed.watchdog_cleanup_quiescence_journal_sha256 is not None
     assert (completed.expired_launch_gate_rejection_sha256 is not None) is start_submitted
+    if start_submitted:
+        pending = restarted._load_required(  # noqa: SLF001
+            _runtime_root(tmp_path) / "cleanup" / "absence-1-pending.json",
+            oci_runtime_module._NeverStartedCleanupPending,  # noqa: SLF001
+        )
+        assert pending.expired_launch_gate_rejection is not None
+        assert (
+            pending.expired_launch_gate_rejection.container_inspection_sha256
+            == canonical_sha256(observed_container)
+        )
+        assert (
+            pending.expired_launch_gate_rejection.container_inspection_sha256
+            != canonical_sha256(current_inspection["value"])
+        )
 
     # Reusing the Docker name cannot reactivate the old watchdog generation: its fired terminal
     # short-circuits before any inspection or kill, while exact local cleanup replays once.

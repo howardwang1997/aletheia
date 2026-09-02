@@ -34,11 +34,13 @@ then becomes the one terminal authority and is atomically paired with one v2 out
 Local irreversible phases use fsynced intent/pending/completed journals and replay the same
 generation. A never-started generation requires exact absence evidence; once an engine mutation may
 have started work, unknown is retained and cannot be converted into absence. The sole submitted-
-start exception is an exact *pre-workload* launch-gate rejection: the complete frozen container and
-start-submission journals must match, the pinned gate must begin at or after its signed ticket
-expiry, Docker must report the gate-reserved exit `126` with PID zero and no restart, and the
-independent watchdog must revalidate the same full inspection before removal. That path records no
-runtime identity and grants no scientific evidence. Every other quick exit remains unknown. An
+start exception is an exact *pre-workload* launch-gate rejection: the historical complete container
+inspection and start-submission journals must match, the pinned gate must begin at or after its
+signed ticket expiry, and Docker must report the gate-reserved exit `126` with PID zero and no
+restart. Before removal the independent watchdog revalidates the same container identity,
+state/timestamps and exhaustive frozen OCI enforcement projection with a fresh seccomp-copy hash;
+unrelated current Docker metadata need not preserve the historical inspection's byte hash. That
+path records no runtime identity and grants no scientific evidence. Every other quick exit remains unknown. An
 actual workload start is recovered from historical ticket/start evidence. Same-node adoption
 requires fresh running inspection and a singleton lock, then crash-idempotently rotates both
 allocator and runtime fences. Cross-node adoption is forbidden.

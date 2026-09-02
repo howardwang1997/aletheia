@@ -47,12 +47,15 @@ from pydantic import AwareDatetime, Field, ValidationError, model_validator
 from aletheia.execution.oci_runtime import (
     DeploymentPinnedOCIPolicy,
     OCIConfiguration,
+    OCIEngineError,
     OCIExecutionPlan,
     OCIProductionCapabilityError,
     OCIWatchdogCleanupQuiescence,
     _DeadlineWatchdogJournal,
+    _OCIEngineConfigurationVerifier,
     _LaunchGateAuthorizationJournal,
     _NeverStartedCleanupPending,
+    _parse_engine_timestamp,
     host_parent_chain_sha256,
 )
 from aletheia.execution.runtime_v2_contracts import (
@@ -72,6 +75,7 @@ _WORKSPACE_SYSTEMD_UNIT = re.compile(
 )
 _MAX_CONTROL_BYTES = 1024 * 1024
 _MAX_GATE_BYTES = 32 * 1024 * 1024
+_MAX_SECCOMP_BYTES = 8 * 1024 * 1024
 _SECTOR_BYTES = 512
 _OCI_MANIFEST_MEDIA_TYPES = {
     "application/vnd.oci.image.manifest.v1+json",
@@ -4628,36 +4632,231 @@ class DurableDeadlineWatchdogService:
             if inspection is not None or pending.container_id is not None:
                 raise OCIWatchdogError("fired-absent cleanup is no longer exactly absent")
             return
-        rejection = pending.expired_launch_gate_rejection
-        if rejection is not None:
-            if (
-                inspection is None
-                or canonical_sha256(inspection) != rejection.container_inspection_sha256
-                or inspection.get("Id") != terminal.container_id
-                or inspection.get("Name") != f"/{armed.container_name}"
-                or pending.container_id != terminal.container_id
-                or rejection.container_id != terminal.container_id
-            ):
-                raise OCIWatchdogError(
-                    "fired-stopped expired-gate cleanup changed exact container evidence"
-                )
-            return
-        state = inspection.get("State") if inspection is not None else None
-        config = inspection.get("Config") if inspection is not None else None
         if (
             inspection is None
             or inspection.get("Id") != terminal.container_id
             or inspection.get("Name") != f"/{armed.container_name}"
-            or not isinstance(config, dict)
-            or config.get("Labels") != dict(armed.container_labels)
-            or not isinstance(state, dict)
-            or state.get("Status") != "created"
-            or state.get("Running") is not False
-            or state.get("Pid") != 0
-            or isinstance(state.get("Pid"), bool)
             or pending.container_id != terminal.container_id
         ):
-            raise OCIWatchdogError("fired-stopped cleanup is not exact CREATED/PID0 quiescence")
+            raise OCIWatchdogError("fired-stopped cleanup changed exact container identity")
+        config = self._load_cleanup_oci_configuration(armed=armed, pending=pending)
+        self._verify_cleanup_engine_configuration(inspection=inspection, config=config)
+        rejection = pending.expired_launch_gate_rejection
+        if rejection is not None:
+            gate = pending.launch_gate_authorization
+            start_submission = pending.start_submission
+            state = inspection.get("State")
+            if (
+                gate is None
+                or start_submission is None
+                or rejection.container_id != terminal.container_id
+                or rejection.preparation_sha256 != armed.preparation_sha256
+                or rejection.authorization_request_sha256 != armed.authorization_request_sha256
+                or rejection.runtime_launch_authorization_sha256
+                != armed.runtime_launch_authorization_sha256
+                or rejection.start_submission_journal_sha256 != start_submission.journal_sha256
+                or rejection.launch_gate_executable_sha256
+                != self._policy.launch_gate_executable_sha256
+                or rejection.launch_gate_executable_sha256 != gate.launch_gate_executable_sha256
+                or rejection.launch_gate_protocol_sha256 != self._policy.launch_gate_protocol_sha256
+                or rejection.launch_gate_protocol_sha256 != gate.launch_gate_protocol_sha256
+                or rejection.authorization_expires_at != pending.authorization.expires_at
+                or not isinstance(state, dict)
+            ):
+                raise OCIWatchdogError(
+                    "fired-stopped expired-gate cleanup changed historical launch evidence"
+                )
+            started_at, finished_at = self._verify_exact_quiescent_state(
+                inspection=inspection,
+                expected_status="exited",
+                expected_exit_code=126,
+            )
+            if started_at != rejection.started_at or finished_at != rejection.finished_at:
+                raise OCIWatchdogError(
+                    "fired-stopped expired-gate cleanup changed exact process timestamps"
+                )
+            return
+        started_at, finished_at = self._verify_exact_quiescent_state(
+            inspection=inspection,
+            expected_status="created",
+            expected_exit_code=0,
+        )
+        zero = datetime(1, 1, 1, tzinfo=timezone.utc)
+        if started_at != zero or finished_at != zero:
+            raise OCIWatchdogError("fired-stopped CREATED cleanup has process history")
+
+    def _load_cleanup_oci_configuration(
+        self,
+        *,
+        armed: _WatchdogArmedRecord,
+        pending: _NeverStartedCleanupPending,
+    ) -> OCIConfiguration:
+        runtime_root = self._scope.runtime_root(armed.runtime_id)
+        config = _load_exact_model(
+            runtime_root / "oci-config.json",
+            OCIConfiguration,
+            owner_uid=self._deployment.allowed_client_uid,
+        )
+        assert isinstance(config, OCIConfiguration)
+        expected_seccomp_path = (
+            Path(self._deployment.journal_root)
+            / "policy"
+            / f"seccomp-{self._policy.seccomp_profile_sha256}.json"
+        )
+        bindings = {
+            "config-hash": config.oci_config_sha256 == pending.oci_config_sha256,
+            "policy": config.policy_sha256 == self._policy.policy_sha256,
+            "request": config.runtime_request_sha256 == pending.runtime_request_sha256,
+            "runtime": config.runtime_id == armed.runtime_id,
+            "container": config.container_name == armed.container_name,
+            "labels": config.labels == armed.container_labels,
+            "low-level-runtime": config.low_level_runtime == self._policy.low_level_runtime,
+            "image-reference": config.image_reference == self._policy.image_reference,
+            "image-manifest": config.image_manifest_sha256 == self._policy.image_manifest_sha256,
+            "image-config": config.image_config_sha256 == self._policy.image_config_sha256,
+            "platform": config.oci_platform == self._policy.oci_platform,
+            "entrypoint": config.entrypoint == self._policy.launch_gate_path,
+            "launch-gate-executable": config.launch_gate_executable_sha256
+            == self._policy.launch_gate_executable_sha256,
+            "launch-gate-protocol": config.launch_gate_protocol_sha256
+            == self._policy.launch_gate_protocol_sha256,
+            "workload-uid": config.workload_uid == self._policy.workload_uid,
+            "workload-gid": config.workload_gid == self._policy.workload_gid,
+            "image-environment": config.image_environment == self._policy.image_environment,
+            "pids": config.pids_limit == self._policy.pids_limit,
+            "cpu-period": config.cpu_period_microseconds == self._policy.cpu_period_microseconds,
+            "stop-timeout": config.stop_timeout_seconds == self._policy.stop_timeout_seconds,
+            "masked-paths": config.masked_paths == self._policy.masked_paths,
+            "readonly-paths": config.readonly_paths == self._policy.readonly_paths,
+            "seccomp-path": config.seccomp_profile_path == str(expected_seccomp_path),
+            "seccomp-hash": config.seccomp_profile_sha256 == self._policy.seccomp_profile_sha256,
+            "apparmor": config.apparmor_profile == self._policy.apparmor_profile,
+        }
+        failed_bindings = tuple(sorted(key for key, valid in bindings.items() if not valid))
+        if failed_bindings:
+            raise OCIWatchdogError(
+                "watchdog cleanup OCI configuration differs from frozen runtime policy: "
+                + ",".join(failed_bindings)
+            )
+        return config
+
+    def _verify_cleanup_engine_configuration(
+        self,
+        *,
+        inspection: dict[str, object],
+        config: OCIConfiguration,
+    ) -> None:
+        verifier = _OCIEngineConfigurationVerifier(
+            policy=self._policy,
+            load_verified_seccomp_copy=lambda: self._load_cleanup_seccomp_copy(config=config),
+        )
+        try:
+            verifier.validate(inspection, config=config)
+        except (OCIEngineError, OCIProductionCapabilityError, ValueError) as exc:
+            raise OCIWatchdogError(
+                "watchdog cleanup container differs from frozen OCI enforcement"
+            ) from exc
+
+    def _load_cleanup_seccomp_copy(self, *, config: OCIConfiguration) -> bytes:
+        path = Path(config.seccomp_profile_path)
+        journal_root = path.parent.parent
+        policy_root = path.parent
+        expected_journal_root = Path(self._deployment.journal_root)
+        try:
+            journal_metadata = journal_root.lstat()
+            policy_metadata = policy_root.lstat()
+        except OSError as exc:
+            raise OCIWatchdogError("runtime-owned seccomp custody root is unavailable") from exc
+        if (
+            journal_root != expected_journal_root
+            or journal_root.is_symlink()
+            or policy_root.is_symlink()
+            or not stat.S_ISDIR(journal_metadata.st_mode)
+            or not stat.S_ISDIR(policy_metadata.st_mode)
+            or journal_metadata.st_dev != self._deployment.journal_root_device
+            or journal_metadata.st_ino != self._deployment.journal_root_inode
+            or journal_metadata.st_uid != self._deployment.allowed_client_uid
+            or journal_metadata.st_gid != self._deployment.allowed_client_gid
+            or policy_metadata.st_uid != self._deployment.allowed_client_uid
+            or policy_metadata.st_gid != self._deployment.allowed_client_gid
+            or stat.S_IMODE(journal_metadata.st_mode) != self._deployment.journal_root_mode
+            or stat.S_IMODE(policy_metadata.st_mode) != 0o500
+        ):
+            raise OCIWatchdogError("runtime-owned seccomp custody root is unsafe")
+        with _stable_regular_file(
+            path,
+            label="runtime-owned seccomp copy",
+            owner_uid=self._deployment.allowed_client_uid,
+            maximum_bytes=_MAX_SECCOMP_BYTES,
+            allowed_modes=frozenset({0o400}),
+        ) as descriptor:
+            metadata = os.fstat(descriptor)
+            if metadata.st_gid != self._deployment.allowed_client_gid:
+                raise OCIWatchdogError("runtime-owned seccomp copy group is unsafe")
+            payload = bytearray()
+            digest = hashlib.sha256()
+            while True:
+                chunk = os.read(descriptor, 1024 * 1024)
+                if not chunk:
+                    break
+                payload.extend(chunk)
+                if len(payload) > _MAX_SECCOMP_BYTES:
+                    raise OCIWatchdogError("runtime-owned seccomp copy exceeded its byte bound")
+                digest.update(chunk)
+        if (
+            digest.hexdigest() != self._policy.seccomp_profile_sha256
+            or digest.hexdigest() != config.seccomp_profile_sha256
+        ):
+            raise OCIWatchdogError("runtime-owned seccomp copy changed frozen content")
+        return bytes(payload)
+
+    @staticmethod
+    def _verify_exact_quiescent_state(
+        *,
+        inspection: dict[str, object],
+        expected_status: Literal["created", "exited"],
+        expected_exit_code: Literal[0, 126],
+    ) -> tuple[datetime, datetime]:
+        state = inspection.get("State")
+        allowed_state_fields = {
+            "Status",
+            "Running",
+            "Paused",
+            "Restarting",
+            "OOMKilled",
+            "Dead",
+            "Pid",
+            "ExitCode",
+            "Error",
+            "StartedAt",
+            "FinishedAt",
+        }
+        if (
+            not isinstance(state, dict)
+            or set(state) != allowed_state_fields
+            or state.get("Status") != expected_status
+            or state.get("Running") is not False
+            or state.get("Paused") is not False
+            or state.get("Restarting") is not False
+            or state.get("OOMKilled") is not False
+            or state.get("Dead") is not False
+            or state.get("Pid") != 0
+            or isinstance(state.get("Pid"), bool)
+            or state.get("ExitCode") != expected_exit_code
+            or isinstance(state.get("ExitCode"), bool)
+            or state.get("Error") != ""
+            or inspection.get("RestartCount") != 0
+            or isinstance(inspection.get("RestartCount"), bool)
+        ):
+            raise OCIWatchdogError("fired-stopped cleanup process state changed")
+        started_value = state.get("StartedAt")
+        finished_value = state.get("FinishedAt")
+        if not isinstance(started_value, str) or not isinstance(finished_value, str):
+            raise OCIWatchdogError("fired-stopped cleanup omitted process timestamps")
+        try:
+            return _parse_engine_timestamp(started_value), _parse_engine_timestamp(finished_value)
+        except OCIEngineError as exc:
+            raise OCIWatchdogError("fired-stopped cleanup timestamps are invalid") from exc
 
     @staticmethod
     def _inspection_proves_stopped(
