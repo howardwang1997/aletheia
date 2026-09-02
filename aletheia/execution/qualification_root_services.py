@@ -21,6 +21,7 @@ from aletheia.execution.oci_deployment import (
     DurableDeadlineWatchdogService,
     LoopbackOutputQuotaProvisioningService,
     LoopbackQuotaProvisionerDeploymentPin,
+    PinnedRootFile,
     SharedOutputWorkspaceDeploymentPin,
     SharedOutputWorkspaceService,
     SystemdWatchdogDeploymentPin,
@@ -97,7 +98,12 @@ class QualificationQuotaServiceConfigV2(ExecutionModel):
 
 
 class QualificationWatchdogServiceConfigV1(ExecutionModel):
-    """Canonical factory config for the independent deadline watchdog."""
+    """Canonical factory config for the independent deadline watchdog.
+
+    ``active_service_module`` is an explicit, process-bound implementation upgrade pin.  It does
+    not replace ``watchdog_deployment``: durable jobs and responses retain that stable deployment
+    identity while a newly reviewed release can read an older sealed watchdog journal.
+    """
 
     schema_name: Literal["aletheia.qualification_watchdog_service_config"] = (
         "aletheia.qualification_watchdog_service_config"
@@ -107,6 +113,7 @@ class QualificationWatchdogServiceConfigV1(ExecutionModel):
     process_config_binding_sha256: str = Field(pattern=_SHA256_PATTERN)
     oci_policy: DeploymentPinnedOCIPolicy
     watchdog_deployment: SystemdWatchdogDeploymentPin
+    active_service_module: PinnedRootFile | None = None
     private_signing_keys_loaded: Literal[False] = False
     database_credentials_loaded: Literal[False] = False
     scientific_admission_allowed: Literal[False] = False
@@ -116,8 +123,14 @@ class QualificationWatchdogServiceConfigV1(ExecutionModel):
         if (
             self.watchdog_deployment.deployment_id != f"{self.deployment_id}:watchdog"
             or self.watchdog_deployment.policy_sha256 != self.oci_policy.policy_sha256
+            or (
+                self.active_service_module is not None
+                and self.active_service_module.mode not in {0o400, 0o440, 0o444}
+            )
         ):
-            raise ValueError("watchdog service config belongs to another deployment or policy")
+            raise ValueError(
+                "watchdog service config belongs to another deployment, policy, or module"
+            )
         return self
 
 
@@ -255,9 +268,16 @@ def compose_watchdog_service(
         config_deployment_id=config.deployment_id,
         process_config_binding_sha256=config.process_config_binding_sha256,
     )
+    if config.active_service_module is not None:
+        expected_module = Path(process.reviewed_code_root) / "aletheia/execution/oci_deployment.py"
+        if Path(config.active_service_module.path) != expected_module:
+            raise QualificationRootServiceCompositionError(
+                "watchdog implementation upgrade escaped the reviewed code root"
+            )
     service = DurableDeadlineWatchdogService(
         policy=config.oci_policy,
         deployment=config.watchdog_deployment,
+        service_module_pin=config.active_service_module,
     )
     return _handler_set(process=process, operation=service.serve_forever)
 

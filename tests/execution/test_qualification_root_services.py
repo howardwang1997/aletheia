@@ -188,6 +188,74 @@ def test_root_factories_bind_exact_process_and_one_operation(
     assert calls == [method_name]
 
 
+def test_watchdog_factory_binds_explicit_reviewed_service_module_upgrade(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    *_prefix, process, base = _configs(tmp_path)
+    active_module = oci_deployment.PinnedRootFile(
+        path=f"{process.reviewed_code_root}/aletheia/execution/oci_deployment.py",
+        sha256="c" * 64,
+        device=71,
+        inode=72,
+        mode=0o444,
+        parent_chain_sha256="d" * 64,
+    )
+    config = base.model_copy(update={"active_service_module": active_module})
+    captured: dict[str, object] = {}
+
+    class FakeWatchdog:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def serve_forever(self) -> None:
+            captured["served"] = True
+
+    monkeypatch.setattr(root_services, "DurableDeadlineWatchdogService", FakeWatchdog)
+    handlers = build_watchdog_service(
+        deployment=process,
+        configuration_bytes=canonical_json_bytes(config),
+    )
+    handlers.handler(poll_milliseconds=None)
+
+    assert captured == {
+        "policy": config.oci_policy,
+        "deployment": config.watchdog_deployment,
+        "service_module_pin": active_module,
+        "served": True,
+    }
+    assert (
+        config.watchdog_deployment.deployment_sha256 == base.watchdog_deployment.deployment_sha256
+    )
+    assert b"active_service_module" not in canonical_json_bytes(base)
+
+
+def test_watchdog_factory_rejects_service_module_upgrade_outside_reviewed_release(
+    tmp_path: Path,
+) -> None:
+    *_prefix, process, base = _configs(tmp_path)
+    rebound = base.model_copy(
+        update={
+            "active_service_module": oci_deployment.PinnedRootFile(
+                path="/opt/another-release/aletheia/execution/oci_deployment.py",
+                sha256="c" * 64,
+                device=71,
+                inode=72,
+                mode=0o444,
+                parent_chain_sha256="d" * 64,
+            )
+        }
+    )
+    with pytest.raises(
+        root_services.QualificationRootServiceCompositionError,
+        match="escaped the reviewed code root",
+    ):
+        build_watchdog_service(
+            deployment=process,
+            configuration_bytes=canonical_json_bytes(rebound),
+        )
+
+
 def test_root_factory_rejects_noncanonical_duplicate_and_rebound_config(tmp_path: Path) -> None:
     process, config, *_rest = _configs(tmp_path)
     payload = canonical_json_bytes(config)
