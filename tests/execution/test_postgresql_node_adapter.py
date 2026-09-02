@@ -60,6 +60,7 @@ from aletheia.execution.node_agent import (
 from aletheia.execution.postgresql_node_adapter import (
     PostgreSQLNodeAllocatorAdapter,
     QualificationExecutionWorker,
+    QualificationPreRuntimeCleanupWorker,
 )
 from aletheia.execution.runtime_contracts import (
     QualificationAuthorityVerifier,
@@ -126,9 +127,20 @@ class _DeliveryAllocator:
     def __init__(self, delivery: object | None) -> None:
         self.delivery = delivery
         self.pulls: list[tuple[str, str]] = []
+        self.cleanup_pulls: list[tuple[str, str, str]] = []
 
     def pull_assignment_delivery(self, *, node_id: str, node_manifest_sha256: str):
         self.pulls.append((node_id, node_manifest_sha256))
+        return self.delivery
+
+    def pull_pre_runtime_cleanup_delivery(
+        self,
+        *,
+        node_id: str,
+        node_manifest_sha256: str,
+        attempt_id: str,
+    ):
+        self.cleanup_pulls.append((node_id, node_manifest_sha256, attempt_id))
         return self.delivery
 
 
@@ -653,6 +665,15 @@ def test_pre_runtime_delivery_projects_historical_cleanup_lineage_without_token(
     assert assignment.historical_pre_runtime_recovery_lineage == lineage
     assert RAW_TOKEN not in repr(assignment)
 
+    exact = adapter.pull_pre_runtime_cleanup_assignment(
+        node_id=pin.node_id,
+        node_manifest_sha256=pin.node_manifest_sha256,
+        attempt_id=snapshot.attempt_id,
+    )
+    assert exact == assignment
+    assert allocator.cleanup_pulls == [(pin.node_id, pin.node_manifest_sha256, snapshot.attempt_id)]
+    assert allocator.pulls == [(pin.node_id, pin.node_manifest_sha256)]
+
 
 def test_reservation_projection_drops_budget_fields_and_preserves_exact_placement(tmp_path) -> None:
     _case, snapshot, _pin, _allocator, _custody, _adapter = _fixture(tmp_path)
@@ -668,6 +689,7 @@ def test_reservation_projection_drops_budget_fields_and_preserves_exact_placemen
 def test_adapter_method_surface_matches_the_frozen_node_allocator_port() -> None:
     methods = (
         "pull_qualification_assignment",
+        "pull_pre_runtime_cleanup_assignment",
         "start_attempt",
         "mark_running",
         "heartbeat",
@@ -686,6 +708,30 @@ def test_adapter_method_surface_matches_the_frozen_node_allocator_port() -> None
         assert tuple(item.kind for item in protocol.parameters.values()) == tuple(
             item.kind for item in concrete.parameters.values()
         )
+
+
+def test_cleanup_worker_exposes_only_exact_recovery_surface(tmp_path, monkeypatch) -> None:
+    harness = _Harness(tmp_path / "node")
+    attempt_id = harness.reservation.attempt_id
+    calls: list[str] = []
+    monkeypatch.setattr(
+        harness.agent,
+        "recover_pre_runtime_cleanup",
+        lambda *, attempt_id: (
+            calls.append(attempt_id)
+            or NodeRunResult(
+                outcome=NodeRunOutcome.PRE_RUNTIME_RELEASED,
+                attempt_id=attempt_id,
+            )
+        ),
+    )
+    worker = QualificationPreRuntimeCleanupWorker(agent=harness.agent)
+
+    result = worker.recover(attempt_id=attempt_id)
+
+    assert result.outcome is NodeRunOutcome.PRE_RUNTIME_RELEASED
+    assert calls == [attempt_id]
+    assert not hasattr(worker, "tick")
 
 
 def test_heartbeat_uses_public_allocator_method_and_maps_lease_rejection(tmp_path) -> None:

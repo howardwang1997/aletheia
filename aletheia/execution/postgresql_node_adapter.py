@@ -269,6 +269,25 @@ class QualificationExecutionWorker:
             raise RuntimeRejected("allocator terminal settlement changed exact acceptance")
 
 
+class QualificationPreRuntimeCleanupWorker:
+    """Expose one exact cleanup command and no assignment polling or settlement surface."""
+
+    def __init__(self, *, agent: QualificationNodeAgent) -> None:
+        if not isinstance(agent, QualificationNodeAgent):
+            raise TypeError("pre-runtime cleanup worker requires a concrete node agent")
+        self._agent = agent
+
+    def recover(self, *, attempt_id: str) -> NodeRunResult:
+        result = self._agent.recover_pre_runtime_cleanup(attempt_id=attempt_id)
+        if result.attempt_id != attempt_id or result.outcome not in {
+            NodeRunOutcome.LOCKED_BY_PEER,
+            NodeRunOutcome.PRE_RUNTIME_RELEASED,
+            NodeRunOutcome.RECONCILIATION_REQUIRED,
+        }:
+            raise RuntimeRejected("pre-runtime cleanup worker reached another lifecycle outcome")
+        return result
+
+
 class PostgreSQLNodeAllocatorAdapter(NodeAllocatorPort):
     """Expose a ``PostgreSQLExecutionAllocator`` through the frozen node-agent port.
 
@@ -429,6 +448,88 @@ class PostgreSQLNodeAllocatorAdapter(NodeAllocatorPort):
             lease_token=None,
             historical_recovery_grant=recovery,
             historical_pre_runtime_recovery_lineage=pre_runtime_recovery,
+        )
+
+    def pull_pre_runtime_cleanup_assignment(
+        self,
+        *,
+        node_id: str,
+        node_manifest_sha256: str,
+        attempt_id: str,
+    ) -> QualificationAssignment | None:
+        """Project one named cleanup-only delivery without polling launch-capable work."""
+
+        if (
+            node_id != self._transport_pin.node_id
+            or node_manifest_sha256 != self._transport_pin.node_manifest_sha256
+        ):
+            raise AssignmentRejected(
+                "pre-runtime cleanup pull differs from pinned node transport scope"
+            )
+        try:
+            delivery = self._allocator.pull_pre_runtime_cleanup_delivery(
+                node_id=node_id,
+                node_manifest_sha256=node_manifest_sha256,
+                attempt_id=attempt_id,
+            )
+        except AdmissionConflict as exc:
+            raise AssignmentRejected(
+                "allocator rejected the exact pre-runtime cleanup delivery"
+            ) from exc
+        if delivery is None:
+            return None
+        try:
+            bundle = EngineeringQualificationBundle.model_validate(
+                delivery.bundle.model_dump(mode="python")
+            )
+            grant = EngineeringQualificationGrant.model_validate(
+                delivery.grant.model_dump(mode="python")
+            )
+            snapshot = self._require_snapshot(
+                delivery.snapshot,
+                operation="exact pre-runtime cleanup pull",
+            )
+            lineage = HistoricalPreRuntimeRecoveryLineage.model_validate(
+                delivery.historical_pre_runtime_recovery_lineage.model_dump(mode="python")
+            )
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise AssignmentRejected(
+                "allocator pre-runtime cleanup delivery is not a closed public DTO"
+            ) from exc
+        if (
+            snapshot.attempt_id != attempt_id
+            or snapshot.status not in {"starting", "reconciliation_required"}
+            or delivery.sealed_envelope is not None
+            or delivery.historical_recovery_grant is not None
+        ):
+            raise AssignmentRejected(
+                "exact pre-runtime cleanup delivery contains another authority mode"
+            )
+        intent, node = self._validate_public_assignment_projection(
+            bundle=bundle,
+            grant=grant,
+            snapshot=snapshot,
+            node_id=node_id,
+            node_manifest_sha256=node_manifest_sha256,
+        )
+        self._validate_pre_runtime_recovery_delivery(
+            lineage=lineage,
+            snapshot=snapshot,
+            node_manifest_sha256=node_manifest_sha256,
+        )
+        token = self._token_custody.load_token(
+            attempt_id=snapshot.attempt_id,
+            fencing_epoch=snapshot.fencing_epoch,
+            expected_sha256=snapshot.lease_token_sha256,
+        )
+        del token
+        return QualificationAssignment(
+            intent=intent,
+            work_order_node=node,
+            qualification_grant=grant,
+            reservation=self.project_reservation(snapshot),
+            lease_token=None,
+            historical_pre_runtime_recovery_lineage=lineage,
         )
 
     def start_attempt(
@@ -1119,5 +1220,6 @@ __all__ = [
     "LeaseTokenCustodyPort",
     "PostgreSQLNodeAllocatorAdapter",
     "QualificationExecutionWorker",
+    "QualificationPreRuntimeCleanupWorker",
     "SystemAssignmentClock",
 ]

@@ -92,6 +92,9 @@ from aletheia.execution.runtime_v2_contracts import (
     verify_runtime_launch_authorization_ticket_historical,
     verify_runtime_termination_acceptance_challenge,
 )
+from aletheia.execution.pre_runtime_cleanup_issuance import (
+    PinnedAttemptScopedPreRuntimeCleanupAuthority,
+)
 from aletheia.execution.schemas import (
     ArtifactManifest,
     ArtifactVerifiedReceipt,
@@ -179,6 +182,18 @@ _STATE_SCHEMA_KEYS = frozenset(
         "runtime_control_journal_sha256",
     }
 )
+
+
+def _pre_runtime_absence_receipt_json(
+    receipt: PreRuntimeAbsenceReceipt,
+) -> dict[str, object]:
+    """Preserve pre-recovery pending-journal bytes for ordinary node receipts."""
+
+    payload = receipt.model_dump(mode="json")
+    if receipt.cleanup_recovery_authority is None:
+        payload.pop("cleanup_recovery_authority")
+        payload.pop("cleanup_recovery_authority_sha256")
+    return payload
 
 
 class NodeAgentError(RuntimeError):
@@ -734,6 +749,14 @@ class NodeAllocatorPort(Protocol):
 
     def pull_qualification_assignment(
         self, *, node_id: str, node_manifest_sha256: str
+    ) -> QualificationAssignment | None: ...
+
+    def pull_pre_runtime_cleanup_assignment(
+        self,
+        *,
+        node_id: str,
+        node_manifest_sha256: str,
+        attempt_id: str,
     ) -> QualificationAssignment | None: ...
 
     def start_attempt(
@@ -1752,7 +1775,7 @@ class NodeLocalStateStore:
                 "schema_version": 3,
                 "attempt_id": attempt_id,
                 "generation": generation,
-                "absence_receipt": receipt.model_dump(mode="json"),
+                "absence_receipt": _pre_runtime_absence_receipt_json(receipt),
                 "replacement_request": (
                     replacement_request.model_dump(mode="json")
                     if replacement_request is not None
@@ -1831,7 +1854,7 @@ class NodeLocalStateStore:
                 "schema_version": 3,
                 "attempt_id": attempt_id,
                 "generation": generation,
-                "absence_receipt": receipt.model_dump(mode="json"),
+                "absence_receipt": _pre_runtime_absence_receipt_json(receipt),
                 "replacement_request": (
                     request.model_dump(mode="json") if request is not None else "none"
                 ),
@@ -2922,6 +2945,9 @@ class QualificationNodeAgent:
         clock: NodeClock | None = None,
         inspection_ttl_seconds: int = 10,
         artifact_completion_grace_seconds: int = 3600,
+        pre_runtime_cleanup_recovery_authority: (
+            PinnedAttemptScopedPreRuntimeCleanupAuthority | None
+        ) = None,
     ) -> None:
         if not _SAFE_LABEL.fullmatch(boot_id):
             raise ValueError("node boot id is not canonical")
@@ -2931,6 +2957,11 @@ class QualificationNodeAgent:
             raise ValueError("runtime inspection TTL must be inside 1..60 seconds")
         if artifact_completion_grace_seconds < 1 or artifact_completion_grace_seconds > 86_400:
             raise ValueError("artifact completion grace must be inside 1..86400 seconds")
+        if pre_runtime_cleanup_recovery_authority is not None and not isinstance(
+            pre_runtime_cleanup_recovery_authority,
+            PinnedAttemptScopedPreRuntimeCleanupAuthority,
+        ):
+            raise TypeError("pre-runtime cleanup recovery authority must be constructor-pinned")
         try:
             public_key = (
                 Ed25519PrivateKey.from_private_bytes(node_signing_private_key)
@@ -2986,6 +3017,7 @@ class QualificationNodeAgent:
         self._clock = clock or SystemNodeClock()
         self._inspection_ttl = timedelta(seconds=inspection_ttl_seconds)
         self._artifact_completion_grace = timedelta(seconds=artifact_completion_grace_seconds)
+        self._pre_runtime_cleanup_recovery_authority = pre_runtime_cleanup_recovery_authority
 
     def run_once(self) -> NodeRunResult:
         assignment = self._allocator.pull_qualification_assignment(
@@ -2994,6 +3026,28 @@ class QualificationNodeAgent:
         )
         if assignment is None:
             return NodeRunResult(outcome=NodeRunOutcome.IDLE)
+        return self.run_assignment(assignment)
+
+    def recover_pre_runtime_cleanup(self, *, attempt_id: str) -> NodeRunResult:
+        """Recover one exact never-started attempt without polling or launching other work."""
+
+        if re.fullmatch(_ATTEMPT_ID_PATTERN, attempt_id) is None:
+            raise AssignmentRejected("pre-runtime cleanup attempt id is not canonical")
+        assignment = self._allocator.pull_pre_runtime_cleanup_assignment(
+            node_id=self._node_authority.manifest.node_id,
+            node_manifest_sha256=self._node_authority.manifest.manifest_sha256,
+            attempt_id=attempt_id,
+        )
+        if (
+            assignment is None
+            or assignment.reservation.attempt_id != attempt_id
+            or assignment.historical_pre_runtime_recovery_lineage is None
+            or assignment.historical_recovery_grant is not None
+            or assignment.lease_token is not None
+        ):
+            raise AssignmentRejected(
+                "exact attempt has no cleanup-only historical pre-runtime delivery"
+            )
         return self.run_assignment(assignment)
 
     def run_assignment(self, assignment: QualificationAssignment) -> NodeRunResult:
@@ -3022,6 +3076,18 @@ class QualificationNodeAgent:
             if state is None and not launch_allowed:
                 raise AssignmentRejected(
                     "historical recovery authority cannot prepare or launch a new runtime"
+                )
+            if (
+                historical_pre_runtime_lineage is not None
+                and self._clock.now() >= self._node_authority.active_until
+                and state is not None
+                and (
+                    state.runtime_identity is not None
+                    or state.node_runtime_launch_receipt is not None
+                )
+            ):
+                raise AssignmentRejected(
+                    "expired-node cleanup authority cannot recover a launched runtime"
                 )
             token = self._resolve_token(assignment)
             input_root, output_root = self._state.workspace(attempt_id)
@@ -3730,9 +3796,34 @@ class QualificationNodeAgent:
                 "qualification node accepts replay-safe, network-none, non-checkpoint work only"
             )
         attempt_id = intent.infrastructure_attempt.infrastructure_attempt_id
+        cleanup_recovery_pin = (
+            self._pre_runtime_cleanup_recovery_authority.authority_pin
+            if self._pre_runtime_cleanup_recovery_authority is not None
+            else None
+        )
+        cleanup_recovery_active = False
+        if historical_pre_runtime is not None and cleanup_recovery_pin is not None:
+            historical_preparation = historical_pre_runtime.runtime_preparation
+            historical_authorization = historical_pre_runtime.runtime_launch_authorization
+            cleanup_recovery_active = (
+                now >= self._node_authority.active_until
+                and cleanup_recovery_pin.active_at(now)
+                and cleanup_recovery_pin.source_node_id == self._node_authority.manifest.node_id
+                and cleanup_recovery_pin.source_node_manifest_sha256
+                == self._node_authority.manifest.manifest_sha256
+                and cleanup_recovery_pin.infrastructure_attempt_id == attempt_id
+                and cleanup_recovery_pin.runtime_preparation_sha256
+                == historical_preparation.preparation_sha256
+                and cleanup_recovery_pin.runtime_launch_authorization_sha256
+                == historical_authorization.authorization_sha256
+                and cleanup_recovery_pin.cleanup_absence_epoch
+                == historical_pre_runtime.runtime_launch_authorization_request.pre_runtime_absence_epoch
+                + 1
+            )
         # Historical pre-runtime recovery has no launched runtime or artifact deadline to honor.
-        # It still needs the current node key to sign fresh absence, while every other delivery
-        # remains bounded by the originally frozen artifact-completion window.
+        # It normally needs the current node key to sign fresh absence.  After that key expires,
+        # only an independently pinned, exact-attempt cleanup key may replace it; every other
+        # delivery remains bounded by the originally frozen artifact-completion window.
         if (
             reservation.execution_id != intent.execution_id
             or reservation.attempt_id != attempt_id
@@ -3761,7 +3852,11 @@ class QualificationNodeAgent:
                     or not now < reservation.hard_deadline + self._artifact_completion_grace
                 )
             )
-            or (historical_pre_runtime is not None and not now < self._node_authority.active_until)
+            or (
+                historical_pre_runtime is not None
+                and not now < self._node_authority.active_until
+                and not cleanup_recovery_active
+            )
             or (
                 not recovery_only_assignment
                 and reservation.status not in {"reconciliation_required", "terminated", "verifying"}
@@ -5273,6 +5368,60 @@ class QualificationNodeAgent:
         self._state.save_state(state)
         return receipt, state
 
+    def _issue_exact_pre_runtime_absence(
+        self,
+        *,
+        state: _AttemptState,
+        observation: RuntimeObservation,
+        cleaned_launch: bool,
+    ) -> PreRuntimeAbsenceReceipt:
+        prior_request = state.runtime_launch_authorization_request if cleaned_launch else None
+        prior_authorization = state.runtime_launch_authorization if cleaned_launch else None
+        signed_at = self._clock.now()
+        if signed_at < self._node_authority.active_until:
+            expires_at = min(
+                observation.inspected_at + self._inspection_ttl,
+                self._node_authority.active_until,
+            )
+            try:
+                return issue_pre_runtime_absence_receipt(
+                    manifest=self._node_authority.manifest,
+                    preparation=state.runtime_preparation,
+                    absence_evidence=observation,
+                    signed_at=signed_at,
+                    expires_at=expires_at,
+                    private_key=self._private_key,
+                    launch_authorization_request=prior_request,
+                    launch_authorization=prior_authorization,
+                    runtime_authority=(self._runtime_control_authority if cleaned_launch else None),
+                )
+            except QualificationVerificationError as exc:
+                raise RuntimeRejected("pre-runtime absence cannot be node signed") from exc
+
+        recovery = self._pre_runtime_cleanup_recovery_authority
+        if recovery is None or prior_request is None or prior_authorization is None:
+            raise RuntimeRejected(
+                "expired node authority has no exact attempt-scoped cleanup signer"
+            )
+        expires_at = min(
+            observation.inspected_at + self._inspection_ttl,
+            recovery.authority_pin.active_until,
+        )
+        try:
+            return recovery.issue(
+                preparation=state.runtime_preparation,
+                absence_evidence=observation,
+                signed_at=signed_at,
+                expires_at=expires_at,
+                launch_authorization_request=prior_request,
+                launch_authorization=prior_authorization,
+                runtime_authority=self._runtime_control_authority,
+            )
+        except QualificationVerificationError as exc:
+            raise RuntimeRejected(
+                "pre-runtime absence cannot be attempt-scoped recovery signed"
+            ) from exc
+
     def _pre_runtime_absence_result(
         self,
         *,
@@ -5300,29 +5449,11 @@ class QualificationNodeAgent:
         )
         cleaned_launch = observation.prelaunch_authorization_request_sha256 is not None
         if pending_generation is None:
-            prior_authorization_request = (
-                state.runtime_launch_authorization_request if cleaned_launch else None
+            receipt = self._issue_exact_pre_runtime_absence(
+                state=state,
+                observation=observation,
+                cleaned_launch=cleaned_launch,
             )
-            prior_authorization = state.runtime_launch_authorization if cleaned_launch else None
-            signed_at = self._clock.now()
-            expires_at = min(
-                observation.inspected_at + self._inspection_ttl,
-                self._node_authority.active_until,
-            )
-            try:
-                receipt = issue_pre_runtime_absence_receipt(
-                    manifest=self._node_authority.manifest,
-                    preparation=state.runtime_preparation,
-                    absence_evidence=observation,
-                    signed_at=signed_at,
-                    expires_at=expires_at,
-                    private_key=self._private_key,
-                    launch_authorization_request=prior_authorization_request,
-                    launch_authorization=prior_authorization,
-                    runtime_authority=(self._runtime_control_authority if cleaned_launch else None),
-                )
-            except QualificationVerificationError as exc:
-                raise RuntimeRejected("pre-runtime absence cannot be node signed") from exc
             replacement_request = (
                 self._new_launch_authorization_request(
                     state=state,
@@ -5394,6 +5525,47 @@ class QualificationNodeAgent:
                     "pending pre-runtime absence differs from durable launch lineage"
                 )
 
+            recovery = self._pre_runtime_cleanup_recovery_authority
+            embedded_recovery = receipt.cleanup_recovery_authority
+            now = self._clock.now()
+            if embedded_recovery is not None and (
+                recovery is None
+                or now < self._node_authority.active_until
+                or embedded_recovery != recovery.authority_pin
+            ):
+                raise LocalStateError(
+                    "pending pre-runtime absence differs from the exact cleanup recovery pin"
+                )
+            if (
+                recovery is not None
+                and now >= self._node_authority.active_until
+                and embedded_recovery is None
+            ):
+                # A generation sealed under the now-expired node key remains immutable evidence,
+                # but PostgreSQL correctly cannot accept it under current-time node authority.
+                # Append a fresh recovery-signed generation before the allocator call so the
+                # original proof is preserved and the exact supersession is crash recoverable.
+                recovered_receipt = self._issue_exact_pre_runtime_absence(
+                    state=state,
+                    observation=observation,
+                    cleaned_launch=cleaned_launch,
+                )
+                self._state.save_pre_runtime_absence_request(
+                    attempt_id=state.attempt_id,
+                    receipt=recovered_receipt,
+                    replacement_request=None,
+                    generation=pending_generation.generation + 1,
+                    supersedes_absence_receipt_sha256=receipt.absence_receipt_sha256,
+                )
+                pending_generation = _PendingPreRuntimeAbsenceGeneration(
+                    generation=pending_generation.generation + 1,
+                    receipt=recovered_receipt,
+                    replacement_request=None,
+                    supersedes_absence_receipt_sha256=receipt.absence_receipt_sha256,
+                )
+                receipt = recovered_receipt
+                replacement_request = None
+
         if reservation is None or token is None:
             state = replace(state, phase=AttemptPhase.RECONCILIATION_REQUIRED)
             self._state.save_state(state)
@@ -5439,31 +5611,11 @@ class QualificationNodeAgent:
                 raise RuntimeRejected(
                     "fresh absence inspection changed its exact tombstone lineage"
                 ) from refresh_error
-            prior_authorization_request = (
-                state.runtime_launch_authorization_request if cleaned_launch else None
+            refreshed_receipt = self._issue_exact_pre_runtime_absence(
+                state=state,
+                observation=refreshed_observation,
+                cleaned_launch=cleaned_launch,
             )
-            prior_authorization = state.runtime_launch_authorization if cleaned_launch else None
-            signed_at = self._clock.now()
-            expires_at = min(
-                refreshed_observation.inspected_at + self._inspection_ttl,
-                self._node_authority.active_until,
-            )
-            try:
-                refreshed_receipt = issue_pre_runtime_absence_receipt(
-                    manifest=self._node_authority.manifest,
-                    preparation=state.runtime_preparation,
-                    absence_evidence=refreshed_observation,
-                    signed_at=signed_at,
-                    expires_at=expires_at,
-                    private_key=self._private_key,
-                    launch_authorization_request=prior_authorization_request,
-                    launch_authorization=prior_authorization,
-                    runtime_authority=(self._runtime_control_authority if cleaned_launch else None),
-                )
-            except QualificationVerificationError as refresh_error:
-                raise RuntimeRejected("refreshed pre-runtime absence cannot be node signed") from (
-                    refresh_error
-                )
             refreshed_request = (
                 self._new_launch_authorization_request(
                     state=state,

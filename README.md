@@ -169,8 +169,8 @@ Kernel/F9-v2 source verifier, a keyless given-protocol campaign runtime, and sep
 prepare/issue/keyless-audit entrypoints. The campaign treats only a signed terminal-material-
 pending source status as retryable and bounds that wait by the authorization's admission deadline.
 Qualification and audit timestamps are derived after fresh replay from the pinned PostgreSQL clock,
-not from caller-supplied evidence or receipt JSON. No real target campaign or production
-source-verification receipt exists, so the **ARL-1 software closure is implemented, but Aletheia is
+not from caller-supplied evidence or receipt JSON. No complete target-campaign receipt or
+production source-verification receipt exists, so the **ARL-1 software closure is implemented, but Aletheia is
 not ARL-1 qualified**. See
 [`docs/ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md`](docs/ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md).
 PR-5 now adds

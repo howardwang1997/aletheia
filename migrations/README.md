@@ -1,7 +1,7 @@
 # Aletheia database migrations
 
 The database schema is versioned with Alembic. Application startup never creates or alters tables.
-The current repository head is `20260831_0031`.
+The current repository head is `20260903_0032`.
 
 For a fresh database:
 
@@ -98,3 +98,9 @@ moves from `reserved` to `starting`. The new expiry must be carried by the appen
 launch authorization written in the same transaction, and the resource lease must match the
 contracted attempt exactly. This separates a bounded campaign pre-launch window from the short
 runtime heartbeat window without allowing arbitrary lease rollback.
+
+Revision `20260903_0032` adds no table and does not revive an expired node identity. It admits a
+second closed JSON shape only for a one-hour-or-shorter, independently keyed authority pinned to
+one source node manifest, one already-authorized never-started attempt, one cleanup epoch, and one
+watchdog deployment. The deferred runtime trigger requires a release-only decision with no launch
+or reauthorization output; legacy absence rows retain their byte shape and validation semantics.

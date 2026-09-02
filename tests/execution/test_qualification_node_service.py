@@ -25,11 +25,13 @@ from aletheia.execution.oci_deployment import (
 from aletheia.execution.postgresql_node_adapter import QualificationExecutionWorker
 from aletheia.execution.qualification_custody import QualificationPreAdmissionCustodyConfig
 from aletheia.execution.qualification_node_service import (
+    AttemptScopedPreRuntimeCleanupServiceConfigV1,
     QualificationNodeCompositionError,
     QualificationNodeMutableRootPinV1,
     QualificationNodePrivateKeyPinV1,
     QualificationNodeServiceConfigV1,
     QualificationNodeWorkerLoop,
+    compose_attempt_scoped_pre_runtime_cleanup,
     compose_node_service,
 )
 from aletheia.execution.qualification_service_contracts import (
@@ -39,8 +41,11 @@ from aletheia.execution.qualification_service_contracts import (
 )
 from aletheia.execution.runtime_contracts import qualification_key_id
 from aletheia.execution.runtime_control_issuance import PinnedRuntimeControlIssuanceAuthority
-from aletheia.execution.runtime_v2_contracts import RuntimeControlAuthorityPin
-from aletheia.execution.schemas import canonical_json_bytes
+from aletheia.execution.runtime_v2_contracts import (
+    AttemptScopedPreRuntimeCleanupAuthorityPin,
+    RuntimeControlAuthorityPin,
+)
+from aletheia.execution.schemas import canonical_json_bytes, canonical_sha256
 from aletheia.execution.terminal_runtime import TerminalNodeAuthorityConfig
 
 _EXECUTION_TESTS = Path(__file__).resolve().parent
@@ -56,6 +61,7 @@ from test_runtime_contracts import PRIVATE_KEY, _worker_authority  # noqa: E402
 from test_terminal_runtime import _config as _terminal_config  # noqa: E402
 
 RUNTIME_PRIVATE_KEY = hashlib.sha256(b"qualification-node-runtime-control").digest()
+RECOVERY_PRIVATE_KEY = hashlib.sha256(b"qualification-node-cleanup-recovery").digest()
 
 
 def _public_key(private_key: bytes) -> str:
@@ -311,6 +317,47 @@ def _fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     return process, config
 
 
+def _cleanup_config(
+    source: QualificationNodeServiceConfigV1,
+) -> AttemptScopedPreRuntimeCleanupServiceConfigV1:
+    manifest = source.node_authority.manifest
+    active_until = min(
+        manifest.key_expires_at,
+        manifest.key_revoked_at or manifest.key_expires_at,
+    )
+    public_key = _public_key(RECOVERY_PRIVATE_KEY)
+    pin = AttemptScopedPreRuntimeCleanupAuthorityPin(
+        policy_sha256=hashlib.sha256(b"qualification-cleanup-recovery-policy").hexdigest(),
+        principal_id="principal:qualification-cleanup-recovery",
+        key_id=qualification_key_id(public_key),
+        public_key_ed25519_hex=public_key,
+        source_node_id=manifest.node_id,
+        source_node_manifest_sha256=manifest.manifest_sha256,
+        infrastructure_attempt_id="iat_" + "7" * 32,
+        runtime_preparation_sha256="8" * 64,
+        runtime_launch_authorization_sha256="9" * 64,
+        cleanup_absence_epoch=1,
+        watchdog_deployment_sha256=source.watchdog_deployment.deployment_sha256,
+        valid_from=active_until,
+        expires_at=active_until + timedelta(minutes=30),
+    )
+    return AttemptScopedPreRuntimeCleanupServiceConfigV1(
+        source_node_service_config=source,
+        source_node_service_config_sha256=canonical_sha256(source),
+        cleanup_authority_pin=pin,
+        cleanup_signing_key=_key_pin(
+            role="pre_runtime_cleanup_recovery",
+            algorithm="ed25519",
+            path="/etc/aletheia/keys/pre-runtime-cleanup-recovery.key",
+            private_key=RECOVERY_PRIVATE_KEY,
+            key_id=pin.key_id,
+            uid=source.node_signing_key.owner_uid,
+            gid=source.node_signing_key.owner_gid,
+        ),
+        configured_at=active_until,
+    )
+
+
 def test_node_config_closes_three_keys_authorities_and_cpu_policy(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -342,6 +389,103 @@ def test_node_config_closes_three_keys_authorities_and_cpu_policy(
     )
     with pytest.raises(ValidationError, match="launch registry differs"):
         QualificationNodeServiceConfigV1.model_validate(payload)
+
+
+def test_cleanup_config_binds_one_expired_node_attempt_watchdog_and_separate_key(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _process, source = _fixture(monkeypatch, tmp_path)
+    recovery = _cleanup_config(source)
+
+    assert recovery.cleanup_authority_pin.infrastructure_attempt_id == "iat_" + "7" * 32
+    assert recovery.execution_launch_allowed is False
+    assert recovery.assignment_polling_allowed is False
+    assert recovery.cleanup_signing_key.key_id not in {
+        source.node_signing_key.key_id,
+        source.assignment_transport_key.key_id,
+        source.runtime_control_key.key_id,
+    }
+
+    payload = recovery.model_dump(mode="python")
+    payload["cleanup_authority_pin"] = recovery.cleanup_authority_pin.model_copy(
+        update={"watchdog_deployment_sha256": "0" * 64}
+    )
+    with pytest.raises(ValidationError, match="watchdog, or key"):
+        AttemptScopedPreRuntimeCleanupServiceConfigV1.model_validate(payload)
+
+    payload = recovery.model_dump(mode="python")
+    payload["cleanup_signing_key"] = recovery.cleanup_signing_key.model_copy(
+        update={"path": source.node_signing_key.path}
+    )
+    with pytest.raises(ValidationError, match="separately held"):
+        AttemptScopedPreRuntimeCleanupServiceConfigV1.model_validate(payload)
+
+
+def test_cleanup_factory_requires_frozen_hash_exact_uid_and_historical_node_verifier(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _process, source = _fixture(monkeypatch, tmp_path)
+    recovery = _cleanup_config(source)
+    payload = canonical_json_bytes(recovery)
+    payload_sha256 = hashlib.sha256(payload).hexdigest()
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        node_service,
+        "_live_authority_time",
+        lambda: recovery.configured_at + timedelta(seconds=1),
+    )
+    monkeypatch.setattr(node_service.os, "geteuid", lambda: recovery.cleanup_signing_key.owner_uid)
+    monkeypatch.setattr(node_service.os, "getegid", lambda: recovery.cleanup_signing_key.owner_gid)
+    monkeypatch.setattr(
+        node_service,
+        "_verify_database_deployment",
+        lambda config: observed.setdefault("database", config),
+    )
+    monkeypatch.setattr(
+        node_service,
+        "_fresh_private_key",
+        lambda pin: (
+            RECOVERY_PRIVATE_KEY
+            if pin == recovery.cleanup_signing_key
+            else pytest.fail("cleanup composition read an unexpected key before the core factory")
+        ),
+    )
+
+    def compose_core(config, *, node_authority_observed_at, cleanup_recovery_authority):
+        observed["source"] = config
+        observed["node_authority_observed_at"] = node_authority_observed_at
+        observed["cleanup_pin"] = cleanup_recovery_authority.authority_pin
+        return "agent", "allocator", "runtime-control"
+
+    monkeypatch.setattr(node_service, "_compose_agent_and_allocator", compose_core)
+    monkeypatch.setattr(
+        node_service,
+        "QualificationPreRuntimeCleanupWorker",
+        lambda *, agent: ("cleanup-worker", agent),
+    )
+
+    worker = compose_attempt_scoped_pre_runtime_cleanup(
+        configuration_bytes=payload,
+        expected_configuration_sha256=payload_sha256,
+        attempt_id=recovery.cleanup_authority_pin.infrastructure_attempt_id,
+    )
+
+    assert worker == ("cleanup-worker", "agent")
+    assert observed == {
+        "database": source,
+        "source": source,
+        "node_authority_observed_at": source.prepared_at,
+        "cleanup_pin": recovery.cleanup_authority_pin,
+    }
+    with pytest.raises(QualificationNodeCompositionError, match="frozen config"):
+        compose_attempt_scoped_pre_runtime_cleanup(
+            configuration_bytes=payload,
+            expected_configuration_sha256="0" * 64,
+            attempt_id=recovery.cleanup_authority_pin.infrastructure_attempt_id,
+        )
 
 
 def test_node_factory_binds_canonical_config_database_and_poll_interval(

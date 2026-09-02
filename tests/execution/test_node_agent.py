@@ -49,6 +49,9 @@ from aletheia.execution.node_agent import (
     RuntimeStartAuthorization,
     TerminalArtifactCommit,
 )
+from aletheia.execution.pre_runtime_cleanup_issuance import (
+    PinnedAttemptScopedPreRuntimeCleanupAuthority,
+)
 from aletheia.execution.runtime_contracts import (
     AttemptAdoptionReceipt,
     EngineeringQualificationGrant,
@@ -71,6 +74,7 @@ from aletheia.execution.runtime_contracts import (
 from aletheia.execution.runtime_v2_contracts import (
     AcceptedQualificationTerminalSubmission,
     AcceptedRuntimeTermination,
+    AttemptScopedPreRuntimeCleanupAuthorityPin,
     HistoricalPreRuntimeRecoveryLineage,
     InputMaterializationEntry,
     InputMaterializationReceipt,
@@ -851,12 +855,27 @@ class _Allocator:
         self.last_rebind_receipt: RuntimeFenceRebindReceipt | None = None
         self.last_node_receipt: NodeExecutionReceipt | None = None
         self.last_disposition: NodeTerminalDisposition | None = None
+        self.cleanup_recovery_authority = None
 
     def pull_qualification_assignment(self, *, node_id: str, node_manifest_sha256: str):
         assert node_id == self.current.node_id
         assert len(node_manifest_sha256) == 64
         self.calls.append("pull")
         return replace(self.assignment, reservation=self.current)
+
+    def pull_pre_runtime_cleanup_assignment(
+        self,
+        *,
+        node_id: str,
+        node_manifest_sha256: str,
+        attempt_id: str,
+    ):
+        assert attempt_id == self.current.attempt_id
+        self.calls.append("cleanup_pull")
+        return self.pull_qualification_assignment(
+            node_id=node_id,
+            node_manifest_sha256=node_manifest_sha256,
+        )
 
     def start_attempt(
         self,
@@ -1022,6 +1041,7 @@ class _Allocator:
             runtime_authority=(
                 RuntimeControlAuthorityVerifier(_runtime_control_pin()) if cleaned_launch else None
             ),
+            cleanup_recovery_authority=self.cleanup_recovery_authority,
         )
         self.last_absence_receipt = absence_receipt
         self.last_absence_request = replacement_launch_authorization_request
@@ -2359,6 +2379,130 @@ def test_historical_pre_runtime_recovery_after_node_key_expiry_is_rejected(
 
     assert harness.runtime.launch_calls == 0
     assert harness.runtime.cleanup_calls == 0
+
+
+def test_attempt_scoped_cleanup_after_node_expiry_releases_without_launch(
+    tmp_path: Path,
+) -> None:
+    harness = _Harness(tmp_path)
+    harness.allocator.crash_after_start_commit = True
+
+    with pytest.raises(SystemExit, match="allocator start commit"):
+        harness.agent.run_once()
+
+    state = harness.state.load_state(harness.reservation.attempt_id)
+    start = harness.allocator._start_authorization
+    assert state is not None and start is not None
+    assert state.runtime_identity is None and state.node_runtime_launch_receipt is None
+    recovered_reservation = replace(
+        harness.allocator.current,
+        status="reconciliation_required",
+    )
+    harness.allocator.current = recovered_reservation
+    lineage = HistoricalPreRuntimeRecoveryLineage(
+        runtime_preparation=state.runtime_preparation,
+        runtime_launch_authorization_request=state.runtime_launch_authorization_request,
+        runtime_launch_authorization=start.launch_authorization,
+    )
+    recovery_assignment = replace(
+        harness.assignment,
+        reservation=recovered_reservation,
+        lease_token=None,
+        historical_pre_runtime_recovery_lineage=lineage,
+    )
+    harness.allocator.assignment = recovery_assignment
+
+    # Mirror the live ARL-1 crash: cleanup completed and generation 1 was sealed locally,
+    # but the allocator never observed it before the enrolled node key expired.
+    original_resolve = harness.allocator.resolve_pre_runtime_absence
+
+    def crash_before_absence_commit(**_scope):
+        raise SystemExit("crash after local absence seal")
+
+    harness.allocator.resolve_pre_runtime_absence = crash_before_absence_commit
+    with pytest.raises(SystemExit, match="local absence seal"):
+        harness.agent.run_once()
+    pending_before_expiry = harness.state.load_latest_pre_runtime_absence_generation(
+        attempt_id=recovered_reservation.attempt_id,
+        absence_epoch=1,
+    )
+    assert pending_before_expiry is not None
+    assert pending_before_expiry.generation == 1
+    assert pending_before_expiry.receipt.cleanup_recovery_authority is None
+    legacy_pending_bytes = next(
+        (tmp_path / "node-state" / "absences").glob("*.pending.json")
+    ).read_bytes()
+    assert b'"cleanup_recovery_authority"' not in legacy_pending_bytes
+    assert b'"cleanup_recovery_authority_sha256"' not in legacy_pending_bytes
+    harness.allocator.resolve_pre_runtime_absence = original_resolve
+
+    harness.clock.current = harness.authority.active_until
+    recovery_private_key = hashlib.sha256(b"node-expiry-cleanup-recovery").digest()
+    recovery_public_key = _public_key_hex(recovery_private_key)
+    recovery_pin = AttemptScopedPreRuntimeCleanupAuthorityPin(
+        policy_sha256=_digest("node-expiry-cleanup-policy"),
+        principal_id="principal:node-expiry-cleanup",
+        key_id=qualification_key_id(recovery_public_key),
+        public_key_ed25519_hex=recovery_public_key,
+        source_node_id=harness.authority.manifest.node_id,
+        source_node_manifest_sha256=harness.authority.manifest.manifest_sha256,
+        infrastructure_attempt_id=recovered_reservation.attempt_id,
+        runtime_preparation_sha256=state.runtime_preparation.preparation_sha256,
+        runtime_launch_authorization_sha256=start.launch_authorization.authorization_sha256,
+        cleanup_absence_epoch=1,
+        watchdog_deployment_sha256=_digest("node-expiry-cleanup-watchdog"),
+        valid_from=harness.clock.current,
+        expires_at=harness.clock.current + timedelta(minutes=30),
+    )
+    recovery_authority = PinnedAttemptScopedPreRuntimeCleanupAuthority(
+        pin=recovery_pin,
+        private_key=recovery_private_key,
+    )
+    harness.allocator.cleanup_recovery_authority = recovery_authority.authority_verifier
+    recovery_agent = QualificationNodeAgent(
+        node_authority=harness.authority,
+        qualification_authority=QualificationAuthorityVerifier(harness.case.pin),
+        runtime_control_authority=RuntimeControlAuthorityVerifier(_runtime_control_pin()),
+        node_signing_private_key=PRIVATE_KEY,
+        boot_id="boot.qualification-001",
+        allocator_principal_id="principal:allocator",
+        allocator=harness.allocator,
+        runtime=harness.runtime,
+        output_quota_provisioner=harness.output_quota_provisioner,
+        artifact_quarantine=harness.artifacts,
+        launch_registry=PinnedLaunchRegistry((harness.spec,)),
+        state_store=harness.state,
+        input_materializer=harness.materializer,
+        clock=harness.clock,
+        artifact_completion_grace_seconds=4 * 60 * 60,
+        pre_runtime_cleanup_recovery_authority=recovery_authority,
+    )
+
+    recovered = recovery_agent.recover_pre_runtime_cleanup(
+        attempt_id=recovered_reservation.attempt_id
+    )
+
+    assert recovered.outcome is NodeRunOutcome.PRE_RUNTIME_RELEASED
+    assert recovered.attempt_id == recovered_reservation.attempt_id
+    assert harness.runtime.launch_calls == 0
+    assert harness.runtime.cleanup_calls == 2
+    assert harness.allocator.calls.count("cleanup_pull") == 1
+    assert harness.allocator.calls.count("absence") == 1
+    assert (
+        harness.allocator.last_absence_receipt.cleanup_recovery_authority_sha256
+        == recovery_pin.authority_sha256
+    )
+    pending_after_recovery = harness.state.load_latest_pre_runtime_absence_generation(
+        attempt_id=recovered_reservation.attempt_id,
+        absence_epoch=1,
+    )
+    assert pending_after_recovery is not None
+    assert pending_after_recovery.generation == 2
+    assert (
+        pending_after_recovery.supersedes_absence_receipt_sha256
+        == pending_before_expiry.receipt.absence_receipt_sha256
+    )
+    assert pending_after_recovery.receipt == harness.allocator.last_absence_receipt
 
 
 def test_historical_pre_runtime_recovery_resumes_cleanup_from_reconciliation_state(

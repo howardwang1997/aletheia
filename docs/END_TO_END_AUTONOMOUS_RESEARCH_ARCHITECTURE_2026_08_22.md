@@ -891,8 +891,8 @@ entrypoint；它要求完整 ARL-0 gates、canonical compiler replay、同一 ac
 target campaign。运行中的 exact reexecution 只通过 signed typed terminal-pending 状态有界等待，最迟在
 SEA admission deadline 停止；资格签发和 audit 时间则在 fresh replay 后取自 pinned PostgreSQL clock，
 deployment JSON 只能给出 24 小时以内的 operation window 与 receipt duration，不能回填或复活 receipt。
-由于真实 Linux target campaign 尚未执行，production source verifier 也尚未产生
-retained receipt，**当前仍没有一份可签发的 ARL-1
+真实 Linux target 已运行多个冻结 candidate，但每个都在不同的 fail-closed 工程边界停止，尚无一份
+完整 PR-8h campaign receipt；production source verifier 也尚未产生 retained receipt，**当前仍没有一份可签发的 ARL-1
 资格 receipt，系统没有晋级 ARL-1**。它也拥有若干 `ARL-2` 所需但未由主控制面贯通的 F8–F11
 原语。没有 `ARL-3` 或 `ARL-4` 证据。
 
@@ -1536,11 +1536,15 @@ CAS writer、model/network/process/GPU 调用，也不检查 live availability�
   loop-backed output quota 与 deadline watchdog，以及 pre-runtime absence、historical actual-start
   recovery、runtime fence rebind、termination challenge/acceptance、artifact grace/deadline expiration
   和 v2 terminal outbox；never-started pre-runtime cleanup 不受 artifact grace 截止，否则会永久滞留
-  active attempt/资源锁，但它始终是 cleanup-only，且仍须 fresh node-signed absence；已实际启动的
-  runtime 与 terminal artifact recovery 仍受原有 bounded grace 约束；
+  active attempt/资源锁，但它始终是 cleanup-only。正常路径仍须 fresh node-signed absence；若该节点
+  key 已过期，`0032` 仅接受一个独立密钥、最长一小时、精确绑定 source node/manifest、既有 attempt、
+  preparation、已提交 launch authorization、下一 absence epoch 与 root watchdog 的 release-only
+  authority，且禁止 replacement launch。已实际启动的 runtime 与 terminal artifact recovery 仍受原有
+  bounded grace 约束；
 - PR-4 execution schema 仍精确为 27 张 `execution_*` tables：`0024` 的 16 张 PR-4a tables、
   `0025` 的 1 张 sealed-assignment table、`0026` 的 10 张 append-only runtime-v2 tables；仓库 current
-  Alembic head 已由 PR-5 推进为 `20260828_0027`，但不改写这 27 张 execution tables 的语义；
+  Alembic head 现为 `20260903_0032`；`0032` 不新增表，只扩展同一 absence row 的 closed
+  release-only recovery shape，且不改写任何既有 row；
 - composed cut 是 single local node、CPU-only（可按 exact cgroup 配额使用多个 CPU cores），所有
   contracts 保持 `qualification_only=true` / `scientific_admission_allowed=false`；GPU/device、remote、
   checkpoint、external/provider action 与 cross-node adoption 均未开放。
