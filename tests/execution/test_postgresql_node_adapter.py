@@ -1813,7 +1813,7 @@ def test_real_postgresql_concurrent_deadline_workers_emit_one_exact_outbox(
     ]
 
 
-def test_real_postgresql_prelaunch_recovery_after_hard_deadline_preserves_quota_and_never_launches(
+def test_real_postgresql_prelaunch_recovery_after_artifact_grace_preserves_quota_and_never_launches(
     tmp_path, monkeypatch, _isolated_adapter_database
 ) -> None:
     prepared, allocator, adapter, agent, runtime, state, claim = _real_v2_composition(
@@ -1836,7 +1836,7 @@ def test_real_postgresql_prelaunch_recovery_after_hard_deadline_preserves_quota_
     )
 
     monkeypatch.setattr(allocator, "authorize_runtime_start", original_authorize)
-    late = claim.snapshot.hard_deadline + timedelta(seconds=1)
+    late = claim.snapshot.hard_deadline + timedelta(seconds=3601)
     runtime.clock.current = late
     monkeypatch.setattr(allocator_module, "_database_time", lambda _session: late)
     reconciled = allocator.reconcile_expired()

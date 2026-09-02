@@ -3730,6 +3730,9 @@ class QualificationNodeAgent:
                 "qualification node accepts replay-safe, network-none, non-checkpoint work only"
             )
         attempt_id = intent.infrastructure_attempt.infrastructure_attempt_id
+        # Historical pre-runtime recovery has no launched runtime or artifact deadline to honor.
+        # It still needs the current node key to sign fresh absence, while every other delivery
+        # remains bounded by the originally frozen artifact-completion window.
         if (
             reservation.execution_id != intent.execution_id
             or reservation.attempt_id != attempt_id
@@ -3748,11 +3751,17 @@ class QualificationNodeAgent:
                 )
             )
             or reservation.lease_expires_at > reservation.hard_deadline
-            or reservation.hard_deadline + self._artifact_completion_grace
-            > self._node_authority.active_until
-            or reservation.hard_deadline + self._artifact_completion_grace
-            > self._runtime_control_authority.pin.active_until
-            or not now < reservation.hard_deadline + self._artifact_completion_grace
+            or (
+                historical_pre_runtime is None
+                and (
+                    reservation.hard_deadline + self._artifact_completion_grace
+                    > self._node_authority.active_until
+                    or reservation.hard_deadline + self._artifact_completion_grace
+                    > self._runtime_control_authority.pin.active_until
+                    or not now < reservation.hard_deadline + self._artifact_completion_grace
+                )
+            )
+            or (historical_pre_runtime is not None and not now < self._node_authority.active_until)
             or (
                 not recovery_only_assignment
                 and reservation.status not in {"reconciliation_required", "terminated", "verifying"}

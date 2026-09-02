@@ -3545,6 +3545,11 @@ class PostgreSQLExecutionAllocator:
                     snapshot=self._snapshot(session, attempt),
                     historical_recovery_grant=recovery_grant,
                 )
+            # A pre-runtime row has no runtime or artifact to submit.  It must remain
+            # cleanup-deliverable after the artifact window closes; otherwise the active-attempt
+            # uniqueness and resource holds can be stranded forever.  The delivery is still
+            # cleanup-only, and resolve_runtime_absence re-locks every row and requires a fresh,
+            # currently trusted node-signed absence proof before releasing anything.
             prelaunch_attempt = session.execute(
                 select(_ExecutionAttemptRecord)
                 .join(
@@ -3559,7 +3564,6 @@ class PostgreSQLExecutionAllocator:
                     _ExecutionAttemptRecord.node_runtime_launch_receipt_sha256.is_(None),
                     _ExecutionAttemptRecord.accepted_runtime_termination_sha256.is_(None),
                     _ExecutionAttemptRecord.accepted_terminal_submission_sha256.is_(None),
-                    _ExecutionAttemptRecord.hard_deadline > now - self._artifact_submission_grace,
                     ~select(_ExecutionRuntimeLaunchReceiptRecord.launch_receipt_sha256)
                     .where(
                         _ExecutionRuntimeLaunchReceiptRecord.attempt_id
@@ -3603,8 +3607,7 @@ class PostgreSQLExecutionAllocator:
                         "stored pre-runtime recovery lineage is invalid"
                     ) from exc
                 if (
-                    prelaunch_attempt.hard_deadline + self._artifact_submission_grace <= now
-                    or preparation.node_id != node_id
+                    preparation.node_id != node_id
                     or preparation.node_manifest_sha256 != node_manifest_sha256
                     or preparation.infrastructure_attempt_id != prelaunch_attempt.attempt_id
                     or preparation.execution_id != prelaunch_attempt.execution_id

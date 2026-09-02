@@ -1019,7 +1019,7 @@ def test_runtime_start_exact_commit_replays_after_lease_and_ticket_expiry(
     assert replay.snapshot.status == "starting"
 
 
-def test_prelaunch_start_commit_recovers_after_deadline_only_to_cleanup(
+def test_prelaunch_start_commit_recovers_after_artifact_grace_only_to_cleanup(
     monkeypatch, tmp_path
 ) -> None:
     prepared, allocator, _adapter, agent, runtime, _state, claim = _running_v2(
@@ -1039,7 +1039,10 @@ def test_prelaunch_start_commit_recovers_after_deadline_only_to_cleanup(
     monkeypatch.setattr(allocator, "authorize_runtime_start", original_authorize)
     assert runtime.launch_calls == 0
 
-    late = claim.snapshot.hard_deadline + timedelta(seconds=1)
+    # Pre-runtime cleanup is not artifact submission.  Even after the artifact window closes,
+    # the exact never-started lineage must remain deliverable so it cannot strand the active
+    # attempt and its exclusive resource holds forever.
+    late = claim.snapshot.hard_deadline + timedelta(seconds=3601)
     runtime.clock.current = late
     monkeypatch.setattr(allocator_module, "_database_time", lambda _session: late)
     reconciled = allocator.reconcile_expired()
