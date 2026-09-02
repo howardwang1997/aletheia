@@ -100,6 +100,7 @@ from aletheia.execution.runtime_contracts import (
 from aletheia.execution.runtime_v2_contracts import (
     AcceptedQualificationTerminalSubmission,
     AcceptedRuntimeTermination,
+    AttemptScopedPreRuntimeCleanupAuthorityVerifier,
     HistoricalPreRuntimeRecoveryLineage,
     HistoricalRuntimeRecoveryGrant,
     MINIMUM_LOOP_OUTPUT_FILESYSTEM_BYTES,
@@ -901,6 +902,18 @@ def _model_json(model: object) -> dict[str, object]:
     return dump(mode="json")
 
 
+def _pre_runtime_absence_receipt_json(
+    receipt: PreRuntimeAbsenceReceipt,
+) -> dict[str, object]:
+    """Preserve the legacy closed shape unless an explicit recovery pin is present."""
+
+    payload = receipt.model_dump(mode="json")
+    if receipt.cleanup_recovery_authority is None:
+        payload.pop("cleanup_recovery_authority")
+        payload.pop("cleanup_recovery_authority_sha256")
+    return payload
+
+
 def _canonical_identity_allowlist(
     values: tuple[str, ...],
     *,
@@ -998,6 +1011,9 @@ class PostgreSQLExecutionAllocator:
         allocator_principal_id: str,
         runtime_control_issuer: RuntimeControlIssuancePort | None = None,
         runtime_control_authority: RuntimeControlVerificationPort | None = None,
+        pre_runtime_cleanup_recovery_authorities: tuple[
+            AttemptScopedPreRuntimeCleanupAuthorityVerifier, ...
+        ] = (),
         sessions: sessionmaker[Session] | Callable[[], Session] | None = None,
         max_inventory_ttl_seconds: int = 30,
         max_runtime_inspection_ttl_seconds: int = 30,
@@ -1117,6 +1133,37 @@ class PostgreSQLExecutionAllocator:
                 raise ValueError(
                     "runtime-control role must be distinct from qualification, node, and terminal roles"
                 )
+        cleanup_authorities: dict[str, AttemptScopedPreRuntimeCleanupAuthorityVerifier] = {}
+        runtime_key_ids = (
+            {runtime_pin.key_id} if self._runtime_control_authority is not None else set()
+        )
+        runtime_principal_ids = (
+            {runtime_pin.principal_id} if self._runtime_control_authority is not None else set()
+        )
+        for authority_verifier in pre_runtime_cleanup_recovery_authorities:
+            if not isinstance(
+                authority_verifier,
+                AttemptScopedPreRuntimeCleanupAuthorityVerifier,
+            ):
+                raise TypeError("pre-runtime cleanup recovery authority must be constructor-pinned")
+            pin = authority_verifier.pin
+            source = self._node_authorities.get(pin.source_node_id)
+            if (
+                pin.infrastructure_attempt_id in cleanup_authorities
+                or source is None
+                or source.manifest.manifest_sha256 != pin.source_node_manifest_sha256
+                or pin.valid_from < source.active_until
+                or pin.key_id in forbidden_key_ids | {terminal_key_id} | runtime_key_ids
+                or pin.principal_id
+                in forbidden_principal_ids | {terminal_principal_id} | runtime_principal_ids
+            ):
+                raise ValueError(
+                    "pre-runtime cleanup authority is duplicate, rebound, or role-confused"
+                )
+            cleanup_authorities[pin.infrastructure_attempt_id] = authority_verifier
+            forbidden_key_ids.add(pin.key_id)
+            forbidden_principal_ids.add(pin.principal_id)
+        self._pre_runtime_cleanup_recovery_authorities = cleanup_authorities
         self._sessions = sessions or session_factory()
         self._max_inventory_ttl = timedelta(seconds=max_inventory_ttl_seconds)
         self._max_runtime_inspection_ttl = timedelta(seconds=max_runtime_inspection_ttl_seconds)
@@ -1218,14 +1265,13 @@ class PostgreSQLExecutionAllocator:
                 created=created,
             )
 
-    def _locked_node_authority(
+    def _deployment_bound_node_authority(
         self,
         node: _ExecutionNodeRecord,
         *,
-        observed_at: datetime,
         error_type: type[AllocationError],
     ) -> WorkerNodeAuthorityVerifier:
-        """Rebuild exact node authority from the locked row and deployment-pinned root."""
+        """Rebuild exact stored bytes without granting current-time node authority."""
 
         configured = self._node_authorities.get(node.node_id)
         try:
@@ -1244,10 +1290,28 @@ class PostgreSQLExecutionAllocator:
                 or node.site_id != manifest.site_id
             ):
                 raise ValueError("locked node authority bytes differ from deployment pins")
+        except (TypeError, ValueError) as exc:
+            raise error_type("node is not bound to exact deployment-enrolled authority") from exc
+        assert configured is not None
+        return configured
+
+    def _locked_node_authority(
+        self,
+        node: _ExecutionNodeRecord,
+        *,
+        observed_at: datetime,
+        error_type: type[AllocationError],
+    ) -> WorkerNodeAuthorityVerifier:
+        """Rebuild exact node authority and require it to be active at observation time."""
+
+        configured = self._deployment_bound_node_authority(node, error_type=error_type)
+        try:
             return verify_worker_node_enrollment(
-                manifest=manifest,
-                enrollment=enrollment,
-                enrollment_authority=NodeEnrollmentAuthorityVerifier(pin),
+                manifest=configured.manifest,
+                enrollment=configured.enrollment,
+                enrollment_authority=NodeEnrollmentAuthorityVerifier(
+                    configured.enrollment_authority_pin
+                ),
                 expected_manifest_sha256=node.node_manifest_sha256,
                 observed_at=observed_at,
             )
@@ -3640,6 +3704,114 @@ class PostgreSQLExecutionAllocator:
             sealed_envelope=initial.envelope,
         )
 
+    def pull_pre_runtime_cleanup_delivery(
+        self,
+        *,
+        node_id: str,
+        node_manifest_sha256: str,
+        attempt_id: str,
+    ) -> QualificationAssignmentDelivery | None:
+        """Return only one named cleanup-only delivery; never fall through to launch work."""
+
+        transport_pin = self._node_assignment_transport_pins.get(node_id)
+        node_authority = self._node_authorities.get(node_id)
+        cleanup_authority = self._pre_runtime_cleanup_recovery_authorities.get(attempt_id)
+        if (
+            re.fullmatch(_ATTEMPT_ID_PATTERN, attempt_id) is None
+            or transport_pin is None
+            or node_authority is None
+            or cleanup_authority is None
+            or transport_pin.node_manifest_sha256 != node_manifest_sha256
+            or node_authority.manifest.manifest_sha256 != node_manifest_sha256
+        ):
+            raise AdmissionConflict(
+                "pre-runtime cleanup pull differs from deployment-pinned node identity"
+            )
+        with self._sessions() as session:
+            now = _database_time(session)
+            if not cleanup_authority.pin.active_at(now):
+                raise AdmissionConflict("pre-runtime cleanup authority is not active at DB time")
+            attempt = session.execute(
+                select(_ExecutionAttemptRecord)
+                .join(
+                    _ExecutionRuntimeLaunchAuthorizationRecord,
+                    _ExecutionRuntimeLaunchAuthorizationRecord.authorization_sha256
+                    == _ExecutionAttemptRecord.latest_runtime_launch_authorization_sha256,
+                )
+                .where(
+                    _ExecutionAttemptRecord.attempt_id == attempt_id,
+                    _ExecutionAttemptRecord.node_id == node_id,
+                    _ExecutionAttemptRecord.status.in_({"starting", "reconciliation_required"}),
+                    _ExecutionAttemptRecord.runtime_preparation_sha256.is_not(None),
+                    _ExecutionAttemptRecord.node_runtime_launch_receipt_sha256.is_(None),
+                    _ExecutionAttemptRecord.accepted_runtime_termination_sha256.is_(None),
+                    _ExecutionAttemptRecord.accepted_terminal_submission_sha256.is_(None),
+                    ~select(_ExecutionRuntimeLaunchReceiptRecord.launch_receipt_sha256)
+                    .where(
+                        _ExecutionRuntimeLaunchReceiptRecord.attempt_id
+                        == _ExecutionAttemptRecord.attempt_id
+                    )
+                    .exists(),
+                )
+            ).scalar_one_or_none()
+            if attempt is None:
+                return None
+            admission = session.get(
+                _ExecutionQualificationAdmissionRecord,
+                attempt.admission_sha256,
+            )
+            if admission is None:
+                raise AdmissionConflict(
+                    "pre-runtime cleanup delivery lacks immutable admission authority"
+                )
+            try:
+                bundle = EngineeringQualificationBundle.model_validate(admission.bundle_json)
+                grant = EngineeringQualificationGrant.model_validate(admission.grant_json)
+                preparation, request, authorization = self._load_current_runtime_authorization(
+                    session, attempt
+                )
+                lineage = HistoricalPreRuntimeRecoveryLineage(
+                    runtime_preparation=preparation,
+                    runtime_launch_authorization_request=request,
+                    runtime_launch_authorization=authorization,
+                )
+            except (
+                TypeError,
+                ValueError,
+                LeaseAuthorityError,
+                QualificationVerificationError,
+            ) as exc:
+                raise AdmissionConflict(
+                    "stored exact pre-runtime cleanup lineage is invalid"
+                ) from exc
+            if (
+                preparation.node_id != node_id
+                or preparation.node_manifest_sha256 != node_manifest_sha256
+                or preparation.infrastructure_attempt_id != attempt.attempt_id
+                or preparation.execution_id != attempt.execution_id
+                or preparation.intent_sha256 != attempt.intent_sha256
+                or admission.infrastructure_attempt_id != attempt.attempt_id
+                or admission.execution_id != attempt.execution_id
+                or admission.intent_sha256 != attempt.intent_sha256
+                or admission.bundle_sha256 != bundle.bundle_sha256
+                or admission.grant_sha256 != grant.grant_sha256
+                or bundle.bundle_sha256 != attempt.bundle_sha256
+                or grant.grant_sha256 != attempt.grant_sha256
+                or cleanup_authority.pin.runtime_preparation_sha256
+                != preparation.preparation_sha256
+                or cleanup_authority.pin.runtime_launch_authorization_sha256
+                != authorization.authorization_sha256
+                or cleanup_authority.pin.cleanup_absence_epoch
+                != request.pre_runtime_absence_epoch + 1
+            ):
+                raise AdmissionConflict("stored exact pre-runtime cleanup authority is rebound")
+            return QualificationAssignmentDelivery(
+                bundle=bundle,
+                grant=grant,
+                snapshot=self._snapshot(session, attempt),
+                historical_pre_runtime_recovery_lineage=lineage,
+            )
+
     def authorize_runtime_start(
         self,
         *,
@@ -4136,11 +4308,36 @@ class PostgreSQLExecutionAllocator:
             locked_holds = self._lock_runtime_holds(session, attempt)
             _budget_head, node, _device_heads, _resource, _devices, _reservation = locked_holds
             now = _database_time(session)
-            node_authority = self._locked_node_authority(
-                node,
-                observed_at=now,
-                error_type=LeaseAuthorityError,
-            )
+            embedded_cleanup_recovery = receipt.cleanup_recovery_authority
+            cleanup_recovery_authority = None
+            if embedded_cleanup_recovery is None:
+                node_authority = self._locked_node_authority(
+                    node,
+                    observed_at=now,
+                    error_type=LeaseAuthorityError,
+                )
+            else:
+                cleanup_recovery_authority = self._pre_runtime_cleanup_recovery_authorities.get(
+                    attempt_id
+                )
+                if (
+                    cleanup_recovery_authority is None
+                    or cleanup_recovery_authority.pin != embedded_cleanup_recovery
+                    or receipt.cleanup_recovery_authority_sha256
+                    != embedded_cleanup_recovery.authority_sha256
+                    or replacement_request is not None
+                    or embedded_cleanup_recovery.infrastructure_attempt_id != attempt.attempt_id
+                    or embedded_cleanup_recovery.source_node_id != node.node_id
+                    or embedded_cleanup_recovery.source_node_manifest_sha256
+                    != node.node_manifest_sha256
+                ):
+                    raise LeaseAuthorityError(
+                        "pre-runtime cleanup recovery differs from exact deployment authority"
+                    )
+                node_authority = self._deployment_bound_node_authority(
+                    node,
+                    error_type=LeaseAuthorityError,
+                )
             inventory = session.get(
                 _ExecutionInventoryAttestationRecord,
                 attempt.node_inventory_sha256,
@@ -4227,7 +4424,7 @@ class PostgreSQLExecutionAllocator:
             if existing is not None:
                 if (
                     existing.attempt_id != attempt.attempt_id
-                    or existing.absence_receipt_json != _model_json(receipt)
+                    or existing.absence_receipt_json != _pre_runtime_absence_receipt_json(receipt)
                     or existing.prior_authorization_request_sha256
                     != (prior_request.request_sha256 if prior_request else None)
                     or existing.prior_authorization_sha256
@@ -4276,6 +4473,7 @@ class PostgreSQLExecutionAllocator:
                     runtime_authority=(
                         issuer.authority_verifier if prior_authorization is not None else None
                     ),
+                    cleanup_recovery_authority=cleanup_recovery_authority,
                 )
             except QualificationVerificationError as exc:
                 try:
@@ -4290,6 +4488,7 @@ class PostgreSQLExecutionAllocator:
                         runtime_authority=(
                             issuer.authority_verifier if prior_authorization is not None else None
                         ),
+                        cleanup_recovery_authority=cleanup_recovery_authority,
                     )
                 except QualificationVerificationError:
                     raise LeaseAuthorityError("pre-runtime absence proof is invalid") from exc
@@ -4416,6 +4615,10 @@ class PostgreSQLExecutionAllocator:
                 "qualification_only": True,
                 "scientific_admission_allowed": False,
             }
+            if receipt.cleanup_recovery_authority_sha256 is not None:
+                decision_payload["pre_runtime_cleanup_recovery_authority_sha256"] = (
+                    receipt.cleanup_recovery_authority_sha256
+                )
             decision_sha256 = canonical_sha256(decision_payload)
             session.add(
                 _ExecutionPreRuntimeAbsenceDecisionRecord(
@@ -4431,7 +4634,7 @@ class PostgreSQLExecutionAllocator:
                         prior_authorization.authorization_sha256 if prior_authorization else None
                     ),
                     absence_payload_sha256=receipt.absence_receipt_sha256,
-                    absence_receipt_json=_model_json(receipt),
+                    absence_receipt_json=_pre_runtime_absence_receipt_json(receipt),
                     disposition=disposition,
                     replacement_request_sha256=(
                         replacement_request.request_sha256 if replacement_request else None

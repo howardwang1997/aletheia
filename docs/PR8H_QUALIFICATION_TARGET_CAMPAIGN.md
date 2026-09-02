@@ -430,10 +430,23 @@ artifact-submission deadline as the selector bound for a row that provably never
 identity, so `20260902f` was no longer delivered after `hard_deadline + artifact grace` and retained
 its exclusive holds. The follow-up keeps only exact pre-runtime/no-launch-receipt cleanup
 deliverable beyond that unrelated artifact window; the allocator still re-locks every authority
-row and requires a fresh node-signed absence proof, and actual-runtime/terminal recovery remains
-bounded. This follow-up has source tests only until its merge commit is frozen on the target,
-replays the retained `20260902f` attempt through the signed pre-runtime-absence transaction, and
-the fresh superseding target campaign completes.
+row and requires a fresh signed absence proof, and actual-runtime/terminal recovery remains
+bounded. Merge `e0c883be6fb4ff6b3340e202432c2230a9db7a9a` was frozen and replayed on the target. That
+replay proved the exact stopped exit-126 container and sealed generation-1 absence evidence, but
+the source node key had already expired before the allocator transaction could accept the proof.
+The container, attempt, exclusive loop/ext4 hold and immutable local/DB evidence remain retained;
+there is still no absence decision or campaign receipt.
+
+The next narrow repair does not revive that node. Alembic `20260903_0032` admits one separately
+keyed, at-most-one-hour cleanup authority pinned to the exact source node manifest, existing
+attempt, runtime preparation, already-committed launch authorization, next absence epoch and root
+watchdog deployment. Its one-shot worker can pull only that named attempt, cannot poll generic
+work, cannot launch or reauthorize, rejects any local launch receipt/runtime identity, and can
+produce only a release decision with no replacement authority. A pre-expiry node-signed pending
+receipt remains immutable generation 1; recovery appends a fresh generation 2 that explicitly
+supersedes it. Target commissioning and execution remain pending until this source is merged,
+frozen from `main`, migrated and reverified. See
+[PR-8j attempt-scoped cleanup recovery](PR8J_ATTEMPT_SCOPED_PRE_RUNTIME_CLEANUP.md).
 
 ## Destructive campaign and evidence order
 
@@ -551,15 +564,16 @@ receipt into a passing shape.
 
 ## Explicit remaining gate
 
-The selected Linux target is compatible and has frozen/installed candidate generations, but none
-has emitted the complete campaign receipt. Therefore no host is currently proven deployable,
+The selected Linux target is compatible and has run frozen/installed candidate generations, but
+none has emitted the complete campaign receipt. Therefore no host is currently proven deployable,
 PR-4b remains nondeployable, and `scientific_admission_allowed` is always false even in a
-successful campaign receipt. The next ordered operation is to merge and freeze the narrow expired-
-gate cleanup repair, use it to close the retained `20260902f` pre-workload generation through the
-signed allocator transaction, then run one fresh superseding generation with the already-proven
-five-minute observation budget, explicit bounded initial-assignment window, short runtime
-heartbeat and 1,800-second workload. The complete campaign must then run—not more controller
-authority.
+successful campaign receipt. The next ordered operation is to merge and freeze the narrow
+attempt-scoped cleanup repair, migrate `0031 -> 0032`, commission its target-local key without
+exporting private bytes, and use it to close the retained `20260902f` pre-workload generation
+through the signed allocator transaction. Only after the old exact loop/ext4 hold is released may
+one fresh superseding generation run with the already-proven five-minute observation budget,
+explicit bounded initial-assignment window, short runtime heartbeat and 1,800-second workload. The
+complete campaign must then run—not more controller authority.
 
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the

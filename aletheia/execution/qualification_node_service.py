@@ -64,6 +64,10 @@ from aletheia.execution.oci_runtime import (
 from aletheia.execution.postgresql_node_adapter import (
     PostgreSQLNodeAllocatorAdapter,
     QualificationExecutionWorker,
+    QualificationPreRuntimeCleanupWorker,
+)
+from aletheia.execution.pre_runtime_cleanup_issuance import (
+    PinnedAttemptScopedPreRuntimeCleanupAuthority,
 )
 from aletheia.execution.qualification_custody import QualificationPreAdmissionCustodyConfig
 from aletheia.execution.qualification_service_contracts import (
@@ -81,11 +85,16 @@ from aletheia.execution.runtime_contracts import (
     qualification_key_id,
 )
 from aletheia.execution.runtime_control_issuance import PinnedRuntimeControlIssuanceAuthority
-from aletheia.execution.runtime_v2_contracts import RuntimeControlAuthorityPin
-from aletheia.execution.schemas import ExecutionModel, canonical_json_bytes
+from aletheia.execution.runtime_v2_contracts import (
+    AttemptScopedPreRuntimeCleanupAuthorityPin,
+    RuntimeControlAuthorityPin,
+    RuntimeControlAuthorityVerifier,
+)
+from aletheia.execution.schemas import ExecutionModel, canonical_json_bytes, canonical_sha256
 from aletheia.execution.terminal_runtime import TerminalNodeAuthorityConfig
 
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
+_ATTEMPT_ID_PATTERN = re.compile(r"^iat_[0-9a-f]{32}$")
 _IDENTITY_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}$"
 _BOOT_ID_PATTERN = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
@@ -101,7 +110,12 @@ class QualificationNodePrivateKeyPinV1(ExecutionModel):
         "aletheia.qualification_node_private_key_pin"
     )
     schema_version: Literal[1] = 1
-    role: Literal["node_signing", "assignment_transport", "runtime_control"]
+    role: Literal[
+        "node_signing",
+        "assignment_transport",
+        "runtime_control",
+        "pre_runtime_cleanup_recovery",
+    ]
     algorithm: Literal["ed25519", "x25519"]
     path: str
     file_sha256: str = Field(pattern=_SHA256_PATTERN)
@@ -368,6 +382,96 @@ class QualificationNodeServiceConfigV1(ExecutionModel):
         return self
 
 
+class AttemptScopedPreRuntimeCleanupServiceConfigV1(ExecutionModel):
+    """One canonical, non-daemon recovery composition for one expired-node attempt."""
+
+    schema_name: Literal["aletheia.attempt_scoped_pre_runtime_cleanup_service_config"] = (
+        "aletheia.attempt_scoped_pre_runtime_cleanup_service_config"
+    )
+    schema_version: Literal[1] = 1
+    source_node_service_config: QualificationNodeServiceConfigV1
+    source_node_service_config_sha256: str = Field(pattern=_SHA256_PATTERN)
+    cleanup_authority_pin: AttemptScopedPreRuntimeCleanupAuthorityPin
+    cleanup_signing_key: QualificationNodePrivateKeyPinV1
+    configured_at: AwareDatetime
+    exact_attempt_pull_only: Literal[True] = True
+    assignment_polling_allowed: Literal[False] = False
+    execution_launch_allowed: Literal[False] = False
+    runtime_reauthorization_allowed: Literal[False] = False
+    terminal_settlement_allowed: Literal[False] = False
+    node_registry_mutation_allowed: Literal[False] = False
+    direct_kernel_mutation_allowed: Literal[False] = False
+    direct_observation_admission_allowed: Literal[False] = False
+    qualification_only: Literal[True] = True
+    scientific_admission_allowed: Literal[False] = False
+
+    @model_validator(mode="after")
+    def _recovery_is_exact_and_separate(
+        self,
+    ) -> "AttemptScopedPreRuntimeCleanupServiceConfigV1":
+        source = self.source_node_service_config
+        node = source.node_authority
+        manifest = node.manifest
+        pin = self.cleanup_authority_pin
+        key = self.cleanup_signing_key
+        source_active_until = min(
+            manifest.key_expires_at,
+            manifest.key_revoked_at or manifest.key_expires_at,
+        )
+        if (
+            self.source_node_service_config_sha256 != canonical_sha256(source)
+            or self.configured_at < source_active_until
+            or not pin.active_at(self.configured_at)
+            or pin.valid_from < source_active_until
+            or pin.source_node_id != manifest.node_id
+            or pin.source_node_manifest_sha256 != manifest.manifest_sha256
+            or pin.watchdog_deployment_sha256 != source.watchdog_deployment.deployment_sha256
+            or key.role != "pre_runtime_cleanup_recovery"
+            or key.algorithm != "ed25519"
+            or key.key_id != pin.key_id
+            or (key.owner_uid, key.owner_gid)
+            != (source.node_signing_key.owner_uid, source.node_signing_key.owner_gid)
+        ):
+            raise ValueError(
+                "attempt-scoped cleanup config differs from its expired node, watchdog, or key"
+            )
+        source_keys = (
+            source.node_signing_key,
+            source.assignment_transport_key,
+            source.runtime_control_key,
+        )
+        if key.path in {item.path for item in source_keys} or key.file_sha256 in {
+            item.file_sha256 for item in source_keys
+        }:
+            raise ValueError("attempt-scoped cleanup key is not separately held")
+        principals = {
+            source.qualification_custody.pricing_authority_pin.principal_id,
+            source.qualification_custody.source_budget_authority_pin.principal_id,
+            source.qualification_custody.qualification_authority_pin.principal_id,
+            source.qualification_custody.terminal_verification_authority_pin.principal_id,
+            source.runtime_control_authority_pin.principal_id,
+            source.allocator_principal_id,
+            source.input_materializer_principal_id,
+            manifest.principal_id,
+            node.enrollment_authority_pin.principal_id,
+            node.assignment_transport_pin.transport_principal_id,
+            source.quota_deployment.provisioner_principal_id,
+        }
+        key_ids = {
+            source.qualification_custody.pricing_authority_pin.key_id,
+            source.qualification_custody.source_budget_authority_pin.key_id,
+            source.qualification_custody.qualification_authority_pin.key_id,
+            source.qualification_custody.terminal_verification_authority_pin.key_id,
+            source.runtime_control_authority_pin.key_id,
+            manifest.node_signing_key_id,
+            node.enrollment_authority_pin.key_id,
+            node.assignment_transport_pin.transport_key_id,
+        }
+        if pin.principal_id in principals or pin.key_id in key_ids:
+            raise ValueError("attempt-scoped cleanup authority is role-confused")
+        return self
+
+
 class QualificationNodeWorkerLoop:
     """Bounded-poll service loop; every tick is independently crash recoverable."""
 
@@ -463,6 +567,23 @@ def _load_config(configuration_bytes: bytes) -> QualificationNodeServiceConfigV1
         raise QualificationNodeCompositionError("qualification node config is invalid") from exc
     if canonical_json_bytes(config) != configuration_bytes:
         raise QualificationNodeCompositionError("qualification node config is not canonical JSON")
+    return config
+
+
+def _load_cleanup_config(
+    configuration_bytes: bytes,
+) -> AttemptScopedPreRuntimeCleanupServiceConfigV1:
+    try:
+        raw = json.loads(configuration_bytes, object_pairs_hook=_unique_object)
+        config = AttemptScopedPreRuntimeCleanupServiceConfigV1.model_validate(raw)
+    except (TypeError, ValueError) as exc:
+        raise QualificationNodeCompositionError(
+            "attempt-scoped pre-runtime cleanup config is invalid"
+        ) from exc
+    if canonical_json_bytes(config) != configuration_bytes:
+        raise QualificationNodeCompositionError(
+            "attempt-scoped pre-runtime cleanup config is not canonical JSON"
+        )
     return config
 
 
@@ -653,18 +774,31 @@ def _verify_live_database_binding(config: QualificationNodeServiceConfigV1) -> N
         )
 
 
-def _compose_worker(config: QualificationNodeServiceConfigV1) -> QualificationExecutionWorker:
-    now = _live_authority_time()
+def _verify_database_deployment(config: QualificationNodeServiceConfigV1) -> None:
+    database_url_sha256 = hashlib.sha256(get_settings().database_url.encode("utf-8")).hexdigest()
+    if (
+        config.database_url_sha256 != database_url_sha256
+        or config.schema_revision != expected_schema_revision()
+    ):
+        raise QualificationNodeCompositionError(
+            "qualification node database differs from deployment"
+        )
+    _verify_live_database_binding(config)
+
+
+def _compose_agent_and_allocator(
+    config: QualificationNodeServiceConfigV1,
+    *,
+    node_authority_observed_at: datetime,
+    cleanup_recovery_authority: PinnedAttemptScopedPreRuntimeCleanupAuthority | None = None,
+) -> tuple[
+    QualificationNodeAgent,
+    PostgreSQLExecutionAllocator,
+    RuntimeControlAuthorityVerifier,
+]:
     node_config = config.node_authority
     manifest = node_config.manifest
     transport = node_config.assignment_transport_pin
-    if (
-        not config.runtime_control_authority_pin.active_at(now)
-        or not node_config.enrollment_authority_pin.active_at(now)
-        or not transport.active_at(now)
-        or now >= min(manifest.key_expires_at, manifest.key_revoked_at or manifest.key_expires_at)
-    ):
-        raise QualificationNodeCompositionError("qualification node authority is not live")
 
     mutable_roots = tuple(
         _verify_mutable_root(item)
@@ -751,7 +885,7 @@ def _compose_worker(config: QualificationNodeServiceConfigV1) -> QualificationEx
         enrollment=node_config.enrollment,
         enrollment_authority=NodeEnrollmentAuthorityVerifier(node_config.enrollment_authority_pin),
         expected_manifest_sha256=manifest.manifest_sha256,
-        observed_at=now,
+        observed_at=node_authority_observed_at,
     )
     qualification_authority = QualificationAuthorityVerifier(custody.qualification_authority_pin)
     runtime_issuer = PinnedRuntimeControlIssuanceAuthority(
@@ -773,6 +907,11 @@ def _compose_worker(config: QualificationNodeServiceConfigV1) -> QualificationEx
         terminal_verification_authority=terminal_verifier,
         allocator_principal_id=config.allocator_principal_id,
         runtime_control_issuer=runtime_issuer,
+        pre_runtime_cleanup_recovery_authorities=(
+            (cleanup_recovery_authority.authority_verifier,)
+            if cleanup_recovery_authority is not None
+            else ()
+        ),
         sessions=session_factory(),
         max_inventory_ttl_seconds=config.max_inventory_ttl_seconds,
         max_runtime_inspection_ttl_seconds=config.max_runtime_inspection_ttl_seconds,
@@ -830,16 +969,93 @@ def _compose_worker(config: QualificationNodeServiceConfigV1) -> QualificationEx
         input_materializer=materializer,
         inspection_ttl_seconds=config.inspection_ttl_seconds,
         artifact_completion_grace_seconds=config.artifact_completion_grace_seconds,
+        pre_runtime_cleanup_recovery_authority=cleanup_recovery_authority,
     )
     if not allocator.runtime_control_issuance_enabled:
         raise QualificationNodeCompositionError("qualification node allocator omitted its signer")
+    return agent, allocator, runtime_issuer.authority_verifier
+
+
+def _compose_worker(config: QualificationNodeServiceConfigV1) -> QualificationExecutionWorker:
+    now = _live_authority_time()
+    node_config = config.node_authority
+    manifest = node_config.manifest
+    transport = node_config.assignment_transport_pin
+    if (
+        not config.runtime_control_authority_pin.active_at(now)
+        or not node_config.enrollment_authority_pin.active_at(now)
+        or not transport.active_at(now)
+        or now >= min(manifest.key_expires_at, manifest.key_revoked_at or manifest.key_expires_at)
+    ):
+        raise QualificationNodeCompositionError("qualification node authority is not live")
+    agent, allocator, runtime_control_authority = _compose_agent_and_allocator(
+        config,
+        node_authority_observed_at=now,
+    )
     return QualificationExecutionWorker(
         agent=agent,
         allocator=allocator,
-        runtime_control_authority=runtime_issuer.authority_verifier,
+        runtime_control_authority=runtime_control_authority,
         node_id=manifest.node_id,
         node_manifest_sha256=manifest.manifest_sha256,
     )
+
+
+def compose_attempt_scoped_pre_runtime_cleanup(
+    *,
+    configuration_bytes: bytes,
+    expected_configuration_sha256: str,
+    attempt_id: str,
+) -> QualificationPreRuntimeCleanupWorker:
+    """Compose one exact post-expiry cleanup command with no polling or launch surface."""
+
+    if (
+        re.fullmatch(_SHA256_PATTERN, expected_configuration_sha256) is None
+        or hashlib.sha256(configuration_bytes).hexdigest() != expected_configuration_sha256
+        or _ATTEMPT_ID_PATTERN.fullmatch(attempt_id) is None
+    ):
+        raise QualificationNodeCompositionError(
+            "attempt-scoped cleanup invocation differs from its frozen config or attempt"
+        )
+    recovery_config = _load_cleanup_config(configuration_bytes)
+    source = recovery_config.source_node_service_config
+    pin = recovery_config.cleanup_authority_pin
+    manifest = source.node_authority.manifest
+    now = _live_authority_time()
+    source_active_until = min(
+        manifest.key_expires_at,
+        manifest.key_revoked_at or manifest.key_expires_at,
+    )
+    if (
+        pin.infrastructure_attempt_id != attempt_id
+        or now < source_active_until
+        or not pin.active_at(now)
+        or (os.geteuid(), os.getegid())
+        != (
+            recovery_config.cleanup_signing_key.owner_uid,
+            recovery_config.cleanup_signing_key.owner_gid,
+        )
+    ):
+        raise QualificationNodeCompositionError(
+            "attempt-scoped cleanup authority is inactive, rebound, or running as another user"
+        )
+    _verify_database_deployment(source)
+    cleanup_key = _fresh_private_key(recovery_config.cleanup_signing_key)
+    try:
+        cleanup_authority = PinnedAttemptScopedPreRuntimeCleanupAuthority(
+            pin=pin,
+            private_key=cleanup_key,
+        )
+    except (TypeError, ValueError) as exc:
+        raise QualificationNodeCompositionError(
+            "attempt-scoped cleanup signing key differs from deployment pin"
+        ) from exc
+    agent, _allocator, _runtime_control = _compose_agent_and_allocator(
+        source,
+        node_authority_observed_at=source.prepared_at,
+        cleanup_recovery_authority=cleanup_authority,
+    )
+    return QualificationPreRuntimeCleanupWorker(agent=agent)
 
 
 def compose_node_service(
@@ -851,15 +1067,7 @@ def compose_node_service(
 
     config = _load_config(configuration_bytes)
     process = _bind_process(deployment, config)
-    database_url_sha256 = hashlib.sha256(get_settings().database_url.encode("utf-8")).hexdigest()
-    if (
-        config.database_url_sha256 != database_url_sha256
-        or config.schema_revision != expected_schema_revision()
-    ):
-        raise QualificationNodeCompositionError(
-            "qualification node database differs from deployment"
-        )
-    _verify_live_database_binding(config)
+    _verify_database_deployment(config)
     loop = QualificationNodeWorkerLoop(_compose_worker(config))
 
     def handler(*, poll_milliseconds: int | None) -> None:
@@ -878,10 +1086,12 @@ def compose_node_service(
 
 
 __all__ = [
+    "AttemptScopedPreRuntimeCleanupServiceConfigV1",
     "QualificationNodeCompositionError",
     "QualificationNodeMutableRootPinV1",
     "QualificationNodePrivateKeyPinV1",
     "QualificationNodeServiceConfigV1",
     "QualificationNodeWorkerLoop",
+    "compose_attempt_scoped_pre_runtime_cleanup",
     "compose_node_service",
 ]

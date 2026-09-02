@@ -88,13 +88,16 @@ only for that closed status, uses the service-signed bounded retry interval, and
 the authorization's observation-admission deadline. Missing registration, invalid signatures,
 database drift, rebound terminal material and custody failures are never retried as readiness.
 
-No production ARL-1 qualification receipt has been issued.
+No production ARL-1 qualification receipt has been issued. Real Linux target candidates have run,
+but each stopped at a fail-closed engineering boundary and none emitted the complete PR-8h target
+campaign receipt required by this gate.
 
 This development machine is macOS and cannot supply the required Linux/root/systemd/cgroup-v2/
-rootful-Docker/AppArmor/loop-ext4 target evidence. The existing PR-8h source tests use synthetic
+rootful-Docker/AppArmor/loop-ext4 target evidence. Local PR-8h source tests use synthetic
 host ports and are intentionally ineligible because every ARL evidence contract requires
 `synthetic_evidence=false`. The production composition is available, but it has deliberately not
-been pointed at invented target receipts or recording ports to manufacture a qualification.
+accepted incomplete target runs, invented receipts or recording ports to manufacture a
+qualification.
 
 Therefore the honest current status remains **ARL-1 qualification gate implemented, deployed
 system not ARL-1 qualified**.

@@ -22,6 +22,8 @@ from aletheia.execution.runtime_contracts import (
 from aletheia.execution.runtime_control_issuance import PinnedRuntimeControlIssuanceAuthority
 from aletheia.execution.runtime_v2_contracts import (
     AcceptedRuntimeTermination,
+    AttemptScopedPreRuntimeCleanupAuthorityPin,
+    AttemptScopedPreRuntimeCleanupAuthorityVerifier,
     InputMaterializationEntry,
     InputMaterializationReceipt,
     QualificationTerminalSubmission,
@@ -36,6 +38,7 @@ from aletheia.execution.runtime_v2_contracts import (
     RuntimeLaunchEvidence,
     RuntimePreparation,
     issue_accepted_runtime_termination,
+    issue_attempt_scoped_pre_runtime_cleanup_receipt,
     issue_historical_runtime_recovery_grant,
     issue_node_runtime_launch_receipt,
     issue_node_runtime_termination_receipt,
@@ -629,6 +632,88 @@ def test_cleaned_absence_advances_epoch_and_binds_prior_signed_ticket() -> None:
             launch_authorization_request=request,
             launch_authorization=authorization,
             runtime_authority=runtime_authority,
+        )
+
+
+def test_attempt_scoped_cleanup_receipt_is_exact_short_lived_and_externally_pinned() -> None:
+    preparation = _preparation()
+    request, authorization = _launch_authority(preparation)
+    runtime_authority = RuntimeControlAuthorityVerifier(_runtime_control_pin())
+    recovery_private_key = hashlib.sha256(b"attempt-scoped-cleanup").digest()
+    recovery_public_key = _public_key_hex(recovery_private_key)
+    pin = AttemptScopedPreRuntimeCleanupAuthorityPin(
+        policy_sha256=_digest("attempt-scoped-cleanup-policy"),
+        principal_id="principal:attempt-scoped-cleanup",
+        key_id=qualification_key_id(recovery_public_key),
+        public_key_ed25519_hex=recovery_public_key,
+        source_node_id=preparation.node_id,
+        source_node_manifest_sha256=preparation.node_manifest_sha256,
+        infrastructure_attempt_id=preparation.infrastructure_attempt_id,
+        runtime_preparation_sha256=preparation.preparation_sha256,
+        runtime_launch_authorization_sha256=authorization.authorization_sha256,
+        cleanup_absence_epoch=1,
+        watchdog_deployment_sha256=_digest("attempt-scoped-cleanup-watchdog"),
+        valid_from=NOW + timedelta(seconds=4),
+        expires_at=NOW + timedelta(minutes=10),
+    )
+    evidence = RuntimeInspectionEvidence(
+        state=RuntimeInspectionState.ABSENT,
+        preparation_sha256=preparation.preparation_sha256,
+        enforced_placement_sha256=preparation.enforced_placement_sha256,
+        input_materialization_receipt_sha256=(preparation.input_materialization_receipt_sha256),
+        enforced_fencing_epoch=preparation.fencing_epoch,
+        enforced_lease_token_sha256=preparation.lease_token_sha256,
+        inspection_evidence_sha256=_digest("attempt-scoped-cleanup-inspection"),
+        runtime_control_journal_sha256=_digest("attempt-scoped-cleanup-control"),
+        prelaunch_absence_journal_sha256=_digest("attempt-scoped-cleanup-journal"),
+        prelaunch_absence_epoch=1,
+        prelaunch_authorization_request_sha256=request.request_sha256,
+        prelaunch_authorization_sha256=authorization.authorization_sha256,
+        inspected_at=NOW + timedelta(seconds=5),
+        inspected_monotonic_ns=5_000,
+    )
+    receipt = issue_attempt_scoped_pre_runtime_cleanup_receipt(
+        authority_pin=pin,
+        preparation=preparation,
+        absence_evidence=evidence,
+        signed_at=NOW + timedelta(seconds=6),
+        expires_at=NOW + timedelta(seconds=10),
+        private_key=recovery_private_key,
+        launch_authorization_request=request,
+        launch_authorization=authorization,
+        runtime_authority=runtime_authority,
+    )
+
+    verified = verify_pre_runtime_absence_receipt(
+        receipt=receipt,
+        preparation=preparation,
+        authority=_authority(),
+        observed_at=NOW + timedelta(seconds=7),
+        maximum_age_seconds=5,
+        launch_authorization_request=request,
+        launch_authorization=authorization,
+        runtime_authority=runtime_authority,
+        cleanup_recovery_authority=(AttemptScopedPreRuntimeCleanupAuthorityVerifier(pin)),
+    )
+
+    assert verified.cleanup_recovery_authority_sha256 == pin.authority_sha256
+    assert receipt.signing_key_id != _authority().manifest.node_signing_key_id
+    with pytest.raises(QualificationVerificationError, match="deployment pin"):
+        verify_pre_runtime_absence_receipt(
+            receipt=receipt,
+            preparation=preparation,
+            authority=_authority(),
+            observed_at=NOW + timedelta(seconds=7),
+            maximum_age_seconds=5,
+            launch_authorization_request=request,
+            launch_authorization=authorization,
+            runtime_authority=runtime_authority,
+        )
+    with pytest.raises(ValidationError, match="at most one hour"):
+        AttemptScopedPreRuntimeCleanupAuthorityPin.model_validate(
+            pin.model_copy(
+                update={"expires_at": pin.valid_from + timedelta(hours=1, microseconds=1)}
+            ).model_dump(mode="python")
         )
 
 

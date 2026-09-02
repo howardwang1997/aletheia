@@ -214,6 +214,109 @@ class RuntimeControlAuthorityVerifier:
             ) from exc
 
 
+class AttemptScopedPreRuntimeCleanupAuthorityPin(ExecutionModel):
+    """One deployment-pinned key that can only release one never-started attempt.
+
+    This authority exists for the narrow case where an exact pre-workload cleanup remains
+    necessary after the enrolled node signing key has expired.  It is not a node enrollment,
+    runtime-control, launch, terminal, or scientific authority.  The source launch lineage and
+    root-watchdog deployment are frozen directly into the pin so the key cannot be reused for a
+    second attempt or cleanup generation.
+    """
+
+    schema_name: Literal["aletheia.attempt_scoped_pre_runtime_cleanup_authority_pin"] = (
+        "aletheia.attempt_scoped_pre_runtime_cleanup_authority_pin"
+    )
+    schema_version: Literal[1] = 1
+    policy_sha256: str = Field(pattern=_SHA256_PATTERN)
+    principal_id: str = Field(pattern=_SYMBOLIC_ID_PATTERN)
+    key_id: str = Field(pattern=_SHA256_PATTERN)
+    public_key_ed25519_hex: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_node_id: str = Field(pattern=_SYMBOLIC_ID_PATTERN)
+    source_node_manifest_sha256: str = Field(pattern=_SHA256_PATTERN)
+    infrastructure_attempt_id: str = Field(pattern=_ATTEMPT_ID_PATTERN)
+    runtime_preparation_sha256: str = Field(pattern=_SHA256_PATTERN)
+    runtime_launch_authorization_sha256: str = Field(pattern=_SHA256_PATTERN)
+    cleanup_absence_epoch: int = Field(ge=1)
+    watchdog_deployment_sha256: str = Field(pattern=_SHA256_PATTERN)
+    valid_from: AwareDatetime
+    expires_at: AwareDatetime
+    revoked_at: AwareDatetime | None = None
+    cleanup_only: Literal[True] = True
+    launch_allowed: Literal[False] = False
+    qualification_only: Literal[True] = True
+    scientific_admission_allowed: Literal[False] = False
+
+    @model_validator(mode="after")
+    def _authority_is_finite_and_exact(self) -> "AttemptScopedPreRuntimeCleanupAuthorityPin":
+        if self.key_id != qualification_key_id(self.public_key_ed25519_hex):
+            raise ValueError("pre-runtime cleanup key id differs from pinned public key")
+        if self.expires_at <= self.valid_from or self.expires_at - self.valid_from > timedelta(
+            hours=1
+        ):
+            raise ValueError(
+                "pre-runtime cleanup authority must have a positive window of at most one hour"
+            )
+        if self.revoked_at is not None and not (
+            self.valid_from <= self.revoked_at <= self.expires_at
+        ):
+            raise ValueError("pre-runtime cleanup revocation is outside its validity window")
+        return self
+
+    @property
+    def active_until(self) -> datetime:
+        return min(self.expires_at, self.revoked_at or self.expires_at)
+
+    @property
+    def authority_sha256(self) -> str:
+        return canonical_sha256(self)
+
+    def active_at(self, timestamp: datetime) -> bool:
+        return self.valid_from <= timestamp < self.active_until
+
+
+class AttemptScopedPreRuntimeCleanupAuthorityVerifier:
+    """Verify only signatures made by one exact cleanup-only deployment pin."""
+
+    def __init__(self, pin: AttemptScopedPreRuntimeCleanupAuthorityPin) -> None:
+        self._pin = AttemptScopedPreRuntimeCleanupAuthorityPin.model_validate(
+            pin.model_dump(mode="python")
+        )
+
+    @property
+    def pin(self) -> AttemptScopedPreRuntimeCleanupAuthorityPin:
+        return self._pin
+
+    def verify_signature(
+        self,
+        *,
+        message: bytes,
+        signature_ed25519_hex: str,
+        signing_key_id: str,
+        signed_at: datetime,
+        expires_at: datetime,
+        observed_at: datetime,
+    ) -> None:
+        _require_utc(observed_at, "pre-runtime cleanup verifier observed_at")
+        pin = self._pin
+        if (
+            signing_key_id != pin.key_id
+            or not pin.active_at(signed_at)
+            or not signed_at <= observed_at < expires_at <= pin.active_until
+        ):
+            raise QualificationVerificationError(
+                "pre-runtime cleanup receipt is outside its exact recovery authority"
+            )
+        try:
+            Ed25519PublicKey.from_public_bytes(bytes.fromhex(pin.public_key_ed25519_hex)).verify(
+                bytes.fromhex(signature_ed25519_hex), message
+            )
+        except (InvalidSignature, ValueError) as exc:
+            raise QualificationVerificationError(
+                "pre-runtime cleanup recovery signature is invalid"
+            ) from exc
+
+
 class RuntimeLaunchAuthorizationRequest(ExecutionModel):
     """Node-monotonic nonce that prevents a delayed/rolled-back-wall-clock launch."""
 
@@ -1310,12 +1413,15 @@ class PreRuntimeAbsenceReceipt(ExecutionModel):
     expires_at: AwareDatetime
     signing_key_id: str = Field(pattern=_SHA256_PATTERN)
     signature_ed25519_hex: str = Field(pattern=_SIGNATURE_PATTERN)
+    cleanup_recovery_authority: AttemptScopedPreRuntimeCleanupAuthorityPin | None = None
+    cleanup_recovery_authority_sha256: str | None = Field(default=None, pattern=_SHA256_PATTERN)
     qualification_only: Literal[True] = True
     scientific_admission_allowed: Literal[False] = False
 
     @model_validator(mode="after")
     def _receipt_is_exact_never_started_proof(self) -> "PreRuntimeAbsenceReceipt":
         evidence = self.absence_evidence
+        recovery = self.cleanup_recovery_authority
         if (
             self.preparation_sha256 != self.preparation.preparation_sha256
             or self.absence_evidence_sha256 != evidence.inspection_sha256
@@ -1331,6 +1437,22 @@ class PreRuntimeAbsenceReceipt(ExecutionModel):
             or self.expires_at <= self.signed_at
         ):
             raise ValueError("pre-runtime absence receipt changed its exact pre-workload proof")
+        if (recovery is None) != (self.cleanup_recovery_authority_sha256 is None):
+            raise ValueError("pre-runtime absence recovery authority is incomplete")
+        if recovery is not None and (
+            self.cleanup_recovery_authority_sha256 != recovery.authority_sha256
+            or self.signing_key_id != recovery.key_id
+            or self.node_manifest_sha256 != recovery.source_node_manifest_sha256
+            or self.preparation.node_id != recovery.source_node_id
+            or self.preparation.infrastructure_attempt_id != recovery.infrastructure_attempt_id
+            or self.preparation_sha256 != recovery.runtime_preparation_sha256
+            or evidence.prelaunch_authorization_sha256
+            != recovery.runtime_launch_authorization_sha256
+            or evidence.prelaunch_absence_epoch != recovery.cleanup_absence_epoch
+            or not recovery.active_at(self.signed_at)
+            or self.expires_at > recovery.active_until
+        ):
+            raise ValueError("pre-runtime absence changed its attempt-scoped recovery authority")
         return self
 
     @property
@@ -1442,6 +1564,76 @@ def issue_pre_runtime_absence_receipt(
     )
 
 
+def issue_attempt_scoped_pre_runtime_cleanup_receipt(
+    *,
+    authority_pin: AttemptScopedPreRuntimeCleanupAuthorityPin,
+    preparation: RuntimePreparation,
+    absence_evidence: RuntimeInspectionEvidence,
+    signed_at: datetime,
+    expires_at: datetime,
+    private_key: bytes,
+    launch_authorization_request: RuntimeLaunchAuthorizationRequest,
+    launch_authorization: RuntimeLaunchAuthorization,
+    runtime_authority: RuntimeControlAuthorityVerifier,
+) -> PreRuntimeAbsenceReceipt:
+    """Sign one fresh absence after source-node expiry without reviving node authority."""
+
+    pin = AttemptScopedPreRuntimeCleanupAuthorityPin.model_validate(
+        authority_pin.model_dump(mode="python")
+    )
+    preparation = RuntimePreparation.model_validate(preparation.model_dump(mode="python"))
+    evidence = RuntimeInspectionEvidence.model_validate(absence_evidence.model_dump(mode="python"))
+    request = RuntimeLaunchAuthorizationRequest.model_validate(
+        launch_authorization_request.model_dump(mode="python")
+    )
+    authorization = RuntimeLaunchAuthorization.model_validate(
+        launch_authorization.model_dump(mode="python")
+    )
+    _require_utc(signed_at, "attempt-scoped pre-runtime cleanup signed_at")
+    _require_utc(expires_at, "attempt-scoped pre-runtime cleanup expires_at")
+    _validate_pre_runtime_absence_launch_lineage(
+        evidence=evidence,
+        preparation=preparation,
+        launch_authorization_request=request,
+        launch_authorization=authorization,
+        runtime_authority=runtime_authority,
+    )
+    if (
+        _public_key_hex(private_key) != pin.public_key_ed25519_hex
+        or preparation.node_id != pin.source_node_id
+        or preparation.node_manifest_sha256 != pin.source_node_manifest_sha256
+        or preparation.infrastructure_attempt_id != pin.infrastructure_attempt_id
+        or preparation.preparation_sha256 != pin.runtime_preparation_sha256
+        or authorization.authorization_sha256 != pin.runtime_launch_authorization_sha256
+        or evidence.prelaunch_absence_epoch != pin.cleanup_absence_epoch
+        or evidence.prelaunch_authorization_sha256 != authorization.authorization_sha256
+        or not evidence.inspected_at <= signed_at < expires_at <= pin.active_until
+        or not pin.active_at(signed_at)
+    ):
+        raise QualificationVerificationError(
+            "pre-runtime cleanup evidence differs from attempt-scoped recovery authority"
+        )
+    unsigned = PreRuntimeAbsenceReceipt(
+        node_manifest_sha256=preparation.node_manifest_sha256,
+        preparation=preparation,
+        preparation_sha256=preparation.preparation_sha256,
+        absence_evidence=evidence,
+        absence_evidence_sha256=evidence.inspection_sha256,
+        signed_at=signed_at,
+        expires_at=expires_at,
+        signing_key_id=pin.key_id,
+        signature_ed25519_hex="0" * 128,
+        cleanup_recovery_authority=pin,
+        cleanup_recovery_authority_sha256=pin.authority_sha256,
+    )
+    signature = Ed25519PrivateKey.from_private_bytes(private_key).sign(unsigned.signature_message)
+    return PreRuntimeAbsenceReceipt.model_validate(
+        unsigned.model_copy(update={"signature_ed25519_hex": signature.hex()}).model_dump(
+            mode="python"
+        )
+    )
+
+
 class VerifiedPreRuntimeAbsence(ExecutionModel):
     absence_receipt_sha256: str = Field(pattern=_SHA256_PATTERN)
     preparation_sha256: str = Field(pattern=_SHA256_PATTERN)
@@ -1449,6 +1641,7 @@ class VerifiedPreRuntimeAbsence(ExecutionModel):
     execution_id: str = Field(pattern=_EXECUTION_ID_PATTERN)
     infrastructure_attempt_id: str = Field(pattern=_ATTEMPT_ID_PATTERN)
     verified_at: AwareDatetime
+    cleanup_recovery_authority_sha256: str | None = Field(default=None, pattern=_SHA256_PATTERN)
     qualification_only: Literal[True] = True
     scientific_admission_allowed: Literal[False] = False
 
@@ -1463,6 +1656,7 @@ def verify_pre_runtime_absence_receipt(
     launch_authorization_request: RuntimeLaunchAuthorizationRequest | None = None,
     launch_authorization: RuntimeLaunchAuthorization | None = None,
     runtime_authority: RuntimeControlAuthorityVerifier | None = None,
+    cleanup_recovery_authority: (AttemptScopedPreRuntimeCleanupAuthorityVerifier | None) = None,
 ) -> VerifiedPreRuntimeAbsence:
     """Verify a fresh pre-workload proof; it is not a process termination receipt."""
 
@@ -1474,7 +1668,6 @@ def verify_pre_runtime_absence_receipt(
         preparation = RuntimePreparation.model_validate(preparation.model_dump(mode="python"))
         if (
             receipt.preparation != preparation
-            or receipt.node_manifest_sha256 != authority.manifest.manifest_sha256
             or preparation.node_manifest_sha256 != authority.manifest.manifest_sha256
             or not receipt.signed_at <= observed_at < receipt.expires_at
             or observed_at - receipt.signed_at > timedelta(seconds=maximum_age_seconds)
@@ -1491,12 +1684,40 @@ def verify_pre_runtime_absence_receipt(
             launch_authorization=launch_authorization,
             runtime_authority=runtime_authority,
         )
-        authority.verify_signature(
-            signing_key_id=receipt.signing_key_id,
-            message=receipt.signature_message,
-            signature_ed25519_hex=receipt.signature_ed25519_hex,
-            signed_at=receipt.signed_at,
-        )
+        recovery_pin = receipt.cleanup_recovery_authority
+        if recovery_pin is None:
+            if cleanup_recovery_authority is not None:
+                raise QualificationVerificationError(
+                    "ordinary pre-runtime absence cannot select cleanup recovery authority"
+                )
+            if receipt.node_manifest_sha256 != authority.manifest.manifest_sha256:
+                raise QualificationVerificationError(
+                    "pre-runtime absence belongs to another enrolled node manifest"
+                )
+            authority.verify_signature(
+                signing_key_id=receipt.signing_key_id,
+                message=receipt.signature_message,
+                signature_ed25519_hex=receipt.signature_ed25519_hex,
+                signed_at=receipt.signed_at,
+            )
+        else:
+            if (
+                cleanup_recovery_authority is None
+                or cleanup_recovery_authority.pin != recovery_pin
+                or receipt.cleanup_recovery_authority_sha256 != recovery_pin.authority_sha256
+                or recovery_pin.source_node_manifest_sha256 != authority.manifest.manifest_sha256
+            ):
+                raise QualificationVerificationError(
+                    "pre-runtime absence recovery authority differs from deployment pin"
+                )
+            cleanup_recovery_authority.verify_signature(
+                message=receipt.signature_message,
+                signature_ed25519_hex=receipt.signature_ed25519_hex,
+                signing_key_id=receipt.signing_key_id,
+                signed_at=receipt.signed_at,
+                expires_at=receipt.expires_at,
+                observed_at=observed_at,
+            )
     except QualificationVerificationError:
         raise
     except (AttributeError, TypeError, ValueError) as exc:
@@ -1510,6 +1731,7 @@ def verify_pre_runtime_absence_receipt(
         execution_id=preparation.execution_id,
         infrastructure_attempt_id=preparation.infrastructure_attempt_id,
         verified_at=observed_at,
+        cleanup_recovery_authority_sha256=(receipt.cleanup_recovery_authority_sha256),
     )
 
 
@@ -3500,6 +3722,8 @@ class RuntimeControlIssuancePort(RuntimeControlVerificationPort, Protocol):
 __all__ = [
     "AcceptedQualificationTerminalSubmission",
     "AcceptedRuntimeTermination",
+    "AttemptScopedPreRuntimeCleanupAuthorityPin",
+    "AttemptScopedPreRuntimeCleanupAuthorityVerifier",
     "HistoricalPreRuntimeRecoveryLineage",
     "HistoricalRuntimeRecoveryGrant",
     "InputMaterializationEntry",
@@ -3535,6 +3759,7 @@ __all__ = [
     "VerifiedRuntimeFenceRebind",
     "issue_accepted_runtime_termination",
     "issue_accepted_qualification_terminal_submission",
+    "issue_attempt_scoped_pre_runtime_cleanup_receipt",
     "issue_historical_runtime_recovery_grant",
     "issue_node_runtime_launch_receipt",
     "issue_node_runtime_termination_receipt",

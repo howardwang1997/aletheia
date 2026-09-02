@@ -23,21 +23,24 @@
       "aletheia/migration": "migration_tooling",
       "aletheia/observations": "new_authority",
       "aletheia/planning": "new_authority",
+      "aletheia/pre_runtime_cleanup_commissioning.py": "new_qualification_authority",
       "aletheia/protocols": "new_authority",
       "aletheia/research_controller": "new_authority",
       "aletheia/research_kernel": "new_authority",
       "aletheia/research_store": "new_authority_adapter",
       "scripts/prepare-qualification-python-runtime.py": "new_qualification_entrypoint",
+      "scripts/commission-pre-runtime-cleanup.py": "new_qualification_entrypoint",
       "scripts/run-arl1-protocol-campaign.py": "new_qualification_entrypoint",
-      "scripts/run-arl1-qualification.py": "new_qualification_entrypoint"
+      "scripts/run-arl1-qualification.py": "new_qualification_entrypoint",
+      "scripts/run-pre-runtime-cleanup.py": "new_qualification_entrypoint"
     },
     "legacy_source_ast_file_count": 324,
     "legacy_source_ast_graph_sha256": "59f4453522a06a32e95e656277a8e727e0b87630e7db017e149c446f1d3ef259",
     "legacy_source_ast_review_limit": "This normalized-AST backstop freezes every parseable Python file in the declared legacy production roots after explicitly removing new-authority and migration-tooling roots. It catches added, removed or semantically changed legacy Python source even when a specialized sink scanner does not recognize the syntax; comments, formatting, generated runtime code, non-Python launchers and the explicitly excluded roots are outside this digest.",
     "migration_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "migration_source_ast_roots": ["aletheia/migration", "migrations"],
-    "migration_source_ast_file_count": 38,
-    "migration_source_ast_graph_sha256": "7d14b213668222fceee9f747f5b7d69ba7ee7c069d1fa4f23b4a4497abed90fd",
+    "migration_source_ast_file_count": 39,
+    "migration_source_ast_graph_sha256": "ae15167ba10c1692614a638fd8c2b34a104a87b7a16d76ce572e1b2f654de366",
     "migration_source_ast_review_limit": "Migration tooling and immutable Alembic revision history have a separate normalized-AST freeze. Historical schema DML/backfills remain deployment authority reviewed through the migration chain rather than runtime scientific write owners.",
     "non_python_invocation_source_scheme": "git_index_regular_mode_path_byte_sha256_v1",
     "non_python_invocation_source_roots": [
@@ -120,9 +123,9 @@
       "research_store.transactional_outbox": "The authority-minimal PostgreSQLResearchKernelOutbox caller-owned publication surface is composed by the controller dispatcher; the full-store transaction-owning mark_outbox_published wrapper remains an explicit uncalled compatibility surface."
     },
     "direct_file_sink_scheme": "ast_reviewed_direct_file_sink_v1",
-    "direct_file_sink_scope_count": 196,
-    "direct_file_sink_call_count": 218,
-    "direct_file_sink_graph_sha256": "1fde85f2799369d797920eceb4b3d515c92b076add64b4172c807d27d6fb2494",
+    "direct_file_sink_scope_count": 197,
+    "direct_file_sink_call_count": 219,
+    "direct_file_sink_graph_sha256": "9ff9b71d1d02fce8fe85a48d2634ae819ed7452e47c5c13fb3b181d1370f36c6",
     "direct_file_sink_review_limit": "The baseline covers direct Path/open/os.write, archive-open modes, atomic replace, serializer, dataframe and plotting file sinks across the declared aletheia, deployed docker-worker and recursive operational-script roots. Indirect library-internal writes, arbitrary dynamic dispatch and external systems remain separate reviewed boundaries.",
     "direct_file_sink_profiles": {
       "scientific_artifact": {
@@ -245,6 +248,14 @@
         "cutover_pr": "PR-8",
         "dual_write_policy": "none"
       },
+      "qualification_cleanup_commissioning_state": {
+        "authority_class": "operational_state",
+        "current_owner_rule": "sink_module",
+        "target_owner": "aletheia.pre_runtime_cleanup_commissioning",
+        "migration_mode": "retain_attempt_scoped_target_local_cleanup_authority",
+        "cutover_pr": "PR-ARL1",
+        "dual_write_policy": "none"
+      },
       "qualification_target_campaign_state": {
         "authority_class": "operational_state",
         "current_owner_rule": "sink_module",
@@ -357,6 +368,7 @@
       "aletheia.qualification_authority_commissioning": "qualification_authority_commissioning_state",
       "aletheia.qualification_campaign": "qualification_target_campaign_state",
       "aletheia.qualification_installer": "qualification_installation_state",
+      "aletheia.pre_runtime_cleanup_commissioning": "qualification_cleanup_commissioning_state",
       "aletheia.research_controller.action_proposal_service": "controller_proposal_custody",
       "aletheia.research_controller.continuation_assessor": "controller_assessment_custody",
       "aletheia.reproducibility.": "scientific_artifact",

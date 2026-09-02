@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import timedelta
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -33,6 +34,9 @@ from aletheia.execution.node_agent import (
     PinnedLaunchSpec,
     QualificationNodeAgent,
 )
+from aletheia.execution.pre_runtime_cleanup_issuance import (
+    PinnedAttemptScopedPreRuntimeCleanupAuthority,
+)
 from aletheia.execution.persistence import (
     _ExecutionAttemptRecord,
     _ExecutionBudgetEventRecord,
@@ -50,9 +54,11 @@ from aletheia.execution.postgresql_node_adapter import PostgreSQLNodeAllocatorAd
 from aletheia.execution.runtime_contracts import (
     QualificationAuthorityVerifier,
     TerminalVerificationAuthorityVerifier,
+    qualification_key_id,
 )
 from aletheia.execution.runtime_v2_contracts import (
     AcceptedQualificationTerminalSubmission,
+    AttemptScopedPreRuntimeCleanupAuthorityPin,
     MINIMUM_LOOP_OUTPUT_FILESYSTEM_BYTES,
     NodeRuntimeLaunchReceipt,
     OutputQuotaProvisioningReceipt,
@@ -74,7 +80,13 @@ from test_postgresql_node_adapter import (  # noqa: E402
     _PublishingArtifactStore,
     _RuntimeControlIssuer,
 )
-from test_runtime_contracts import PRIVATE_KEY, _AuthorityResolver, _digest, _worker_authority  # noqa: E402
+from test_runtime_contracts import (  # noqa: E402
+    PRIVATE_KEY,
+    _AuthorityResolver,
+    _digest,
+    _public_key_hex,
+    _worker_authority,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -1068,6 +1080,164 @@ def test_prelaunch_start_commit_recovers_after_artifact_grace_only_to_cleanup(
     assert snapshot is not None and snapshot.status == "cancelled"
     assert snapshot.reconciliation_reason is None
     assert snapshot.resource_lease_sha256 == claim.snapshot.resource_lease_sha256
+
+
+def test_expired_node_attempt_scoped_cleanup_commits_release_under_deferred_guard(
+    monkeypatch, tmp_path
+) -> None:
+    prepared, allocator, _adapter, agent, runtime, state, claim = _running_v2(
+        monkeypatch,
+        tmp_path,
+        start=False,
+    )
+    original_authorize = allocator.authorize_runtime_start
+
+    def commit_then_crash(**scope: object) -> None:
+        original_authorize(**scope)
+        raise SystemExit("crash before saving committed start authority")
+
+    monkeypatch.setattr(allocator, "authorize_runtime_start", commit_then_crash)
+    with pytest.raises(SystemExit, match="saving committed start authority"):
+        agent.run_once()
+    monkeypatch.setattr(allocator, "authorize_runtime_start", original_authorize)
+    assert runtime.launch_calls == 0
+
+    node_authority = next(iter(allocator._node_authorities.values()))  # noqa: SLF001
+    late = node_authority.active_until
+    elapsed = late - runtime.clock.current
+    runtime.clock.current = late
+    runtime.clock.monotonic += int(elapsed.total_seconds() * 1_000_000_000)
+    monkeypatch.setattr(allocator_module, "_database_time", lambda _session: late)
+    reconciled = allocator.reconcile_expired()
+    assert len(reconciled) == 1
+
+    historical = allocator.pull_assignment_delivery(
+        node_id=prepared.manifest.node_id,
+        node_manifest_sha256=prepared.manifest.manifest_sha256,
+    )
+    assert historical is not None
+    lineage = historical.historical_pre_runtime_recovery_lineage
+    assert lineage is not None
+    cleanup_private_key = hashlib.sha256(b"postgres-attempt-scoped-cleanup").digest()
+    cleanup_public_key = _public_key_hex(cleanup_private_key)
+    cleanup_pin = AttemptScopedPreRuntimeCleanupAuthorityPin(
+        policy_sha256=_digest("postgres-attempt-scoped-cleanup-policy"),
+        principal_id="principal:postgres-attempt-scoped-cleanup",
+        key_id=qualification_key_id(cleanup_public_key),
+        public_key_ed25519_hex=cleanup_public_key,
+        source_node_id=prepared.manifest.node_id,
+        source_node_manifest_sha256=prepared.manifest.manifest_sha256,
+        infrastructure_attempt_id=claim.snapshot.attempt_id,
+        runtime_preparation_sha256=lineage.runtime_preparation.preparation_sha256,
+        runtime_launch_authorization_sha256=(
+            lineage.runtime_launch_authorization.authorization_sha256
+        ),
+        cleanup_absence_epoch=(
+            lineage.runtime_launch_authorization_request.pre_runtime_absence_epoch + 1
+        ),
+        watchdog_deployment_sha256=_digest("postgres-attempt-scoped-cleanup-watchdog"),
+        valid_from=late,
+        expires_at=late + timedelta(minutes=30),
+    )
+    cleanup_authority = PinnedAttemptScopedPreRuntimeCleanupAuthority(
+        pin=cleanup_pin,
+        private_key=cleanup_private_key,
+    )
+    early_cleanup_authority = PinnedAttemptScopedPreRuntimeCleanupAuthority(
+        pin=AttemptScopedPreRuntimeCleanupAuthorityPin.model_validate(
+            cleanup_pin.model_copy(
+                update={"valid_from": late - timedelta(microseconds=1)}
+            ).model_dump(mode="python")
+        ),
+        private_key=cleanup_private_key,
+    )
+    with pytest.raises(ValueError, match="duplicate, rebound, or role-confused"):
+        PostgreSQLExecutionAllocator(
+            authority=allocator._authority,  # noqa: SLF001
+            artifact_resolver=allocator._artifact_resolver,  # noqa: SLF001
+            execution_authority_resolver=allocator._execution_authority_resolver,  # noqa: SLF001
+            pricing_authority=allocator._pricing_authority,  # noqa: SLF001
+            node_authorities=tuple(allocator._node_authorities.values()),  # noqa: SLF001
+            node_assignment_transport_pins=tuple(
+                allocator._node_assignment_transport_pins.values()  # noqa: SLF001
+            ),
+            terminal_verification_authority=allocator._terminal_verification_authority,  # noqa: SLF001
+            allocator_principal_id=allocator._allocator_principal_id,  # noqa: SLF001
+            runtime_control_issuer=allocator._runtime_control_issuer,  # noqa: SLF001
+            pre_runtime_cleanup_recovery_authorities=(early_cleanup_authority.authority_verifier,),
+            artifact_submission_grace_seconds=3600,
+        )
+    recovery_allocator = PostgreSQLExecutionAllocator(
+        authority=allocator._authority,  # noqa: SLF001
+        artifact_resolver=allocator._artifact_resolver,  # noqa: SLF001
+        execution_authority_resolver=allocator._execution_authority_resolver,  # noqa: SLF001
+        pricing_authority=allocator._pricing_authority,  # noqa: SLF001
+        node_authorities=tuple(allocator._node_authorities.values()),  # noqa: SLF001
+        node_assignment_transport_pins=tuple(
+            allocator._node_assignment_transport_pins.values()  # noqa: SLF001
+        ),
+        terminal_verification_authority=allocator._terminal_verification_authority,  # noqa: SLF001
+        allocator_principal_id=allocator._allocator_principal_id,  # noqa: SLF001
+        runtime_control_issuer=allocator._runtime_control_issuer,  # noqa: SLF001
+        pre_runtime_cleanup_recovery_authorities=(cleanup_authority.authority_verifier,),
+        artifact_submission_grace_seconds=3600,
+    )
+    recovery_adapter = PostgreSQLNodeAllocatorAdapter(
+        allocator=recovery_allocator,
+        transport_pin=prepared.transport_pin,
+        node_transport_private_key=TRANSPORT_PRIVATE_KEY,
+        token_custody=state,
+        clock=runtime.clock,
+    )
+    recovery_agent = QualificationNodeAgent(
+        node_authority=node_authority,
+        qualification_authority=allocator._authority,  # noqa: SLF001
+        runtime_control_authority=allocator._runtime_control_issuer.authority_verifier,  # noqa: SLF001
+        node_signing_private_key=PRIVATE_KEY,
+        boot_id="boot.001",
+        allocator_principal_id="principal:allocator",
+        allocator=recovery_adapter,
+        runtime=runtime,
+        artifact_quarantine=agent._artifact_quarantine,  # noqa: SLF001
+        launch_registry=agent._registry,  # noqa: SLF001
+        state_store=state,
+        input_materializer=agent._input_materializer,  # noqa: SLF001
+        output_quota_provisioner=agent._output_quota_provisioner,  # noqa: SLF001
+        clock=runtime.clock,
+        artifact_completion_grace_seconds=3600,
+        pre_runtime_cleanup_recovery_authority=cleanup_authority,
+    )
+
+    result = recovery_agent.recover_pre_runtime_cleanup(attempt_id=claim.snapshot.attempt_id)
+
+    assert result.outcome is NodeRunOutcome.PRE_RUNTIME_RELEASED
+    assert runtime.launch_calls == 0
+    assert result.pre_runtime_absence_receipt is not None
+    assert (
+        result.pre_runtime_absence_receipt.cleanup_recovery_authority_sha256
+        == cleanup_pin.authority_sha256
+    )
+    with session_factory()() as session:
+        attempt = session.get(_ExecutionAttemptRecord, claim.snapshot.attempt_id)
+        assert attempt is not None and attempt.status == "cancelled"
+        assert attempt.pre_runtime_absence_count == 1
+        decision = session.execute(
+            text(
+                "SELECT absence_receipt_json, decision_json "
+                "FROM execution_pre_runtime_absence_decisions "
+                "WHERE attempt_id = :attempt_id"
+            ),
+            {"attempt_id": claim.snapshot.attempt_id},
+        ).one()
+        assert decision.absence_receipt_json["cleanup_recovery_authority"] == (
+            cleanup_pin.model_dump(mode="json")
+        )
+        assert (
+            decision.decision_json["pre_runtime_cleanup_recovery_authority_sha256"]
+            == cleanup_pin.authority_sha256
+        )
+        assert decision.decision_json["disposition"] == "released"
+        assert decision.decision_json["replacement_request_sha256"] is None
 
 
 def test_runtime_v2_admission_rejects_future_runtime_control_pin_atomically(

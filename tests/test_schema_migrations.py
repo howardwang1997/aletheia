@@ -22,7 +22,7 @@ from aletheia.schema_migrations import require_schema_exact
 
 
 def test_repository_has_one_expected_alembic_head():
-    assert expected_schema_revision() == "20260831_0031"
+    assert expected_schema_revision() == "20260903_0032"
 
 
 def test_qualification_deployment_pins_the_repository_alembic_head():
@@ -82,6 +82,43 @@ def test_prelaunch_lease_contraction_requires_exact_runtime_authority():
     assert "authorization_json->>'lease_expires_at'" in attempt_guard
     assert "attempt_row.lease_expires_at = NEW.lease_expires_at" in resource_guard
     assert "launch_row.authorization_sha256" in resource_guard
+
+
+def test_attempt_scoped_cleanup_migration_keeps_legacy_shape_and_release_only_guard():
+    migration_path = (
+        Path(__file__).parents[1]
+        / "migrations"
+        / "versions"
+        / "20260903_0032_attempt_scoped_cleanup_recovery.py"
+    )
+    migration = runpy.run_path(str(migration_path))
+    receipt_shape = migration["_RECOVERY_RECEIPT_SHAPE"]
+    decision_guard = migration["_RECOVERY_RUNTIME_PIN_TIME_GUARD"]
+    json_guard = migration["_RECOVERY_ABSENCE_JSON_GUARD"]
+    assert "CASE WHEN value ? 'cleanup_recovery_authority'" in receipt_shape
+    assert 'ELSE\n                \'{"schema_name":"string"' in receipt_shape
+    assert "d.disposition IS DISTINCT FROM 'released'" in decision_guard
+    assert "d.replacement_request_sha256 IS NOT NULL" in decision_guard
+    assert "(d.absence_receipt_json->>'signed_at')::timestamptz <" in decision_guard
+    assert "(d.absence_receipt_json->>'expires_at')::timestamptz > LEAST(" in decision_guard
+    assert "runtime_launch_authorization_sha256" in json_guard
+    assert "cleanup_absence_epoch" in json_guard
+
+    runtime_v2_source = (
+        Path(__file__).parents[1]
+        / "migrations"
+        / "versions"
+        / "20260827_0026_runtime_v2_lifecycle.py"
+    ).read_text()
+    rewritten = runtime_v2_source
+    for _function_name, old, new, _label in migration["_upgrade_pairs"]():
+        assert rewritten.count(old) == 1
+        rewritten = rewritten.replace(old, new)
+        assert new in rewritten
+    for _function_name, old, new, _label in reversed(migration["_upgrade_pairs"]()):
+        assert rewritten.count(new) == 1
+        rewritten = rewritten.replace(new, old)
+    assert rewritten == runtime_v2_source
 
 
 def test_arl1_replicate_campaign_replaces_single_sea_per_action_constraint():
