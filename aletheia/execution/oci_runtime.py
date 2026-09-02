@@ -2833,7 +2833,23 @@ class LocalQualificationOCIRuntime:
                                 inspected_monotonic_ns=self._clock.monotonic_ns(),
                                 identity=None,
                             )
-                        if observed_rejection != rejection:
+                        # ``container_inspection_sha256`` preserves the exact bytes seen when the
+                        # cleanup intent was first journaled, but Docker may later rewrite
+                        # unrelated engine-maintained fields in ContainerInspect.  The fresh
+                        # recognition above revalidates the complete frozen OCI configuration,
+                        # exact container/process identity, exit code, restart count, and both
+                        # timestamps.  Keep the historical digest immutable while comparing every
+                        # security-relevant rejection field across replay.
+                        if (
+                            observed_rejection.model_copy(
+                                update={
+                                    "container_inspection_sha256": (
+                                        rejection.container_inspection_sha256
+                                    )
+                                }
+                            )
+                            != rejection
+                        ):
                             raise OCIJournalError(
                                 "expired launch-gate rejection changed during cleanup"
                             )
