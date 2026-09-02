@@ -3775,11 +3775,12 @@ class _WatchdogKillCompleted(ExecutionModel):
 
 
 class _WatchdogCleanupQuiescenceRecord(ExecutionModel):
-    """Durably bind a fired pre-launch terminal to exact local cleanup authority.
+    """Durably bind a fired pre-workload terminal to exact local cleanup authority.
 
     The terminal remains ``fired``.  This acknowledgement only proves that its absent or stopped
-    decision is quiescent, so the node may complete exact absence or remove the same CREATED/PID0
-    container without racing any later action by the watchdog.
+    decision is quiescent, so the node may complete exact absence, remove the same CREATED/PID0
+    container, or remove an exact expired-before-exec launch-gate rejection without racing any
+    later action by the watchdog.
     """
 
     schema_name: Literal["aletheia.systemd_oci_watchdog_cleanup_quiescence"] = (
@@ -4031,7 +4032,7 @@ class _WatchdogJournalScope:
             or pending.create_submission is None
             or pending.create_submission.phase != "create"
         ):
-            raise OCIWatchdogError("fired-stopped watchdog differs from exact CREATED cleanup")
+            raise OCIWatchdogError("fired-stopped watchdog differs from exact pre-workload cleanup")
         return pending, "fired_stopped"
 
 
@@ -4343,9 +4344,10 @@ class DurableDeadlineWatchdogService:
             return
         firing_intent = self._ensure_firing_intent(armed, now=now)
         if firing_intent.container_was_running is not True:
-            # Absence/CREATED is an observation, not permanent quiescence.  Only a fresh second
-            # inspection while the narrow create/start mutation flock is demonstrably free can
-            # finalize it; a busy lock leaves the job armed for the next service tick.
+            # A non-running pre-workload candidate is an observation, not permanent quiescence.
+            # Only a fresh second inspection while the narrow create/start mutation flock is
+            # demonstrably free can finalize it; a busy lock leaves the job armed for the next
+            # service tick.
             with self._engine_mutation_generation_lock(armed) as acquired:
                 if not acquired:
                     return
@@ -4608,6 +4610,20 @@ class DurableDeadlineWatchdogService:
         if terminal.container_id is None:
             if inspection is not None or pending.container_id is not None:
                 raise OCIWatchdogError("fired-absent cleanup is no longer exactly absent")
+            return
+        rejection = pending.expired_launch_gate_rejection
+        if rejection is not None:
+            if (
+                inspection is None
+                or canonical_sha256(inspection) != rejection.container_inspection_sha256
+                or inspection.get("Id") != terminal.container_id
+                or inspection.get("Name") != f"/{armed.container_name}"
+                or pending.container_id != terminal.container_id
+                or rejection.container_id != terminal.container_id
+            ):
+                raise OCIWatchdogError(
+                    "fired-stopped expired-gate cleanup changed exact container evidence"
+                )
             return
         state = inspection.get("State") if inspection is not None else None
         config = inspection.get("Config") if inspection is not None else None

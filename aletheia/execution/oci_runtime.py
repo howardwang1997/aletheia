@@ -289,7 +289,7 @@ class OCILaunchGateVerifier(Protocol):
 
 
 class OCIWatchdogCleanupQuiescence(ExecutionModel):
-    """Typed root-service acknowledgement for one exact never-started cleanup.
+    """Typed root-service acknowledgement for one exact pre-workload cleanup.
 
     ``retired`` means the watchdog committed a retirement terminal.  The fired variants preserve
     the immutable fired terminal and bind the root service's separate durable quiescence record.
@@ -982,6 +982,47 @@ class _PrelaunchAbsenceJournal(ExecutionModel):
         return canonical_sha256(self)
 
 
+class _ExpiredLaunchGateRejection(ExecutionModel):
+    """Exact proof that the pinned gate could not have execed the workload.
+
+    Docker may accept ``start`` so close to the signed wall-clock deadline that the container
+    entrypoint begins only after the ticket has expired.  The pinned gate rechecks that deadline
+    immediately before its fd-based workload exec and maps every rejection to exit code 126.  This
+    record is deliberately narrower than a generic stopped-container observation: it requires the
+    complete frozen configuration, the immutable start-submission journal, no restart, and an
+    entrypoint start timestamp at or after the signed expiry.  It can therefore close a
+    pre-*workload* launch gap without claiming a runtime identity or scientific execution.
+    """
+
+    schema_name: Literal["aletheia.expired_launch_gate_rejection"] = (
+        "aletheia.expired_launch_gate_rejection"
+    )
+    schema_version: Literal[1] = 1
+    preparation_sha256: str = Field(pattern=_SHA256_PATTERN)
+    authorization_request_sha256: str = Field(pattern=_SHA256_PATTERN)
+    runtime_launch_authorization_sha256: str = Field(pattern=_SHA256_PATTERN)
+    start_submission_journal_sha256: str = Field(pattern=_SHA256_PATTERN)
+    container_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    container_inspection_sha256: str = Field(pattern=_SHA256_PATTERN)
+    launch_gate_executable_sha256: str = Field(pattern=_SHA256_PATTERN)
+    launch_gate_protocol_sha256: str = Field(pattern=_SHA256_PATTERN)
+    authorization_expires_at: AwareDatetime
+    started_at: AwareDatetime
+    finished_at: AwareDatetime
+    exit_code: Literal[126] = 126
+    disposition: Literal["expired_before_workload_exec"] = "expired_before_workload_exec"
+
+    @model_validator(mode="after")
+    def _gate_rejection_is_ordered(self) -> "_ExpiredLaunchGateRejection":
+        if self.started_at < self.authorization_expires_at or self.finished_at < self.started_at:
+            raise ValueError("expired launch-gate rejection is not historically ordered")
+        return self
+
+    @property
+    def evidence_sha256(self) -> str:
+        return canonical_sha256(self)
+
+
 class _NeverStartedCleanupPending(ExecutionModel):
     preparation_sha256: str = Field(pattern=_SHA256_PATTERN)
     runtime_request_sha256: str = Field(pattern=_SHA256_PATTERN)
@@ -996,6 +1037,8 @@ class _NeverStartedCleanupPending(ExecutionModel):
     production_capability: OCIProductionCapability | None = None
     deadline_watchdog: _DeadlineWatchdogJournal | None = None
     create_submission: _EngineMutationSubmission | None = None
+    start_submission: _EngineMutationSubmission | None = None
+    expired_launch_gate_rejection: _ExpiredLaunchGateRejection | None = None
     container_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     initial_engine_inspection_sha256: str = Field(pattern=_SHA256_PATTERN)
     watchdog_retirement_evidence_sha256: str | None = Field(default=None, pattern=_SHA256_PATTERN)
@@ -1022,6 +1065,8 @@ class _NeverStartedCleanupPending(ExecutionModel):
                     self.production_capability,
                     self.deadline_watchdog,
                     self.create_submission,
+                    self.start_submission,
+                    self.expired_launch_gate_rejection,
                     self.container_id,
                 )
             ):
@@ -1035,6 +1080,31 @@ class _NeverStartedCleanupPending(ExecutionModel):
             or self.launch_pending.oci_config_sha256 != self.oci_config_sha256
         ):
             raise ValueError("OCI never-started cleanup changed its exact launch generation")
+        if (self.start_submission is None) != (self.expired_launch_gate_rejection is None):
+            raise ValueError("OCI cleanup start submission lacks an expired-gate proof")
+        if self.start_submission is not None:
+            rejection = self.expired_launch_gate_rejection
+            assert rejection is not None
+            if (
+                self.start_submission.phase != "start"
+                or self.create_submission is None
+                or rejection.preparation_sha256 != self.preparation_sha256
+                or rejection.authorization_request_sha256
+                != self.authorization_request.request_sha256
+                or rejection.runtime_launch_authorization_sha256
+                != self.authorization.authorization_sha256
+                or rejection.start_submission_journal_sha256 != self.start_submission.journal_sha256
+                or rejection.container_id != self.container_id
+                or rejection.container_inspection_sha256 != self.initial_engine_inspection_sha256
+                or self.launch_gate_authorization is None
+                or rejection.launch_gate_executable_sha256
+                != self.launch_gate_authorization.launch_gate_executable_sha256
+                or rejection.launch_gate_protocol_sha256
+                != self.launch_gate_authorization.launch_gate_protocol_sha256
+                or rejection.authorization_expires_at != self.authorization.expires_at
+                or self.start_submission.submitted_at > rejection.started_at
+            ):
+                raise ValueError("OCI expired-gate cleanup changed its exact launch generation")
         if self.container_id is not None and (
             self.launch_gate_authorization is None
             or self.production_capability is None
@@ -1078,6 +1148,7 @@ class _NeverStartedCleanupCompleted(ExecutionModel):
     authorization_request_sha256: str = Field(pattern=_SHA256_PATTERN)
     runtime_launch_authorization_sha256: str = Field(pattern=_SHA256_PATTERN)
     deleted_container_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    expired_launch_gate_rejection_sha256: str | None = Field(default=None, pattern=_SHA256_PATTERN)
     watchdog_retirement_evidence_sha256: str | None = Field(default=None, pattern=_SHA256_PATTERN)
     watchdog_cleanup_quiescence_journal_sha256: str | None = Field(
         default=None, pattern=_SHA256_PATTERN
@@ -2376,7 +2447,13 @@ class LocalQualificationOCIRuntime:
         authorization_request: RuntimeLaunchAuthorizationRequest,
         authorization: RuntimeLaunchAuthorization,
     ) -> RuntimeInspectionEvidence:
-        """Remove only exact CREATED/PID0 state with no submitted start mutation."""
+        """Remove an exact pre-workload generation without inventing runtime identity.
+
+        The ordinary case is CREATED/PID0 with no submitted start.  One additional closed case is
+        accepted: the immutable launch gate itself started only after its signed ticket expired,
+        exited with the gate's reserved rejection code, and therefore could not have fd-execed the
+        workload.  Every other submitted-start outcome remains UNKNOWN and retains all holds.
+        """
 
         request, preparation, runtime_root = self._validate_prepared(request, preparation)
         config = self._load_required(runtime_root / "oci-config.json", OCIConfiguration)
@@ -2476,15 +2553,6 @@ class LocalQualificationOCIRuntime:
                 authorization=authorization,
                 command=start_command,
             )
-            if start_submission is not None:
-                return self._inspection(
-                    state=RuntimeInspectionState.UNKNOWN,
-                    preparation=preparation,
-                    control=control,
-                    inspected_at=self._utc_now(),
-                    inspected_monotonic_ns=self._clock.monotonic_ns(),
-                    identity=None,
-                )
             if gate is not None and (
                 gate.preparation_sha256 != preparation.preparation_sha256
                 or gate.authorization_request != authorization_request
@@ -2528,6 +2596,7 @@ class LocalQualificationOCIRuntime:
                     create_submission is not None
                     and (gate is None or stored_capability is None or watchdog is None)
                 )
+                or (start_submission is not None and create_submission is None)
             ):
                 raise OCIJournalError("OCI cleanup phase ordering is incomplete or impossible")
 
@@ -2544,6 +2613,7 @@ class LocalQualificationOCIRuntime:
             inspection = self._engine_inspect(config.container_name, optional=True)
             if pending is None:
                 container_id: str | None = None
+                expired_gate_rejection: _ExpiredLaunchGateRejection | None = None
                 if inspection is None:
                     if create_submission is not None:
                         return self._inspection(
@@ -2567,20 +2637,40 @@ class LocalQualificationOCIRuntime:
                             inspected_monotonic_ns=self._clock.monotonic_ns(),
                             identity=None,
                         )
-                    try:
-                        container_id = self._created_never_started_container_id(
+                    if start_submission is not None:
+                        expired_gate_rejection = self._expired_launch_gate_rejection(
                             inspection,
                             config=config,
-                        )
-                    except OCIEngineError:
-                        return self._inspection(
-                            state=RuntimeInspectionState.UNKNOWN,
                             preparation=preparation,
-                            control=control,
-                            inspected_at=self._utc_now(),
-                            inspected_monotonic_ns=self._clock.monotonic_ns(),
-                            identity=None,
+                            authorization_request=authorization_request,
+                            authorization=authorization,
+                            start_submission=start_submission,
                         )
+                        if expired_gate_rejection is None:
+                            return self._inspection(
+                                state=RuntimeInspectionState.UNKNOWN,
+                                preparation=preparation,
+                                control=control,
+                                inspected_at=self._utc_now(),
+                                inspected_monotonic_ns=self._clock.monotonic_ns(),
+                                identity=None,
+                            )
+                        container_id = expired_gate_rejection.container_id
+                    else:
+                        try:
+                            container_id = self._created_never_started_container_id(
+                                inspection,
+                                config=config,
+                            )
+                        except OCIEngineError:
+                            return self._inspection(
+                                state=RuntimeInspectionState.UNKNOWN,
+                                preparation=preparation,
+                                control=control,
+                                inspected_at=self._utc_now(),
+                                inspected_monotonic_ns=self._clock.monotonic_ns(),
+                                identity=None,
+                            )
                     initial_inspection_sha256 = canonical_sha256(inspection)
                 retirement_evidence = (
                     self._expected_watchdog_retirement_evidence_sha256(
@@ -2607,6 +2697,8 @@ class LocalQualificationOCIRuntime:
                     production_capability=stored_capability,
                     deadline_watchdog=watchdog,
                     create_submission=create_submission,
+                    start_submission=start_submission,
+                    expired_launch_gate_rejection=expired_gate_rejection,
                     container_id=container_id,
                     initial_engine_inspection_sha256=initial_inspection_sha256,
                     watchdog_retirement_evidence_sha256=retirement_evidence,
@@ -2626,6 +2718,7 @@ class LocalQualificationOCIRuntime:
                 or pending.production_capability != stored_capability
                 or pending.deadline_watchdog != watchdog
                 or pending.create_submission != create_submission
+                or pending.start_submission != start_submission
             ):
                 raise OCIJournalError("OCI cleanup pending journal changed during replay")
 
@@ -2703,20 +2796,45 @@ class LocalQualificationOCIRuntime:
                 if inspection is None:
                     pass
                 else:
-                    try:
-                        observed_id = self._created_never_started_container_id(
+                    rejection = pending.expired_launch_gate_rejection
+                    if rejection is not None:
+                        observed_rejection = self._expired_launch_gate_rejection(
                             inspection,
                             config=config,
-                        )
-                    except OCIEngineError:
-                        return self._inspection(
-                            state=RuntimeInspectionState.UNKNOWN,
                             preparation=preparation,
-                            control=control,
-                            inspected_at=self._utc_now(),
-                            inspected_monotonic_ns=self._clock.monotonic_ns(),
-                            identity=None,
+                            authorization_request=authorization_request,
+                            authorization=authorization,
+                            start_submission=start_submission,
                         )
+                        if observed_rejection is None:
+                            return self._inspection(
+                                state=RuntimeInspectionState.UNKNOWN,
+                                preparation=preparation,
+                                control=control,
+                                inspected_at=self._utc_now(),
+                                inspected_monotonic_ns=self._clock.monotonic_ns(),
+                                identity=None,
+                            )
+                        if observed_rejection != rejection:
+                            raise OCIJournalError(
+                                "expired launch-gate rejection changed during cleanup"
+                            )
+                        observed_id = observed_rejection.container_id
+                    else:
+                        try:
+                            observed_id = self._created_never_started_container_id(
+                                inspection,
+                                config=config,
+                            )
+                        except OCIEngineError:
+                            return self._inspection(
+                                state=RuntimeInspectionState.UNKNOWN,
+                                preparation=preparation,
+                                control=control,
+                                inspected_at=self._utc_now(),
+                                inspected_monotonic_ns=self._clock.monotonic_ns(),
+                                identity=None,
+                            )
                     if observed_id != pending.container_id:
                         raise OCIJournalError("OCI cleanup container identity changed")
                     self._remove_created_container(observed_id)
@@ -2739,6 +2857,11 @@ class LocalQualificationOCIRuntime:
                     authorization_request_sha256=authorization_request.request_sha256,
                     runtime_launch_authorization_sha256=authorization.authorization_sha256,
                     deleted_container_id=pending.container_id,
+                    expired_launch_gate_rejection_sha256=(
+                        pending.expired_launch_gate_rejection.evidence_sha256
+                        if pending.expired_launch_gate_rejection is not None
+                        else None
+                    ),
                     watchdog_retirement_evidence_sha256=(
                         pending.watchdog_retirement_evidence_sha256
                     ),
@@ -2758,6 +2881,12 @@ class LocalQualificationOCIRuntime:
                 or completed.runtime_launch_authorization_sha256
                 != authorization.authorization_sha256
                 or completed.deleted_container_id != pending.container_id
+                or completed.expired_launch_gate_rejection_sha256
+                != (
+                    pending.expired_launch_gate_rejection.evidence_sha256
+                    if pending.expired_launch_gate_rejection is not None
+                    else None
+                )
                 or completed.watchdog_retirement_evidence_sha256
                 != pending.watchdog_retirement_evidence_sha256
                 or completed.watchdog_cleanup_quiescence_journal_sha256
@@ -5237,6 +5366,92 @@ class LocalQualificationOCIRuntime:
         if not isinstance(decoded, list) or len(decoded) != 1 or not isinstance(decoded[0], dict):
             raise OCIEngineError("OCI inspect response must contain exactly one container")
         return decoded[0]
+
+    def _expired_launch_gate_rejection(
+        self,
+        inspection: dict[str, object],
+        *,
+        config: OCIConfiguration,
+        preparation: RuntimePreparation,
+        authorization_request: RuntimeLaunchAuthorizationRequest,
+        authorization: RuntimeLaunchAuthorization,
+        start_submission: _EngineMutationSubmission | None,
+    ) -> _ExpiredLaunchGateRejection | None:
+        """Recognize only an exact gate process that began after its ticket expired."""
+
+        if start_submission is None:
+            return None
+        self._validate_engine_configuration(inspection, config=config)
+        container_id = inspection.get("Id")
+        state = inspection.get("State")
+        allowed_state_fields = {
+            "Status",
+            "Running",
+            "Paused",
+            "Restarting",
+            "OOMKilled",
+            "Dead",
+            "Pid",
+            "ExitCode",
+            "Error",
+            "StartedAt",
+            "FinishedAt",
+        }
+        if (
+            not isinstance(container_id, str)
+            or re.fullmatch(r"[0-9a-f]{64}", container_id) is None
+            or not isinstance(state, dict)
+            or set(state) != allowed_state_fields
+            or state.get("Status") != "exited"
+            or state.get("Running") is not False
+            or state.get("Paused") is not False
+            or state.get("Restarting") is not False
+            or state.get("OOMKilled") is not False
+            or state.get("Dead") is not False
+            or state.get("Pid") != 0
+            or isinstance(state.get("Pid"), bool)
+            or state.get("ExitCode") != 126
+            or isinstance(state.get("ExitCode"), bool)
+            or state.get("Error") != ""
+            or inspection.get("RestartCount") != 0
+            or isinstance(inspection.get("RestartCount"), bool)
+        ):
+            return None
+        started_value = state.get("StartedAt")
+        finished_value = state.get("FinishedAt")
+        if not isinstance(started_value, str) or not isinstance(finished_value, str):
+            return None
+        try:
+            started_at = self._parse_engine_timestamp(started_value)
+            finished_at = self._parse_engine_timestamp(finished_value)
+        except OCIEngineError:
+            return None
+        now = self._utc_now()
+        if (
+            preparation.preparation_sha256 != start_submission.preparation_sha256
+            or authorization_request.request_sha256 != start_submission.authorization_request_sha256
+            or authorization.authorization_sha256
+            != start_submission.runtime_launch_authorization_sha256
+            or start_submission.phase != "start"
+            or start_submission.submitted_at > started_at
+            or started_at < authorization.expires_at
+            or finished_at < started_at
+            or now < finished_at
+        ):
+            return None
+        return _ExpiredLaunchGateRejection(
+            preparation_sha256=preparation.preparation_sha256,
+            authorization_request_sha256=authorization_request.request_sha256,
+            runtime_launch_authorization_sha256=authorization.authorization_sha256,
+            start_submission_journal_sha256=start_submission.journal_sha256,
+            container_id=container_id,
+            container_inspection_sha256=canonical_sha256(inspection),
+            launch_gate_executable_sha256=self._policy.launch_gate_executable_sha256,
+            launch_gate_protocol_sha256=self._policy.launch_gate_protocol_sha256,
+            authorization_expires_at=authorization.expires_at,
+            started_at=started_at,
+            finished_at=finished_at,
+        )
 
     def _created_never_started_container_id(
         self,

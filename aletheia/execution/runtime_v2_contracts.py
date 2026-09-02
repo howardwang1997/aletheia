@@ -696,7 +696,7 @@ def _validated_runtime_launch_authorization_scope(
 
 
 class HistoricalPreRuntimeRecoveryLineage(ExecutionModel):
-    """Exact persisted start lineage used only to prove and clean a never-started runtime.
+    """Exact persisted start lineage used only to prove and clean a pre-workload generation.
 
     The embedded launch authorization is historical evidence, not fresh launch authority.  A
     consumer must independently verify its signature and must never call a runtime start from
@@ -1109,7 +1109,7 @@ def verify_node_runtime_launch_receipt(
 
 
 class RuntimeInspectionEvidence(ExecutionModel):
-    """Journal-backed engine observation; ``ABSENT`` means exact never-started only."""
+    """Journal-backed engine observation; ``ABSENT`` means exact pre-workload absence only."""
 
     schema_name: Literal["aletheia.runtime_inspection_evidence"] = (
         "aletheia.runtime_inspection_evidence"
@@ -1280,7 +1280,7 @@ def validate_runtime_terminal_evidence_refresh(
 def validate_pre_runtime_absence_evidence_refresh(
     *, previous: RuntimeInspectionEvidence, refreshed: RuntimeInspectionEvidence
 ) -> None:
-    """Validate a fresh inspection of one exact never-started tombstone and absence epoch."""
+    """Validate one exact pre-workload tombstone and absence epoch."""
 
     _validate_runtime_inspection_evidence_refresh(
         previous=previous,
@@ -1290,7 +1290,12 @@ def validate_pre_runtime_absence_evidence_refresh(
 
 
 class PreRuntimeAbsenceReceipt(ExecutionModel):
-    """Node-signed proof that one exact preparation never created or started a runtime."""
+    """Node-signed proof that one exact preparation never started its authorized workload.
+
+    The OCI container is normally absent or CREATED/PID0.  A deployment adapter may also bind a
+    narrower, independently quiesced launch-gate rejection that proves the gate could not have
+    execed the workload.  This receipt never stands for process termination or engineering output.
+    """
 
     schema_name: Literal["aletheia.pre_runtime_absence_receipt"] = (
         "aletheia.pre_runtime_absence_receipt"
@@ -1325,7 +1330,7 @@ class PreRuntimeAbsenceReceipt(ExecutionModel):
             or self.signed_at - evidence.inspected_at > _MAX_NODE_PROOF_SIGNING_LAG
             or self.expires_at <= self.signed_at
         ):
-            raise ValueError("pre-runtime absence receipt changed its exact never-started proof")
+            raise ValueError("pre-runtime absence receipt changed its exact pre-workload proof")
         return self
 
     @property
@@ -1459,7 +1464,7 @@ def verify_pre_runtime_absence_receipt(
     launch_authorization: RuntimeLaunchAuthorization | None = None,
     runtime_authority: RuntimeControlAuthorityVerifier | None = None,
 ) -> VerifiedPreRuntimeAbsence:
-    """Verify a fresh never-started proof; it is not a process termination receipt."""
+    """Verify a fresh pre-workload proof; it is not a process termination receipt."""
 
     _require_utc(observed_at, "pre-runtime absence observed_at")
     if maximum_age_seconds < 1:

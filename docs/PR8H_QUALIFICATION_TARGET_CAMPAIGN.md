@@ -410,6 +410,25 @@ sequence and 57 owner records through this path. Missing or definition-drifted e
 plus unexpected execution routines and triggers on the protected tables, therefore remain visible
 to preflight instead of being hidden by an expected-value echo.
 
+The post-policy `20260902f` attempt is retained as another negative engineering result, not target
+qualification. Execution `exe_5262a55a2fc652128afc5117f2ea3db0`, attempt
+`iat_07e6426dda2ce12096885b033d3ebe8c` and slot
+`sos_f6232f8a28edab264ff3985d5ca9af2e` reached an exact Docker start submission, but the 15-second
+runtime-control ticket expired at `2026-09-02T06:34:39.360817Z` and the pinned container entrypoint
+did not begin until `2026-09-02T06:34:39.449616Z`. The launch gate therefore exited with its
+reserved rejection code `126` before workload exec. No runtime launch receipt or scientific raw
+run exists, and the allocator correctly retained reconciliation rather than treating a generic
+Docker exit as absence.
+
+The source repair adds only a closed recovery form for that timing race. It requires the immutable
+start-submission journal, complete frozen container inspection, entrypoint start at or after the
+signed expiry, exact exit `126`, PID zero, no restart, and independent root-watchdog revalidation of
+the same stopped inspection before container removal. Earlier start, any other exit code, restart,
+configuration drift, missing container evidence, or a real launch journal remains fail-closed. The
+repair has source tests only until its merge commit is frozen on the target, replays the retained
+`20260902f` attempt through the signed pre-runtime-absence transaction, and the fresh superseding
+target campaign completes.
+
 ## Destructive campaign and evidence order
 
 The request embeds the complete observer config and one already-committed
@@ -529,11 +548,12 @@ receipt into a passing shape.
 The selected Linux target is compatible and has frozen/installed candidate generations, but none
 has emitted the complete campaign receipt. Therefore no host is currently proven deployable,
 PR-4b remains nondeployable, and `scientific_admission_allowed` is always false even in a
-successful campaign receipt. The next ordered operation is to merge the root-service readiness
-repair after its pull-request and main CI are green, commission one entirely fresh generation from
-that merge commit with the already-proven five-minute observation budget, explicit bounded
-initial-assignment window, short runtime heartbeat and 1,800-second workload, then rerun the
-complete campaign—not more controller authority.
+successful campaign receipt. The next ordered operation is to merge and freeze the narrow expired-
+gate cleanup repair, use it to close the retained `20260902f` pre-workload generation through the
+signed allocator transaction, then run one fresh superseding generation with the already-proven
+five-minute observation budget, explicit bounded initial-assignment window, short runtime
+heartbeat and 1,800-second workload. The complete campaign must then run—not more controller
+authority.
 
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the
