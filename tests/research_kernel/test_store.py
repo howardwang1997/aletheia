@@ -13,6 +13,7 @@ from pathlib import Path
 from threading import Barrier
 
 import pytest
+from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError
 
@@ -435,6 +436,34 @@ def test_proposal_cannot_write_and_commit_is_atomic_idempotent_and_auditable(
     with pytest.raises(ResearchIdempotencyConflict, match="different content"):
         store.commit(rebound)
     assert _counts(scope.quest_id) == (1, 1, 1, 1, 1)
+
+
+def test_standalone_audit_is_select_only_while_participating_audit_locks(
+    tmp_path: Path,
+) -> None:
+    archive, scope, _charter, command, _root_branch_id, trust_root, policy = _quest_fixture(
+        tmp_path / "cas",
+        label="audit-lock-boundary",
+    )
+    store = _store(trust_root, policy, archive=archive)
+    store.commit(command)
+    statements: list[str] = []
+
+    def capture_statement(_connection, _cursor, statement, _parameters, _context, _many) -> None:
+        statements.append(statement)
+
+    database = engine()
+    sqlalchemy_event.listen(database, "before_cursor_execute", capture_statement)
+    try:
+        assert store.audit(scope.quest_id).quest_id == scope.quest_id
+        assert all("FOR UPDATE" not in statement.upper() for statement in statements)
+
+        statements.clear()
+        with session_scope() as session:
+            assert store.audit_in_session(session, scope.quest_id).quest_id == scope.quest_id
+        assert any("FOR UPDATE" in statement.upper() for statement in statements)
+    finally:
+        sqlalchemy_event.remove(database, "before_cursor_execute", capture_statement)
 
 
 def test_operational_outbox_port_has_no_kernel_signing_or_archive_dependency(

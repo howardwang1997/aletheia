@@ -278,6 +278,28 @@ def test_delayed_initial_assignment_contracts_to_runtime_heartbeat_window(
         assert resource.lease_expires_at == attempt.lease_expires_at
 
 
+def test_reserved_qualification_run_is_a_typed_pending_raw_source(monkeypatch, tmp_path) -> None:
+    prepared, allocator, _adapter, _agent, _runtime, _state, claim = _running_v2(
+        monkeypatch,
+        tmp_path,
+        start=False,
+    )
+
+    lineage = allocator.load_verified_qualification_run_lineage(
+        execution_id=claim.snapshot.execution_id,
+        attempt_id=claim.snapshot.attempt_id,
+        observed_at=prepared.observed_at,
+    )
+    material = allocator.load_verified_qualification_raw_run_material(
+        execution_id=claim.snapshot.execution_id,
+        attempt_id=claim.snapshot.attempt_id,
+        observed_at=prepared.observed_at,
+    )
+
+    assert lineage is None
+    assert material is None
+
+
 def test_database_rejects_unbound_attempt_and_resource_lease_contraction(
     monkeypatch, tmp_path
 ) -> None:
