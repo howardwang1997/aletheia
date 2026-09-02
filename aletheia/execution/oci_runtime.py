@@ -118,6 +118,24 @@ def _canonical_standard_json_bytes(value: object) -> bytes:
     ).encode("utf-8")
 
 
+def _parse_engine_timestamp(value: str) -> datetime:
+    """Parse Docker's closed RFC3339Nano UTC timestamp projection."""
+
+    # Docker commonly emits RFC3339Nano, while datetime accepts at most six fractional digits.
+    match = re.fullmatch(
+        r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z",
+        value,
+    )
+    if match is None:
+        raise OCIEngineError("OCI engine timestamp is not canonical UTC RFC3339")
+    fraction = (match.group(2) or "")[:6].ljust(6, "0")
+    normalized = f"{match.group(1)}.{fraction}+00:00"
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError as exc:  # pragma: no cover - regex already constrains shape
+        raise OCIEngineError("OCI engine timestamp is invalid") from exc
+
+
 _DOCKER_MASKED_PATHS = (
     "/proc/acpi",
     "/proc/asound",
@@ -5550,11 +5568,13 @@ class LocalQualificationOCIRuntime:
         if completed.stdout != f"{container_id}\n".encode() or completed.stderr:
             raise OCIEngineError("OCI remove response changed exact created container identity")
 
-    def _validate_engine_configuration(
-        self,
+    @staticmethod
+    def _verify_frozen_engine_configuration(
         inspection: dict[str, object],
         *,
         config: OCIConfiguration,
+        policy: DeploymentPinnedOCIPolicy,
+        load_verified_seccomp_copy: Callable[[], bytes],
     ) -> None:
         container_config = inspection.get("Config")
         host_config = inspection.get("HostConfig")
@@ -5650,9 +5670,12 @@ class LocalQualificationOCIRuntime:
             isinstance(item, str) for item in raw_security_options
         ):
             raise OCIEngineError("OCI security options are absent or untyped")
-        normalized_security_options = self._normalize_engine_security_options(
-            raw_security_options,
-            config=config,
+        normalized_security_options = (
+            LocalQualificationOCIRuntime._normalize_engine_security_options(
+                raw_security_options,
+                config=config,
+                load_verified_seccomp_copy=load_verified_seccomp_copy,
+            )
         )
         expected_security_options = {
             "no-new-privileges=true",
@@ -5666,7 +5689,7 @@ class LocalQualificationOCIRuntime:
             raise OCIEngineError("OCI tmpfs inspection is not typed")
         expected_tmpfs: dict[str, frozenset[str]] = {}
         if config.scratch_bytes:
-            expected_tmpfs[self._policy.scratch_mount_target] = frozenset(
+            expected_tmpfs[policy.scratch_mount_target] = frozenset(
                 {
                     "rw",
                     "noexec",
@@ -5775,11 +5798,12 @@ class LocalQualificationOCIRuntime:
         ):
             raise OCIEngineError("OCI engine enforcement differs from deterministic config")
 
+    @staticmethod
     def _normalize_engine_security_options(
-        self,
         raw_security_options: list[object],
         *,
         config: OCIConfiguration,
+        load_verified_seccomp_copy: Callable[[], bytes],
     ) -> tuple[str, ...]:
         """Normalize only independently verified Docker inspection variants.
 
@@ -5798,7 +5822,7 @@ class LocalQualificationOCIRuntime:
             if item.startswith("seccomp=") and item != expected_seccomp:
                 inline_payload = item.removeprefix("seccomp=")
                 try:
-                    frozen_payload = self._load_verified_seccomp_copy()
+                    frozen_payload = load_verified_seccomp_copy()
                     frozen = _strict_json_value(
                         frozen_payload,
                         label="deployment-pinned seccomp profile",
@@ -5817,6 +5841,17 @@ class LocalQualificationOCIRuntime:
                     item = expected_seccomp
             normalized.append(item)
         return tuple(normalized)
+
+    def _validate_engine_configuration(
+        self,
+        inspection: dict[str, object],
+        *,
+        config: OCIConfiguration,
+    ) -> None:
+        _OCIEngineConfigurationVerifier(
+            policy=self._policy,
+            load_verified_seccomp_copy=self._load_verified_seccomp_copy,
+        ).validate(inspection, config=config)
 
     def _run_engine(
         self,
@@ -5903,19 +5938,7 @@ class LocalQualificationOCIRuntime:
 
     @staticmethod
     def _parse_engine_timestamp(value: str) -> datetime:
-        # Docker commonly emits RFC3339Nano, while datetime accepts at most six fractional digits.
-        match = re.fullmatch(
-            r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z",
-            value,
-        )
-        if match is None:
-            raise OCIEngineError("OCI engine timestamp is not canonical UTC RFC3339")
-        fraction = (match.group(2) or "")[:6].ljust(6, "0")
-        normalized = f"{match.group(1)}.{fraction}+00:00"
-        try:
-            return datetime.fromisoformat(normalized)
-        except ValueError as exc:  # pragma: no cover - regex already constrains shape
-            raise OCIEngineError("OCI engine timestamp is invalid") from exc
+        return _parse_engine_timestamp(value)
 
     @contextmanager
     def _pinned_file_descriptor(
@@ -7141,6 +7164,37 @@ class LocalQualificationOCIRuntime:
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
+
+
+class _OCIEngineConfigurationVerifier:
+    """Shared fail-closed verifier for stable Docker enforcement semantics.
+
+    ContainerInspect contains unrelated engine-maintained metadata that is not stable across
+    daemon time.  Runtime launch and watchdog replay therefore share this verifier instead of
+    treating the complete inspection object as an immutable security identity.
+    """
+
+    def __init__(
+        self,
+        *,
+        policy: DeploymentPinnedOCIPolicy,
+        load_verified_seccomp_copy: Callable[[], bytes],
+    ) -> None:
+        self._policy = DeploymentPinnedOCIPolicy.model_validate(policy.model_dump(mode="python"))
+        self._load_verified_seccomp_copy = load_verified_seccomp_copy
+
+    def validate(
+        self,
+        inspection: dict[str, object],
+        *,
+        config: OCIConfiguration,
+    ) -> None:
+        LocalQualificationOCIRuntime._verify_frozen_engine_configuration(
+            inspection,
+            config=config,
+            policy=self._policy,
+            load_verified_seccomp_copy=self._load_verified_seccomp_copy,
+        )
 
 
 # Descriptive aliases for callers that prefer the shorter adapter name.
