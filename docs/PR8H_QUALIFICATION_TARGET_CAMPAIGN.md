@@ -425,9 +425,15 @@ start-submission journal, complete frozen container inspection, entrypoint start
 signed expiry, exact exit `126`, PID zero, no restart, and independent root-watchdog revalidation of
 the same stopped inspection before container removal. Earlier start, any other exit code, restart,
 configuration drift, missing container evidence, or a real launch journal remains fail-closed. The
-repair has source tests only until its merge commit is frozen on the target, replays the retained
-`20260902f` attempt through the signed pre-runtime-absence transaction, and the fresh superseding
-target campaign completes.
+first target replay of merge `b7d6eba` exposed a separate liveness defect: the allocator reused the
+artifact-submission deadline as the selector bound for a row that provably never acquired runtime
+identity, so `20260902f` was no longer delivered after `hard_deadline + artifact grace` and retained
+its exclusive holds. The follow-up keeps only exact pre-runtime/no-launch-receipt cleanup
+deliverable beyond that unrelated artifact window; the allocator still re-locks every authority
+row and requires a fresh node-signed absence proof, and actual-runtime/terminal recovery remains
+bounded. This follow-up has source tests only until its merge commit is frozen on the target,
+replays the retained `20260902f` attempt through the signed pre-runtime-absence transaction, and
+the fresh superseding target campaign completes.
 
 ## Destructive campaign and evidence order
 

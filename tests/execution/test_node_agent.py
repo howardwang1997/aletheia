@@ -2275,7 +2275,7 @@ def test_historical_pre_runtime_delivery_resubmits_exact_local_launch_receipt(
     assert persisted.phase is AttemptPhase.RUNNING
 
 
-def test_historical_pre_runtime_recovery_after_hard_deadline_only_cleans_and_releases(
+def test_historical_pre_runtime_recovery_after_artifact_grace_only_cleans_and_releases(
     tmp_path: Path,
 ) -> None:
     harness = _Harness(tmp_path)
@@ -2291,8 +2291,8 @@ def test_historical_pre_runtime_recovery_after_hard_deadline_only_cleans_and_rel
     assert start is not None
     assert harness.runtime.launch_calls == 0
 
-    harness.clock.current = harness.reservation.hard_deadline + timedelta(minutes=1)
-    harness.clock.monotonic += 16 * 60 * 1_000_000_000
+    harness.clock.current = harness.reservation.hard_deadline + timedelta(hours=4, seconds=1)
+    harness.clock.monotonic += (4 * 60 * 60 + 15 * 60 + 1) * 1_000_000_000
     recovered_reservation = replace(
         harness.allocator.current,
         status="reconciliation_required",
@@ -2321,6 +2321,44 @@ def test_historical_pre_runtime_recovery_after_hard_deadline_only_cleans_and_rel
     assert persisted is not None
     assert persisted.runtime_launch_authorization == start.launch_authorization
     assert persisted.phase.value == "pre_runtime_released"
+
+
+def test_historical_pre_runtime_recovery_after_node_key_expiry_is_rejected(
+    tmp_path: Path,
+) -> None:
+    harness = _Harness(tmp_path)
+    harness.allocator.crash_after_start_commit = True
+
+    with pytest.raises(SystemExit, match="allocator start commit"):
+        harness.agent.run_once()
+
+    state = harness.state.load_state(harness.reservation.attempt_id)
+    start = harness.allocator._start_authorization
+    assert state is not None and start is not None
+    recovered_reservation = replace(
+        harness.allocator.current,
+        status="reconciliation_required",
+    )
+    harness.allocator.current = recovered_reservation
+    harness.clock.current = harness.authority.active_until
+    lineage = HistoricalPreRuntimeRecoveryLineage(
+        runtime_preparation=state.runtime_preparation,
+        runtime_launch_authorization_request=state.runtime_launch_authorization_request,
+        runtime_launch_authorization=start.launch_authorization,
+    )
+
+    with pytest.raises(AssignmentRejected, match="exact allocator/grant authority"):
+        harness.agent.run_assignment(
+            replace(
+                harness.assignment,
+                reservation=recovered_reservation,
+                lease_token=None,
+                historical_pre_runtime_recovery_lineage=lineage,
+            )
+        )
+
+    assert harness.runtime.launch_calls == 0
+    assert harness.runtime.cleanup_calls == 0
 
 
 def test_historical_pre_runtime_recovery_resumes_cleanup_from_reconciliation_state(

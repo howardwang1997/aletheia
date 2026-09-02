@@ -1535,7 +1535,9 @@ CAS writer、model/network/process/GPU 调用，也不检查 live availability�
   `LocalCASInputMaterializer`、`LocalQualificationOCIRuntime`、in-container launch gate、root/systemd
   loop-backed output quota 与 deadline watchdog，以及 pre-runtime absence、historical actual-start
   recovery、runtime fence rebind、termination challenge/acceptance、artifact grace/deadline expiration
-  和 v2 terminal outbox；
+  和 v2 terminal outbox；never-started pre-runtime cleanup 不受 artifact grace 截止，否则会永久滞留
+  active attempt/资源锁，但它始终是 cleanup-only，且仍须 fresh node-signed absence；已实际启动的
+  runtime 与 terminal artifact recovery 仍受原有 bounded grace 约束；
 - PR-4 execution schema 仍精确为 27 张 `execution_*` tables：`0024` 的 16 张 PR-4a tables、
   `0025` 的 1 张 sealed-assignment table、`0026` 的 10 张 append-only runtime-v2 tables；仓库 current
   Alembic head 已由 PR-5 推进为 `20260828_0027`，但不改写这 27 张 execution tables 的语义；
