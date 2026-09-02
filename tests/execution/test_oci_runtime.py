@@ -651,6 +651,34 @@ def _created_engine_inspection(
     return inspection
 
 
+def _expired_gate_engine_inspection(
+    runtime: LocalQualificationOCIRuntime,
+    request: RuntimeLaunchRequest,
+    authorization: RuntimeLaunchAuthorization,
+    *,
+    started_offset: timedelta = timedelta(microseconds=1),
+    exit_code: int = 126,
+) -> dict[str, object]:
+    inspection = _exact_engine_inspection(runtime, request)
+    started_at = authorization.expires_at + started_offset
+    finished_at = started_at + timedelta(seconds=1)
+    inspection["RestartCount"] = 0
+    inspection["State"] = {
+        "Status": "exited",
+        "Running": False,
+        "Paused": False,
+        "Restarting": False,
+        "OOMKilled": False,
+        "Dead": False,
+        "Pid": 0,
+        "ExitCode": exit_code,
+        "Error": "",
+        "StartedAt": started_at.isoformat().replace("+00:00", "Z"),
+        "FinishedAt": finished_at.isoformat().replace("+00:00", "Z"),
+    }
+    return inspection
+
+
 def _runtime_root(tmp_path: Path) -> Path:
     roots = tuple(
         path
@@ -1747,6 +1775,151 @@ def test_cleanup_exact_created_pid_zero_retires_watchdog_then_deletes(
     assert deleted == [created["Id"]]
 
 
+def test_cleanup_exact_expired_launch_gate_rejection_is_pre_workload_absence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request, policy = _request(tmp_path)
+    clock = _Clock()
+    controller = _RecordingDeadlineWatchdogController()
+    runtime = LocalQualificationOCIRuntime(
+        policy=policy,
+        journal_root=tmp_path / "runtime-journal",
+        clock=clock,
+        runtime_control_authority=RuntimeControlAuthorityVerifier(_control_pin()),
+        output_quota_controller=_QuotaController(),
+        launch_gate_verifier=_LaunchGateVerifier(),
+        deadline_watchdog_controller=controller,
+    )
+    preparation = runtime.prepare(request=request)
+    authorization_request, authorization = _launch_authorization(preparation)
+    root = _runtime_root(tmp_path)
+    _seed_pending_launch_generation(
+        runtime,
+        runtime_root=root,
+        request=request,
+        preparation=preparation,
+        authorization_request=authorization_request,
+        authorization=authorization,
+        preflight=True,
+        start_submitted=True,
+    )
+    rejected = _expired_gate_engine_inspection(runtime, request, authorization)
+    clock.wall = authorization.expires_at + timedelta(seconds=2)
+    observations: list[dict[str, object] | None] = [rejected, None]
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        runtime,
+        "probe_production_capability",
+        lambda *, request: _capability(runtime, request),
+    )
+    monkeypatch.setattr(runtime, "_engine_inspect", lambda *args, **kwargs: observations.pop(0))
+    monkeypatch.setattr(runtime, "_remove_created_container", deleted.append)
+
+    evidence = runtime.cleanup_never_started(
+        request=request,
+        preparation=preparation,
+        authorization_request=authorization_request,
+        authorization=authorization,
+    )
+
+    assert evidence.state is RuntimeInspectionState.ABSENT
+    assert evidence.runtime_identity is None
+    assert deleted == [rejected["Id"]]
+    pending = runtime._load_required(  # noqa: SLF001
+        root / "cleanup" / "absence-1-pending.json",
+        oci_runtime_module._NeverStartedCleanupPending,  # noqa: SLF001
+    )
+    assert pending.start_submission is not None
+    assert pending.expired_launch_gate_rejection is not None
+    assert pending.expired_launch_gate_rejection.started_at >= authorization.expires_at
+    assert pending.expired_launch_gate_rejection.exit_code == 126
+    tampered = pending.model_dump(mode="python")
+    tampered["expired_launch_gate_rejection"]["container_inspection_sha256"] = H0
+    with pytest.raises(ValidationError, match="expired-gate cleanup changed"):
+        oci_runtime_module._NeverStartedCleanupPending.model_validate(tampered)  # noqa: SLF001
+    completed = runtime._load_required(  # noqa: SLF001
+        root / "cleanup" / "absence-1-completed.json",
+        oci_runtime_module._NeverStartedCleanupCompleted,  # noqa: SLF001
+    )
+    assert completed.expired_launch_gate_rejection_sha256 == (
+        pending.expired_launch_gate_rejection.evidence_sha256
+    )
+
+    monkeypatch.setattr(runtime, "_engine_inspect", lambda *args, **kwargs: None)
+    replay = runtime.cleanup_never_started(
+        request=request,
+        preparation=preparation,
+        authorization_request=authorization_request,
+        authorization=authorization,
+    )
+    assert replay.state is RuntimeInspectionState.ABSENT
+    assert replay.prelaunch_absence_journal_sha256 == evidence.prelaunch_absence_journal_sha256
+    assert deleted == [rejected["Id"]]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["started-before-expiry", "different-exit", "restarted"],
+)
+def test_submitted_start_without_exact_expired_gate_rejection_retains_hold(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    request, policy = _request(tmp_path)
+    clock = _Clock()
+    runtime = _runtime(tmp_path, policy, clock=clock)
+    preparation = runtime.prepare(request=request)
+    authorization_request, authorization = _launch_authorization(preparation)
+    root = _runtime_root(tmp_path)
+    _seed_pending_launch_generation(
+        runtime,
+        runtime_root=root,
+        request=request,
+        preparation=preparation,
+        authorization_request=authorization_request,
+        authorization=authorization,
+        preflight=True,
+        start_submitted=True,
+    )
+    inspection = _expired_gate_engine_inspection(
+        runtime,
+        request,
+        authorization,
+        started_offset=(
+            timedelta(microseconds=-1)
+            if mutation == "started-before-expiry"
+            else timedelta(microseconds=1)
+        ),
+        exit_code=1 if mutation == "different-exit" else 126,
+    )
+    if mutation == "restarted":
+        inspection["RestartCount"] = 1
+    clock.wall = authorization.expires_at + timedelta(seconds=2)
+    monkeypatch.setattr(
+        runtime,
+        "probe_production_capability",
+        lambda *, request: _capability(runtime, request),
+    )
+    monkeypatch.setattr(runtime, "_engine_inspect", lambda *args, **kwargs: inspection)
+    monkeypatch.setattr(
+        runtime,
+        "_remove_created_container",
+        lambda container_id: pytest.fail(f"unproven start removed {container_id}"),
+    )
+
+    evidence = runtime.cleanup_never_started(
+        request=request,
+        preparation=preparation,
+        authorization_request=authorization_request,
+        authorization=authorization,
+    )
+
+    assert evidence.state is RuntimeInspectionState.UNKNOWN
+    assert not (root / "cleanup" / "absence-1-pending.json").exists()
+
+
 def test_cleanup_rejects_wrong_watchdog_retirement_before_container_delete(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1939,7 +2112,7 @@ def test_cleanup_created_container_crash_windows_roll_forward_exactly(
 
 
 @pytest.mark.parametrize("engine_absent", [False, True])
-def test_cleanup_never_claims_absence_after_start_submission_or_inflight_create(
+def test_cleanup_never_claims_absence_without_expired_gate_or_completed_create_proof(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     engine_absent: bool,
@@ -1971,7 +2144,7 @@ def test_cleanup_never_claims_absence_after_start_submission_or_inflight_create(
         monkeypatch.setattr(
             runtime,
             "_engine_inspect",
-            lambda *args, **kwargs: pytest.fail("start-submitted cleanup inspected/deleted engine"),
+            lambda *args, **kwargs: _created_engine_inspection(runtime, request),
         )
     monkeypatch.setattr(
         runtime,

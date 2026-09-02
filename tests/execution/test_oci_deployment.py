@@ -47,9 +47,11 @@ from aletheia.execution.schemas import canonical_json_bytes, canonical_sha256
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_oci_runtime import (  # noqa: E402
+    _Clock,
     _capability,
     _control_pin,
     _created_engine_inspection,
+    _expired_gate_engine_inspection,
     _launch_authorization,
     _policy,
     _request,
@@ -1074,8 +1076,11 @@ def test_sealed_retirement_pending_wins_deadline_race_before_any_kill(
     assert terminal.retirement_evidence_sha256 == retirement
 
 
-@pytest.mark.parametrize("watchdog_observation", ["absent", "blocked_create", "created"])
-def test_fired_prelaunch_watchdog_acknowledges_exact_quiescence_for_cold_cleanup(
+@pytest.mark.parametrize(
+    "watchdog_observation",
+    ["absent", "blocked_create", "created", "expired_gate"],
+)
+def test_fired_preworkload_watchdog_acknowledges_exact_quiescence_for_cold_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     watchdog_observation: str,
@@ -1106,9 +1111,12 @@ def test_fired_prelaunch_watchdog_acknowledges_exact_quiescence_for_cold_cleanup
     preparation = runtime.prepare(request=request)
     authorization_request, authorization = _launch_authorization(preparation)
     created = _created_engine_inspection(runtime, request)
+    expired_gate = _expired_gate_engine_inspection(runtime, request, authorization)
     config = runtime.build_oci_configuration(request=request)
     created["Name"] = f"/{config.container_name}"
-    create_submitted = watchdog_observation in {"blocked_create", "created"}
+    expired_gate["Name"] = f"/{config.container_name}"
+    create_submitted = watchdog_observation in {"blocked_create", "created", "expired_gate"}
+    start_submitted = watchdog_observation == "expired_gate"
     _seed_pending_launch_generation(
         runtime,
         runtime_root=_runtime_root(tmp_path),
@@ -1118,12 +1126,16 @@ def test_fired_prelaunch_watchdog_acknowledges_exact_quiescence_for_cold_cleanup
         authorization=authorization,
         preflight=True,
         create_submitted=create_submitted,
+        start_submitted=start_submitted,
     )
     armed = service._load_armed(  # noqa: SLF001
         preparation.runtime_id,
         authorization_request.request_sha256,
     )
-    initial_inspection = created if watchdog_observation == "created" else None
+    observed_container = expired_gate if start_submitted else created
+    initial_inspection = (
+        observed_container if watchdog_observation in {"created", "expired_gate"} else None
+    )
     current_inspection = {"value": initial_inspection}
     monkeypatch.setattr(
         service,
@@ -1145,8 +1157,11 @@ def test_fired_prelaunch_watchdog_acknowledges_exact_quiescence_for_cold_cleanup
     monkeypatch.setattr(service, "_deadline_reached", lambda armed, now: True)
 
     # Cold node restart: the service's immutable fired terminal is acknowledged as quiescent,
-    # then the runtime alone removes the exact CREATED/PID0 id (or completes exact absence).
-    restarted = _runtime(tmp_path, policy)
+    # then the runtime alone removes the exact pre-workload id (or completes exact absence).
+    restarted_clock = _Clock()
+    if start_submitted:
+        restarted_clock.wall = authorization.expires_at + timedelta(seconds=2)
+    restarted = _runtime(tmp_path, policy, clock=restarted_clock)
     restarted._deadline_watchdog_controller = controller  # noqa: SLF001
     monkeypatch.setattr(
         restarted,
@@ -1158,11 +1173,11 @@ def test_fired_prelaunch_watchdog_acknowledges_exact_quiescence_for_cold_cleanup
 
     def _inspect(*args: object, **kwargs: object) -> dict[str, object] | None:
         del args, kwargs
-        return created if present["value"] else None
+        return observed_container if present["value"] else None
 
     def _remove(container_id: str) -> None:
         assert present["value"] is True
-        assert container_id == created["Id"]
+        assert container_id == observed_container["Id"]
         deleted.append(container_id)
         present["value"] = False
 
@@ -1175,7 +1190,7 @@ def test_fired_prelaunch_watchdog_acknowledges_exact_quiescence_for_cold_cleanup
         authorization=authorization,
     )
     assert evidence.state.value == "absent"
-    assert deleted == ([created["Id"]] if create_submitted else [])
+    assert deleted == ([observed_container["Id"]] if create_submitted else [])
     terminal = service._load_terminal(armed)  # noqa: SLF001
     assert terminal is not None and terminal.status == "fired"
     assert terminal.container_was_running is (False if create_submitted else None)
@@ -1190,6 +1205,7 @@ def test_fired_prelaunch_watchdog_acknowledges_exact_quiescence_for_cold_cleanup
         oci_runtime_module._NeverStartedCleanupCompleted,  # noqa: SLF001
     )
     assert completed.watchdog_cleanup_quiescence_journal_sha256 is not None
+    assert (completed.expired_launch_gate_rejection_sha256 is not None) is start_submitted
 
     # Reusing the Docker name cannot reactivate the old watchdog generation: its fired terminal
     # short-circuits before any inspection or kill, while exact local cleanup replays once.
@@ -1206,7 +1222,7 @@ def test_fired_prelaunch_watchdog_acknowledges_exact_quiescence_for_cold_cleanup
         authorization=authorization,
     )
     assert replay.state.value == "absent"
-    assert deleted == ([created["Id"]] if create_submitted else [])
+    assert deleted == ([observed_container["Id"]] if create_submitted else [])
 
 
 def test_busy_start_mutation_does_not_starve_another_overdue_running_job(

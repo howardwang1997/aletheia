@@ -1568,7 +1568,11 @@ evidence，不是独立 remote attestation；watchdog 是 single-threaded inspec
 `maximum_active_jobs` 默认为 4,096 且超过 deployment-pinned 值会拒绝扫描；4,096 jobs 下的 hard-real-time
 kill latency 尚未证实。mount-generation mismatch 的语义逐边界固定为：
 post-create exact rm、post-start exact kill；final pre-start guard 则在 start 前 fail closed，并保留精确
-CREATED/PID0 generation 交由 durable never-started cleanup，不能笼统称为当场终止并删除。
+CREATED/PID0 generation 交由 durable never-started cleanup，不能笼统称为当场终止并删除。唯一允许
+submitted-start 回到 pre-workload cleanup 的封闭分支，是完整 frozen inspection 证明 pinned launch gate
+在签名 ticket 到期后才开始、以 gate 专用 `126` 拒绝码退出、PID=0 且从未 restart，并由独立 root
+watchdog 对同一完整 inspection 做 quiescence 复核；该分支不生成 runtime identity、工程成功或科学证据，
+其余 quick exit 仍永久 fail closed 为 unknown/reconciliation。
 
 验收：fault injection 下同一 attempt 不并发重复；确认旧 attempt 失败后，每次 infrastructure retry 使用新
 attempt ID；execution terminal receipt/outbox exactly-once。DB terminal state 必须绑定已复核的 artifact

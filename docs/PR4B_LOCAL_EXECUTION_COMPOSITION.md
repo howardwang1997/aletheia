@@ -124,6 +124,11 @@ closure is not proof of every kernel/host failure mode or a substitute for targe
 - an exact never-started/created-with-PID-zero proof may authorize cleanup and either release or a
   replacement launch generation. At or after the hard deadline, historical pre-runtime recovery
   can only finish cleanup/release; it cannot prepare or launch work;
+- a submitted Docker start is still eligible for pre-workload cleanup only when the full frozen
+  inspection proves that the pinned launch gate itself began at or after ticket expiry, exited with
+  its reserved rejection code `126`, has PID zero and no restart, and the root watchdog
+  independently revalidates the same stopped container before removal. This does not create a
+  runtime identity, engineering success, or scientific evidence;
 - after an engine mutation may have started a process, absence is not inferred. An ambiguous or
   unknown runtime retains reconciliation and its evidence; it never releases authority or starts a
   duplicate;
