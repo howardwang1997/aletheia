@@ -29,6 +29,7 @@ from aletheia.execution.oci_deployment import (
     OCIOutputQuotaError,
     OCIWatchdogError,
     PinnedOCIImageLayout,
+    PinnedRootFile,
     PinnedRootExecutable,
     PreinstalledOutputWorkspaceRootPin,
     SystemdDeadlineWatchdogController,
@@ -699,6 +700,79 @@ def test_watchdog_service_requires_root_systemd_supervision(tmp_path: Path) -> N
 
     with pytest.raises(OCIWatchdogError, match="root on Linux|systemd supervision"):
         service._require_root_systemd_service()  # noqa: SLF001
+
+
+def test_watchdog_explicit_service_module_pin_preserves_durable_deployment_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = _policy(tmp_path / "policy")
+    deployment = _watchdog_deployment(tmp_path, policy)
+    module_path = Path(oci_deployment_module.__file__).resolve()
+    active_module = PinnedRootFile(
+        path=str(module_path),
+        sha256="9" * 64,
+        device=91,
+        inode=92,
+        mode=0o444,
+        parent_chain_sha256="8" * 64,
+    )
+    service = DurableDeadlineWatchdogService(
+        policy=policy,
+        deployment=deployment,
+        service_module_pin=active_module,
+    )
+    verified: list[PinnedRootFile] = []
+
+    def read_text(path: Path, *, encoding: str) -> str:
+        assert encoding == "ascii"
+        return {
+            "/proc/1/comm": "systemd\n",
+            "/proc/self/cgroup": "0::/system.slice/watchdog.service\n",
+            "/proc/self/status": "Uid:\t0\t0\t0\t0\nGid:\t0\t0\t0\t0\n",
+        }[str(path)]
+
+    monkeypatch.setattr(oci_deployment_module.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(oci_deployment_module.os, "getegid", lambda: 0)
+    monkeypatch.setattr(oci_deployment_module.sys, "platform", "linux")
+    monkeypatch.setattr(oci_deployment_module.Path, "read_text", read_text)
+    monkeypatch.setattr(oci_deployment_module, "_in_exact_systemd_unit", lambda *_args: True)
+    monkeypatch.setattr(
+        oci_deployment_module,
+        "_verify_root_file_pin",
+        lambda pin, **_scope: verified.append(pin),
+    )
+    monkeypatch.setattr(
+        oci_deployment_module,
+        "_verify_root_process_executable",
+        lambda *_args, **_scope: None,
+    )
+    monkeypatch.setattr(service, "_verify_deployment_roots", lambda: None)
+    monkeypatch.setenv("INVOCATION_ID", "a" * 32)
+
+    service._require_root_systemd_service()  # noqa: SLF001
+
+    assert verified == [active_module]
+    assert service._deployment.deployment_sha256 == deployment.deployment_sha256  # noqa: SLF001
+    assert service._service_module_pin == active_module  # noqa: SLF001
+
+
+def test_watchdog_rejects_mutable_service_module_upgrade_pin(tmp_path: Path) -> None:
+    policy = _policy(tmp_path / "policy")
+    deployment = _watchdog_deployment(tmp_path, policy)
+    with pytest.raises(ValueError, match="implementation"):
+        DurableDeadlineWatchdogService(
+            policy=policy,
+            deployment=deployment,
+            service_module_pin=PinnedRootFile(
+                path=str(Path(oci_deployment_module.__file__).resolve()),
+                sha256="9" * 64,
+                device=91,
+                inode=92,
+                mode=0o600,
+                parent_chain_sha256="8" * 64,
+            ),
+        )
 
 
 def test_watchdog_recovery_kills_only_exact_labelled_container(

@@ -4044,17 +4044,34 @@ class DurableDeadlineWatchdogService:
         *,
         policy: DeploymentPinnedOCIPolicy,
         deployment: SystemdWatchdogDeploymentPin,
+        service_module_pin: PinnedRootFile | None = None,
     ) -> None:
         self._policy = DeploymentPinnedOCIPolicy.model_validate(policy.model_dump(mode="python"))
         self._deployment = SystemdWatchdogDeploymentPin.model_validate(
             deployment.model_dump(mode="python")
         )
+        legacy_service_module_pin = PinnedRootFile(
+            path=str(Path(__file__).resolve()),
+            sha256=self._deployment.service_module_sha256,
+            device=self._deployment.service_module_device,
+            inode=self._deployment.service_module_inode,
+            mode=self._deployment.service_module_mode,
+            parent_chain_sha256=self._deployment.service_module_parent_chain_sha256,
+        )
+        self._service_module_pin = PinnedRootFile.model_validate(
+            (
+                service_module_pin.model_dump(mode="python")
+                if service_module_pin is not None
+                else legacy_service_module_pin.model_dump(mode="python")
+            )
+        )
         if (
             self._deployment.policy_sha256 != self._policy.policy_sha256
             or self._deployment.allowed_client_uid != self._policy.workload_uid
             or self._deployment.allowed_client_gid != self._policy.workload_gid
+            or self._service_module_pin.mode not in {0o400, 0o440, 0o444}
         ):
-            raise ValueError("watchdog deployment differs from OCI policy principal")
+            raise ValueError("watchdog deployment, implementation, or OCI policy differs")
         self._scope = _WatchdogJournalScope(policy=self._policy, deployment=self._deployment)
         self._stop_event = threading.Event()
         # The pinned service unit permits one daemon process, while this lock serializes
@@ -4865,8 +4882,6 @@ class DurableDeadlineWatchdogService:
             cgroup = Path("/proc/self/cgroup").read_text(encoding="ascii")
             status = Path("/proc/self/status").read_text(encoding="ascii")
             module = Path(__file__).resolve(strict=True)
-            module_metadata = module.lstat()
-            module_sha256 = hashlib.sha256(module.read_bytes()).hexdigest()
         except (OSError, UnicodeError) as exc:
             raise OCIWatchdogError("watchdog cannot prove systemd supervision") from exc
         invocation_id = os.environ.get("INVOCATION_ID", "")
@@ -4876,16 +4891,14 @@ class DurableDeadlineWatchdogService:
             or not _in_exact_systemd_unit(cgroup, self._deployment.systemd_unit_name)
             or re.search(r"^Uid:\s+0\s+0\s+0\s+0$", status, re.MULTILINE) is None
             or re.search(r"^Gid:\s+0\s+0\s+0\s+0$", status, re.MULTILINE) is None
-            or module_metadata.st_uid != 0
-            or module_metadata.st_gid != 0
-            or module_metadata.st_dev != self._deployment.service_module_device
-            or module_metadata.st_ino != self._deployment.service_module_inode
-            or stat.S_IMODE(module_metadata.st_mode) != self._deployment.service_module_mode
-            or module_sha256 != self._deployment.service_module_sha256
-            or host_parent_chain_sha256(module)
-            != self._deployment.service_module_parent_chain_sha256
+            or module != Path(self._service_module_pin.path)
         ):
             raise OCIWatchdogError("watchdog is not running in its pinned systemd service")
+        _verify_root_file_pin(
+            self._service_module_pin,
+            label="watchdog active service module",
+            error_type=OCIWatchdogError,
+        )
         _verify_root_process_executable(
             self._deployment.service_executable,
             error_type=OCIWatchdogError,
