@@ -1775,6 +1775,80 @@ def test_cleanup_exact_created_pid_zero_retires_watchdog_then_deletes(
     assert deleted == [created["Id"]]
 
 
+def test_never_started_cleanup_allows_only_same_boot_mount_table_churn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request, policy = _request(tmp_path)
+    runtime = _runtime(tmp_path, policy)
+    preparation = runtime.prepare(request=request)
+    authorization_request, authorization = _launch_authorization(preparation)
+    root = _runtime_root(tmp_path)
+    _seed_pending_launch_generation(
+        runtime,
+        runtime_root=root,
+        request=request,
+        preparation=preparation,
+        authorization_request=authorization_request,
+        authorization=authorization,
+        preflight=True,
+        create_submitted=True,
+    )
+    stored = _capability(runtime, runtime._coerce_request(request))  # noqa: SLF001
+    mount_churn = stored.model_copy(
+        update={"cgroup_mount_sha256": _digest("unrelated-loop-mount-churn")}
+    )
+    created = _created_engine_inspection(runtime, request)
+    observations: list[dict[str, object] | None] = [created, None]
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        runtime,
+        "probe_production_capability",
+        lambda *, request: mount_churn,
+    )
+    monkeypatch.setattr(runtime, "_engine_inspect", lambda *args, **kwargs: observations.pop(0))
+    monkeypatch.setattr(runtime, "_remove_created_container", deleted.append)
+
+    evidence = runtime.cleanup_never_started(
+        request=request,
+        preparation=preparation,
+        authorization_request=authorization_request,
+        authorization=authorization,
+    )
+
+    assert evidence.state is RuntimeInspectionState.ABSENT
+    assert deleted == [created["Id"]]
+    with pytest.raises(
+        OCIProductionCapabilityError,
+        match="production capability changed during exact launch replay",
+    ):
+        runtime._validate_capability_replay(  # noqa: SLF001
+            stored=stored,
+            observed=mount_churn,
+            request=runtime._coerce_request(request),  # noqa: SLF001
+        )
+
+
+def test_never_started_cleanup_rejects_other_capability_drift(
+    tmp_path: Path,
+) -> None:
+    request, policy = _request(tmp_path)
+    runtime = _runtime(tmp_path, policy)
+    plan = runtime._coerce_request(request)  # noqa: SLF001
+    stored = _capability(runtime, plan)
+    changed = stored.model_copy(update={"engine_info_sha256": _digest("changed-engine-info")})
+
+    with pytest.raises(
+        OCIProductionCapabilityError,
+        match="production capability changed during never-started cleanup replay",
+    ):
+        runtime._validate_never_started_cleanup_capability_replay(  # noqa: SLF001
+            stored=stored,
+            observed=changed,
+            request=plan,
+        )
+
+
 def test_cleanup_exact_expired_launch_gate_rejection_is_pre_workload_absence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

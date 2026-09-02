@@ -2562,7 +2562,7 @@ class LocalQualificationOCIRuntime:
             ):
                 raise OCIJournalError("OCI cleanup launch-gate phase changed exact authority")
             if stored_capability is not None:
-                self._validate_capability_replay(
+                self._validate_never_started_cleanup_capability_replay(
                     stored=stored_capability,
                     observed=capability,
                     request=request,
@@ -4057,6 +4057,37 @@ class LocalQualificationOCIRuntime:
         ):
             raise OCIProductionCapabilityError(
                 "production capability changed during exact launch replay"
+            )
+
+    def _validate_never_started_cleanup_capability_replay(
+        self,
+        *,
+        stored: OCIProductionCapability,
+        observed: OCIProductionCapability,
+        request: OCIExecutionPlan,
+    ) -> None:
+        """Accept same-boot mount-table churn only for proven pre-workload cleanup.
+
+        ``cgroup_mount_sha256`` in capability v2 hashes the host's complete mountinfo bytes, so an
+        unrelated loop/ext4 mount changes it even though the cgroup-v2 substrate is unchanged.
+        A never-started cleanup cannot grant launch authority or runtime identity: it can only
+        remove an exact absent/CREATED container or a signed-ticket gate rejection.  Fresh probing
+        still proves the current cgroup-v2 mount and every security-relevant stable field below;
+        boot changes and all running/historical launch recovery keep the stricter replay check.
+        """
+
+        self._validate_capability_scope(stored, request)
+        self._validate_capability_scope(observed, request)
+        cleanup_exclusions = {
+            "observed_at",
+            "observed_monotonic_ns",
+            "cgroup_mount_sha256",
+        }
+        if stored.model_dump(mode="json", exclude=cleanup_exclusions) != observed.model_dump(
+            mode="json", exclude=cleanup_exclusions
+        ):
+            raise OCIProductionCapabilityError(
+                "production capability changed during never-started cleanup replay"
             )
 
     def _compose_launch_evidence(
