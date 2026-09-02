@@ -450,9 +450,12 @@ produce only a release decision with no replacement authority. A pre-expiry node
 receipt remains immutable generation 1; recovery appends a fresh generation 2 that explicitly
 supersedes it. PR #139 was subsequently merged, frozen, installed and migrated on the target. Its
 first two one-shot cleanup invocations made no container-removal or database-release mutation: the
-first found the independently supervised services inactive, and the second exposed the byte-wide
-Docker inspection replay defect described above. A narrow stable-semantics follow-up must now be
-merged, frozen and target-replayed under a newly commissioned, non-reused cleanup key. See
+first found the independently supervised services inactive, and the second exposed the watchdog's
+byte-wide Docker inspection replay defect. PR #140 repaired that boundary and was merged, frozen,
+installed and target-replayed under a newly commissioned, non-reused cleanup key. The third
+invocation passed watchdog quiescence but exposed the equivalent raw-inspection equality in the
+node cleanup replay, again before container removal or database release. A second narrow
+stable-semantics follow-up must merge and target-replay under another non-reused key. See
 [PR-8j attempt-scoped cleanup recovery](PR8J_ATTEMPT_SCOPED_PRE_RUNTIME_CLEANUP.md).
 
 ## Destructive campaign and evidence order
@@ -574,13 +577,13 @@ receipt into a passing shape.
 The selected Linux target is compatible and has run frozen/installed candidate generations, but
 none has emitted the complete campaign receipt. Therefore no host is currently proven deployable,
 PR-4b remains nondeployable, and `scientific_admission_allowed` is always false even in a
-successful campaign receipt. The next ordered operation is to merge and freeze the narrow
-attempt-scoped cleanup repair, migrate `0031 -> 0032`, commission its target-local key without
-exporting private bytes, and use it to close the retained `20260902f` pre-workload generation
-through the signed allocator transaction. Only after the old exact loop/ext4 hold is released may
-one fresh superseding generation run with the already-proven five-minute observation budget,
-explicit bounded initial-assignment window, short runtime heartbeat and 1,800-second workload. The
-complete campaign must then run—not more controller authority.
+successful campaign receipt. The database is already at `0032`; the next ordered operation is to
+merge and freeze the node-side stable-replay repair, commission another target-local non-reused
+cleanup key without exporting private bytes, and use it to close the retained `20260902f`
+pre-workload generation through the signed allocator transaction. Only after the old exact
+loop/ext4 hold is released may one fresh superseding generation run with the already-proven
+five-minute observation budget, explicit bounded initial-assignment window, short runtime heartbeat
+and 1,800-second workload. The complete campaign must then run—not more controller authority.
 
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the

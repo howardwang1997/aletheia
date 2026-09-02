@@ -129,8 +129,8 @@ closure is not proof of every kernel/host failure mode or a substitute for targe
 - a submitted Docker start is still eligible for pre-workload cleanup only when its immutable
   historical inspection proves that the pinned launch gate itself began at or after ticket expiry,
   exited with its reserved rejection code `126`, has PID zero and no restart. Before removal the
-  root watchdog independently revalidates the same container ID/name, exact state/timestamps and
-  exhaustive frozen OCI enforcement semantics, including a fresh seccomp-copy hash. Unrelated
+  root watchdog and node cleanup each revalidate the same container ID/name, exact state/timestamps
+  and exhaustive frozen OCI enforcement semantics, including a fresh seccomp-copy hash. Unrelated
   current Docker metadata may drift without replacing the historical full-inspection evidence.
   This does not create a runtime identity, engineering success, or scientific evidence;
 - after an engine mutation may have started a process, absence is not inferred. An ambiguous or

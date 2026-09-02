@@ -1932,6 +1932,147 @@ def test_cleanup_exact_expired_launch_gate_rejection_is_pre_workload_absence(
     assert deleted == [rejected["Id"]]
 
 
+def test_cleanup_replays_expired_gate_after_nonauthoritative_inspection_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request, policy = _request(tmp_path)
+    clock = _Clock()
+    controller = _RecordingDeadlineWatchdogController()
+    runtime = LocalQualificationOCIRuntime(
+        policy=policy,
+        journal_root=tmp_path / "runtime-journal",
+        clock=clock,
+        runtime_control_authority=RuntimeControlAuthorityVerifier(_control_pin()),
+        output_quota_controller=_QuotaController(),
+        launch_gate_verifier=_LaunchGateVerifier(),
+        deadline_watchdog_controller=controller,
+    )
+    preparation = runtime.prepare(request=request)
+    authorization_request, authorization = _launch_authorization(preparation)
+    root = _runtime_root(tmp_path)
+    _seed_pending_launch_generation(
+        runtime,
+        runtime_root=root,
+        request=request,
+        preparation=preparation,
+        authorization_request=authorization_request,
+        authorization=authorization,
+        preflight=True,
+        start_submitted=True,
+    )
+    rejected = _expired_gate_engine_inspection(runtime, request, authorization)
+    clock.wall = authorization.expires_at + timedelta(seconds=2)
+    monkeypatch.setattr(
+        runtime,
+        "probe_production_capability",
+        lambda *, request: _capability(runtime, request),
+    )
+    monkeypatch.setattr(runtime, "_engine_inspect", lambda *args, **kwargs: rejected)
+
+    def _unavailable_watchdog(**scope: object) -> OCIWatchdogCleanupQuiescence:
+        del scope
+        raise OSError("synthetic unavailable watchdog")
+
+    monkeypatch.setattr(
+        controller,
+        "retire_and_verify_deadline_watchdog",
+        _unavailable_watchdog,
+    )
+
+    with pytest.raises(
+        OCIProductionCapabilityError,
+        match="old runtime deadline watchdog could not be durably retired",
+    ):
+        runtime.cleanup_never_started(
+            request=request,
+            preparation=preparation,
+            authorization_request=authorization_request,
+            authorization=authorization,
+        )
+
+    pending = runtime._load_required(  # noqa: SLF001
+        root / "cleanup" / "absence-1-pending.json",
+        oci_runtime_module._NeverStartedCleanupPending,  # noqa: SLF001
+    )
+    assert pending.expired_launch_gate_rejection is not None
+    historical_inspection_sha256 = pending.expired_launch_gate_rejection.container_inspection_sha256
+    assert historical_inspection_sha256 == canonical_sha256(rejected)
+
+    deleted: list[str] = []
+
+    def _fired_stopped(**scope: object) -> OCIWatchdogCleanupQuiescence:
+        evidence_sha256 = scope["expected_evidence_sha256"]
+        assert isinstance(evidence_sha256, str)
+        container_id = rejected["Id"]
+        assert isinstance(container_id, str)
+        return OCIWatchdogCleanupQuiescence(
+            cleanup_evidence_sha256=evidence_sha256,
+            decision="fired_stopped",
+            service_quiescence_record_sha256=H1,
+            container_id=container_id,
+        )
+
+    monkeypatch.setattr(
+        controller,
+        "retire_and_verify_deadline_watchdog",
+        _fired_stopped,
+    )
+    monkeypatch.setattr(runtime, "_remove_created_container", deleted.append)
+
+    timestamp_drift = copy.deepcopy(rejected)
+    state = timestamp_drift["State"]
+    assert isinstance(state, dict)
+    finished_at = datetime.fromisoformat(str(state["FinishedAt"]).replace("Z", "+00:00"))
+    state["FinishedAt"] = (
+        (finished_at + timedelta(microseconds=1)).isoformat().replace("+00:00", "Z")
+    )
+    monkeypatch.setattr(runtime, "_engine_inspect", lambda *args, **kwargs: timestamp_drift)
+    with pytest.raises(
+        OCIJournalError,
+        match="expired launch-gate rejection changed during cleanup",
+    ):
+        runtime.cleanup_never_started(
+            request=request,
+            preparation=preparation,
+            authorization_request=authorization_request,
+            authorization=authorization,
+        )
+    assert deleted == []
+
+    replayed = copy.deepcopy(rejected)
+    replayed["GraphDriver"] = {
+        "Data": {"MergedDir": "/engine-maintained/non-security-metadata"},
+        "Name": "overlay2",
+    }
+    assert canonical_sha256(replayed) != historical_inspection_sha256
+    observations: list[dict[str, object] | None] = [replayed, None]
+    monkeypatch.setattr(
+        runtime,
+        "_engine_inspect",
+        lambda *args, **kwargs: observations.pop(0),
+    )
+
+    evidence = runtime.cleanup_never_started(
+        request=request,
+        preparation=preparation,
+        authorization_request=authorization_request,
+        authorization=authorization,
+    )
+
+    assert evidence.state is RuntimeInspectionState.ABSENT
+    assert deleted == [rejected["Id"]]
+    recovered = runtime._load_required(  # noqa: SLF001
+        root / "cleanup" / "absence-1-pending.json",
+        oci_runtime_module._NeverStartedCleanupPending,  # noqa: SLF001
+    )
+    assert recovered.expired_launch_gate_rejection is not None
+    assert (
+        recovered.expired_launch_gate_rejection.container_inspection_sha256
+        == historical_inspection_sha256
+    )
+
+
 @pytest.mark.parametrize(
     "mutation",
     ["started-before-expiry", "different-exit", "restarted"],

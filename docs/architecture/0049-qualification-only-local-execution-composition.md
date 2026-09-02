@@ -37,13 +37,13 @@ have started work, unknown is retained and cannot be converted into absence. The
 start exception is an exact *pre-workload* launch-gate rejection: the historical complete container
 inspection and start-submission journals must match, the pinned gate must begin at or after its
 signed ticket expiry, and Docker must report the gate-reserved exit `126` with PID zero and no
-restart. Before removal the independent watchdog revalidates the same container identity,
-state/timestamps and exhaustive frozen OCI enforcement projection with a fresh seccomp-copy hash;
-unrelated current Docker metadata need not preserve the historical inspection's byte hash. That
-path records no runtime identity and grants no scientific evidence. Every other quick exit remains unknown. An
-actual workload start is recovered from historical ticket/start evidence. Same-node adoption
-requires fresh running inspection and a singleton lock, then crash-idempotently rotates both
-allocator and runtime fences. Cross-node adoption is forbidden.
+restart. Before removal the independent watchdog and node cleanup each revalidate the same
+container identity, state/timestamps and exhaustive frozen OCI enforcement projection with a fresh
+seccomp-copy hash; unrelated current Docker metadata need not preserve the historical inspection's
+byte hash. That path records no runtime identity and grants no scientific evidence. Every other
+quick exit remains unknown. An actual workload start is recovered from historical ticket/start
+evidence. Same-node adoption requires fresh running inspection and a singleton lock, then
+crash-idempotently rotates both allocator and runtime fences. Cross-node adoption is forbidden.
 
 A deployment-pinned root/systemd watchdog owns hard-deadline enforcement independently of the node
 agent. It binds the exact container and durable launch scope, uses cgroup-v2 kill, and requires an

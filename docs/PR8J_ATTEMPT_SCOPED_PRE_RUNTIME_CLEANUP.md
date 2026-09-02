@@ -1,7 +1,7 @@
 # PR-8j attempt-scoped pre-runtime cleanup recovery
 
-- Status: source merged and target commissioned; recovery remains paused on a separately exposed
-  watchdog quiescence replay defect
+- Status: watchdog replay repair merged and target-replayed; recovery remains paused on the same
+  raw-inspection comparison independently exposed in the node cleanup replay
 - Scope: release one retained never-started qualification attempt after its source node key expired
 - Scientific authority: none
 
@@ -81,13 +81,25 @@ of the *entire current* Docker `ContainerInspect` object with the historical ins
 Docker-maintained, non-security metadata can change while the frozen configuration and process
 identity remain unchanged, so this byte-wide replay comparison prevented liveness.
 
-The follow-up keeps the historical full-inspection hash immutable but does not treat unrelated
-current metadata as security authority. Runtime and watchdog now share the same exhaustive frozen
-OCI enforcement verifier, freshly rehash the runtime-owned seccomp copy, and independently require
-the exact container ID/name, closed process-state fields, exit `126`, PID zero, no restart and the
+The first follow-up keeps the historical full-inspection hash immutable but does not treat unrelated
+current metadata as security authority. Runtime and watchdog share the same exhaustive frozen OCI
+enforcement verifier, freshly rehash the runtime-owned seccomp copy, and independently require the
+exact container ID/name, closed process-state fields, exit `126`, PID zero, no restart and the
 historical start/finish timestamps. Configuration, state or timestamp drift still fails before a
-quiescence acknowledgement or container removal. This source change must merge, be frozen into a
-new release and pass the same target replay before the retained attempt can be released.
+quiescence acknowledgement or container removal.
+
+PR #140 merged as `cf6b00357df4e41d057e7b86c093405e198ae6d7`; deterministic archive
+`b041c985c371a536d2c02e33f107aeb3a6f3f8c94647e8f6763bc086db8afb02` was installed frozen on
+the same target, its watchdog process was rebound to that release, and a new target-local cleanup
+authority was commissioned without exporting private bytes. The third one-shot invocation passed
+the watchdog's stable quiescence verification, then failed closed before container removal or the
+allocator release transaction. A fixed-string, target-local redaction classified the exception as
+`expired launch-gate rejection changed during cleanup`: the node cleanup independently rebuilt the
+same fully verified rejection but still compared its fresh full-inspection digest with the original
+historical digest. The next repair applies the same rule at that second boundary: preserve the
+historical digest, freshly revalidate the complete OCI/process projection, and compare every
+security-relevant rejection field while excluding only the newly observed raw digest. A changed
+configuration or start/finish timestamp remains rejected in regression tests.
 
 ## Focused verification
 
