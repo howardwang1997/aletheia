@@ -36,12 +36,15 @@ configuration, and the previously hidden TypeScript/React findings are fixed rat
 
 The Conda environment now also carries explicit patched-version floors for the direct and
 transitive packages reported by `pip-audit`, including cryptography, MCP, Starlette,
-python-multipart, Pillow, Torch and their HTTP/runtime dependencies. A resolved environment must
-pass both `pip check` and `pip-audit --local`; lowering those floors is not an ARL-1-compatible
-deployment change. Every direct Python-base OCI source now upgrades to the audited pip/setuptools
-floor before installing anything; qualification, legacy-evaluation and sandbox sources also carry
-the patched cryptography, pydantic-settings and Torch floors. A static regression gate prevents the
-audited vulnerable pins from returning.
+python-multipart, Pillow, Transformers, Torch and their HTTP/runtime dependencies. A resolved
+environment must pass both `pip check` and `pip-audit --local`; lowering those floors is not an
+ARL-1-compatible deployment change. On 2026-09-03 the audit newly classified Transformers versions
+below 5.10.0 as vulnerable to CVE-2026-9856. The nominal 5.10.0 fix release is yanked on PyPI, so
+the environment instead retains the verified non-yanked `transformers>=5.10.4,<6` floor. Every
+direct Python-base OCI source now upgrades to the audited pip/setuptools floor before installing
+anything; qualification, legacy-evaluation and sandbox sources also carry the patched
+cryptography, pydantic-settings and Torch floors. A static regression gate prevents the audited
+vulnerable pins from returning.
 
 The live Research Kernel CAS and F9-v2 campaign archive now support one closed shared-custody
 layout for UID-separated services: only the designated writer owns a `0750` tree, every published

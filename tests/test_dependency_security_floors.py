@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 VULNERABLE_DEPLOYMENT_PINS = (
     "cryptography==48.0.0",
     "pydantic-settings==2.14.1",
+    "transformers==5.9.0",
     "torch==2.12.0",
 )
 
@@ -24,6 +25,7 @@ def test_python_environment_retains_audited_security_floors() -> None:
         "starlette>=1.3.1",
         "python-multipart>=0.0.31",
         "pydantic-settings>=2.14.2",
+        "transformers>=5.10.4,<6",
         "torch>=2.13.0",
         "h2>=4.4.1",
         "tornado>=6.5.7",
