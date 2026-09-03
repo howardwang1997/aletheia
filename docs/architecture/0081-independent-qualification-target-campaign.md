@@ -32,16 +32,21 @@ certify its own host would collapse the authority boundary.
    covering the greater of the ordinary heartbeat interval and the complete signed launch window.
    The ordinary heartbeat protocol takes over after launch and may extend, but never shorten, that
    retained lease.
-5. The outbox is stopped before the selected attempt becomes terminal. The node process is killed,
+5. Before campaign mutation, the pinned systemd boundary must reject every live sibling
+   `aletheia-qualification-*` or `aletheia-arl1-*` service outside the request's exact five units.
+   The same check surrounds activation and installed-manifest observation and is repeated when a
+   completed receipt is revalidated. It has no stop/disable authority: older generations must be
+   explicitly retired or the campaign must move to a fresh disposable target.
+6. The outbox is stopped before the selected attempt becomes terminal. The node process is killed,
    one immutable successful v2 terminal row must commit, the outbox is restarted to publish a
    canonical spool envelope, then its process is killed and the same inode/bytes must survive.
-6. Quota and watchdog processes are independently killed after a real loop/ext4 generation and
+7. Quota and watchdog processes are independently killed after a real loop/ext4 generation and
    must replay the same root-service receipt. A real node peer transaction is terminated by the
    separate admin backend and must lose its connection and advisory lock before peer reconnect.
-7. The campaign journal is append-only and crash-replayable. It retains the full post-kill signed
+8. The campaign journal is append-only and crash-replayable. It retains the full post-kill signed
    observation beside a mechanically recomputable preflight; a final verdict is derived only after
    that evidence and fresh DB/spool revalidation.
-8. Success grants deployment qualification for that exact evidence chain only. It never grants
+9. Success grants deployment qualification for that exact evidence chain only. It never grants
    scientific observation admission.
 
 ## Consequences

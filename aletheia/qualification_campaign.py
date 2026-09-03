@@ -72,6 +72,7 @@ _MAX_JOURNAL_BYTES = 64 * 1024 * 1024
 _MAX_CHILD_BYTES = 4 * 1024 * 1024
 _OPT_IN_CONFIRMATION = "RUN_QUALIFICATION_TARGET_CAMPAIGN"
 _ADMIN_DATABASE_URL_ENV = "ALETHEIA_QUALIFICATION_ADMIN_DATABASE_URL"
+_QUALIFICATION_SERVICE_PREFIXES = ("aletheia-qualification-", "aletheia-arl1-")
 
 # Keep this statement executable by PostgreSQL itself, not only by SQLite-backed
 # test doubles.  AUTHORIZATION is a reserved PostgreSQL keyword and therefore
@@ -127,6 +128,37 @@ _TRANSIENT_ROOT_SERVICE_FAILURES = frozenset(
         ("OCIWatchdogError", "independent watchdog service is unavailable"),
     }
 )
+
+
+def _live_qualification_service_names(systemctl_output: str) -> tuple[str, ...]:
+    """Parse the closed service projection used to exclude live sibling generations."""
+
+    seen: set[str] = set()
+    live: set[str] = set()
+    for raw_line in systemctl_output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        fields = line.split(maxsplit=5)
+        if fields[0] == "●":
+            fields = fields[1:]
+        if len(fields) < 4:
+            raise QualificationCampaignError("systemd service output is ambiguous")
+        unit_name, load_state, active_state, _sub_state = fields[:4]
+        if not unit_name.startswith(_QUALIFICATION_SERVICE_PREFIXES):
+            continue
+        if (
+            load_state != "loaded"
+            or re.fullmatch(r"[a-z0-9_.@-]+[.]service", unit_name) is None
+            or unit_name in seen
+        ):
+            raise QualificationCampaignError(
+                "systemd qualification-service projection is ambiguous"
+            )
+        seen.add(unit_name)
+        if active_state not in {"inactive", "failed"}:
+            live.add(unit_name)
+    return tuple(sorted(live))
 
 
 class QualificationCampaignExecutionExpectationV1(ExecutionModel):
@@ -1043,6 +1075,7 @@ class LinuxQualificationTargetCampaignHost:
         if pid_one != "systemd" or not Path("/sys/fs/cgroup/cgroup.controllers").is_file():
             raise QualificationCampaignError("target is not real systemd/cgroup-v2 Linux")
         self._admin_database_url()
+        self._assert_no_live_sibling_qualification_services()
 
     @contextmanager
     def lock(self) -> Iterator[None]:
@@ -1361,7 +1394,30 @@ class LinuxQualificationTargetCampaignHost:
             self.spec.outbox_unit_name,
         )
 
+    def _assert_no_live_sibling_qualification_services(self) -> None:
+        output = self._systemctl(
+            "list-units",
+            "--all",
+            "--type=service",
+            "--plain",
+            "--no-legend",
+            "--no-pager",
+            "--full",
+        )
+        expected = frozenset(self._unit_names_in_start_order())
+        unexpected = tuple(
+            name
+            for name in _live_qualification_service_names(output)
+            if name not in expected
+        )
+        if unexpected:
+            raise QualificationCampaignError(
+                "live sibling qualification services must be retired before the campaign: "
+                + ",".join(unexpected)
+            )
+
     def activate_services(self) -> QualificationSystemdActivationReceiptV1:
+        self._assert_no_live_sibling_qualification_services()
         for unit in self._unit_names_in_start_order():
             self._systemctl("enable", unit)
             self._systemctl("start", unit)
@@ -1391,6 +1447,7 @@ class LinuxQualificationTargetCampaignHost:
                 raise QualificationCampaignError(f"service did not remain running: {unit}")
             else:
                 main_pids.append((unit, pid))
+        self._assert_no_live_sibling_qualification_services()
         return QualificationSystemdActivationReceiptV1(
             unit_names=tuple(sorted(self._unit_names_in_start_order())),
             main_pids=tuple(sorted(main_pids)),
@@ -1398,11 +1455,14 @@ class LinuxQualificationTargetCampaignHost:
         )
 
     def freeze_installed_manifest(self) -> QualificationInstalledDeploymentManifestV1:
-        return freeze_installed_manifest(
+        self._assert_no_live_sibling_qualification_services()
+        manifest = freeze_installed_manifest(
             self.spec,
             self._observer,
             self.request.observer_config.observer_pin,
         )
+        self._assert_no_live_sibling_qualification_services()
+        return manifest
 
     def _admin_database_url(self) -> str:
         value = os.environ.get(_ADMIN_DATABASE_URL_ENV, "")
@@ -2404,6 +2464,7 @@ class LinuxQualificationTargetCampaignHost:
     def revalidate_completed(self, receipt: QualificationTargetCampaignReceiptV1) -> None:
         request = self.request
         verify_qualification_target_campaign_receipt(request, receipt)
+        self._assert_no_live_sibling_qualification_services()
         for unit in self._unit_names_in_start_order():
             state = self._show(unit, "LoadState", "ActiveState", "SubState", "UnitFileState")
             expected_substate = "exited" if unit == self.spec.workspace_unit_name else "running"
@@ -2416,6 +2477,7 @@ class LinuxQualificationTargetCampaignHost:
                 raise QualificationCampaignError(f"completed campaign service drifted: {unit}")
         self._revalidate_terminal(receipt.terminal_campaign)
         current = self.reobserve(receipt.installed_manifest)
+        self._assert_no_live_sibling_qualification_services()
         if (
             current.preflight.installed_manifest_sha256
             != receipt.installed_manifest.manifest_sha256

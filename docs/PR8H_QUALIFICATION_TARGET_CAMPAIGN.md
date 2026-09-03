@@ -629,6 +629,19 @@ budget, an explicit bounded initial-assignment window, a short runtime heartbeat
 authorization whose complete configured window is retained by the lease, and the exact
 1,800-second workload. The complete campaign must then run—not more controller authority.
 
+A read-only target reinspection at `2026-09-03T08:16:03Z` also found qualification services from
+generations `20260901c`, `20260901d` and `20260903g` still active. The generation-c and
+generation-d node units had accumulated 17,286 and 14,270 restarts respectively, while the
+generation-g node had restarted once. Those sibling workers are background execution and I/O
+authority, not inert retained evidence. The concrete campaign host now enumerates all systemd
+services through the pinned `systemctl` executable and fails before campaign mutation if any live
+`aletheia-qualification-*` or `aletheia-arl1-*` service outside the request's exact five units is
+active, activating, reloading or deactivating. It repeats that check around activation,
+installed-manifest observation and completed receipt revalidation. The check only rejects; it
+never stops or disables a unit. Generation h
+therefore requires either exact reviewed retirement of every older active generation or a fresh
+disposable target before its request is frozen.
+
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the
 [PR-8b installer guide](PR8B_DISABLED_QUALIFICATION_INSTALLER.md).
