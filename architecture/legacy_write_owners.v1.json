@@ -87,8 +87,8 @@
     "service_mutator_call_graph_sha256": "13e491fdfcf7637e3ee2652a465eb9e119126e1360f379985cf628bf38138f5f",
     "service_boundary_limit": "This mechanically freezes statically declared aletheia.memory.service imports and imported-name uses across aletheia and operational scripts in module and nested lexical scopes. It does not claim to discover arbitrary dynamic imports or direct ORM, SQL, filesystem or external-system mutations; those are handled by separate reviewed surface baselines.",
     "writer_surface_usage_scheme": "ast_all_scope_import_alias_instance_scope_v2",
-    "writer_surface_usage_count": 377,
-    "writer_surface_call_graph_sha256": "e96f834a1777bd3f63446cea6bbd77f72ec86ac40e76e059929e52f8ff04b60f",
+    "writer_surface_usage_count": 378,
+    "writer_surface_call_graph_sha256": "fd0db8bb48bacf58eaefb6e0e315356d65410db4531c51796a3542c1ea1ec7e2",
     "allowed_legacy_caller_scope": "Every current aletheia-package caller must be covered by allowed_legacy_callers. Operational scripts are fully frozen in call_sites and may be omitted from the post-cutover application allowlist.",
     "shared_generic_writer_implementations": {
       "aletheia.observations.store._append_exact": {
@@ -3267,6 +3267,10 @@
           "symbol": "QualificationExecutionWorker._settle"
         },
         {
+          "module": "aletheia.execution.postgresql_node_adapter",
+          "symbol": "QualificationExecutionWorker.tick"
+        },
+        {
           "module": "aletheia.observations.execution_registration",
           "symbol": "PostgreSQLAtomicScientificExecutionRegistrar.register_and_reserve"
         },
@@ -3443,6 +3447,10 @@
         {
           "module": "aletheia.execution.postgresql_node_adapter",
           "symbol": "QualificationExecutionWorker._settle"
+        },
+        {
+          "module": "aletheia.execution.postgresql_node_adapter",
+          "symbol": "QualificationExecutionWorker.tick"
         },
         {
           "module": "aletheia.observations.execution_registration",

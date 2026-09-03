@@ -31,7 +31,9 @@ certify its own host would collapse the authority boundary.
    the first exact runtime launch authorization contracts it atomically to a bounded launch lease
    covering the greater of the ordinary heartbeat interval and the complete signed launch window.
    The ordinary heartbeat protocol takes over after launch and may extend, but never shorten, that
-   retained lease.
+   retained lease. Before every node tick, database-clock expiry is persisted only for that
+   worker's exact deployment-pinned and registered `(node_id, node_manifest_sha256)`; the worker
+   cannot run the allocator's unscoped maintenance sweep over sibling nodes.
 5. Before campaign mutation, the pinned systemd boundary must reject every live sibling
    `aletheia-qualification-*` or `aletheia-arl1-*` service outside the request's exact five units.
    The same check surrounds activation and installed-manifest observation and is repeated when a

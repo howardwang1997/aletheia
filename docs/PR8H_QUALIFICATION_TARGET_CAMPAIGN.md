@@ -496,6 +496,19 @@ their own signed authorization. PostgreSQL regressions cover the initial contrac
 that remains valid after crossing the shorter heartbeat interval, and a delayed replay that must
 renew a complete replacement window.
 
+The same retained evidence exposed a separate production-composition omission. The allocator had
+an atomic database-clock `reconcile_expired()` transition, but only tests called it; the polling
+worker could therefore report a node-local reconciliation outcome forever while the central row
+remained `starting`. Each worker tick now invokes that transition with its exact configured
+`(node_id, node_manifest_sha256)` before terminal adjudication, settlement or assignment polling.
+The allocator checks both deployment pins and the registered node identity, filters candidates by
+node, and rechecks the locked attempt before mutation. It retains resource and budget holds and
+does not release, retry or create scientific authority. A real PostgreSQL regression reproduces
+the generation-g shape—committed launch authorization, no runtime identity or launch receipt, and
+cleanup unable to prove absence—and requires central `starting@v2 ->
+reconciliation_required@v3` plus the unchanged local diagnostic. The historical generation-g row
+has not been edited; it remains evidence produced by the older frozen release.
+
 ## Destructive campaign and evidence order
 
 The request embeds the complete observer config and one already-committed
@@ -622,10 +635,11 @@ journal requires reconciliation, but the database has not persisted that transit
 exact container started before ticket expiry, that attempt must not be relabelled as never-started
 or passed through the attempt-scoped pre-runtime cleanup protocol.
 
-The next ordered operation is to merge and freeze the complete-launch-window repair. Preserve the
-generation-g request, database, journal and backing evidence, then decommission only its exact
-generation-scoped units, exited container and mounts after read-only identity checks; this is
-failed-deployment retirement, not an allocator state rewrite. The new dependency security floor
+The next ordered operation is to merge and freeze the complete-launch-window and node-scoped
+expiry-reconciliation repairs. Preserve the generation-g request, database, journal and backing
+evidence, then decommission only its exact generation-scoped units, exited container and mounts
+after read-only identity checks; this is failed-deployment retirement, not an allocator state
+rewrite. The new dependency security floor
 also forbids reuse of generation g's reviewed Python runtime: prepare and rehash a fresh runtime
 that resolves non-yanked `transformers>=5.10.4,<6` and passes both `pip check` and
 `pip-audit --local` before freezing the deployment request. A fresh superseding generation must use

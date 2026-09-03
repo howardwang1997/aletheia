@@ -24,6 +24,11 @@ from aletheia.execution.allocator import (
     LocalPricingAuthorityPin,
     PostgreSQLExecutionAllocator,
 )
+from aletheia.execution.assignment_contracts import (
+    NodeAssignmentTransportPin,
+    node_transport_key_id,
+    x25519_public_key_hex,
+)
 from aletheia.execution.node_agent import (
     NodeLocalStateStore,
     NodeRunOutcome,
@@ -625,6 +630,79 @@ def test_node_resubmits_local_receipt_through_expired_lease_reconciliation(
         assert resource.state == "held"
         assert reservation.state == "held"
         assert event_types == ("reserved", "reconciliation_required", "adopted")
+
+
+def test_expiry_reconciliation_scope_cannot_mutate_another_pinned_node(
+    monkeypatch, tmp_path
+) -> None:
+    prepared, allocator, _adapter, _agent, _runtime, _state, claim = _running_v2(
+        monkeypatch,
+        tmp_path,
+        start=False,
+    )
+    secondary_manifest = prepared.manifest.model_copy(
+        update={
+            "node_id": "node.expiry-scope-secondary",
+            "principal_id": "principal:expiry-scope-secondary",
+        }
+    )
+    secondary_authority = _worker_authority(
+        secondary_manifest,
+        observed_at=prepared.observed_at,
+    )
+    secondary_transport_private_key = bytes.fromhex("93" * 32)
+    secondary_transport_public_key = x25519_public_key_hex(
+        secondary_transport_private_key
+    )
+    secondary_transport = NodeAssignmentTransportPin(
+        node_id=secondary_manifest.node_id,
+        node_manifest_sha256=secondary_manifest.manifest_sha256,
+        transport_policy_sha256=_digest("expiry-scope-secondary-transport-policy"),
+        transport_principal_id="principal:expiry-scope-secondary-transport",
+        transport_key_id=node_transport_key_id(secondary_transport_public_key),
+        public_key_x25519_hex=secondary_transport_public_key,
+        valid_from=prepared.observed_at - timedelta(days=1),
+        expires_at=prepared.observed_at + timedelta(days=1),
+    )
+    scoped_allocator = PostgreSQLExecutionAllocator(
+        authority=allocator._authority,  # noqa: SLF001
+        artifact_resolver=allocator._artifact_resolver,  # noqa: SLF001
+        execution_authority_resolver=allocator._execution_authority_resolver,  # noqa: SLF001
+        pricing_authority=allocator._pricing_authority,  # noqa: SLF001
+        node_authorities=(
+            *allocator._node_authorities.values(),  # noqa: SLF001
+            secondary_authority,
+        ),
+        node_assignment_transport_pins=(
+            *allocator._node_assignment_transport_pins.values(),  # noqa: SLF001
+            secondary_transport,
+        ),
+        terminal_verification_authority=allocator._terminal_verification_authority,  # noqa: SLF001
+        allocator_principal_id=allocator._allocator_principal_id,  # noqa: SLF001
+        runtime_control_issuer=allocator._runtime_control_issuer,  # noqa: SLF001
+        artifact_submission_grace_seconds=3600,
+    )
+    scoped_allocator.register_node(secondary_manifest.node_id)
+    late = claim.snapshot.lease_expires_at
+    monkeypatch.setattr(allocator_module, "_database_time", lambda _session: late)
+
+    foreign_result = scoped_allocator.reconcile_expired(
+        node_id=secondary_manifest.node_id,
+        node_manifest_sha256=secondary_manifest.manifest_sha256,
+    )
+
+    assert foreign_result == ()
+    untouched = allocator.load_attempt(claim.snapshot.attempt_id)
+    assert untouched is not None and untouched.status == "reserved"
+
+    owner_result = scoped_allocator.reconcile_expired(
+        node_id=prepared.manifest.node_id,
+        node_manifest_sha256=prepared.manifest.manifest_sha256,
+    )
+
+    assert len(owner_result) == 1
+    assert owner_result[0].attempt_id == claim.snapshot.attempt_id
+    assert owner_result[0].status == "reconciliation_required"
 
 
 def test_adopted_runtime_can_commit_terminal_under_rotated_fence(monkeypatch, tmp_path) -> None:

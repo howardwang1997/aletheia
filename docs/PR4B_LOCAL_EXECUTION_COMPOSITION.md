@@ -31,7 +31,7 @@ PostgreSQL-role, and clock configuration has passed the opt-in production campai
 |---|---|---|
 | Pricing and source budget | `ExactExecutionCostQuoteRegistry`, `SourceBudgetProjectionRegistry`, and `CompositeExecutionAuthorityResolver` | Read-only, detached-Ed25519-verified, deployment-pinned files. There is deliberately no application signing/publishing API; provisioning and key custody remain deployment work. |
 | Assignment delivery | `SealedQualificationAssignment` plus `PostgreSQLNodeAllocatorAdapter` | One X25519/AEAD envelope per attempt. Initial delivery decrypts directly into node-local token custody; public DTOs and historical delivery never reveal the raw lease token. |
-| Allocator/agent bridge | `PostgreSQLNodeAllocatorAdapter` and `QualificationExecutionWorker` | Uses only public allocator DTOs, translates exact proof-rejection codes, settles an authenticated collected/pending terminal acceptance or adjudicates its signed deadline expiration, and atomically creates the terminal outbox row. It does not publish that outbox row or schedule worker ticks. |
+| Allocator/agent bridge | `PostgreSQLNodeAllocatorAdapter` and `QualificationExecutionWorker` | Uses only public allocator DTOs, translates exact proof-rejection codes, first persists DB-clock expiry within the worker's exact pinned node scope, settles an authenticated collected/pending terminal acceptance or adjudicates its signed deadline expiration, and atomically creates the terminal outbox row. It does not publish that outbox row or schedule worker ticks. |
 | Input staging | `LocalCASInputMaterializer` | Freshly reopens verified CAS custody, streams and rehashes every declared input, publishes a sealed `0500` exact tree, and emits a typed materialization receipt. It does not fetch remote or network inputs. |
 | Output quota | `LoopbackOutputQuotaProvisioningService` and `LoopbackOutputQuotaProvisionerClient` | A narrow root/systemd service provisions one crash-replayable ext4 loop filesystem before input materialization. The minimum requested size is 16 MiB; the exact sector-aligned block capacity is no larger than the request and is bound by `OutputQuotaProvisioningReceipt`. That receipt is trusted-local evidence emitted by the privileged root service, not independent remote attestation. There is no sparse-directory or best-effort quota fallback. |
 | Runtime and launch gate | `LocalQualificationOCIRuntime`, `ImmutableOCIImageLaunchGateVerifier`, and `aletheia.execution.qualification_launch_gate` | Digest-pinned Docker image/layout, direct exec, exact workload digest/argv, read-only root, network none, dropped capabilities, no-new-privileges, pinned seccomp/AppArmor, private cgroup namespace, exact CPU/memory/pids limits, read-only inputs, and the quota mount as the only writable workload mount. This PR-4b cut rejects every accelerator/device launch before engine mutation. |
@@ -93,7 +93,7 @@ The composed happy path is:
 signed qualification + exact registries + fresh inventory
   -> atomic reservation + one sealed assignment
   -> output quota provision -> input materialization -> inert runtime preparation
-  -> short DB-clock launch authorization
+  -> bounded DB-clock launch authorization and retained complete launch window
   -> watchdog arm + in-container launch-gate verification
   -> Docker create/start + node launch receipt + allocator start acceptance
   -> running/heartbeat
@@ -110,6 +110,15 @@ linearizes exact concurrent retries and crossed identity conflicts before Postgr
 primary-key and replicate-slot unique indexes; one caller may mint the raw lease token, while every
 exact follower reloads only committed hashed/sealed custody. The database clock is sampled after
 the wait, so contention cannot carry an expired authority window into a reservation.
+
+Before each production node tick polls recovery or new work, the concrete worker asks the allocator
+to retain expired attempts using the database clock and the exact configured
+`(node_id, node_manifest_sha256)`. Both deployment pins and the registered node row must match, the
+candidate query is node-filtered, and the locked attempt is rechecked against that node before any
+hold changes. The unscoped sweep remains an explicit allocator-maintenance surface; a node worker
+never uses it. This makes central `reconciliation_required` durable even when a launch gap cannot
+produce a runtime identity, launch receipt, or signed absence proof, without giving one generation
+authority over sibling nodes in a shared database.
 
 The required crash protocol gives each irreversible local step a durable
 intent/pending/completed record. A conforming replay must return the same bytes or fail closed; it

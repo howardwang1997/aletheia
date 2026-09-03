@@ -140,6 +140,15 @@ class QualificationExecutionWorker:
         self._node_manifest_sha256 = node_manifest_sha256
 
     def tick(self) -> NodeRunResult:
+        try:
+            self._allocator.reconcile_expired(
+                node_id=self._node_id,
+                node_manifest_sha256=self._node_manifest_sha256,
+            )
+        except (AdmissionConflict, LeaseAuthorityError) as exc:
+            raise RuntimeRejected(
+                "allocator rejected node-scoped expiry reconciliation"
+            ) from exc
         self._adjudicate_expired_terminal()
         try:
             pending = self._allocator.pull_pending_qualification_terminal_settlement(

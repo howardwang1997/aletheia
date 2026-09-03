@@ -7258,25 +7258,63 @@ class PostgreSQLExecutionAllocator:
                 snapshot=self._snapshot(session, attempt), replayed=False
             )
 
-    def reconcile_expired(self, *, limit: int = 100) -> tuple[ReservationSnapshot, ...]:
+    def reconcile_expired(
+        self,
+        *,
+        limit: int = 100,
+        node_id: str | None = None,
+        node_manifest_sha256: str | None = None,
+    ) -> tuple[ReservationSnapshot, ...]:
+        """Retain expired attempts, optionally within one exact pinned node scope.
+
+        The unscoped form remains available for an explicit allocator maintenance sweep.  A
+        node-resident production worker must supply both scope values so sharing a database with
+        another enrolled node cannot give it authority to mutate that node's attempts.
+        """
+
         if limit < 1 or limit > 10_000:
             raise ValueError("expiry reconciliation limit is outside 1..10000")
+        if (node_id is None) != (node_manifest_sha256 is None):
+            raise ValueError("expiry reconciliation node scope must be complete")
+        scoped_node_id: str | None = None
+        if node_id is not None:
+            transport_pin = self._node_assignment_transport_pins.get(node_id)
+            node_authority = self._node_authorities.get(node_id)
+            if (
+                transport_pin is None
+                or node_authority is None
+                or transport_pin.node_manifest_sha256 != node_manifest_sha256
+                or node_authority.manifest.manifest_sha256 != node_manifest_sha256
+            ):
+                raise AdmissionConflict(
+                    "expiry reconciliation differs from deployment-pinned node identity"
+                )
+            scoped_node_id = node_id
         with self._sessions() as session:
+            if scoped_node_id is not None:
+                node = session.get(_ExecutionNodeRecord, scoped_node_id)
+                if node is None or node.node_manifest_sha256 != node_manifest_sha256:
+                    raise AdmissionConflict(
+                        "expiry reconciliation differs from registered node identity"
+                    )
             now = _database_time(session)
+            filters = [
+                _ExecutionAttemptRecord.status.in_(
+                    ACTIVE_ATTEMPT_STATES - {"reconciliation_required"}
+                ),
+                _ExecutionAttemptRecord.accepted_runtime_termination_sha256.is_(None),
+                _ExecutionAttemptRecord.accepted_terminal_submission_sha256.is_(None),
+                (
+                    (_ExecutionAttemptRecord.lease_expires_at <= now)
+                    | (_ExecutionAttemptRecord.hard_deadline <= now)
+                ),
+            ]
+            if scoped_node_id is not None:
+                filters.append(_ExecutionAttemptRecord.node_id == scoped_node_id)
             attempt_ids = tuple(
                 session.execute(
                     select(_ExecutionAttemptRecord.attempt_id)
-                    .where(
-                        _ExecutionAttemptRecord.status.in_(
-                            ACTIVE_ATTEMPT_STATES - {"reconciliation_required"}
-                        ),
-                        _ExecutionAttemptRecord.accepted_runtime_termination_sha256.is_(None),
-                        _ExecutionAttemptRecord.accepted_terminal_submission_sha256.is_(None),
-                        (
-                            (_ExecutionAttemptRecord.lease_expires_at <= now)
-                            | (_ExecutionAttemptRecord.hard_deadline <= now)
-                        ),
-                    )
+                    .where(*filters)
                     .order_by(
                         _ExecutionAttemptRecord.lease_expires_at,
                         _ExecutionAttemptRecord.attempt_id,
@@ -7286,17 +7324,27 @@ class PostgreSQLExecutionAllocator:
             )
         snapshots: list[ReservationSnapshot] = []
         for attempt_id in attempt_ids:
-            snapshot = self._reconcile_expired_attempt(attempt_id)
+            snapshot = self._reconcile_expired_attempt(
+                attempt_id,
+                expected_node_id=scoped_node_id,
+            )
             if snapshot is not None:
                 snapshots.append(snapshot)
         return tuple(snapshots)
 
-    def _reconcile_expired_attempt(self, attempt_id: str) -> ReservationSnapshot | None:
+    def _reconcile_expired_attempt(
+        self,
+        attempt_id: str,
+        *,
+        expected_node_id: str | None = None,
+    ) -> ReservationSnapshot | None:
         with self._sessions() as session, session.begin():
             try:
                 _head, attempt = self._lock_execution_attempt(session, attempt_id)
             except LeaseAuthorityError:
                 return None
+            if expected_node_id is not None and attempt.node_id != expected_node_id:
+                raise LeaseAuthorityError("expired attempt moved outside its node scope")
             now = _database_time(session)
             if attempt.status == "reconciliation_required":
                 return self._snapshot(session, attempt)
