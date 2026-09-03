@@ -3956,28 +3956,39 @@ class PostgreSQLExecutionAllocator:
             # Registration may deliberately reserve enough time for a bounded external
             # campaign to render, review and apply its frozen plan before this node starts.
             # Possession of the exact lease token at this serialization point converts that
-            # pre-launch window into the ordinary short heartbeat window.  Updating both rows
-            # in the same transaction preserves the deferred attempt/resource authority guard.
+            # pre-launch window into a bounded launch lease.  It must cover both the ordinary
+            # heartbeat interval and the complete signed launch-authorization window: Docker
+            # create/start plus the in-container gate happen before the first running heartbeat.
+            # Contracting directly to a shorter heartbeat can therefore expire a valid gate in
+            # the middle of its frozen OCI/workload verification.  Updating both rows in the
+            # same transaction preserves the deferred attempt/resource authority guard.
+            runtime_pin = issuer.authority_pin
+            launch_window_expires_at = now + timedelta(
+                seconds=self._max_runtime_launch_authorization_seconds
+            )
+            if launch_window_expires_at > min(
+                attempt.hard_deadline,
+                runtime_pin.active_until,
+            ):
+                raise LeaseAuthorityError(
+                    "runtime-control authority cannot cover the complete launch window"
+                )
             heartbeat_lease_expires_at = min(
                 now + self._heartbeat_extension,
                 attempt.hard_deadline,
             )
+            bounded_launch_lease_expires_at = max(
+                heartbeat_lease_expires_at,
+                launch_window_expires_at,
+            )
             runtime_lease_expires_at = (
-                heartbeat_lease_expires_at
+                bounded_launch_lease_expires_at
                 if attempt.status == "reserved"
-                else max(attempt.lease_expires_at, heartbeat_lease_expires_at)
+                else max(attempt.lease_expires_at, bounded_launch_lease_expires_at)
             )
             if runtime_lease_expires_at <= now:
-                raise LeaseAuthorityError("runtime heartbeat window is empty")
-            runtime_pin = issuer.authority_pin
-            expires_at = min(
-                now + timedelta(seconds=self._max_runtime_launch_authorization_seconds),
-                runtime_lease_expires_at,
-                attempt.hard_deadline,
-                runtime_pin.active_until,
-            )
-            if expires_at <= now:
-                raise LeaseAuthorityError("runtime-control launch window is empty")
+                raise LeaseAuthorityError("runtime launch lease window is empty")
+            expires_at = launch_window_expires_at
             try:
                 authorization = issuer.issue_launch_authorization(
                     authorization_request=authorization_request,
@@ -4306,7 +4317,7 @@ class PostgreSQLExecutionAllocator:
             if attempt.node_runtime_launch_receipt_sha256 is not None:
                 raise LeaseAuthorityError("a launched runtime cannot use pre-runtime absence")
             locked_holds = self._lock_runtime_holds(session, attempt)
-            _budget_head, node, _device_heads, _resource, _devices, _reservation = locked_holds
+            _budget_head, node, _device_heads, resource, _devices, _reservation = locked_holds
             now = _database_time(session)
             embedded_cleanup_recovery = receipt.cleanup_recovery_authority
             cleanup_recovery_authority = None
@@ -4500,6 +4511,7 @@ class PostgreSQLExecutionAllocator:
                 raise LeaseAuthorityError("pre-runtime absence epoch is not the next durable value")
 
             replacement_authorization = None
+            replacement_lease_expires_at = None
             disposition = "released"
             replacement_authorization_sha256 = None
             if replacement_request is not None:
@@ -4523,24 +4535,32 @@ class PostgreSQLExecutionAllocator:
                         "replacement launch request differs from fresh absence proof"
                     )
                 runtime_pin = issuer.authority_pin
-                expires_at = min(
-                    now + timedelta(seconds=self._max_runtime_launch_authorization_seconds),
-                    attempt.lease_expires_at,
+                launch_window_expires_at = now + timedelta(
+                    seconds=self._max_runtime_launch_authorization_seconds
+                )
+                if launch_window_expires_at > min(
                     attempt.hard_deadline,
                     runtime_pin.active_until,
+                ):
+                    raise LeaseAuthorityError(
+                        "runtime-control authority cannot cover the complete replacement "
+                        "launch window"
+                    )
+                replacement_lease_expires_at = max(
+                    attempt.lease_expires_at,
+                    min(now + self._heartbeat_extension, attempt.hard_deadline),
+                    launch_window_expires_at,
                 )
-                if expires_at <= now:
-                    raise LeaseAuthorityError("replacement runtime launch window is empty")
                 try:
                     replacement_authorization = issuer.issue_launch_authorization(
                         authorization_request=replacement_request,
                         preparation=preparation,
                         admission_sha256=attempt.admission_sha256,
                         qualification_grant_sha256=attempt.grant_sha256,
-                        lease_expires_at=attempt.lease_expires_at,
+                        lease_expires_at=replacement_lease_expires_at,
                         hard_deadline=attempt.hard_deadline,
                         issued_at=now,
-                        expires_at=expires_at,
+                        expires_at=launch_window_expires_at,
                         max_launch_delay_ns=(
                             self._max_runtime_launch_authorization_seconds * 1_000_000_000
                         ),
@@ -4651,10 +4671,15 @@ class PostgreSQLExecutionAllocator:
             attempt.pre_runtime_absence_count = absence_epoch
             attempt.latest_pre_runtime_absence_receipt_sha256 = receipt.absence_receipt_sha256
             if replacement_authorization is not None:
+                assert replacement_lease_expires_at is not None
                 attempt.runtime_launch_authorization_count += 1
                 attempt.latest_runtime_launch_authorization_sha256 = (
                     replacement_authorization.authorization_sha256
                 )
+                attempt.heartbeat_at = now
+                attempt.lease_expires_at = replacement_lease_expires_at
+                resource.heartbeat_at = now
+                resource.lease_expires_at = replacement_lease_expires_at
                 attempt.status = "starting"
             else:
                 budget_head, node, device_heads, resource, devices, reservation = locked_holds

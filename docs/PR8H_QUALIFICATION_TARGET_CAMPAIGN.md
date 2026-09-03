@@ -458,6 +458,37 @@ node cleanup replay, again before container removal or database release. A secon
 stable-semantics follow-up must merge and target-replay under another non-reused key. See
 [PR-8j attempt-scoped cleanup recovery](PR8J_ATTEMPT_SCOPED_PRE_RUNTIME_CLEANUP.md).
 
+Generation `20260903g`, frozen from merge commit
+`7ff28514e84a756d75004aa8d1a545091b12df87`, incorporated that node-side stable-replay repair and
+reached a new target-only launch-timing boundary. Its campaign request and plan had SHA-256
+`40c88ab645ce5de70cfa05023521ca661a1888afeca88c9f814078536f235e69` and
+`f4f1ce0263b3761b911a004c0cd562b4`. Execution
+`exe_54abfd9a789cc368b0602970bb8b51e4` and attempt
+`iat_88dec31d6385eca0b653421404233ff7` retained only campaign activation; the apply process never
+observed the attempt as running and wrote no installed-manifest or destructive-fault phase.
+
+The exact Docker start was submitted at `2026-09-03T02:49:04.267261Z`, and container
+`49120073870a3421a052b711168277a32cfef01faa53d3e0fa57192f1bf3b95e` began at
+`02:49:04.459057638Z`. The runtime ticket expired at `02:49:05.775710Z`; after rehashing the frozen
+launch configuration and workload, the gate exited `126` at `02:49:05.892104134Z`, before the
+node could publish `engine-launch.json`. The exact output tree is empty, but the entrypoint began
+before ticket expiry, so the existing narrow expired-before-start proof correctly refuses to call
+this a never-started workload. The attempt remains `reconciliation_required`, with no runtime
+identity, launch receipt or scientifically admissible output. This is negative engineering
+evidence, not a campaign receipt.
+
+The allocator defect was an internally inconsistent window. The deployment selected a 30-second
+maximum launch delay, but first authorization contracted the attempt/resource lease to the
+15-second heartbeat interval and then truncated the signed ticket to that lease. Docker
+create/start consumed almost that entire interval, leaving the in-container verifier about 1.3
+seconds. First and replacement launch authorization now require the hard deadline and
+runtime-control pin to cover the complete configured launch window, keep both attempt and resource
+leases live for at least the greater of that window and the heartbeat extension, and issue the
+ticket for the full window. The first post-launch heartbeat may contract future liveness again;
+pre-launch Docker and gate work can no longer be assigned a lease shorter than their own signed
+authorization. PostgreSQL regressions cover both the initial contraction and a delayed replay that
+must renew a complete replacement window.
+
 ## Destructive campaign and evidence order
 
 The request embeds the complete observer config and one already-committed
@@ -530,7 +561,8 @@ The dedicated qualification registration service must also freeze an explicit
 `initial_assignment_lease_seconds` that covers registration through deterministic campaign apply
 startup, while remaining inside the signed execution hard deadline. This is not the node heartbeat
 interval: the node service retains its short `heartbeat_extension_seconds`, and revision `0031`
-contracts to that value when it issues the first runtime launch authorization.
+contracts the long reservation to a bounded launch lease covering the greater of that heartbeat
+extension and the complete signed launch-authorization window.
 
 ```console
 sudo /opt/aletheia/python/bin/python -S -s -P \
