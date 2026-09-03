@@ -620,10 +620,13 @@ pre-runtime cleanup protocol.
 The next ordered operation is to merge and freeze the complete-launch-window repair. Preserve the
 generation-g request, database, journal and backing evidence, then decommission only its exact
 generation-scoped units, exited container and mounts after read-only identity checks; this is
-failed-deployment retirement, not an allocator state rewrite. A fresh superseding generation must
-use a fresh database and non-reused authority identities, the already-proven five-minute
-observation budget, an explicit bounded initial-assignment window, a short runtime heartbeat, a
-launch authorization whose complete configured window is retained by the lease, and the exact
+failed-deployment retirement, not an allocator state rewrite. The new dependency security floor
+also forbids reuse of generation g's reviewed Python runtime: prepare and rehash a fresh runtime
+that resolves non-yanked `transformers>=5.10.4,<6` and passes both `pip check` and
+`pip-audit --local` before freezing the deployment request. A fresh superseding generation must use
+a fresh database and non-reused authority identities, the already-proven five-minute observation
+budget, an explicit bounded initial-assignment window, a short runtime heartbeat, a launch
+authorization whose complete configured window is retained by the lease, and the exact
 1,800-second workload. The complete campaign must then run—not more controller authority.
 
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from importlib.metadata import version
 from pathlib import Path
+
+from packaging.version import Version
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +35,12 @@ def test_python_environment_retains_audited_security_floors() -> None:
         "pyasn1>=0.6.4",
     ):
         assert requirement in environment
+
+
+def test_resolved_transformers_is_on_the_non_yanked_patched_line() -> None:
+    resolved = Version(version("transformers"))
+
+    assert Version("5.10.4") <= resolved < Version("6")
 
 
 def test_deployment_images_do_not_reintroduce_audited_vulnerable_pins() -> None:
