@@ -897,6 +897,24 @@ def _database_time(session: Session) -> datetime:
     return session.execute(select(func.clock_timestamp())).scalar_one()
 
 
+def _lock_admission_uniqueness(session: Session, intent: ExecutionIntent) -> None:
+    """Serialize both unique execution-head identities before their first insert."""
+
+    # A targeted ON CONFLICT insert can otherwise deadlock in PostgreSQL's speculative-insert
+    # machinery when concurrent callers contend on both the execution primary key and the
+    # replicate-slot unique index.  This private namespace and fixed acquisition order also make
+    # crossed identity rebindings serialize before either unique index is touched.  Transaction
+    # locks release on commit/rollback, including for a caller-owned transaction.
+    lock_keys = (
+        f"execution-admission:execution:{intent.execution_id}",
+        f"execution-admission:replicate-slot:{intent.replicate_slot.replicate_slot_id}",
+    )
+    for lock_key in lock_keys:
+        session.execute(
+            select(func.pg_advisory_xact_lock(func.hashtextextended(lock_key, 0)))
+        ).scalar_one()
+
+
 def _model_json(model: object) -> dict[str, object]:
     dump = getattr(model, "model_dump")
     return dump(mode="json")
@@ -1743,12 +1761,13 @@ class PostgreSQLExecutionAllocator:
 
         bundle = EngineeringQualificationBundle.model_validate(bundle.model_dump(mode="python"))
         grant = EngineeringQualificationGrant.model_validate(grant.model_dump(mode="python"))
+        intent = bundle.intent
         with self._admission_session(session) as session:
+            _lock_admission_uniqueness(session, intent)
             preliminary_now = _database_time(session)
             self._validate_pricing_authority(bundle)
             quote = bundle.cost_quote
             authorization = bundle.budget_authorization
-            intent = bundle.intent
             if (
                 self._runtime_control_authority is not None
                 and intent.resource_request.artifact_quota_bytes

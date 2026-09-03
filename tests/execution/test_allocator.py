@@ -13,6 +13,7 @@ import hashlib
 from pathlib import Path
 import secrets
 import sys
+from threading import Barrier
 
 import pytest
 from sqlalchemy import null, select, text
@@ -676,11 +677,17 @@ def test_caller_owned_admission_requires_an_active_transaction(monkeypatch) -> N
             )
 
 
-def test_concurrent_exact_admission_mints_only_one_raw_token(monkeypatch) -> None:
+@pytest.mark.parametrize("_iteration", range(8))
+def test_concurrent_exact_admission_mints_only_one_raw_token(
+    monkeypatch,
+    _iteration: int,
+) -> None:
     prepared = _prepared(monkeypatch)
     _register_and_inventory(prepared)
+    start = Barrier(2)
 
     def admit():
+        start.wait(timeout=10)
         return prepared.allocator.admit_and_reserve(bundle=prepared.bundle, grant=prepared.grant)
 
     with ThreadPoolExecutor(max_workers=2) as pool:

@@ -104,6 +104,13 @@ signed qualification + exact registries + fresh inventory
   -> exactly one execution.qualification_terminal.v2 outbox row
 ```
 
+Before the first execution-head insert, admission takes transaction-scoped PostgreSQL advisory
+locks for both the execution ID and scientific replicate-slot ID in one fixed, private order. This
+linearizes exact concurrent retries and crossed identity conflicts before PostgreSQL touches the
+primary-key and replicate-slot unique indexes; one caller may mint the raw lease token, while every
+exact follower reloads only committed hashed/sealed custody. The database clock is sampled after
+the wait, so contention cannot carry an expired authority window into a reservation.
+
 The required crash protocol gives each irreversible local step a durable
 intent/pending/completed record. A conforming replay must return the same bytes or fail closed; it
 cannot mint a replacement generation merely because a process died. The frozen source and focused
