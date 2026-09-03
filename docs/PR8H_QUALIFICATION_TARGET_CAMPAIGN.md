@@ -486,10 +486,11 @@ create/start consumed almost that entire interval, leaving the in-container veri
 seconds. First and replacement launch authorization now require the hard deadline and
 runtime-control pin to cover the complete configured launch window, keep both attempt and resource
 leases live for at least the greater of that window and the heartbeat extension, and issue the
-ticket for the full window. The first post-launch heartbeat may contract future liveness again;
-pre-launch Docker and gate work can no longer be assigned a lease shorter than their own signed
-authorization. PostgreSQL regressions cover both the initial contraction and a delayed replay that
-must renew a complete replacement window.
+ticket for the full window. After launch, ordinary heartbeats may extend but never shorten that
+retained lease; pre-launch Docker and gate work can no longer be assigned a lease shorter than
+their own signed authorization. PostgreSQL regressions cover the initial contraction, a launch
+that remains valid after crossing the shorter heartbeat interval, and a delayed replay that must
+renew a complete replacement window.
 
 ## Destructive campaign and evidence order
 

@@ -297,6 +297,51 @@ def test_delayed_initial_assignment_contracts_to_runtime_launch_window(
         assert resource.lease_expires_at == attempt.lease_expires_at
 
 
+def test_runtime_launch_remains_authorized_past_short_heartbeat_window(
+    monkeypatch, tmp_path
+) -> None:
+    prepared, allocator, adapter, agent, runtime, state, claim = _running_v2(
+        monkeypatch,
+        tmp_path,
+        start=False,
+        heartbeat_extension_seconds=15,
+        max_runtime_launch_authorization_seconds=30,
+    )
+    original_start = adapter.start_attempt
+
+    def delay_after_committed_authorization(**scope):
+        committed = original_start(**scope)
+        runtime.clock.current += timedelta(seconds=20)
+        runtime.clock.monotonic += 20 * 1_000_000_000
+        return committed
+
+    monkeypatch.setattr(adapter, "start_attempt", delay_after_committed_authorization)
+    monkeypatch.setattr(
+        allocator_module,
+        "_database_time",
+        lambda _session: runtime.clock.current,
+    )
+
+    result = agent.run_once()
+
+    assert result.outcome is NodeRunOutcome.RUNNING
+    assert runtime.launch_calls == 1
+    current = state.load_state(claim.snapshot.attempt_id)
+    assert current is not None
+    authorization = current.runtime_launch_authorization
+    identity = current.runtime_identity
+    assert authorization is not None and identity is not None
+    assert authorization.issued_at == prepared.observed_at
+    assert identity.started_at == prepared.observed_at + timedelta(seconds=20)
+    assert identity.started_at > authorization.issued_at + timedelta(seconds=15)
+    assert identity.started_at < authorization.expires_at
+    snapshot = allocator.load_attempt(claim.snapshot.attempt_id)
+    assert snapshot is not None
+    assert snapshot.status == "running"
+    assert snapshot.lease_expires_at == identity.started_at + timedelta(seconds=15)
+    assert snapshot.lease_expires_at > authorization.lease_expires_at
+
+
 def test_replacement_authorization_renews_complete_runtime_launch_window(
     monkeypatch, tmp_path
 ) -> None:
