@@ -612,13 +612,19 @@ receipt into a passing shape.
 The selected Linux target is compatible and has run frozen/installed candidate generations, but
 none has emitted the complete campaign receipt. Therefore no host is currently proven deployable,
 PR-4b remains nondeployable, and `scientific_admission_allowed` is always false even in a
-successful campaign receipt. The database is already at `0032`; the next ordered operation is to
-merge and freeze the node-side stable-replay repair, commission another target-local non-reused
-cleanup key without exporting private bytes, and use it to close the retained `20260902f`
-pre-workload generation through the signed allocator transaction. Only after the old exact
-loop/ext4 hold is released may one fresh superseding generation run with the already-proven
-five-minute observation budget, explicit bounded initial-assignment window, short runtime heartbeat
-and 1,800-second workload. The complete campaign must then run—not more controller authority.
+successful campaign receipt. The generation-`20260903g` database is already at `0032` and retains
+its attempt as `reconciliation_required`. Because its exact container started before ticket expiry,
+that attempt must not be relabelled as never-started or passed through the attempt-scoped
+pre-runtime cleanup protocol.
+
+The next ordered operation is to merge and freeze the complete-launch-window repair. Preserve the
+generation-g request, database, journal and backing evidence, then decommission only its exact
+generation-scoped units, exited container and mounts after read-only identity checks; this is
+failed-deployment retirement, not an allocator state rewrite. A fresh superseding generation must
+use a fresh database and non-reused authority identities, the already-proven five-minute
+observation budget, an explicit bounded initial-assignment window, a short runtime heartbeat, a
+launch authorization whose complete configured window is retained by the lease, and the exact
+1,800-second workload. The complete campaign must then run—not more controller authority.
 
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the
