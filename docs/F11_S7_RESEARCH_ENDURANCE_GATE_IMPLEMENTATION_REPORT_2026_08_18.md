@@ -200,10 +200,13 @@ production boundary. It remains zero-fit on production data until the real gate 
 The expanded F9/F10/F11 cross-component selection passes `61 passed in 21.45s`.
 
 Changed-file Ruff, Python compilation, `git diff --check`, CLI help/list smoke, Alembic
-`current/head = 20260818_0022`, and ORM schema diff `0` also pass. The repository's pre-existing
-ESOL tests fetch a public remote CSV on each invocation; the final full run explicitly unset a
-stale local `127.0.0.1:7890` proxy after targeted reproduction proved the earlier TLS failures were
-transport-only.
+`current/head = 20260818_0022`, and ORM schema diff `0` also pass. The repository's ESOL
+demonstrations previously fetched a public remote CSV on each invocation; that historical full run
+explicitly unset a stale local `127.0.0.1:7890` proxy after targeted reproduction proved its TLS
+failures were transport-only. PR-8h follow-up validation later removed that nondeterministic
+boundary: the exact 96,699-byte public ESOL CSV is now packaged, SHA-256 verified and record-count
+checked before use, so neither tests nor scientific demonstrations rely on the proxy or silently
+follow upstream data drift.
 
 ## Changed implementation surface
 
