@@ -475,9 +475,13 @@ The exact Docker start was submitted at `2026-09-03T02:49:04.267261Z`, and conta
 launch configuration and workload, the gate exited `126` at `02:49:05.892104134Z`, before the
 node could publish `engine-launch.json`. The exact output tree is empty, but the entrypoint began
 before ticket expiry, so the existing narrow expired-before-start proof correctly refuses to call
-this a never-started workload. The attempt remains `reconciliation_required`, with no runtime
-identity, launch receipt or scientifically admissible output. This is negative engineering
-evidence, not a campaign receipt.
+this a never-started workload. A later read-only database query showed that the durable attempt row
+remains `starting` at state version 2 with an expired lease, one launch authorization, zero runtime
+inspections, and no runtime identity or launch receipt. The restarted node's local journal reports
+`historical_pre_runtime_cleanup_did_not_prove_absence` and a reconciliation-required outcome, but
+no central reconciliation transition was committed. The row must not be relabelled to match the
+local outcome. Operationally it requires reconciliation and has no scientifically admissible
+output. This is negative engineering evidence, not a campaign receipt.
 
 The allocator defect was an internally inconsistent window. The deployment selected a 30-second
 maximum launch delay, but first authorization contracted the attempt/resource lease to the
@@ -613,9 +617,10 @@ The selected Linux target is compatible and has run frozen/installed candidate g
 none has emitted the complete campaign receipt. Therefore no host is currently proven deployable,
 PR-4b remains nondeployable, and `scientific_admission_allowed` is always false even in a
 successful campaign receipt. The generation-`20260903g` database is already at `0032` and retains
-its attempt as `reconciliation_required`. Because its exact container started before ticket expiry,
-that attempt must not be relabelled as never-started or passed through the attempt-scoped
-pre-runtime cleanup protocol.
+its attempt as `starting` with an expired lease and no accepted runtime identity. Its local node
+journal requires reconciliation, but the database has not persisted that transition. Because the
+exact container started before ticket expiry, that attempt must not be relabelled as never-started
+or passed through the attempt-scoped pre-runtime cleanup protocol.
 
 The next ordered operation is to merge and freeze the complete-launch-window repair. Preserve the
 generation-g request, database, journal and backing evidence, then decommission only its exact
@@ -629,18 +634,22 @@ budget, an explicit bounded initial-assignment window, a short runtime heartbeat
 authorization whose complete configured window is retained by the lease, and the exact
 1,800-second workload. The complete campaign must then run—not more controller authority.
 
-A read-only target reinspection at `2026-09-03T08:16:03Z` also found qualification services from
-generations `20260901c`, `20260901d` and `20260903g` still active. The generation-c and
-generation-d node units had accumulated 17,286 and 14,270 restarts respectively, while the
-generation-g node had restarted once. Those sibling workers are background execution and I/O
-authority, not inert retained evidence. The concrete campaign host now enumerates all systemd
+A read-only target reinspection at `2026-09-03T17:23:58Z` also found all five qualification units
+from each of generations `20260901c`, `20260901d` and `20260903g` still enabled and live. The
+generation-c and generation-d node units had accumulated 24,628 and 21,614 restarts respectively,
+while the generation-g node had restarted once. Follow-up checks found one shared
+`aletheia_qualification` database at schema `20260903_0032`, one allocator plus three outbox
+connections, and retained c/d/g quota devices `/dev/loop26`-`27`, `/dev/loop28`-`29`, and
+`/dev/loop6`. Those sibling workers are background execution and I/O authority, not inert retained
+evidence; their database and mount residue also cannot be called a fresh h environment. The
+concrete campaign host now enumerates all systemd
 services through the pinned `systemctl` executable and fails before campaign mutation if any live
 `aletheia-qualification-*` or `aletheia-arl1-*` service outside the request's exact five units is
 active, activating, reloading or deactivating. It repeats that check around activation,
 installed-manifest observation and completed receipt revalidation. The check only rejects; it
-never stops or disables a unit. Generation h
-therefore requires either exact reviewed retirement of every older active generation or a fresh
-disposable target before its request is frozen.
+never stops or disables a unit. Generation h therefore requires exact reviewed retirement of every
+older active generation plus a fresh isolated database and mount review, or a fresh disposable
+target, before its request is frozen.
 
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the
