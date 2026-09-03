@@ -464,8 +464,10 @@ reached a new target-only launch-timing boundary. Its campaign request and plan 
 `40c88ab645ce5de70cfa05023521ca661a1888afeca88c9f814078536f235e69` and
 `f4f1ce0263b3761b911a004c0cd562b4`. Execution
 `exe_54abfd9a789cc368b0602970bb8b51e4` and attempt
-`iat_88dec31d6385eca0b653421404233ff7` retained only campaign activation; the apply process never
-observed the attempt as running and wrote no installed-manifest or destructive-fault phase.
+`iat_88dec31d6385eca0b653421404233ff7` retained campaign activation and the
+`02-installed-manifest.json` record (SHA-256
+`514c4a798d17aaa5b39f62622799b5d405d5552a60722e7ec2aeae64b3341f55`); the apply process never
+observed the attempt as running after that checkpoint and wrote no destructive-fault phase.
 
 The exact Docker start was submitted at `2026-09-03T02:49:04.267261Z`, and container
 `49120073870a3421a052b711168277a32cfef01faa53d3e0fa57192f1bf3b95e` began at
