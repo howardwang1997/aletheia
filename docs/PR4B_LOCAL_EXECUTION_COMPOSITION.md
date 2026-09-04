@@ -1,9 +1,9 @@
 # PR-4b qualification-only local execution composition
 
-- Status: source/test composition and deployment-evidence contracts complete; target-host
-  installation/campaign is unqualified and nondeployable
-- Evidence date: 2026-08-25
-- Alembic head: `20260827_0026`
+- Status: exact generation-h qualification-only deployment passed PR-8h; scientific admission
+  remains forbidden
+- Evidence date: 2026-09-04
+- Alembic head: `20260903_0032`
 
 PR-4b composes the PR-4a authority foundation into one local, CPU-only engineering-qualification
 path. The implementation remains permanently marked `qualification_only=true` and
@@ -11,19 +11,14 @@ path. The implementation remains permanently marked `qualification_only=true` an
 claim admission path, a remote/GPU scheduler, or an autonomous experiment controller.
 
 Repository implementation and deterministic/fault-test coverage are not deployment evidence. The
-repository now contains a portable desired-state contract, deterministic systemd/PostgreSQL
-rendering, five guarded one-role runner entrypoints, and a derived manifest/preflight contract over
-an externally pinned observer signature. The runners verify an out-of-band manifest digest before
-loading a byte-pinned factory, but no production role factory is supplied by that process-boundary
-slice. PR-8b adds an opt-in crash-replayable installer for only the exact manifest and five disabled
-unit files. It cannot create principals, apply the PostgreSQL ACL, enable/start units or qualify a
-host. The repository still contains no complete target-host commissioning workflow, concrete Linux
-observer, frozen manifest instance, or campaign runner, and the target-host campaign has not run. A host is
-deployable only after its exact
-Linux, rootful Docker, systemd, loop/ext4, mount-namespace, cgroup-v2 and Docker
-systemd-cgroup-driver layout, seccomp, AppArmor, image-layout, UID/GID, filesystem,
-PostgreSQL-role, and clock configuration has passed the opt-in production campaign described under
-**Deployment status**.
+later PR-8a through PR-8h slices added the guarded factories, disabled bootstrap/commissioning/
+installation workflow, concrete independent Linux observer and destructive campaign runner.
+Generation `20260904h`, frozen from merge
+`e0dc06ce23796aa9fc49d598c57bde6bbe7256fb`, then passed that campaign with
+`deployment_qualified=true` and `scientific_admission_allowed=false`. The result is evidence only
+for that exact Linux/rootful-Docker/systemd/loop-ext4/mount/cgroup/AppArmor/PostgreSQL deployment;
+it does not make source tests into evidence, transfer to later bytes, or turn this qualification
+substrate into a scientific-admission service.
 
 ## Implemented composition
 
@@ -37,19 +32,18 @@ PostgreSQL-role, and clock configuration has passed the opt-in production campai
 | Runtime and launch gate | `LocalQualificationOCIRuntime`, `ImmutableOCIImageLaunchGateVerifier`, and `aletheia.execution.qualification_launch_gate` | Digest-pinned Docker image/layout, direct exec, exact workload digest/argv, read-only root, network none, dropped capabilities, no-new-privileges, pinned seccomp/AppArmor, private cgroup namespace, exact CPU/memory/pids limits, read-only inputs, and the quota mount as the only writable workload mount. This PR-4b cut rejects every accelerator/device launch before engine mutation. |
 | Deadline enforcement | `DurableDeadlineWatchdogService` and `SystemdDeadlineWatchdogController` | Independently supervised root/systemd watchdog, exact durable job scope, pinned service/unit/module/binary, `cgroup.kill`, and empty-cgroup evidence. There is no in-process timer fallback. Its due-job recovery is a single-threaded inspect loop; `maximum_active_jobs` defaults to 4,096 and rejects a scan above the deployment-pinned value. Hard-real-time kill latency at 4,096 jobs has not been established. |
 | Artifact and terminal path | `LocalArtifactStore`, `QualificationNodeAgent`, `PostgreSQLExecutionAllocator`, `QualificationExecutionWorker`, and `QualificationTerminalOutboxService` | Quarantine/CAS rehash, termination challenge/receipt, independently accepted runtime termination, bounded artifact grace, terminal acceptance or pre-signed deadline expiration, and one transactional v2 outbox row. PR-8e retains exact v1/v2 envelopes in a private crash-replayable spool; external consumer delivery and acknowledgment remain separate. |
-| Deployment evidence | `QualificationDeploymentSpecV1`, `render_systemd_units`, `render_postgresql_acl`, `SignedQualificationLinuxDeploymentObservation`, `QualificationInstalledDeploymentManifestV1`, and `verify_installed_manifest` | Portable desired state closes reviewed code/Python/native-dependency trees, service identities, exact PostgreSQL objects/ACL closure, host/runtime pins, and an external observer key. Only a real Linux observation may be frozen; revalidation returns eligibility for a later opt-in campaign, never a deployment or scientific verdict. Installation, observer implementation, and campaign execution remain external. |
+| Deployment evidence | `QualificationDeploymentSpecV1`, `render_systemd_units`, `render_postgresql_acl`, `SignedQualificationLinuxDeploymentObservation`, `QualificationInstalledDeploymentManifestV1`, and the PR-8h verifier/campaign | Portable desired state closes reviewed code/Python/native-dependency trees, service identities, exact PostgreSQL objects/ACL closure, host/runtime pins, and an external observer key. Only a real Linux observation may be frozen; generation h supplies one exact completed campaign. Neither source revalidation nor the campaign grants scientific authority. |
 | Service process boundary | `QualificationServiceDeploymentManifestV1`, `QualificationServiceRuntime`, and five thin `scripts/run-*.py` entrypoints | Each process exposes one role/operation, verifies canonical manifest/source/config bytes and live Linux UID/GID, and emits only non-authoritative operational diagnostics. PR-8c/PR-8d/PR-8e supply all five source factories; commissioned credentials remain absent. |
 | Disabled file installation | `QualificationInstallationRequestV1`, `LinuxQualificationInstallationHost`, and `scripts/install-qualification-deployment.py` | Dry-run by default; explicit root/Linux opt-in atomically publishes the exact manifest and five units with append-only crash recovery, invokes only pinned daemon-reload, and proves every unit remains disabled/inactive. Principals, configs/keys, PostgreSQL ACLs, activation, observer and campaign stay external. |
 
-There is no complete commissioned target-host composition instance or workflow that
-provisions identities and registry files, creates/restricts PostgreSQL roles, configures mount
-propagation, or starts/supervises the worker. PR-8b can install only the manifest/disabled unit file
-subset. There is a closed schema for deriving a manifest from signed live
-evidence, but no target-host manifest instance has been frozen.
+The original PR-4b slice did not contain a complete commissioned target-host workflow. The later
+PR-8 chain now provides it, and generation h retained one frozen installed-manifest instance plus
+the complete campaign receipt. PR-8b itself still installs only the manifest/disabled-unit subset;
+the later bootstrap, commissioning, observer and campaign stages remain separate authorities.
 `QualificationExecutionWorker` closes the database/node/terminal application path and
 `LocalQualificationOCIRuntime` accepts the concrete gate/quota/watchdog controllers, but the whole
-real root-service + Docker + PostgreSQL path is not established merely by constructing those
-objects. Deployment must supply and validate that wiring as one exact manifest/campaign.
+real root-service + Docker + PostgreSQL path is never established merely by constructing those
+objects. Each deployment must still supply and validate that wiring as one exact manifest/campaign.
 
 The concrete path is one local node and CPU-only. A request may reserve multiple CPU cores within
 the signed inventory and exact cgroup limit; “CPU-only” does not mean a one-core limit. Although
@@ -57,9 +51,10 @@ the PR-4a allocator contracts can represent at most one accelerator, this compos
 device launch and recovery. Multi-node placement, GPU access, checkpoint resume, provider actions,
 and cross-node adoption remain out of scope.
 
-## Authoritative schema
+## Authoritative schema at the original PR-4b checkpoint
 
-The current Alembic head is `20260827_0026` and owns exactly 27 `execution_*` tables:
+At the original PR-4b checkpoint, Alembic head `20260827_0026` owned exactly 27
+`execution_*` tables:
 
 - `20260825_0024` creates the 16-table PR-4a foundation: `execution_nodes`,
   `execution_inventory_attestations`, `execution_inventory_devices`, `execution_device_heads`,
@@ -219,6 +214,12 @@ are required TCB assumptions, not properties proved by a Pydantic contract or un
 
 ## Deployment status
 
+The current deployment result is the exact generation-h PR-8h receipt documented in
+[the target campaign guide](PR8H_QUALIFICATION_TARGET_CAMPAIGN.md). It proves the bounded CPU-only
+qualification substrate on one frozen target and does not grant scientific authority. The test
+counts and local-database runs below are retained historical source checkpoints, not substitutes
+for that receipt.
+
 The repository has deterministic unit/fault coverage for authority binding, raw-DML guards,
 assignment/token custody, input materialization, allocator/runtime lifecycle, mount-generation
 rechecks, quota/watchdog crash journals, adapter translation, terminal settlement, and concurrent
@@ -263,24 +264,17 @@ quota/watchdog service or target-host Docker mount namespace.
 
 Five guarded source runner entrypoints now exist, every rendered `ExecStart` carries the exact
 deployment-manifest SHA-256, and an explicit installer can publish only those disabled files.
-All five processes now have checked-in factories. PR-8f adds the first disabled-only commissioning
-stage for exact Linux principals, PostgreSQL peer URLs and empty custody roots, but that stage has
-not run. The complete config/key/ACL workflow, concrete observer, frozen manifest instance and
-campaign runner still do not exist at this checkpoint. `QualificationInstalledDeploymentManifestV1` is a derived schema, not evidence
-that any installation was observed. Until an opt-in campaign runs as root on the exact target Linux host with its real systemd units,
-rootful Docker daemon, shared mount visibility, loop/ext4 tools, cgroup-v2 hierarchy, pinned OCI
-layout/image, Docker's pinned systemd cgroup layout, seccomp/AppArmor profiles, dedicated UID/GID,
-and restricted PostgreSQL role, PR-4b
-must be described as an implemented qualification composition with deployment validation pending,
-not as a deployable or production execution service. A Docker daemon reachable from a non-Linux
-development host, containerized/mocked systemd, or unit tests that monkeypatch root/kernel evidence
-do not satisfy this gate.
+All five processes now have checked-in factories. PR-8f, PR-8g and PR-8b separately preserve
+bootstrap, config/key/ACL commissioning and disabled installation; PR-8h independently observes
+and exercises the activated result. Generation h ran that complete order on a real Linux PID-1
+systemd host with rootful Docker, shared mount visibility, loop/ext4, cgroup v2, pinned
+OCI/seccomp/AppArmor identities, dedicated UID/GID and restricted PostgreSQL peer roles. Its exact
+replay created no second workload and returned byte-identical receipt output.
 
-At this evidence checkpoint the controlling process is Darwin. A Colima Ubuntu VM exposes a
-rootful Linux Docker daemon and cgroup v2, but it does not prove the target host's PID 1 systemd,
-real root loop/ext4 services, or shared quota-service/node/Docker mount namespace. Consequently the
-full exact target-host campaign was not run, and the reachable VM/daemon is not deployment evidence.
-PR-4b is therefore explicitly **nondeployable** at this checkpoint.
+This closes the original deployment-evidence gate only for the frozen h instance. A Darwin/Colima
+run, mocked root/kernel evidence or a later source tree still cannot borrow that verdict. The
+post-h UTC role hardening changes rendered ACL bytes and therefore requires its own newly frozen
+campaign before that version can be described as deployment-qualified.
 
 ## Explicit non-capabilities and next boundary
 
@@ -290,14 +284,15 @@ GPU/device execution, checkpoint resume, ambiguous provider-action reconciliatio
 authored work, or protection from the TCB principals above. The subsequent PR-5 slice had to add a
 signed Research Kernel action bound to the exact qualification/execution bundle and an independent
 observation-admission bridge before this fabric could participate in a scientific Quest. That local
-source/test bridge is now present, but it does not upgrade PR-4b's deployment status; target-host
-qualification and production controller/validator composition remain separate gates.
+source/test bridge is now present, and generation h upgrades the exact deployment verdict only;
+production scientific controller/validator composition and ARL-1 remain separate gates.
 
 The proposed discovery-episode objects in the target architecture remain later evaluation work:
 `DiscoveryEpisodeProjection` must be a pure, recomputable, read-only view over authoritative events
 and receipts, and `DiscoveryEpisodeAssessment` must remain evaluator-only. Neither object changes
 PR-4b authority or becomes a second research ledger. With the PR-5 local bridge present, that slice
-is now eligible as later evaluation work, not part of PR-4b or PR-5 authority.
+is now eligible as later evaluation work, not part of PR-4b or PR-5 authority. Generation h does
+not change those scientific non-capabilities.
 
 See [architecture decision 0049](architecture/0049-qualification-only-local-execution-composition.md)
 for the decision and threat model and the

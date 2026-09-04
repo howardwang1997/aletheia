@@ -1,7 +1,7 @@
 # PR-8f disabled qualification host bootstrap
 
-- Status: principal/root bootstrap source complete; no target-host bootstrap has been executed
-- Date: 2026-08-27
+- Status: exact generation-h bootstrap executed and later qualified on target
+- Date: 2026-09-05
 
 ## Closed commissioning stage
 
@@ -47,19 +47,16 @@ exist as root-owned mode `0700`; every target parent must already exist, be root
 contain no symlink traversal. The Docker group and PostgreSQL socket directory are external
 preconditions, not objects this stage mutates.
 
-## Explicit remaining gates
+## Target result and remaining boundary
 
-No command above has been run on a target host in this repository checkpoint. The receipt always
-states that configs and private keys are unpublished, PostgreSQL roles and ACLs are unapplied,
-systemd units are uninstalled/disabled/inactive, deployment qualification is false, and scientific
-admission is forbidden.
-
-PR-8g now supplies the next ordered source stage: it publishes the exact process configs and
-private keys, creates/adopts the owner plus two restricted PostgreSQL peer roles, and atomically
-applies/revalidates the rendered ACL while all five units remain absent. It has not been run on a
-target host. PR-8h now supplies the concrete observer/campaign runner, but the real
-Linux/systemd/rootful-Docker/loop/ext4/PostgreSQL process-kill campaign still has to execute before
-any host can be called deployable.
+At the original PR-8f checkpoint no target command had run, and the bootstrap receipt correctly
+kept configs/keys unpublished, PostgreSQL unchanged, units absent and both authority flags false.
+Generation `20260904h` later applied bootstrap request SHA-256
+`a0fcc6471e5ee35ccc88d7a258d845fcabad8ec298308739dc9ec0341d006fbb`, continued through PR-8g
+commissioning and PR-8b installation, and passed the exact PR-8h campaign. That later receipt is
+the deployment evidence; bootstrap alone still cannot activate services or grant scientific
+admission. A source or deployment change requires a fresh generation and cannot reuse h's
+principal/root observations as current evidence.
 
 See [ADR 0079](architecture/0079-disabled-qualification-host-bootstrap.md), the
 [PR-8g authority commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), the

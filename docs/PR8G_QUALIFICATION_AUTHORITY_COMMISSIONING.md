@@ -1,7 +1,8 @@
 # PR-8g qualification authority commissioning
 
-- Status: config/key/PostgreSQL commissioning source complete; not executed on a target host
-- Date: 2026-08-27
+- Status: generation h commissioned and independently qualified; post-qualification UTC hardening
+  requires a new freeze before reuse
+- Date: 2026-09-05
 
 ## Closed commissioning stage
 
@@ -46,19 +47,24 @@ NOLOGIN owner plus two passwordless LOGIN roles, database ownership transfer and
 exhaustive ACL run in one database transaction; after ownership transfer, any explicit database
 grant retained by the separately pinned former admin is revoked. Pre-existing roles are accepted only when every
 login, membership, password, validity and connection-limit field is safe; their config must be
-either pristine or already equal to the final `search_path`. The transaction normalizes the target
-ACL, and the committed state then requires the exact role config and direct database/schema/table/
-column/sequence/routine privilege projection. Exact retry runs the exhaustive catalog block inside
-a read-only transaction and reconstructs those direct privilege hashes, so later ACL drift cannot
-be mistaken for the original receipt. The PostgreSQL system identifier, version number, database
-OID/name and encoding are checked before mutation and retained in the receipt.
+either pristine or already equal to the final `TimeZone=UTC` plus
+`search_path=pg_catalog, public` tuple. The role-local UTC default prevents a host-cluster timezone
+name from becoming an ambient Python timezone-data dependency and makes timestamp display and
+interpretation deterministic for every new application session. The transaction normalizes the
+target ACL, and the committed state then requires the exact role config and direct
+database/schema/table/column/sequence/routine privilege projection. Exact retry runs the exhaustive
+catalog block inside a read-only transaction and reconstructs those direct privilege hashes, so
+later ACL drift cannot be mistaken for the original receipt. The PostgreSQL system identifier,
+version number, database OID/name and encoding are checked before mutation and retained in the
+receipt.
 
-The deployment target pins the repository's unique Alembic head `20260831_0031`. Revision `0027`
+The deployment target pins the repository's unique Alembic head `20260903_0032`. Revision `0027`
 adds the PR-5 scientific-controller persistence, `0028` permits the preregistered replicate
 campaigns required by ARL-1, `0029` closes real-time endurance transaction-clock custody, and
 `0030` gives the runtime-v2 deferred validator exact no-login owner authority without granting
 application roles direct routine execution. Revision `0031` binds the one permitted pre-launch
-lease contraction to the exact append-only runtime launch authority and matching resource lease.
+lease contraction to the exact append-only runtime launch authority and matching resource lease;
+revision `0032` adds the separately keyed, attempt-scoped pre-runtime cleanup authority.
 Commissioning rejects any older or newer database revision. A repository regression test requires
 this deployment pin to remain equal to the unique Alembic head.
 
@@ -80,17 +86,24 @@ Both commands require a canonical root-owned mode-`0400` request file. Apply add
 Linux, effective `root:root`, the unchanged PR-8f bootstrap state, the three source key files, the
 pinned `systemctl` executable, the exact HBA projection, and a current migrated PostgreSQL database.
 
-## Explicit remaining gates
+## Target result and remaining gate
 
-No target host or database was mutated at this checkpoint. The final receipt always records that
-all five units remain absent, uninstalled, disabled and inactive; deployment qualification and
-scientific admission remain false. PR-8b must still install the final manifest and disabled units.
+Generation `20260904h` applied this stage to the fresh database
+`aletheia_qualification_20260904h` and later passed the complete PR-8h target campaign. Its
+commissioning request had SHA-256
+`c36aea116a4010c51d75376e993ce207f785731576509c63096319f3ae590e24`; this is exact target
+evidence for frozen merge `e0dc06ce23796aa9fc49d598c57bde6bbe7256fb`, not a transferable
+claim for later source.
 
-PR-8h now provides the independent live observer and campaign runner, but it has not executed the
-exact Linux/rootful-Docker/systemd/shared-mount/loop/ext4/cgroup-v2/AppArmor/PostgreSQL
-peer/process-kill campaign. In particular, unit tests and a synthetic host port do not prove OS
-peer login, real transaction rollback, key custody on the target filesystem or service restart
-recovery.
+That run also exposed repeated Psycopg warnings when the target cluster reported `Etc/UTC` to the
+minimal service runtime. Psycopg safely fell back to UTC and the independently observed campaign
+still qualified, but relying on the fallback is unnecessary ambient behavior. The current ACL and
+commissioning projection therefore require both application roles to start new sessions with the
+exact `TimeZone=UTC` default. Because this changes the rendered ACL and commissioned-state digest,
+it must be frozen and independently qualified in a later generation before that updated deployment
+can inherit generation h's claim. Scientific admission remains false in every PR-8g/PR-8h receipt;
+the next capability gate is the production ARL-1 given-protocol campaign and independent
+qualification flow.
 
 See [ADR 0080](architecture/0080-qualification-authority-commissioning.md), the
 [PR-8h target campaign guide](PR8H_QUALIFICATION_TARGET_CAMPAIGN.md), the
