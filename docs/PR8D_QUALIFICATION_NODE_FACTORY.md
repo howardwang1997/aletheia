@@ -1,7 +1,7 @@
 # PR-8d qualification node factory
 
-- Status: node-side source composition complete; not commissioned on a target host
-- Date: 2026-08-27
+- Status: node-side source composition complete; exact generation h later qualified on target
+- Date: 2026-09-05
 
 ## Closed source surface
 
@@ -45,8 +45,9 @@ remaining commissioning work is not evidence produced by a Python unit test.
 
 The node factory currently admits exactly one CPU-only launch specification. GPU device discovery,
 host scheduler integration and signed live inventory remain outside this local qualification
-deployment. The exact Linux/root/systemd/loop/ext4/rootful-Docker/PostgreSQL process-kill campaign
-must still pass before the service is described as deployable or production-qualified.
+deployment. Exact generation `20260904h` later passed the
+Linux/root/systemd/loop/ext4/rootful-Docker/PostgreSQL process-kill campaign for the frozen CPU-only
+service. That result does not extend to GPU, another release, or scientific admission.
 
 See [architecture decision 0077](architecture/0077-qualification-node-factory.md), the
 [PR-8c root factory guide](PR8C_PRIVILEGED_QUALIFICATION_FACTORIES.md), and the

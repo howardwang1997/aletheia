@@ -1,7 +1,8 @@
 # PR-8i qualification Python runtime preparation
 
-- Status: source complete; the prepared target tree is not deployment qualification
-- Date: 2026-08-29
+- Status: source complete; the prepared tree was bound into qualified generation h, but preparation
+  alone is not deployment qualification
+- Date: 2026-09-05
 
 ## Why this stage exists
 
@@ -29,6 +30,14 @@ The systemd renderer now sets `LANG=C` and `LC_ALL=C`, preventing locale/gconv m
 silently reintroducing ambient native dependencies. It still unsets `LD_LIBRARY_PATH` and
 `LD_PRELOAD`; the closure works through the reviewed ELF interpreter/RPATH, not environment
 injection.
+
+Generation h later exposed a separate relocation detail: CPython's compiled `TZPATH` retained the
+disposable source prefix, whose root-only parent was deliberately inaccessible to the service UID,
+even though the frozen target tree contained its own complete `share/zoneinfo`. New preparation
+probes set `PYTHONTZPATH` to that in-tree directory, require it to be a real directory, and actually
+load both `UTC` and `Etc/UTC`. The deployment spec requires those reviewed files and every rendered
+service receives the same exact in-tree assignment. Timezone lookup therefore no longer depends on
+the retained build environment.
 
 ## Operator flow
 
@@ -66,12 +75,20 @@ must be embedded in the PR-8f seed spec and then independently rehashed by PR-8h
 ## Target-A preparation checkpoint
 
 The 2026-08-29 target-A run used request
-`71b155c27f1f418bba79e9a2001136cc0a66a8a2eeda0af4164fa54e247134f4` and emitted canonical
-receipt `a7bd36c671ea1a83ad069a9bd98ec6a67577aa7f5f963449634199312a77bfa8`. The receipt binds
+`71b155c27f1f418bba79e9a2001136cc0a66a8a2eeda0af4164fa54e247134f4` and emitted one canonical
+JSON line. The retained stdout artifact, including its single trailing LF, has SHA-256
+`a7bd36c671ea1a83ad069a9bd98ec6a67577aa7f5f963449634199312a77bfa8`; the canonical receipt
+model bytes without that transport delimiter have SHA-256
+`cbaff6a658d0afc0ece6081f1f20e6d46ffed84bc1484f0fd1c63a70778deb9f`. The receipt binds
 manifest `9904a0cfa1cf7d49c0201f5a614ded78efadc0458157f38c6601600303ab1836`, 1,826 nested
 directories, 23,810 regular files, and 79 loaded native paths. An independent post-run traversal
 found zero symlinks, hardlinks, special files, writable entries, ownership mismatches, or external
 native mappings; all eight requested modules imported under the final `-S -s -P` interpreter.
+
+The preparation CLI now constructs stdout from `canonical_json_bytes(receipt) + b"\n"` directly,
+and a byte-level regression fixes that framing. This preserves the historical artifact bytes while
+preventing an operator from confusing a canonical JSON model digest with the digest of its
+newline-delimited stdout transport.
 
 The first attempt correctly failed while encoding legitimate inert Conda filenames containing
 spaces and parentheses. The reviewed-tree grammar now admits those two printable characters while

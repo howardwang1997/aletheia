@@ -1,7 +1,7 @@
 # PR-8e qualification terminal-outbox factory
 
-- Status: outbox-side source composition complete; not commissioned on a target host
-- Date: 2026-08-27
+- Status: outbox-side source composition complete; exact generation h later qualified on target
+- Date: 2026-09-05
 
 ## Closed source surface
 
@@ -42,10 +42,11 @@ real terminal row under process-kill.
 
 With PR-8c, PR-8d and PR-8e, all five manifest entries now have checked-in factories. PR-8f now
 supplies the first disabled commissioning stage for exact principals, empty directories and local
-PostgreSQL peer URLs, but it has not been run on a target host. Config/key publication and
-PostgreSQL role/ACL commissioning remain next while units stay disabled. Only after that may the real
-Linux/root/systemd/loop/ext4/rootful-Docker/PostgreSQL process-kill campaign enable the bounded
-services and produce deployment evidence.
+PostgreSQL peer URLs. Generation `20260904h` later completed that stage, config/key/ACL
+commissioning and disabled installation before the real campaign enabled the bounded services.
+The target receipt proves one terminal v2 row, outbox quiescence, durable spool replay, outbox
+`SIGKILL` recovery and exact local-peer access for the frozen deployment; external consumer
+delivery remains outside this factory and outside PR-8h.
 
 See [ADR 0078](architecture/0078-qualification-terminal-outbox-factory.md), the
 [PR-8d node-factory guide](PR8D_QUALIFICATION_NODE_FACTORY.md), and the

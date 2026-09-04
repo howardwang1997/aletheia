@@ -1,7 +1,7 @@
 # PR-8a guarded qualification service runners
 
-- Status: source process boundary complete; target-host commissioning pending
-- Date: 2026-08-27
+- Status: source process boundary complete; exact generation h later qualified on target
+- Date: 2026-09-05
 
 ## What changed
 
@@ -42,9 +42,10 @@ PR-8b now supplies that narrowly scoped, explicit installer for the manifest and
 files. It still does not supply all factories, principals/configs/keys, PostgreSQL ACL mutation,
 service activation, observer or campaign.
 
-There is still no concrete independent Linux observer, frozen target-host manifest instance, or
-root/systemd/loop/ext4/rootful-Docker/PostgreSQL campaign. Source tests on Darwin or a mocked Linux
-identity are not deployment evidence and do not make PR-4b deployable.
+Generation `20260904h` later commissioned these five guarded runners and passed the concrete
+root/systemd/loop/ext4/rootful-Docker/PostgreSQL PR-8h campaign on frozen merge `e0dc06ce`. That
+target receipt—not the source tests on Darwin or a mocked Linux identity—is the deployment
+evidence, and it still grants no scientific admission.
 
 See [architecture decision 0074](architecture/0074-guarded-qualification-service-runners.md) and
 the [PR-4b deployment guide](PR4B_LOCAL_EXECUTION_COMPOSITION.md).

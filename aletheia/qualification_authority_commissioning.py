@@ -91,6 +91,7 @@ _ROLE_PATTERN = r"^[a-z][a-z0-9_]{0,62}$"
 _MAX_ARTIFACT_BYTES = 16 * 1024 * 1024
 _OPT_IN_CONFIRMATION = "COMMISSION_QUALIFICATION_AUTHORITY_DISABLED"
 _ADMIN_DATABASE_URL_ENV = "ALETHEIA_QUALIFICATION_ADMIN_DATABASE_URL"
+_APPLICATION_ROLE_CONFIG = ("TimeZone=UTC", "search_path=pg_catalog, public")
 _ARTIFACT_ORDER = (
     "key:node_signing",
     "key:assignment_transport",
@@ -1100,9 +1101,7 @@ def verify_qualification_authority_commissioning_receipt(
                 if role == database_intent.owner_role
                 else database_intent.application_role_connection_limit
             ),
-            role_config=(
-                ("search_path=pg_catalog, public",) if role != database_intent.owner_role else ()
-            ),
+            role_config=(_APPLICATION_ROLE_CONFIG if role != database_intent.owner_role else ()),
             target_privileges_sha256=(
                 postgresql_role_privileges_sha256(
                     request.installation_request.deployment_spec,
@@ -2597,7 +2596,7 @@ class LinuxQualificationAuthorityCommissioningHost:
             role_name=role_name,
             can_login=can_login,
             connection_limit=connection_limit,
-            role_config=("search_path=pg_catalog, public",) if can_login else (),
+            role_config=_APPLICATION_ROLE_CONFIG if can_login else (),
             target_privileges_sha256=(
                 postgresql_role_privileges_sha256(spec, role_name=role_name) if can_login else None
             ),

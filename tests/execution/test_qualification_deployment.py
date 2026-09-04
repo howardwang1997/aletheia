@@ -129,7 +129,15 @@ def _spec(**updates: object) -> deployment.QualificationDeploymentSpecV1:
             relative_path=path,
             expected_mode=0o555,
         )
-        for path in ("bin", "lib", "lib/python3.12", "lib/python3.12/site-packages")
+        for path in (
+            "bin",
+            "lib",
+            "lib/python3.12",
+            "lib/python3.12/site-packages",
+            "share",
+            "share/zoneinfo",
+            "share/zoneinfo/Etc",
+        )
     )
     python_entries = (
         deployment.QualificationReviewedCodeFile(
@@ -142,6 +150,18 @@ def _spec(**updates: object) -> deployment.QualificationDeploymentSpecV1:
             relative_path="lib/python3.12/os.py",
             reviewed_sha256=_sha("reviewed-stdlib-os"),
             byte_length=40_000,
+            expected_mode=0o444,
+        ),
+        deployment.QualificationReviewedCodeFile(
+            relative_path="share/zoneinfo/Etc/UTC",
+            reviewed_sha256=_sha("reviewed-timezone-etc-utc"),
+            byte_length=114,
+            expected_mode=0o444,
+        ),
+        deployment.QualificationReviewedCodeFile(
+            relative_path="share/zoneinfo/UTC",
+            reviewed_sha256=_sha("reviewed-timezone-utc"),
+            byte_length=114,
             expected_mode=0o444,
         ),
     )
@@ -1060,6 +1080,28 @@ def test_spec_requires_one_reviewed_site_packages_path_after_code_root() -> None
         )
 
 
+def test_spec_requires_relocatable_utc_timezone_data() -> None:
+    spec = _spec()
+    entries = tuple(
+        entry
+        for entry in spec.reviewed_python_environment.entries
+        if entry.relative_path != "share/zoneinfo/Etc/UTC"
+    )
+    changed = spec.reviewed_python_environment.model_copy(
+        update={
+            "entries": entries,
+            "manifest_sha256": deployment.reviewed_code_tree_manifest_sha256(
+                root_path=spec.reviewed_python_environment.root_path,
+                directories=spec.reviewed_python_environment.directories,
+                entries=entries,
+                expected_root_mode=spec.reviewed_python_environment.expected_root_mode,
+            ),
+        }
+    )
+    with pytest.raises(ValidationError, match="relocatable UTC timezone data"):
+        _spec(reviewed_python_environment=changed)
+
+
 def test_systemd_render_is_deterministic_and_preserves_required_service_boundaries() -> None:
     spec = _spec()
     first = deployment.render_systemd_units(spec)
@@ -1077,7 +1119,7 @@ def test_systemd_render_is_deterministic_and_preserves_required_service_boundari
         )
     )
     assert canonical_sha256(first) == (
-        "4aa7623afa0f0aa3b6579da6dbfb4b25d7c7505261e0185739c39dcd685b0bcb"
+        "98a3cd894fde5fae3c4b4108ea13b79a47be7f05f759cdbabb7a52dce5b23e19"
     )
 
     by_name = {item.unit_name: item.content for item in first}
@@ -1110,6 +1152,10 @@ def test_systemd_render_is_deterministic_and_preserves_required_service_boundari
         and "Environment=LC_ALL=C" in item.content
         and f"Environment=PYTHONHOME={spec.reviewed_python_environment.root_path}" in item.content
         and f"Environment=PYTHONPATH={spec.code_root}" in item.content
+        and (
+            f"Environment=PYTHONTZPATH={spec.reviewed_python_environment.root_path}/share/zoneinfo"
+        )
+        in item.content
         and (
             "Environment=ALETHEIA_QUALIFICATION_SITE_PACKAGES="
             f"{spec.expected_python_import_paths[1]}"
@@ -1239,7 +1285,7 @@ def test_postgresql_acl_is_deterministic_explicit_and_contains_no_secret() -> No
     second = deployment.render_postgresql_acl(spec)
     assert first == second
     assert hashlib.sha256(first).hexdigest() == (
-        "2fe77e0375d9700df17ba4ba95ea91bb77d9aa455b92211c59d296f96a860e34"
+        "7dce6a50f5aa59e98c334393fd5463354e9317d77a15debc9b5f38174153ba74"
     )
     text = first.decode()
     assert text.count("ALTER TABLE public.") == 27
@@ -1289,6 +1335,8 @@ def test_postgresql_acl_is_deterministic_explicit_and_contains_no_secret() -> No
     assert "REVOKE DELETE, TRUNCATE, REFERENCES, TRIGGER" in text
     assert "GRANT USAGE ON SCHEMA public" in text
     assert "NOBYPASSRLS" in text and "NOINHERIT" in text
+    assert "ALTER ROLE \"aletheia_exec_allocator\" SET TimeZone = 'UTC';" in text
+    assert "ALTER ROLE \"aletheia_exec_outbox\" SET TimeZone = 'UTC';" in text
     assert "CREATE ROLE" not in text
     assert "PASSWORD" not in text
     assert "GRANT DELETE" not in text

@@ -547,9 +547,22 @@ def _probe_runtime(
 ) -> tuple[str, ...]:
     python = root / python_relative_path
     site_packages = root / site_packages_relative_path
+    timezone_data = root / "share" / "zoneinfo"
+    try:
+        timezone_metadata = timezone_data.lstat()
+    except OSError as exc:
+        raise QualificationTargetPreparationError(
+            "prepared Python timezone data is unavailable"
+        ) from exc
+    if timezone_data.is_symlink() or not stat.S_ISDIR(timezone_metadata.st_mode):
+        raise QualificationTargetPreparationError(
+            "prepared Python timezone data is not a directory"
+        )
     code = (
-        "import importlib,json,sys;"
+        "import importlib,json,sys,zoneinfo;"
         f"sys.path.append({str(site_packages)!r});"
+        f"assert zoneinfo.TZPATH==({str(timezone_data)!r},);"
+        "zoneinfo.ZoneInfo('UTC');zoneinfo.ZoneInfo('Etc/UTC');"
         f"[importlib.import_module(value) for value in {modules!r}];"
         "paths=sorted({line.split(None,5)[5].removesuffix(' (deleted)') "
         "for line in open('/proc/self/maps',encoding='ascii') "
@@ -566,6 +579,7 @@ def _probe_runtime(
         "PYTHONHOME": str(root),
         "PYTHONNOUSERSITE": "1",
         "PYTHONSAFEPATH": "1",
+        "PYTHONTZPATH": str(timezone_data),
         "PYTHONDONTWRITEBYTECODE": "1",
     }
     completed = subprocess.run(
@@ -857,10 +871,10 @@ def load_qualification_python_runtime_preparation_request(
 
 
 def _emit(value: ExecutionModel) -> None:
-    print(
-        json.dumps(value.model_dump(mode="json"), sort_keys=True, separators=(",", ":")),
-        flush=True,
-    )
+    """Write one canonical JSON record with an explicit line delimiter."""
+
+    sys.stdout.buffer.write(canonical_json_bytes(value) + b"\n")
+    sys.stdout.buffer.flush()
 
 
 def run_qualification_python_runtime_preparation_cli(

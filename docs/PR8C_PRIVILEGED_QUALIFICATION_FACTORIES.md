@@ -1,10 +1,10 @@
 # PR-8c privileged qualification service factories
 
-- Status: root-side source composition complete; not commissioned on a target host
-- Date: 2026-08-27
+- Status: root-side source composition complete; exact generation h later qualified on target
+- Date: 2026-09-05
 
-Subsequent PR-8d and PR-8e have now supplied the node and terminal-outbox factories described
-below; target-host commissioning remains open.
+Subsequent PR-8d and PR-8e supplied the node and terminal-outbox factories described below;
+generation `20260904h` later commissioned and qualified all five together.
 
 ## Closed source surface
 
@@ -41,8 +41,12 @@ write configs or keys, install/enable/start units, or apply PostgreSQL ACLs. PR-
 implemented the non-root node and terminal-outbox services. No concrete observer or campaign runner is
 added, and no Linux bind/shared, loop/ext4, Docker, systemd or process-kill campaign ran in this PR.
 
-Commissioning must now pin the configs, principals, keys and ACL before any target-host campaign
-can produce a frozen installed manifest.
+At this source checkpoint, commissioning still had to pin the configs, principals, keys and ACL
+before any target-host campaign could produce a frozen installed manifest.
+
+That ordered work subsequently completed for exact frozen generation h. Its PR-8h receipt proves
+the real bind/shared mount, loop/ext4, systemd, Docker and process-kill paths for those bytes; this
+historical source slice and its unit tests remain non-evidence by themselves.
 
 See [architecture decision 0076](architecture/0076-privileged-qualification-factories.md), the
 [PR-8b installer guide](PR8B_DISABLED_QUALIFICATION_INSTALLER.md), and the

@@ -43,7 +43,11 @@ system-capability claim.
 
 The repository now contains the concrete PostgreSQL/CAS/Kernel/F9-v2 source verifier and guarded
 campaign/prepare/issue/verify entrypoints, so no recording adapter is required for the production
-path. It can express and verify what would constitute ARL-1 without awarding itself the level. A
-real receipt remains impossible until the Linux target campaign and production scientific protocol
-campaigns are retained and independently replayed. This cost is intentional: qualification is a
-statement about a deployed system, not about how many source tests pass.
+path. It can express and verify what would constitute ARL-1 without awarding itself the level.
+Generation `20260904h` now supplies a complete, exactly replayed PR-8h receipt for one frozen
+deployment, so the Linux target prerequisite is no longer hypothetical. A real ARL-1 receipt still
+requires the production scientific protocol campaigns and their disjoint verification,
+qualification and keyless-audit phases to be retained and independently replayed. Any later
+deployment change must obtain its own target receipt rather than borrowing h's evidence. This cost
+is intentional: qualification is a statement about a deployed system, not about how many source
+tests pass.

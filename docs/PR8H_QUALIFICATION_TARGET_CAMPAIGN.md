@@ -1,7 +1,8 @@
 # PR-8h independent observer and qualification target campaign
 
-- Status: observer/campaign source complete; no target-host campaign receipt exists
-- Date: 2026-09-01
+- Status: generation h qualified on the exact frozen target and replayed byte-for-byte;
+  qualification-only, with no scientific admission
+- Date: 2026-09-05
 
 ## What this slice closes
 
@@ -41,10 +42,11 @@ The observer also supplies the first durable evidence of the kernel-assigned sha
 mount ID. Pre-install configs cannot truthfully predict it; live node composition pins it for the
 process lifetime and same-boot revalidation rejects any later mount-identity drift.
 
-## Target compatibility checkpoint
+## Target campaign history and compatibility checkpoints
 
-The selected disposable Ubuntu target has passed a pre-campaign compatibility checkpoint, but not
-the campaign itself.  On that host the production verifier freshly read the root-owned OCI
+Before the successful generation-h run, the selected disposable Ubuntu target passed a sequence
+of fail-closed compatibility and campaign checkpoints. On that host the production verifier
+freshly read the root-owned OCI
 archive, manifest, config, ten layer diff IDs and in-image launch gate, then bound them to Docker
 29.1.3's containerd-backed image inspection.  Docker 29 identifies this image by an exact OCI
 manifest `Descriptor`; legacy graphdriver installations instead identify the config digest.  The
@@ -624,32 +626,14 @@ Then rerun the same apply command and require byte-identical final receipt outpu
 tests and a fresh-database migration run are additional deployment gates; they must not edit the
 receipt into a passing shape.
 
-## Explicit remaining gate
+## Generation-h preparation and target result
 
-The selected Linux target is compatible and has run frozen/installed candidate generations, but
-none has emitted the complete campaign receipt. Therefore no host is currently proven deployable,
-PR-4b remains nondeployable, and `scientific_admission_allowed` is always false even in a
-successful campaign receipt. The generation-`20260903g` database is already at `0032` and retains
-its attempt as `starting` with an expired lease and no accepted runtime identity. Its local node
-journal requires reconciliation, but the database has not persisted that transition. Because the
-exact container started before ticket expiry, that attempt must not be relabelled as never-started
-or passed through the attempt-scoped pre-runtime cleanup protocol.
-
-The next ordered source operation is to merge and freeze the complete-launch-window and
-node-scoped expiry-reconciliation repairs. The complete repository Conda environment must continue
-to resolve non-yanked `transformers>=5.10.4,<6` and pass both `pip check` and
-`pip-audit --local`. That floor does not by itself invalidate generation g's separately prepared
-PR-8i service runtime: a read-only inspection of the frozen tree found 27 distributions and neither
-Transformers nor sentence-transformers. Before freezing generation h, independently rehash,
-re-probe and audit the exact minimal runtime tree it will pin. Reuse is admissible only if its
-bytes, immutable custody, required imports, native-mapping closure and actual installed dependency
-set all revalidate unchanged; otherwise prepare and rehash a fresh minimal runtime. Do not add the
-unrelated research/model stack merely to make this service runtime resemble the complete repository
-environment. A fresh superseding generation must use a fresh database and non-reused authority
-identities, the already-proven five-minute observation budget, an explicit bounded
-initial-assignment window, a short runtime heartbeat, a launch authorization whose complete
-configured window is retained by the lease, and the exact 1,800-second workload. The complete
-campaign must then run—not more controller authority.
+The retained checkpoints below were the final preconditions for generation h. They are preserved
+because the passing receipt must not erase the negative runs or make their databases, mounts and
+authority identities look reusable. The complete repository Conda environment continued to
+resolve non-yanked `transformers>=5.10.4,<6` and pass both `pip check` and `pip-audit --local`.
+That full-environment floor did not require adding the unrelated research/model stack to the
+separately frozen 27-distribution PR-8i service runtime.
 
 The existing PR-8i tree was evaluated against that reuse rule at `2026-09-04T04:24:39Z`. The
 frozen request and receipt still have SHA-256
@@ -662,8 +646,9 @@ all 79 receipt-bound native paths byte-for-byte and found zero external mappings
 installed distributions produce canonical inventory SHA-256
 `49565a4e6d6f760af58a0fa96455baaaabd00acf2c7ba8f80bed5f6bc2f511d4`; `pip check` found no broken
 requirements and `pip-audit 2.10.1` queried OSV with every version pinned, reporting no known
-vulnerabilities. This makes the tree a valid candidate for generation h, not qualified deployment
-evidence: h's own frozen spec, bootstrap and observer must bind and repeat the same checks.
+vulnerabilities. This made the tree a valid candidate for generation h, not qualified deployment
+evidence by itself; h's own frozen spec, bootstrap and observer subsequently bound and repeated
+the same checks.
 
 A read-only target reinspection at `2026-09-03T17:23:58Z` also found all five qualification units
 from each of generations `20260901c`, `20260901d` and `20260903g` still enabled and live. The
@@ -680,9 +665,9 @@ active, activating, reloading or deactivating, or if any sibling unit file is no
 `disabled` or `masked`. An inactive but enabled, static, indirect, linked, generated, transient or
 runtime-masked unit can regain authority on activation or reboot and is therefore not inert. The
 host repeats both checks around activation, installed-manifest observation and completed receipt
-revalidation. It only rejects; it never stops or disables a unit. Generation h therefore requires
+revalidation. It only rejects; it never stops or disables a unit. Generation h therefore required
 exact reviewed retirement of every older active or reboot-capable generation plus a fresh isolated
-database and mount review, or a fresh disposable target, before its request is frozen.
+database and mount review before its request could be frozen.
 
 At `2026-09-04T03:47:23Z`, an explicitly authorized operator retirement preserved the historical
 request, database, journals, manifests, unit files, workspace sources and quota backing images,
@@ -707,11 +692,11 @@ confirmed that generation g is still `starting@v2`, has no reconciliation reason
 or launch receipt, and retains both resource and budget holds. Retirement did not rewrite the
 allocator.
 
-This retirement removes the known live c/d/g contamination but does not certify the target as
-fresh. Inactive historical generations, their retained containers, loops and mounts remain outside
-that exact authorization. A generation-h request still requires a fresh isolated database and a
-complete read-only mount/container review (or a new disposable target) after the repaired source
-has merged and been frozen.
+This retirement removed the known live c/d/g contamination but did not by itself certify the
+target as fresh. Inactive historical generations, their retained containers, loops and mounts
+remained outside that exact authorization. Generation h therefore still required the fresh
+isolated database, a pre-freeze read-only mount/container review and the later signed observer
+repetition.
 
 A subsequent read-only unit-file audit at `2026-09-04T04:42:16Z` found another latent boundary that
 the live-service scan could not see: the five qualification units for each of generations
@@ -744,8 +729,89 @@ twenty exact unit files, then required each unit to be loaded, enabled, `inactiv
 `disabled`, still `inactive/dead` with `MainPID=0`, while every unit-file hash and manifest hash was
 unchanged. No qualification or ARL-1 sibling service was live. The operation did not delete unit
 files, manifests, containers, mounts, backing images, journals or database state. This closes the
-known reboot-capable z/a/b/e service boundary, but generation h still requires its fresh isolated
-database and final read-only container/mount/resource review before the request is frozen.
+known reboot-capable z/a/b/e service boundary. Generation h then performed its fresh isolated
+database and final pre-freeze container/mount/resource review; the campaign observer repeated the
+closed-system checks after request freeze.
+
+Generation `20260904h` froze merge commit
+`e0dc06ce23796aa9fc49d598c57bde6bbe7256fb` after pull-request and main CI passed. Its
+independent database `aletheia_qualification_20260904h` had OID `29814` and exact schema head
+`20260903_0032`. The foundation, bootstrap, commissioning and installation completed under fresh,
+non-reused identities; all five installed units were initially disabled and inactive. The final
+campaign request had SHA-256
+`71374f20a383c12fbd181c679d05e4eedb2813b5bbf99d686d3870b737282148`; the canonical plan model
+bytes had SHA-256
+`f9b90f833cd4fec74885e859462fe301579426dc18c9ceb66c026f7e3418f05a` and plan ID
+`qtp_12882c031f36ee152082ee821c71ca85`.
+
+The campaign bound execution `exe_b15df593dabc42d8d3d3c86e02bbe873`, attempt
+`iat_5f63dc2b7807c9643efd04cb1e245574` and slot
+`sos_d9cc2c009a12e1c7f6056e15bb263f37`. Container
+`4af9df4ebdad69a5bc54a57e51bce37f6d7d57d4171930f2f36ba2852af99aab` ran the exact
+1,800-second workload from `2026-09-04T10:19:49.090465818Z` through
+`2026-09-04T10:49:49.851935594Z`, exited zero and was not OOM-killed. PostgreSQL retained one
+launch authorization, runtime inspection, termination challenge, termination acceptance,
+qualification terminal acceptance and v2 terminal-outbox row. The attempt ended `succeeded` at
+state version `494`, fencing epoch `1`, with no adoption or reconciliation; its resource lease was
+released and its budget reservation settled. The accepted output-tree and artifact-manifest
+digests remain bound in the terminal acceptance and campaign receipt.
+
+All destructive scenarios completed: node and outbox `SIGKILL` recovery, durable exactly-once
+outbox-spool replay, real loop-backed ext4 quota generation, quota/watchdog `SIGKILL` recovery,
+passwordless local-peer probes for both application roles, PostgreSQL backend termination with
+transaction-lock release, and a final independent signed reobservation with zero blockers. The
+receipt retains the following ordered scenario-evidence SHA-256 sequence:
+
+```text
+4e33292d776c37ddf66a32185965c3b98ec47ba2dc6c5c68043ff67b15e9ca51
+63544d2d7c070b41de84fb9d10493f93db18a9e3f638bf100a3b8f96ffe859c2
+7f40da8e3feb61a9f1a96e8f2e2802192cc5e920bc652f623e6ae0fb35214286
+d9c796c68bdc498aa6b8163c15a447a6392083989ef1a0a9a6715c460681c468
+04247508dfd2664aab77e50b33cb51fb5b0496934586123f9cfdd7ba3766e17e
+d44d17dcdf0b3f17f3e17d219e73cb4c39bac6e7dbffdcd2fdc000a87b40e410
+9bc1a28ae92783c105d53088d448aa878b1663e2a766cbe45c6b37ea9c23092c
+61dd3eec5deb6754f84b2cd51e4c4b30029435637ea578cf8ead3530f98b1708
+95f88ba59c718a37f1e07cfb55ca349fb8a73712da2fe1565c180b21aa1c467b
+17f10f4de5edbcdf21783ed77fe5c4056941d71dc063fe0d9aa5070484e9b2d7
+```
+
+Receipt `qtx_1a32860767fa6804960f6ec8425bea60` completed at
+`2026-09-04T10:52:50.528659Z` with `campaign_executed=true`,
+`deployment_qualified=true`, `qualification_only=true` and
+`scientific_admission_allowed=false`. Its canonical write-once journal bytes have SHA-256
+`1110387242e73c10984b0e6d006102309b1f2aa237153a8523a504d906a6c13d`; the retained CLI stdout
+adds exactly one LF and has SHA-256
+`e4b5c2f2f5e312cf33515b287827e1ce599b4bb23af29da057168aeb0a5eb6e3`. Repeating the exact
+apply command performed journal verification only: it emitted byte-identical stdout, created no
+second workload container, and left every service PID and restart counter unchanged. The five h
+units remain enabled and active because that is the explicitly observed final activation state in
+the successful receipt, not abandoned pre-campaign residue.
+
+Two operator-composition mistakes failed before h's keys were created and remain negative evidence.
+Revision r1 treated the historical PR-8i stdout artifact—including its required LF—as if it were
+the delimiter-free canonical model bytes. Revision r2 then represented root-private mode-`0400`
+receipts with a worker-readable file type. Revision r3 retained the full stdout SHA while parsing
+only the exact one-line canonical model and embedded dedicated root-private file pins; neither
+failure consumed campaign authority. The checked-in preparation CLI now emits its canonical JSON
+line from explicit bytes and tests the single-LF framing.
+
+The qualified h services also logged Psycopg's safe UTC fallback when PostgreSQL reported the
+cluster timezone as `Etc/UTC`, which the minimal runtime could not resolve by name. This did not
+change timestamps or any observed campaign outcome, but it exposed an unnecessary ambient
+timezone-data dependency. Post-h source now pins both application roles to the exact
+`TimeZone=UTC` session default, which Psycopg handles directly, and binds every service's
+`PYTHONTZPATH` to the frozen runtime's reviewed in-tree `share/zoneinfo`. Runtime preparation now
+requires that directory and actually loads both UTC names under the relocated interpreter. Those
+changes alter unit bytes, the ACL and the commissioning receipt chain: h qualifies only the frozen
+`e0dc06ce` deployment, and the hardened source must receive a new freeze and target qualification
+before it can claim the same result.
+
+PR-8h is therefore complete for the exact generation-h deployment. It does not establish ARL-1,
+scientific validity, independent replication or autonomous scientific authority. The next
+end-to-end gate is to execute the production given-protocol campaign on a qualified target with all
+preregistered reexecutions, then perform disjoint source verification, qualification signing and a
+fresh keyless audit. Reboot/restart qualification remains a separate deployment gate for any
+newly frozen generation.
 
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the

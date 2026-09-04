@@ -1,7 +1,7 @@
 # PR-8b disabled qualification file installer
 
-- Status: source installer complete; no target-host installation has been executed
-- Date: 2026-08-27
+- Status: exact generation-h installation executed and later qualified on target
+- Date: 2026-09-05
 
 ## Installed surface
 
@@ -53,11 +53,15 @@ the host independently, freeze `QualificationInstalledDeploymentManifestV1`, or 
 qualification campaign. All factory/config inputs and target parents must already exist with exact
 custody. PR-8c/PR-8d/PR-8e have since closed the root, node and terminal-outbox
 source-composition gates. PR-8f now supplies a separate disabled-only principal/root bootstrap,
-and PR-8g supplies the config/key/ACL commissioning workflow. Neither stage has run on a target
-host; the final manifest and disabled units have not been installed.
+and PR-8g supplies the config/key/ACL commissioning workflow. Generation `20260904h` later ran
+both stages and installed the final manifest plus five initially disabled/inactive units under
+installation request SHA-256
+`dfe49c9fb1848e6ff9a7513db7fa8e40c91139f92a817926421e3595534ca78e`.
 
-PR-8h now supplies the independent observer and destructive campaign runner. Its local contract
-tests do not change the fact that no target-host installation or campaign receipt exists.
+PR-8h subsequently activated that exact frozen installation, completed every destructive scenario
+and byte-identically replayed its deployment-qualified receipt. The installer receipt itself
+remains qualification-only and non-authoritative; it is the later exact target campaign, not local
+contract tests, that establishes the deployment result.
 
 The Darwin unit/fault tests exercise the pure state machine and a non-root atomic-file primitive;
 they do not execute the concrete root/systemd adapter and are not target-host evidence.

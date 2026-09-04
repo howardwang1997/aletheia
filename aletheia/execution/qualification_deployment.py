@@ -48,6 +48,11 @@ _SAFE_SYSTEMD_PATH = re.compile(r"^/[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$")
 # reject controls and every shell metacharacter that is not already part of the historical set.
 _SAFE_RELATIVE_CODE_PATH = re.compile(r"^[A-Za-z0-9._+() -]+(?:/[A-Za-z0-9._+() -]+)*$")
 _PYTHON_SITE_PACKAGES_RELATIVE_PATH = re.compile(r"^lib/python[0-9]+[.][0-9]+/site-packages$")
+_PYTHON_TIMEZONE_DATA_RELATIVE_PATH = Path("share/zoneinfo")
+_REQUIRED_PYTHON_TIMEZONE_FILES = (
+    "share/zoneinfo/Etc/UTC",
+    "share/zoneinfo/UTC",
+)
 _UNIT_PATTERNS: Mapping[str, re.Pattern[str]] = {
     "workspace": re.compile(r"^aletheia-qualification-workspace(?:-[a-z0-9_.-]+)?[.]service$"),
     "quota": re.compile(r"^aletheia-qualification-output-quota(?:-[a-z0-9_.-]+)?[.]service$"),
@@ -874,15 +879,27 @@ class QualificationDeploymentSpecV1(ExecutionModel):
             raise ValueError(
                 "expected Python import paths must bind code root then one reviewed site-packages"
             )
-        python_entry = {
+        python_entries = {
             entry.relative_path: entry for entry in self.reviewed_python_environment.entries
-        }.get(str(paths["python_executable"].relative_to(python_environment_root)))
+        }
+        python_entry = python_entries.get(
+            str(paths["python_executable"].relative_to(python_environment_root))
+        )
         if (
             python_entry is None
             or python_entry.reviewed_sha256 != self.expected_python_executable.reviewed_sha256
             or python_entry.expected_mode != self.expected_python_executable.expected_mode
         ):
             raise ValueError("expected Python must be an exact reviewed environment entry")
+        python_directories = {
+            directory.relative_path for directory in self.reviewed_python_environment.directories
+        }
+        if _PYTHON_TIMEZONE_DATA_RELATIVE_PATH.as_posix() not in python_directories or any(
+            path not in python_entries for path in _REQUIRED_PYTHON_TIMEZONE_FILES
+        ):
+            raise ValueError(
+                "reviewed Python environment must contain relocatable UTC timezone data"
+            )
         if self.reviewed_code_tree.root_path != str(paths["code_root"]):
             raise ValueError("reviewed code-tree root must equal the rendered code root")
         reviewed_entries = {entry.relative_path: entry for entry in self.reviewed_code_tree.entries}
@@ -1188,6 +1205,8 @@ def _python_environment_assignments(
         "LC_ALL=C",
         f"PYTHONHOME={spec.reviewed_python_environment.root_path}",
         f"PYTHONPATH={spec.code_root}",
+        "PYTHONTZPATH="
+        + str(Path(spec.reviewed_python_environment.root_path) / "share" / "zoneinfo"),
         "ALETHEIA_QUALIFICATION_SITE_PACKAGES=" + spec.expected_python_import_paths[1],
         "PYTHONNOUSERSITE=1",
         "PYTHONSAFEPATH=1",
@@ -1799,6 +1818,8 @@ def render_postgresql_acl(spec: QualificationDeploymentSpecV1) -> bytes:
         "  END IF;",
         "END",
         "$aletheia_acl$;",
+        f"ALTER ROLE {allocator} SET TimeZone = 'UTC';",
+        f"ALTER ROLE {outbox} SET TimeZone = 'UTC';",
         f"ALTER ROLE {allocator} SET search_path = pg_catalog, public;",
         f"ALTER ROLE {outbox} SET search_path = pg_catalog, public;",
         "COMMIT;",

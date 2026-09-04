@@ -91,16 +91,22 @@ only for that closed status, uses the service-signed bounded retry interval, and
 the authorization's observation-admission deadline. Missing registration, invalid signatures,
 database drift, rebound terminal material and custody failures are never retried as readiness.
 
-No production ARL-1 qualification receipt has been issued. Real Linux target candidates have run,
-but each stopped at a fail-closed engineering boundary and none emitted the complete PR-8h target
-campaign receipt required by this gate.
+No production ARL-1 qualification receipt has been issued. Generation `20260904h` did emit and
+byte-identically replay the complete PR-8h target receipt for frozen merge
+`e0dc06ce23796aa9fc49d598c57bde6bbe7256fb`, with `deployment_qualified=true` and
+`scientific_admission_allowed=false`. The prerequisite has therefore moved from synthetic source
+tests to real target evidence, but it is only one input to this gate: the production given-protocol
+campaigns, all preregistered reexecutions, scientific validation/admission/Kernel evidence,
+disjoint source verification, qualification signature and fresh keyless audit have not run as one
+retained bundle.
 
-This development machine is macOS and cannot supply the required Linux/root/systemd/cgroup-v2/
-rootful-Docker/AppArmor/loop-ext4 target evidence. Local PR-8h source tests use synthetic
-host ports and are intentionally ineligible because every ARL evidence contract requires
-`synthetic_evidence=false`. The production composition is available, but it has deliberately not
-accepted incomplete target runs, invented receipts or recording ports to manufacture a
-qualification.
+Later source binds the frozen runtime's in-tree timezone database and hardens the commissioned
+PostgreSQL application roles with an exact `TimeZone=UTC` session default after generation h
+exposed a safe Psycopg fallback from the cluster's `Etc/UTC` name. Those unit/ACL changes are not
+retroactively covered by h. Either ARL-1 must use the unchanged exact h deployment and receipt, or
+a newly frozen hardened generation must repeat PR-8f/PR-8g/PR-8b/PR-8h before its evidence can
+enter this gate. Local synthetic host ports remain intentionally ineligible because every ARL
+evidence contract requires `synthetic_evidence=false`.
 
 Therefore the honest current status remains **ARL-1 qualification gate implemented, deployed
 system not ARL-1 qualified**.
@@ -180,5 +186,10 @@ The real exit procedure must use a disposable qualified Linux target:
 8. restart from empty process memory and run `scripts/run-arl1-qualification.py verify` under a
    third, keyless auditor principal with `VERIFY_ARL1_QUALIFICATION`; and
 9. tamper one byte in every retained source class and require verification to fail.
+
+For the exact generation-h deployment, the fresh exact-head database, commissioning/installation
+chain and target receipt required by steps 1–3 are retained; steps 4–9 remain. Procedural checks not
+embedded in those receipts must still be repeated, and a deployment containing any post-h ACL or
+runtime change must repeat steps 1–3 instead of borrowing h's qualification.
 
 No local test or CI badge substitutes for those target-host steps.
