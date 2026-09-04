@@ -651,6 +651,20 @@ initial-assignment window, a short runtime heartbeat, a launch authorization who
 configured window is retained by the lease, and the exact 1,800-second workload. The complete
 campaign must then run—not more controller authority.
 
+The existing PR-8i tree was evaluated against that reuse rule at `2026-09-04T04:24:39Z`. The
+frozen request and receipt still have SHA-256
+`71b155c27f1f418bba79e9a2001136cc0a66a8a2eeda0af4164fa54e247134f4` and
+`a7bd36c671ea1a83ad069a9bd98ec6a67577aa7f5f963449634199312a77bfa8`; both bind tree manifest
+`9904a0cfa1cf7d49c0201f5a614ded78efadc0458157f38c6601600303ab1836`. The frozen observer streamed
+and rehashed all 1,826 directories, 23,810 regular files and 875,137,883 bytes under exact root
+custody, finding zero symlinks or mismatches. Replaying the eight-module isolated probe reproduced
+all 79 receipt-bound native paths byte-for-byte and found zero external mappings. The exact 27
+installed distributions produce canonical inventory SHA-256
+`49565a4e6d6f760af58a0fa96455baaaabd00acf2c7ba8f80bed5f6bc2f511d4`; `pip check` found no broken
+requirements and `pip-audit 2.10.1` queried OSV with every version pinned, reporting no known
+vulnerabilities. This makes the tree a valid candidate for generation h, not qualified deployment
+evidence: h's own frozen spec, bootstrap and observer must bind and repeat the same checks.
+
 A read-only target reinspection at `2026-09-03T17:23:58Z` also found all five qualification units
 from each of generations `20260901c`, `20260901d` and `20260903g` still enabled and live. The
 generation-c and generation-d node units had accumulated 24,628 and 21,614 restarts respectively,
