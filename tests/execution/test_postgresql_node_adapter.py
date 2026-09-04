@@ -1078,6 +1078,7 @@ def test_worker_never_settles_a_non_collected_node_tick(tmp_path, monkeypatch) -
         lambda **_scope: None,
         raising=False,
     )
+    monkeypatch.setattr(prepared.allocator, "reconcile_expired", lambda **_scope: ())
     worker = QualificationExecutionWorker(
         agent=harness.agent,
         allocator=prepared.allocator,
@@ -1158,6 +1159,11 @@ def test_worker_adjudicates_signed_terminal_deadline_before_other_work(
 
     monkeypatch.setattr(
         prepared.allocator,
+        "reconcile_expired",
+        lambda **_scope: calls.append("expiry") or (),
+    )
+    monkeypatch.setattr(
+        prepared.allocator,
         "adjudicate_expired_qualification_terminal",
         adjudicate,
         raising=False,
@@ -1184,7 +1190,7 @@ def test_worker_adjudicates_signed_terminal_deadline_before_other_work(
     result = worker.tick()
 
     assert result.outcome is NodeRunOutcome.IDLE
-    assert calls == ["deadline", "pending", "agent"]
+    assert calls == ["expiry", "deadline", "pending", "agent"]
 
     valid_commit = vars(commit)
     forged_projections = (
@@ -1251,6 +1257,7 @@ def test_worker_finalizes_signed_db_pending_acceptance_before_one_agent_tick(
         lambda **_scope: None,
         raising=False,
     )
+    monkeypatch.setattr(prepared.allocator, "reconcile_expired", lambda **_scope: ())
     monkeypatch.setattr(prepared.allocator, "settle_qualification_terminal", settle)
     worker = QualificationExecutionWorker(
         agent=harness.agent,
@@ -1355,6 +1362,7 @@ def test_worker_settles_from_signed_acceptance_not_other_result_fields(
         lambda **_scope: None,
         raising=False,
     )
+    monkeypatch.setattr(prepared.allocator, "reconcile_expired", lambda **_scope: ())
     worker = QualificationExecutionWorker(
         agent=harness.agent,
         allocator=prepared.allocator,
@@ -1381,6 +1389,107 @@ def test_worker_settles_from_signed_acceptance_not_other_result_fields(
     with pytest.raises(RuntimeRejected, match="authenticated terminal acceptance"):
         worker.tick()
     assert settled == []
+
+
+def test_real_postgresql_worker_persists_expired_launch_gap_before_local_reconciliation(
+    tmp_path, monkeypatch, _isolated_adapter_database
+) -> None:
+    prepared, allocator, _adapter, agent, runtime, state, claim = _real_v2_composition(
+        monkeypatch,
+        tmp_path,
+        start=False,
+    )
+    runtime.quick_exit_before_identity = True
+
+    with pytest.raises(SystemExit, match="workload exited before exact launch identity"):
+        agent.run_once()
+
+    local = state.load_state(claim.snapshot.attempt_id)
+    before = allocator.load_attempt(claim.snapshot.attempt_id)
+    assert local is not None and local.phase.value == "launch_committed"
+    assert local.runtime_identity is None and local.node_runtime_launch_receipt is None
+    assert before is not None and before.status == "starting" and before.state_version == 2
+    assert before.reconciliation_reason is None
+
+    with pytest.raises(ValueError, match="node scope must be complete"):
+        allocator.reconcile_expired(node_id=prepared.manifest.node_id)
+    with pytest.raises(AdmissionConflict, match="deployment-pinned node identity"):
+        allocator.reconcile_expired(
+            node_id=prepared.manifest.node_id,
+            node_manifest_sha256=_digest("another-node-manifest"),
+        )
+
+    late = before.lease_expires_at
+    runtime.clock.current = late
+    monkeypatch.setattr(allocator_module, "_database_time", lambda _session: late)
+    original_reconcile = allocator.reconcile_expired
+    scopes: list[dict[str, object]] = []
+
+    def scoped_reconcile(**scope):
+        scopes.append(scope)
+        return original_reconcile(**scope)
+
+    monkeypatch.setattr(allocator, "reconcile_expired", scoped_reconcile)
+    runtime_authority = allocator._require_runtime_control_authority()  # noqa: SLF001
+    worker = QualificationExecutionWorker(
+        agent=agent,
+        allocator=allocator,
+        runtime_control_authority=runtime_authority.authority_verifier,
+        node_id=prepared.manifest.node_id,
+        node_manifest_sha256=prepared.manifest.manifest_sha256,
+    )
+
+    result = worker.tick()
+
+    assert result.outcome is NodeRunOutcome.RECONCILIATION_REQUIRED
+    assert result.reconciliation_reason == (
+        "historical_pre_runtime_cleanup_did_not_prove_absence"
+    )
+    assert scopes == [
+        {
+            "node_id": prepared.manifest.node_id,
+            "node_manifest_sha256": prepared.manifest.manifest_sha256,
+        }
+    ]
+    assert runtime.launch_calls == 0
+    with session_factory()() as session:
+        central = session.execute(
+            text(
+                "SELECT status, state_version, reconciliation_reason, "
+                "runtime_identity_sha256, node_runtime_launch_receipt_sha256 "
+                "FROM execution_attempts WHERE attempt_id = :attempt_id"
+            ),
+            {"attempt_id": claim.snapshot.attempt_id},
+        ).one()
+        hold_states = session.execute(
+            text(
+                "SELECT resource.state, budget.state "
+                "FROM execution_resource_leases AS resource "
+                "JOIN execution_budget_reservations AS budget USING (attempt_id) "
+                "WHERE resource.attempt_id = :attempt_id"
+            ),
+            {"attempt_id": claim.snapshot.attempt_id},
+        ).one()
+        event_types = tuple(
+            session.execute(
+                text(
+                    "SELECT event_type FROM execution_budget_events "
+                    "WHERE reservation_id = ("
+                    "SELECT reservation_id FROM execution_budget_reservations "
+                    "WHERE attempt_id = :attempt_id) ORDER BY sequence"
+                ),
+                {"attempt_id": claim.snapshot.attempt_id},
+            ).scalars()
+        )
+    assert central == (
+        "reconciliation_required",
+        3,
+        "lease_expired",
+        None,
+        None,
+    )
+    assert hold_states == ("reconciliation_required", "reconciliation_required")
+    assert event_types == ("reserved", "reconciliation_required")
 
 
 @pytest.mark.parametrize("settlement_crash", ("before", "after"))
@@ -1678,7 +1787,7 @@ def test_real_postgresql_worker_deadline_commit_return_crash_is_terminal_and_for
         node_id="node.foreign-adapter",
         node_manifest_sha256=_digest("foreign-adapter-manifest"),
     )
-    with pytest.raises(RuntimeRejected, match="terminal deadline adjudication"):
+    with pytest.raises(RuntimeRejected, match="node-scoped expiry reconciliation"):
         foreign_worker.tick()
     with sessions() as session:
         assert (

@@ -2029,6 +2029,7 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
         "PostgreSQLNodeAllocatorAdapter.submit_terminal_artifacts",
         "QualificationExecutionWorker._adjudicate_expired_terminal",
         "QualificationExecutionWorker._settle",
+        "QualificationExecutionWorker.tick",
     }
     expected_callers = (
         {("aletheia.execution.allocator", symbol) for symbol in expected_allocator_callers}

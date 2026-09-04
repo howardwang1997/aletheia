@@ -24,6 +24,11 @@ from aletheia.execution.allocator import (
     LocalPricingAuthorityPin,
     PostgreSQLExecutionAllocator,
 )
+from aletheia.execution.assignment_contracts import (
+    NodeAssignmentTransportPin,
+    node_transport_key_id,
+    x25519_public_key_hex,
+)
 from aletheia.execution.node_agent import (
     NodeLocalStateStore,
     NodeRunOutcome,
@@ -33,6 +38,7 @@ from aletheia.execution.node_agent import (
     PinnedLaunchRegistry,
     PinnedLaunchSpec,
     QualificationNodeAgent,
+    RuntimeRejected,
 )
 from aletheia.execution.pre_runtime_cleanup_issuance import (
     PinnedAttemptScopedPreRuntimeCleanupAuthority,
@@ -157,6 +163,8 @@ def _running_v2(
     *,
     start: bool = True,
     initial_assignment_lease_seconds: int | None = None,
+    heartbeat_extension_seconds: int = 15,
+    max_runtime_launch_authorization_seconds: int = 30,
 ):
     prepared = _prepared(
         monkeypatch,
@@ -190,7 +198,8 @@ def _running_v2(
         allocator_principal_id="principal:allocator",
         runtime_control_issuer=issuer,
         max_inventory_ttl_seconds=30,
-        heartbeat_extension_seconds=15,
+        heartbeat_extension_seconds=heartbeat_extension_seconds,
+        max_runtime_launch_authorization_seconds=(max_runtime_launch_authorization_seconds),
         initial_assignment_lease_seconds=initial_assignment_lease_seconds,
         artifact_submission_grace_seconds=3600,
     )
@@ -260,7 +269,7 @@ def _running_v2(
     return prepared, allocator, adapter, agent, runtime, state, claim
 
 
-def test_delayed_initial_assignment_contracts_to_runtime_heartbeat_window(
+def test_delayed_initial_assignment_contracts_to_runtime_launch_window(
     monkeypatch, tmp_path
 ) -> None:
     prepared, allocator, _adapter, agent, runtime, _state, claim = _running_v2(
@@ -285,9 +294,106 @@ def test_delayed_initial_assignment_contracts_to_runtime_heartbeat_window(
             )
         ).scalar_one()
         assert attempt is not None
-        assert attempt.lease_expires_at == delayed_start + timedelta(seconds=15)
+        # The pre-launch reservation contracts, but the resulting lease must still cover the
+        # complete signed launch window.  A shorter heartbeat interval applies only after launch;
+        # using it here can expire the in-container gate while Docker is still starting it.
+        assert attempt.lease_expires_at == delayed_start + timedelta(seconds=30)
         assert attempt.lease_expires_at < claim.snapshot.lease_expires_at
         assert resource.lease_expires_at == attempt.lease_expires_at
+
+
+def test_runtime_launch_remains_authorized_past_short_heartbeat_window(
+    monkeypatch, tmp_path
+) -> None:
+    prepared, allocator, adapter, agent, runtime, state, claim = _running_v2(
+        monkeypatch,
+        tmp_path,
+        start=False,
+        heartbeat_extension_seconds=15,
+        max_runtime_launch_authorization_seconds=30,
+    )
+    original_start = adapter.start_attempt
+
+    def delay_after_committed_authorization(**scope):
+        committed = original_start(**scope)
+        runtime.clock.current += timedelta(seconds=20)
+        runtime.clock.monotonic += 20 * 1_000_000_000
+        return committed
+
+    monkeypatch.setattr(adapter, "start_attempt", delay_after_committed_authorization)
+    monkeypatch.setattr(
+        allocator_module,
+        "_database_time",
+        lambda _session: runtime.clock.current,
+    )
+
+    result = agent.run_once()
+
+    assert result.outcome is NodeRunOutcome.RUNNING
+    assert runtime.launch_calls == 1
+    current = state.load_state(claim.snapshot.attempt_id)
+    assert current is not None
+    authorization = current.runtime_launch_authorization
+    identity = current.runtime_identity
+    assert authorization is not None and identity is not None
+    assert authorization.issued_at == prepared.observed_at
+    assert identity.started_at == prepared.observed_at + timedelta(seconds=20)
+    assert identity.started_at > authorization.issued_at + timedelta(seconds=15)
+    assert identity.started_at < authorization.expires_at
+    snapshot = allocator.load_attempt(claim.snapshot.attempt_id)
+    assert snapshot is not None
+    assert snapshot.status == "running"
+    assert snapshot.lease_expires_at == identity.started_at + timedelta(seconds=15)
+    assert snapshot.lease_expires_at > authorization.lease_expires_at
+
+
+def test_replacement_authorization_renews_complete_runtime_launch_window(
+    monkeypatch, tmp_path
+) -> None:
+    _prepared, allocator, adapter, agent, runtime, state, claim = _running_v2(
+        monkeypatch,
+        tmp_path,
+        start=False,
+        heartbeat_extension_seconds=60,
+        max_runtime_launch_authorization_seconds=30,
+    )
+    original_start = adapter.start_attempt
+    assignment = adapter.pull_qualification_assignment(
+        node_id=claim.snapshot.node_id,
+        node_manifest_sha256=_prepared.manifest.manifest_sha256,
+    )
+    assert assignment is not None
+
+    def delay_committed_authorization(**scope):
+        committed = original_start(**scope)
+        runtime.clock.current += timedelta(seconds=50)
+        runtime.clock.monotonic += 50 * 1_000_000_000
+        return committed
+
+    monkeypatch.setattr(adapter, "start_attempt", delay_committed_authorization)
+    monkeypatch.setattr(
+        allocator_module,
+        "_database_time",
+        lambda _session: runtime.clock.current,
+    )
+    with pytest.raises(RuntimeRejected, match="authorization is invalid or stale"):
+        agent.run_assignment(assignment)
+    monkeypatch.setattr(adapter, "start_attempt", original_start)
+
+    cleaned = agent.run_assignment(assignment)
+
+    assert cleaned.outcome is NodeRunOutcome.PRE_RUNTIME_REAUTHORIZED
+    replacement = cleaned.pre_runtime_absence_receipt
+    assert replacement is not None
+    current = state.load_state(claim.snapshot.attempt_id)
+    assert current is not None and current.runtime_launch_authorization is not None
+    authorization = current.runtime_launch_authorization
+    assert authorization.issued_at == runtime.clock.current
+    assert authorization.expires_at == runtime.clock.current + timedelta(seconds=30)
+    assert authorization.lease_expires_at == runtime.clock.current + timedelta(seconds=60)
+    snapshot = allocator.load_attempt(claim.snapshot.attempt_id)
+    assert snapshot is not None
+    assert snapshot.lease_expires_at == authorization.lease_expires_at
 
 
 def test_reserved_qualification_run_is_a_typed_pending_raw_source(monkeypatch, tmp_path) -> None:
@@ -399,15 +505,17 @@ def test_expired_lease_launch_receipt_enters_reconciliation_atomically(
     assert local.runtime_identity is not None
     assert local.node_runtime_launch_receipt == captured[0]
     assert claim.lease_token is not None
+    launch_snapshot = allocator.load_attempt(claim.snapshot.attempt_id)
+    assert launch_snapshot is not None
 
     # Reproduce the target-host boundary: the engine start and signed node receipt are
-    # durable, but the short lease expires immediately before the DB acceptance call.
+    # durable, but the bounded launch lease expires immediately before the DB acceptance call.
     # The launch remains valid historical evidence and must atomically move every hold
     # into reconciliation without an intermediate attempt-row autoflush.
     monkeypatch.setattr(
         allocator_module,
         "_database_time",
-        lambda _session: claim.snapshot.lease_expires_at,
+        lambda _session: launch_snapshot.lease_expires_at,
     )
     committed = allocator.accept_runtime_launch(
         attempt_id=claim.snapshot.attempt_id,
@@ -418,7 +526,7 @@ def test_expired_lease_launch_receipt_enters_reconciliation_atomically(
 
     assert committed.replayed is False
     assert committed.snapshot.status == "reconciliation_required"
-    assert committed.snapshot.lease_expires_at == claim.snapshot.lease_expires_at
+    assert committed.snapshot.lease_expires_at == launch_snapshot.lease_expires_at
     sessions = session_factory()
     with sessions() as session:
         attempt = session.get(_ExecutionAttemptRecord, claim.snapshot.attempt_id)
@@ -477,13 +585,15 @@ def test_node_resubmits_local_receipt_through_expired_lease_reconciliation(
     assert local.phase.value == "launch_committed"
     assert runtime.launch_calls == 1
     monkeypatch.setattr(adapter, "mark_running", original_mark_running)
-    elapsed = claim.snapshot.lease_expires_at - runtime.clock.current
-    runtime.clock.current = claim.snapshot.lease_expires_at
+    launch_snapshot = allocator.load_attempt(claim.snapshot.attempt_id)
+    assert launch_snapshot is not None
+    elapsed = launch_snapshot.lease_expires_at - runtime.clock.current
+    runtime.clock.current = launch_snapshot.lease_expires_at
     runtime.clock.monotonic += int(elapsed.total_seconds() * 1_000_000_000)
     monkeypatch.setattr(
         allocator_module,
         "_database_time",
-        lambda _session: claim.snapshot.lease_expires_at,
+        lambda _session: launch_snapshot.lease_expires_at,
     )
 
     recovered = agent.run_once()
@@ -520,6 +630,79 @@ def test_node_resubmits_local_receipt_through_expired_lease_reconciliation(
         assert resource.state == "held"
         assert reservation.state == "held"
         assert event_types == ("reserved", "reconciliation_required", "adopted")
+
+
+def test_expiry_reconciliation_scope_cannot_mutate_another_pinned_node(
+    monkeypatch, tmp_path
+) -> None:
+    prepared, allocator, _adapter, _agent, _runtime, _state, claim = _running_v2(
+        monkeypatch,
+        tmp_path,
+        start=False,
+    )
+    secondary_manifest = prepared.manifest.model_copy(
+        update={
+            "node_id": "node.expiry-scope-secondary",
+            "principal_id": "principal:expiry-scope-secondary",
+        }
+    )
+    secondary_authority = _worker_authority(
+        secondary_manifest,
+        observed_at=prepared.observed_at,
+    )
+    secondary_transport_private_key = bytes.fromhex("93" * 32)
+    secondary_transport_public_key = x25519_public_key_hex(
+        secondary_transport_private_key
+    )
+    secondary_transport = NodeAssignmentTransportPin(
+        node_id=secondary_manifest.node_id,
+        node_manifest_sha256=secondary_manifest.manifest_sha256,
+        transport_policy_sha256=_digest("expiry-scope-secondary-transport-policy"),
+        transport_principal_id="principal:expiry-scope-secondary-transport",
+        transport_key_id=node_transport_key_id(secondary_transport_public_key),
+        public_key_x25519_hex=secondary_transport_public_key,
+        valid_from=prepared.observed_at - timedelta(days=1),
+        expires_at=prepared.observed_at + timedelta(days=1),
+    )
+    scoped_allocator = PostgreSQLExecutionAllocator(
+        authority=allocator._authority,  # noqa: SLF001
+        artifact_resolver=allocator._artifact_resolver,  # noqa: SLF001
+        execution_authority_resolver=allocator._execution_authority_resolver,  # noqa: SLF001
+        pricing_authority=allocator._pricing_authority,  # noqa: SLF001
+        node_authorities=(
+            *allocator._node_authorities.values(),  # noqa: SLF001
+            secondary_authority,
+        ),
+        node_assignment_transport_pins=(
+            *allocator._node_assignment_transport_pins.values(),  # noqa: SLF001
+            secondary_transport,
+        ),
+        terminal_verification_authority=allocator._terminal_verification_authority,  # noqa: SLF001
+        allocator_principal_id=allocator._allocator_principal_id,  # noqa: SLF001
+        runtime_control_issuer=allocator._runtime_control_issuer,  # noqa: SLF001
+        artifact_submission_grace_seconds=3600,
+    )
+    scoped_allocator.register_node(secondary_manifest.node_id)
+    late = claim.snapshot.lease_expires_at
+    monkeypatch.setattr(allocator_module, "_database_time", lambda _session: late)
+
+    foreign_result = scoped_allocator.reconcile_expired(
+        node_id=secondary_manifest.node_id,
+        node_manifest_sha256=secondary_manifest.manifest_sha256,
+    )
+
+    assert foreign_result == ()
+    untouched = allocator.load_attempt(claim.snapshot.attempt_id)
+    assert untouched is not None and untouched.status == "reserved"
+
+    owner_result = scoped_allocator.reconcile_expired(
+        node_id=prepared.manifest.node_id,
+        node_manifest_sha256=prepared.manifest.manifest_sha256,
+    )
+
+    assert len(owner_result) == 1
+    assert owner_result[0].attempt_id == claim.snapshot.attempt_id
+    assert owner_result[0].status == "reconciliation_required"
 
 
 def test_adopted_runtime_can_commit_terminal_under_rotated_fence(monkeypatch, tmp_path) -> None:
@@ -1656,7 +1839,9 @@ def test_runtime_fence_rebind_json_is_exactly_bound_to_adoption(monkeypatch, tmp
     _prepared_case, allocator, _adapter, agent, runtime, _state, claim = _running_v2(
         monkeypatch, tmp_path
     )
-    expired = claim.snapshot.lease_expires_at + timedelta(microseconds=1)
+    running_snapshot = allocator.load_attempt(claim.snapshot.attempt_id)
+    assert running_snapshot is not None
+    expired = running_snapshot.lease_expires_at + timedelta(microseconds=1)
     assert expired < claim.snapshot.hard_deadline
     runtime.clock.current = expired
     monkeypatch.setattr(allocator_module, "_database_time", lambda _session: expired)

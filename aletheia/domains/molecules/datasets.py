@@ -1,16 +1,23 @@
 """Dataset resolution for the molecules domain.
 
 The canonical benchmark is **MoleculeNet ESOL** (Delaney aqueous solubility), the
-field's standard small regression benchmark with a published scaffold-split SOTA. We
-load the public CSV by URL (cached) — the unit test never downloads (it featurizes a
-tiny in-memory SMILES frame).
+field's standard small regression benchmark with a published scaffold-split SOTA. Its
+exact public CSV bytes are packaged and hash-verified so scientific demonstrations do
+not depend on network availability or silently follow upstream data drift.
 """
 
 from __future__ import annotations
 
+import hashlib
+from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 ESOL_URL = "https://deepchemdata.s3-us-west-1.amazonaws.com/datasets/delaney-processed.csv"
+ESOL_RESOURCE = "data/delaney-processed.csv"
+ESOL_PATH = Path(__file__).resolve().parent / ESOL_RESOURCE
+ESOL_SHA256 = "8c06a76f0c6487d29ab0f903e6a7a7139f189ab3c1178f159c8be8964602f189"
+ESOL_RECORD_COUNT = 1128
 # AqSolDB curated aqueous-solubility dataset (~10k compounds), Harvard Dataverse
 # (doi:10.7910/DVN/OVHAW8, curated-solubility-dataset.csv). OPTIONAL — a larger second
 # benchmark for replicating a finding across datasets; network-gated, so callers that need
@@ -26,13 +33,32 @@ KNOWN_TARGETS = {
 KNOWN_SMILES = {"esol": "smiles", "delaney": "smiles", "aqsoldb": "SMILES"}
 
 
+class MolecularBenchmarkIntegrityError(RuntimeError):
+    """A packaged scientific benchmark is absent or differs from its reviewed bytes."""
+
+
+def _load_frozen_esol() -> Any:
+    import pandas as pd
+
+    try:
+        payload = ESOL_PATH.read_bytes()
+    except OSError as exc:
+        raise MolecularBenchmarkIntegrityError("frozen ESOL benchmark is unavailable") from exc
+    if hashlib.sha256(payload).hexdigest() != ESOL_SHA256:
+        raise MolecularBenchmarkIntegrityError("frozen ESOL benchmark differs from its digest")
+    frame = pd.read_csv(BytesIO(payload))
+    if len(frame) != ESOL_RECORD_COUNT:
+        raise MolecularBenchmarkIntegrityError("frozen ESOL benchmark record count differs")
+    return frame
+
+
 def load_benchmark(ref: str) -> Any:
-    """Load a known molecular benchmark by name (downloads + caches on first use)."""
+    """Load a known molecular benchmark from reviewed bytes or its explicit remote source."""
     import pandas as pd
 
     key = (ref or "esol").strip().lower()
     if key in ("esol", "delaney"):
-        return pd.read_csv(ESOL_URL)
+        return _load_frozen_esol()
     if key == "aqsoldb":
         return pd.read_csv(AQSOLDB_URL)
     raise ValueError(f"unknown molecular benchmark: {ref!r}")

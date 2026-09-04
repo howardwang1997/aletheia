@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from importlib.metadata import version
 from pathlib import Path
+
+from packaging.version import Version
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -8,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 VULNERABLE_DEPLOYMENT_PINS = (
     "cryptography==48.0.0",
     "pydantic-settings==2.14.1",
+    "transformers==5.9.0",
     "torch==2.12.0",
 )
 
@@ -24,12 +28,19 @@ def test_python_environment_retains_audited_security_floors() -> None:
         "starlette>=1.3.1",
         "python-multipart>=0.0.31",
         "pydantic-settings>=2.14.2",
+        "transformers>=5.10.4,<6",
         "torch>=2.13.0",
         "h2>=4.4.1",
         "tornado>=6.5.7",
         "pyasn1>=0.6.4",
     ):
         assert requirement in environment
+
+
+def test_resolved_transformers_is_on_the_non_yanked_patched_line() -> None:
+    resolved = Version(version("transformers"))
+
+    assert Version("5.10.4") <= resolved < Version("6")
 
 
 def test_deployment_images_do_not_reintroduce_audited_vulnerable_pins() -> None:

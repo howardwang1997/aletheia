@@ -458,6 +458,57 @@ node cleanup replay, again before container removal or database release. A secon
 stable-semantics follow-up must merge and target-replay under another non-reused key. See
 [PR-8j attempt-scoped cleanup recovery](PR8J_ATTEMPT_SCOPED_PRE_RUNTIME_CLEANUP.md).
 
+Generation `20260903g`, frozen from merge commit
+`7ff28514e84a756d75004aa8d1a545091b12df87`, incorporated that node-side stable-replay repair and
+reached a new target-only launch-timing boundary. Its campaign request and plan had SHA-256
+`40c88ab645ce5de70cfa05023521ca661a1888afeca88c9f814078536f235e69` and
+`f4f1ce0263b3761b911a004c0cd562b4`. Execution
+`exe_54abfd9a789cc368b0602970bb8b51e4` and attempt
+`iat_88dec31d6385eca0b653421404233ff7` retained campaign activation and the
+`02-installed-manifest.json` record (SHA-256
+`514c4a798d17aaa5b39f62622799b5d405d5552a60722e7ec2aeae64b3341f55`); the apply process never
+observed the attempt as running after that checkpoint and wrote no destructive-fault phase.
+
+The exact Docker start was submitted at `2026-09-03T02:49:04.267261Z`, and container
+`49120073870a3421a052b711168277a32cfef01faa53d3e0fa57192f1bf3b95e` began at
+`02:49:04.459057638Z`. The runtime ticket expired at `02:49:05.775710Z`; after rehashing the frozen
+launch configuration and workload, the gate exited `126` at `02:49:05.892104134Z`, before the
+node could publish `engine-launch.json`. The exact output tree is empty, but the entrypoint began
+before ticket expiry, so the existing narrow expired-before-start proof correctly refuses to call
+this a never-started workload. A later read-only database query showed that the durable attempt row
+remains `starting` at state version 2 with an expired lease, one launch authorization, zero runtime
+inspections, and no runtime identity or launch receipt. The restarted node's local journal reports
+`historical_pre_runtime_cleanup_did_not_prove_absence` and a reconciliation-required outcome, but
+no central reconciliation transition was committed. The row must not be relabelled to match the
+local outcome. Operationally it requires reconciliation and has no scientifically admissible
+output. This is negative engineering evidence, not a campaign receipt.
+
+The allocator defect was an internally inconsistent window. The deployment selected a 30-second
+maximum launch delay, but first authorization contracted the attempt/resource lease to the
+15-second heartbeat interval and then truncated the signed ticket to that lease. Docker
+create/start consumed almost that entire interval, leaving the in-container verifier about 1.3
+seconds. First and replacement launch authorization now require the hard deadline and
+runtime-control pin to cover the complete configured launch window, keep both attempt and resource
+leases live for at least the greater of that window and the heartbeat extension, and issue the
+ticket for the full window. After launch, ordinary heartbeats may extend but never shorten that
+retained lease; pre-launch Docker and gate work can no longer be assigned a lease shorter than
+their own signed authorization. PostgreSQL regressions cover the initial contraction, a launch
+that remains valid after crossing the shorter heartbeat interval, and a delayed replay that must
+renew a complete replacement window.
+
+The same retained evidence exposed a separate production-composition omission. The allocator had
+an atomic database-clock `reconcile_expired()` transition, but only tests called it; the polling
+worker could therefore report a node-local reconciliation outcome forever while the central row
+remained `starting`. Each worker tick now invokes that transition with its exact configured
+`(node_id, node_manifest_sha256)` before terminal adjudication, settlement or assignment polling.
+The allocator checks both deployment pins and the registered node identity, filters candidates by
+node, and rechecks the locked attempt before mutation. It retains resource and budget holds and
+does not release, retry or create scientific authority. A real PostgreSQL regression reproduces
+the generation-g shape—committed launch authorization, no runtime identity or launch receipt, and
+cleanup unable to prove absence—and requires central `starting@v2 ->
+reconciliation_required@v3` plus the unchanged local diagnostic. The historical generation-g row
+has not been edited; it remains evidence produced by the older frozen release.
+
 ## Destructive campaign and evidence order
 
 The request embeds the complete observer config and one already-committed
@@ -530,7 +581,8 @@ The dedicated qualification registration service must also freeze an explicit
 `initial_assignment_lease_seconds` that covers registration through deterministic campaign apply
 startup, while remaining inside the signed execution hard deadline. This is not the node heartbeat
 interval: the node service retains its short `heartbeat_extension_seconds`, and revision `0031`
-contracts to that value when it issues the first runtime launch authorization.
+contracts the long reservation to a bounded launch lease covering the greater of that heartbeat
+extension and the complete signed launch-authorization window.
 
 ```console
 sudo /opt/aletheia/python/bin/python -S -s -P \
@@ -577,13 +629,123 @@ receipt into a passing shape.
 The selected Linux target is compatible and has run frozen/installed candidate generations, but
 none has emitted the complete campaign receipt. Therefore no host is currently proven deployable,
 PR-4b remains nondeployable, and `scientific_admission_allowed` is always false even in a
-successful campaign receipt. The database is already at `0032`; the next ordered operation is to
-merge and freeze the node-side stable-replay repair, commission another target-local non-reused
-cleanup key without exporting private bytes, and use it to close the retained `20260902f`
-pre-workload generation through the signed allocator transaction. Only after the old exact
-loop/ext4 hold is released may one fresh superseding generation run with the already-proven
-five-minute observation budget, explicit bounded initial-assignment window, short runtime heartbeat
-and 1,800-second workload. The complete campaign must then run—not more controller authority.
+successful campaign receipt. The generation-`20260903g` database is already at `0032` and retains
+its attempt as `starting` with an expired lease and no accepted runtime identity. Its local node
+journal requires reconciliation, but the database has not persisted that transition. Because the
+exact container started before ticket expiry, that attempt must not be relabelled as never-started
+or passed through the attempt-scoped pre-runtime cleanup protocol.
+
+The next ordered source operation is to merge and freeze the complete-launch-window and
+node-scoped expiry-reconciliation repairs. The complete repository Conda environment must continue
+to resolve non-yanked `transformers>=5.10.4,<6` and pass both `pip check` and
+`pip-audit --local`. That floor does not by itself invalidate generation g's separately prepared
+PR-8i service runtime: a read-only inspection of the frozen tree found 27 distributions and neither
+Transformers nor sentence-transformers. Before freezing generation h, independently rehash,
+re-probe and audit the exact minimal runtime tree it will pin. Reuse is admissible only if its
+bytes, immutable custody, required imports, native-mapping closure and actual installed dependency
+set all revalidate unchanged; otherwise prepare and rehash a fresh minimal runtime. Do not add the
+unrelated research/model stack merely to make this service runtime resemble the complete repository
+environment. A fresh superseding generation must use a fresh database and non-reused authority
+identities, the already-proven five-minute observation budget, an explicit bounded
+initial-assignment window, a short runtime heartbeat, a launch authorization whose complete
+configured window is retained by the lease, and the exact 1,800-second workload. The complete
+campaign must then run—not more controller authority.
+
+The existing PR-8i tree was evaluated against that reuse rule at `2026-09-04T04:24:39Z`. The
+frozen request and receipt still have SHA-256
+`71b155c27f1f418bba79e9a2001136cc0a66a8a2eeda0af4164fa54e247134f4` and
+`a7bd36c671ea1a83ad069a9bd98ec6a67577aa7f5f963449634199312a77bfa8`; both bind tree manifest
+`9904a0cfa1cf7d49c0201f5a614ded78efadc0458157f38c6601600303ab1836`. The frozen observer streamed
+and rehashed all 1,826 directories, 23,810 regular files and 875,137,883 bytes under exact root
+custody, finding zero symlinks or mismatches. Replaying the eight-module isolated probe reproduced
+all 79 receipt-bound native paths byte-for-byte and found zero external mappings. The exact 27
+installed distributions produce canonical inventory SHA-256
+`49565a4e6d6f760af58a0fa96455baaaabd00acf2c7ba8f80bed5f6bc2f511d4`; `pip check` found no broken
+requirements and `pip-audit 2.10.1` queried OSV with every version pinned, reporting no known
+vulnerabilities. This makes the tree a valid candidate for generation h, not qualified deployment
+evidence: h's own frozen spec, bootstrap and observer must bind and repeat the same checks.
+
+A read-only target reinspection at `2026-09-03T17:23:58Z` also found all five qualification units
+from each of generations `20260901c`, `20260901d` and `20260903g` still enabled and live. The
+generation-c and generation-d node units had accumulated 24,628 and 21,614 restarts respectively,
+while the generation-g node had restarted once. Follow-up checks found one shared
+`aletheia_qualification` database at schema `20260903_0032`, one allocator plus three outbox
+connections, and retained c/d/g quota devices `/dev/loop26`-`27`, `/dev/loop28`-`29`, and
+`/dev/loop6`. Those sibling workers are background execution and I/O authority, not inert retained
+evidence; their database and mount residue also cannot be called a fresh h environment. The
+concrete campaign host now enumerates all systemd services and unit files through the pinned
+`systemctl` executable. It fails before campaign mutation if any
+`aletheia-qualification-*` or `aletheia-arl1-*` service outside the request's exact five units is
+active, activating, reloading or deactivating, or if any sibling unit file is not persistently
+`disabled` or `masked`. An inactive but enabled, static, indirect, linked, generated, transient or
+runtime-masked unit can regain authority on activation or reboot and is therefore not inert. The
+host repeats both checks around activation, installed-manifest observation and completed receipt
+revalidation. It only rejects; it never stops or disables a unit. Generation h therefore requires
+exact reviewed retirement of every older active or reboot-capable generation plus a fresh isolated
+database and mount review, or a fresh disposable target, before its request is frozen.
+
+At `2026-09-04T03:47:23Z`, an explicitly authorized operator retirement preserved the historical
+request, database, journals, manifests, unit files, workspace sources and quota backing images,
+while removing only c/d/g execution and mount authority. Read-only checks first bound all fifteen
+units to their exact generation manifests and releases, and bound three exact Docker containers to
+their exited/PID-zero identities. The operator then stopped and disabled the five c, five d and
+five g units. All fifteen became `inactive/dead`, `MainPID=0` and `disabled` before further
+cleanup. The exact exited containers were removed by full ID:
+
+- c: `a50dd7ce1ed15d72b15840c28b117efb11688981d9ee0da6ece58cf65560c801`, exit 0;
+- d: `0bb03fea5517bab6edc84ed282afde0185091888ba21ecf30b6ee9b59fb0e594`, exit 0; and
+- g: `49120073870a3421a052b711168277a32cfef01faa53d3e0fa57192f1bf3b95e`, exit 126.
+
+The five exact output mounts were ordinarily unmounted without lazy, recursive or forced
+semantics; `/dev/loop26`, `/dev/loop27`, `/dev/loop28`, `/dev/loop29` and `/dev/loop6` were detached
+only after all five had no mountpoint. The c/d/g workspace bind targets were then ordinarily
+unmounted. Their five 16 MiB backing images remain root-owned, root-grouped mode `0600`; the three
+runtime-journal control roots remain in allocator custody mode `0700`; and all three manifest bytes
+still match the SHA-256 values embedded in their retained units. A fresh closed-system service
+scan found no live sibling qualification or ARL-1 service. A forced-read-only peer query finally
+confirmed that generation g is still `starting@v2`, has no reconciliation reason, runtime identity
+or launch receipt, and retains both resource and budget holds. Retirement did not rewrite the
+allocator.
+
+This retirement removes the known live c/d/g contamination but does not certify the target as
+fresh. Inactive historical generations, their retained containers, loops and mounts remain outside
+that exact authorization. A generation-h request still requires a fresh isolated database and a
+complete read-only mount/container review (or a new disposable target) after the repaired source
+has merged and been frozen.
+
+A subsequent read-only unit-file audit at `2026-09-04T04:42:16Z` found another latent boundary that
+the live-service scan could not see: the five qualification units for each of generations
+`20260831z`, `20260901a`, `20260901b` and `20260901e` are inactive but enabled. All twenty can
+reacquire execution or mount authority after reboot. They were outside the c/d/g retirement
+authorization and remain unchanged. The campaign now rejects this non-inert state, so generation h
+could not run on this target until an operator exactly disabled or retired those twenty units after
+identity checks, or selected a genuinely fresh target.
+
+The follow-up identity check at `2026-09-04T04:47:41Z` found every one of the twenty units loaded,
+`inactive/dead`, `MainPID=0` and enabled, and bound each five-unit generation to a root-owned,
+root-grouped mode-`0444` manifest and one exact release:
+
+- `20260831z`: manifest `1e3d0f82607da60915fe92bfb65b1456054ffe4e8446e7579e261b6b2cbd1052`,
+  release `/opt/aletheia/release-2146ab5-z1`;
+- `20260901a`: manifest `96022566c6b28de63812b5eb4cca036a71c0e9faad2671409b39fac104756121`,
+  release `/opt/aletheia/release-8386fb5-a1`;
+- `20260901b`: manifest `9697118033fe7439052f1b8eae4d725cb3273485e1caf4885da11339c5dca9c9`,
+  release `/opt/aletheia/release-7afb64d-b1`; and
+- `20260901e`: manifest `4ad084d534604d195fdcfeff23117d980d1a39d9d023449de48bb93b2f164890`,
+  release `/opt/aletheia/release-3fcdb57-e1`.
+
+That check changed no target state.
+
+At `2026-09-04T07:21:55Z`, the operator explicitly authorized and completed that exact disable-only
+retirement. A fail-closed precheck revalidated all four manifest hashes above and every one of the
+twenty exact unit files, then required each unit to be loaded, enabled, `inactive/dead` and
+`MainPID=0`. The operation passed those twenty explicit names to `systemctl disable` without
+`--now`; it removed only their `multi-user.target.wants` links. A postcheck found all twenty
+`disabled`, still `inactive/dead` with `MainPID=0`, while every unit-file hash and manifest hash was
+unchanged. No qualification or ARL-1 sibling service was live. The operation did not delete unit
+files, manifests, containers, mounts, backing images, journals or database state. This closes the
+known reboot-capable z/a/b/e service boundary, but generation h still requires its fresh isolated
+database and final read-only container/mount/resource review before the request is frozen.
 
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the

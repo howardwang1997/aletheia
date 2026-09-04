@@ -897,6 +897,24 @@ def _database_time(session: Session) -> datetime:
     return session.execute(select(func.clock_timestamp())).scalar_one()
 
 
+def _lock_admission_uniqueness(session: Session, intent: ExecutionIntent) -> None:
+    """Serialize both unique execution-head identities before their first insert."""
+
+    # A targeted ON CONFLICT insert can otherwise deadlock in PostgreSQL's speculative-insert
+    # machinery when concurrent callers contend on both the execution primary key and the
+    # replicate-slot unique index.  This private namespace and fixed acquisition order also make
+    # crossed identity rebindings serialize before either unique index is touched.  Transaction
+    # locks release on commit/rollback, including for a caller-owned transaction.
+    lock_keys = (
+        f"execution-admission:execution:{intent.execution_id}",
+        f"execution-admission:replicate-slot:{intent.replicate_slot.replicate_slot_id}",
+    )
+    for lock_key in lock_keys:
+        session.execute(
+            select(func.pg_advisory_xact_lock(func.hashtextextended(lock_key, 0)))
+        ).scalar_one()
+
+
 def _model_json(model: object) -> dict[str, object]:
     dump = getattr(model, "model_dump")
     return dump(mode="json")
@@ -1743,12 +1761,13 @@ class PostgreSQLExecutionAllocator:
 
         bundle = EngineeringQualificationBundle.model_validate(bundle.model_dump(mode="python"))
         grant = EngineeringQualificationGrant.model_validate(grant.model_dump(mode="python"))
+        intent = bundle.intent
         with self._admission_session(session) as session:
+            _lock_admission_uniqueness(session, intent)
             preliminary_now = _database_time(session)
             self._validate_pricing_authority(bundle)
             quote = bundle.cost_quote
             authorization = bundle.budget_authorization
-            intent = bundle.intent
             if (
                 self._runtime_control_authority is not None
                 and intent.resource_request.artifact_quota_bytes
@@ -3956,28 +3975,39 @@ class PostgreSQLExecutionAllocator:
             # Registration may deliberately reserve enough time for a bounded external
             # campaign to render, review and apply its frozen plan before this node starts.
             # Possession of the exact lease token at this serialization point converts that
-            # pre-launch window into the ordinary short heartbeat window.  Updating both rows
-            # in the same transaction preserves the deferred attempt/resource authority guard.
+            # pre-launch window into a bounded launch lease.  It must cover both the ordinary
+            # heartbeat interval and the complete signed launch-authorization window: Docker
+            # create/start plus the in-container gate happen before the first running heartbeat.
+            # Contracting directly to a shorter heartbeat can therefore expire a valid gate in
+            # the middle of its frozen OCI/workload verification.  Updating both rows in the
+            # same transaction preserves the deferred attempt/resource authority guard.
+            runtime_pin = issuer.authority_pin
+            launch_window_expires_at = now + timedelta(
+                seconds=self._max_runtime_launch_authorization_seconds
+            )
+            if launch_window_expires_at > min(
+                attempt.hard_deadline,
+                runtime_pin.active_until,
+            ):
+                raise LeaseAuthorityError(
+                    "runtime-control authority cannot cover the complete launch window"
+                )
             heartbeat_lease_expires_at = min(
                 now + self._heartbeat_extension,
                 attempt.hard_deadline,
             )
+            bounded_launch_lease_expires_at = max(
+                heartbeat_lease_expires_at,
+                launch_window_expires_at,
+            )
             runtime_lease_expires_at = (
-                heartbeat_lease_expires_at
+                bounded_launch_lease_expires_at
                 if attempt.status == "reserved"
-                else max(attempt.lease_expires_at, heartbeat_lease_expires_at)
+                else max(attempt.lease_expires_at, bounded_launch_lease_expires_at)
             )
             if runtime_lease_expires_at <= now:
-                raise LeaseAuthorityError("runtime heartbeat window is empty")
-            runtime_pin = issuer.authority_pin
-            expires_at = min(
-                now + timedelta(seconds=self._max_runtime_launch_authorization_seconds),
-                runtime_lease_expires_at,
-                attempt.hard_deadline,
-                runtime_pin.active_until,
-            )
-            if expires_at <= now:
-                raise LeaseAuthorityError("runtime-control launch window is empty")
+                raise LeaseAuthorityError("runtime launch lease window is empty")
+            expires_at = launch_window_expires_at
             try:
                 authorization = issuer.issue_launch_authorization(
                     authorization_request=authorization_request,
@@ -4306,7 +4336,7 @@ class PostgreSQLExecutionAllocator:
             if attempt.node_runtime_launch_receipt_sha256 is not None:
                 raise LeaseAuthorityError("a launched runtime cannot use pre-runtime absence")
             locked_holds = self._lock_runtime_holds(session, attempt)
-            _budget_head, node, _device_heads, _resource, _devices, _reservation = locked_holds
+            _budget_head, node, _device_heads, resource, _devices, _reservation = locked_holds
             now = _database_time(session)
             embedded_cleanup_recovery = receipt.cleanup_recovery_authority
             cleanup_recovery_authority = None
@@ -4500,6 +4530,7 @@ class PostgreSQLExecutionAllocator:
                 raise LeaseAuthorityError("pre-runtime absence epoch is not the next durable value")
 
             replacement_authorization = None
+            replacement_lease_expires_at = None
             disposition = "released"
             replacement_authorization_sha256 = None
             if replacement_request is not None:
@@ -4523,24 +4554,32 @@ class PostgreSQLExecutionAllocator:
                         "replacement launch request differs from fresh absence proof"
                     )
                 runtime_pin = issuer.authority_pin
-                expires_at = min(
-                    now + timedelta(seconds=self._max_runtime_launch_authorization_seconds),
-                    attempt.lease_expires_at,
+                launch_window_expires_at = now + timedelta(
+                    seconds=self._max_runtime_launch_authorization_seconds
+                )
+                if launch_window_expires_at > min(
                     attempt.hard_deadline,
                     runtime_pin.active_until,
+                ):
+                    raise LeaseAuthorityError(
+                        "runtime-control authority cannot cover the complete replacement "
+                        "launch window"
+                    )
+                replacement_lease_expires_at = max(
+                    attempt.lease_expires_at,
+                    min(now + self._heartbeat_extension, attempt.hard_deadline),
+                    launch_window_expires_at,
                 )
-                if expires_at <= now:
-                    raise LeaseAuthorityError("replacement runtime launch window is empty")
                 try:
                     replacement_authorization = issuer.issue_launch_authorization(
                         authorization_request=replacement_request,
                         preparation=preparation,
                         admission_sha256=attempt.admission_sha256,
                         qualification_grant_sha256=attempt.grant_sha256,
-                        lease_expires_at=attempt.lease_expires_at,
+                        lease_expires_at=replacement_lease_expires_at,
                         hard_deadline=attempt.hard_deadline,
                         issued_at=now,
-                        expires_at=expires_at,
+                        expires_at=launch_window_expires_at,
                         max_launch_delay_ns=(
                             self._max_runtime_launch_authorization_seconds * 1_000_000_000
                         ),
@@ -4651,10 +4690,15 @@ class PostgreSQLExecutionAllocator:
             attempt.pre_runtime_absence_count = absence_epoch
             attempt.latest_pre_runtime_absence_receipt_sha256 = receipt.absence_receipt_sha256
             if replacement_authorization is not None:
+                assert replacement_lease_expires_at is not None
                 attempt.runtime_launch_authorization_count += 1
                 attempt.latest_runtime_launch_authorization_sha256 = (
                     replacement_authorization.authorization_sha256
                 )
+                attempt.heartbeat_at = now
+                attempt.lease_expires_at = replacement_lease_expires_at
+                resource.heartbeat_at = now
+                resource.lease_expires_at = replacement_lease_expires_at
                 attempt.status = "starting"
             else:
                 budget_head, node, device_heads, resource, devices, reservation = locked_holds
@@ -7214,25 +7258,63 @@ class PostgreSQLExecutionAllocator:
                 snapshot=self._snapshot(session, attempt), replayed=False
             )
 
-    def reconcile_expired(self, *, limit: int = 100) -> tuple[ReservationSnapshot, ...]:
+    def reconcile_expired(
+        self,
+        *,
+        limit: int = 100,
+        node_id: str | None = None,
+        node_manifest_sha256: str | None = None,
+    ) -> tuple[ReservationSnapshot, ...]:
+        """Retain expired attempts, optionally within one exact pinned node scope.
+
+        The unscoped form remains available for an explicit allocator maintenance sweep.  A
+        node-resident production worker must supply both scope values so sharing a database with
+        another enrolled node cannot give it authority to mutate that node's attempts.
+        """
+
         if limit < 1 or limit > 10_000:
             raise ValueError("expiry reconciliation limit is outside 1..10000")
+        if (node_id is None) != (node_manifest_sha256 is None):
+            raise ValueError("expiry reconciliation node scope must be complete")
+        scoped_node_id: str | None = None
+        if node_id is not None:
+            transport_pin = self._node_assignment_transport_pins.get(node_id)
+            node_authority = self._node_authorities.get(node_id)
+            if (
+                transport_pin is None
+                or node_authority is None
+                or transport_pin.node_manifest_sha256 != node_manifest_sha256
+                or node_authority.manifest.manifest_sha256 != node_manifest_sha256
+            ):
+                raise AdmissionConflict(
+                    "expiry reconciliation differs from deployment-pinned node identity"
+                )
+            scoped_node_id = node_id
         with self._sessions() as session:
+            if scoped_node_id is not None:
+                node = session.get(_ExecutionNodeRecord, scoped_node_id)
+                if node is None or node.node_manifest_sha256 != node_manifest_sha256:
+                    raise AdmissionConflict(
+                        "expiry reconciliation differs from registered node identity"
+                    )
             now = _database_time(session)
+            filters = [
+                _ExecutionAttemptRecord.status.in_(
+                    ACTIVE_ATTEMPT_STATES - {"reconciliation_required"}
+                ),
+                _ExecutionAttemptRecord.accepted_runtime_termination_sha256.is_(None),
+                _ExecutionAttemptRecord.accepted_terminal_submission_sha256.is_(None),
+                (
+                    (_ExecutionAttemptRecord.lease_expires_at <= now)
+                    | (_ExecutionAttemptRecord.hard_deadline <= now)
+                ),
+            ]
+            if scoped_node_id is not None:
+                filters.append(_ExecutionAttemptRecord.node_id == scoped_node_id)
             attempt_ids = tuple(
                 session.execute(
                     select(_ExecutionAttemptRecord.attempt_id)
-                    .where(
-                        _ExecutionAttemptRecord.status.in_(
-                            ACTIVE_ATTEMPT_STATES - {"reconciliation_required"}
-                        ),
-                        _ExecutionAttemptRecord.accepted_runtime_termination_sha256.is_(None),
-                        _ExecutionAttemptRecord.accepted_terminal_submission_sha256.is_(None),
-                        (
-                            (_ExecutionAttemptRecord.lease_expires_at <= now)
-                            | (_ExecutionAttemptRecord.hard_deadline <= now)
-                        ),
-                    )
+                    .where(*filters)
                     .order_by(
                         _ExecutionAttemptRecord.lease_expires_at,
                         _ExecutionAttemptRecord.attempt_id,
@@ -7242,17 +7324,27 @@ class PostgreSQLExecutionAllocator:
             )
         snapshots: list[ReservationSnapshot] = []
         for attempt_id in attempt_ids:
-            snapshot = self._reconcile_expired_attempt(attempt_id)
+            snapshot = self._reconcile_expired_attempt(
+                attempt_id,
+                expected_node_id=scoped_node_id,
+            )
             if snapshot is not None:
                 snapshots.append(snapshot)
         return tuple(snapshots)
 
-    def _reconcile_expired_attempt(self, attempt_id: str) -> ReservationSnapshot | None:
+    def _reconcile_expired_attempt(
+        self,
+        attempt_id: str,
+        *,
+        expected_node_id: str | None = None,
+    ) -> ReservationSnapshot | None:
         with self._sessions() as session, session.begin():
             try:
                 _head, attempt = self._lock_execution_attempt(session, attempt_id)
             except LeaseAuthorityError:
                 return None
+            if expected_node_id is not None and attempt.node_id != expected_node_id:
+                raise LeaseAuthorityError("expired attempt moved outside its node scope")
             now = _database_time(session)
             if attempt.status == "reconciliation_required":
                 return self._snapshot(session, attempt)

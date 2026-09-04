@@ -18,6 +18,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["aletheia*"]
 
+[tool.setuptools.package-data]
+"aletheia.domains.molecules" = ["data/*.csv", "data/README.md"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

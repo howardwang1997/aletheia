@@ -1,0 +1,2 @@
+# Preserve the reviewed upstream bytes of the frozen ESOL benchmark.
+aletheia/domains/molecules/data/delaney-processed.csv -text -whitespace

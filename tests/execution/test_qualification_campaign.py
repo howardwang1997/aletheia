@@ -907,6 +907,154 @@ def test_attempt_projection_sql_uses_a_nonreserved_authorization_alias() -> None
     assert "sea.authorization_sha256" in campaign._ATTEMPT_PROJECTION_SQL  # noqa: SLF001
 
 
+def test_live_qualification_service_projection_is_closed() -> None:
+    output = "\n".join(
+        (
+            "ssh.service loaded active running OpenBSD Secure Shell server",
+            "aletheia-qualification-node-arl1-next.service loaded active running node",
+            "aletheia-qualification-node-arl1-restarting.service loaded activating auto-restart node",
+            "● aletheia-arl1-campaign-old.service loaded active running old campaign",
+            "aletheia-qualification-node-retired.service loaded inactive dead retired node",
+            "aletheia-arl1-campaign-failed.service loaded failed failed failed campaign",
+        )
+    )
+    assert campaign._live_qualification_service_names(output) == (  # noqa: SLF001
+        "aletheia-arl1-campaign-old.service",
+        "aletheia-qualification-node-arl1-next.service",
+        "aletheia-qualification-node-arl1-restarting.service",
+    )
+
+    with pytest.raises(
+        campaign.QualificationCampaignError,
+        match="service output is ambiguous",
+    ):
+        campaign._live_qualification_service_names(  # noqa: SLF001
+            "aletheia-qualification-node-old.service loaded active"
+        )
+    with pytest.raises(
+        campaign.QualificationCampaignError,
+        match="qualification-service projection is ambiguous",
+    ):
+        campaign._live_qualification_service_names(  # noqa: SLF001
+            "\n".join((output.splitlines()[1], output.splitlines()[1]))
+        )
+
+
+def test_qualification_unit_file_projection_rejects_reboot_authority() -> None:
+    output = "\n".join(
+        (
+            "ssh.service enabled enabled",
+            "aletheia-qualification-node-disabled.service disabled enabled",
+            "aletheia-qualification-node-masked.service masked enabled",
+            "aletheia-qualification-node-enabled.service enabled enabled",
+            "aletheia-qualification-node-runtime-mask.service masked-runtime enabled",
+            "aletheia-arl1-campaign-static.service static -",
+        )
+    )
+    assert campaign._non_inert_qualification_unit_file_names(output) == (  # noqa: SLF001
+        "aletheia-arl1-campaign-static.service",
+        "aletheia-qualification-node-enabled.service",
+        "aletheia-qualification-node-runtime-mask.service",
+    )
+
+    with pytest.raises(
+        campaign.QualificationCampaignError,
+        match="unit-file output is ambiguous",
+    ):
+        campaign._non_inert_qualification_unit_file_names(  # noqa: SLF001
+            "aletheia-qualification-node-old.service enabled enabled extra"
+        )
+    with pytest.raises(
+        campaign.QualificationCampaignError,
+        match="qualification unit-file projection is ambiguous",
+    ):
+        campaign._non_inert_qualification_unit_file_names(  # noqa: SLF001
+            "\n".join((output.splitlines()[3], output.splitlines()[3]))
+        )
+
+
+def test_campaign_rejects_sibling_qualification_authority() -> None:
+    host = object.__new__(campaign.LinuxQualificationTargetCampaignHost)
+    object.__setattr__(
+        host,
+        "spec",
+        SimpleNamespace(
+            workspace_unit_name="aletheia-qualification-workspace-arl1-next.service",
+            quota_unit_name="aletheia-qualification-output-quota-arl1-next.service",
+            watchdog_unit_name="aletheia-qualification-oci-watchdog-arl1-next.service",
+            node_unit_name="aletheia-qualification-node-arl1-next.service",
+            outbox_unit_name="aletheia-qualification-outbox-arl1-next.service",
+        ),
+    )
+    invocations: list[tuple[str, ...]] = []
+    active = [
+        "ssh.service loaded active running ssh",
+        "aletheia-qualification-node-arl1-next.service loaded active running current node",
+    ]
+    unit_files = [
+        "ssh.service enabled enabled",
+        "aletheia-qualification-node-arl1-next.service enabled enabled",
+        "aletheia-qualification-node-arl1-retired.service disabled enabled",
+    ]
+
+    def systemctl(*arguments: str) -> str:
+        invocations.append(arguments)
+        return "\n".join(unit_files if arguments[0] == "list-unit-files" else active)
+
+    object.__setattr__(host, "_systemctl", systemctl)
+    host._assert_no_sibling_qualification_authority()  # noqa: SLF001
+
+    active.extend(
+        (
+            "aletheia-qualification-node-arl1-old.service loaded active running old node",
+            "aletheia-arl1-campaign-old.service loaded active running old campaign",
+        )
+    )
+    with pytest.raises(
+        campaign.QualificationCampaignError,
+        match=(
+            "live sibling qualification services must be retired.*"
+            "aletheia-arl1-campaign-old[.]service.*"
+            "aletheia-qualification-node-arl1-old[.]service"
+        ),
+    ):
+        host._assert_no_sibling_qualification_authority()  # noqa: SLF001
+
+    expected_live_invocation = (
+        "list-units",
+        "--all",
+        "--type=service",
+        "--plain",
+        "--no-legend",
+        "--no-pager",
+        "--full",
+    )
+    expected_unit_file_invocation = (
+        "list-unit-files",
+        "--type=service",
+        "--plain",
+        "--no-legend",
+        "--no-pager",
+        "--full",
+    )
+    assert invocations == [
+        expected_live_invocation,
+        expected_unit_file_invocation,
+        expected_live_invocation,
+    ]
+
+    active[:] = active[:2]
+    unit_files.append("aletheia-arl1-campaign-old.service enabled enabled")
+    with pytest.raises(
+        campaign.QualificationCampaignError,
+        match=(
+            "non-inert sibling qualification unit files must be disabled or masked.*"
+            "aletheia-arl1-campaign-old[.]service"
+        ),
+    ):
+        host._assert_no_sibling_qualification_authority()  # noqa: SLF001
+
+
 def test_attempt_projection_sql_parses_on_ci_postgresql() -> None:
     raw_url = os.environ.get("ALETHEIA_DATABASE_URL", "")
     if not raw_url:
