@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -259,6 +260,53 @@ def test_emit_writes_exactly_one_canonical_json_line(
     captured = capfdbinary.readouterr()
     assert captured.out == canonical_json_bytes(plan) + b"\n"
     assert captured.err == b""
+
+
+def test_runtime_probe_binds_and_loads_relocated_timezone_data(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "runtime"
+    (root / "bin").mkdir(parents=True)
+    (root / "bin" / "python").write_bytes(b"python")
+    site_packages = root / "lib" / "python3.11" / "site-packages"
+    site_packages.mkdir(parents=True)
+    timezone_data = root / "share" / "zoneinfo"
+    timezone_data.mkdir(parents=True)
+    invocation: dict[str, object] = {}
+
+    def run(argv, **kwargs):
+        invocation.update({"argv": argv, **kwargs})
+        return subprocess.CompletedProcess(argv, 0, stdout="[]\n", stderr="")
+
+    monkeypatch.setattr(preparation.subprocess, "run", run)
+
+    assert (
+        preparation._probe_runtime(  # noqa: SLF001
+            root=root,
+            python_relative_path="bin/python",
+            site_packages_relative_path="lib/python3.11/site-packages",
+            modules=("psycopg",),
+        )
+        == ()
+    )
+    assert invocation["env"]["PYTHONTZPATH"] == str(timezone_data)
+    assert "zoneinfo.ZoneInfo('UTC')" in invocation["argv"][-1]
+    assert "zoneinfo.ZoneInfo('Etc/UTC')" in invocation["argv"][-1]
+
+
+def test_runtime_probe_rejects_missing_timezone_data(tmp_path: Path) -> None:
+    root = tmp_path / "runtime"
+    (root / "bin").mkdir(parents=True)
+    (root / "bin" / "python").write_bytes(b"python")
+
+    with pytest.raises(preparation.QualificationTargetPreparationError, match="timezone data"):
+        preparation._probe_runtime(  # noqa: SLF001
+            root=root,
+            python_relative_path="bin/python",
+            site_packages_relative_path="lib/python3.11/site-packages",
+            modules=("psycopg",),
+        )
 
 
 def test_apply_fails_before_mutation_outside_linux_root(monkeypatch: pytest.MonkeyPatch) -> None:

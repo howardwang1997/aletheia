@@ -799,9 +799,12 @@ The qualified h services also logged Psycopg's safe UTC fallback when PostgreSQL
 cluster timezone as `Etc/UTC`, which the minimal runtime could not resolve by name. This did not
 change timestamps or any observed campaign outcome, but it exposed an unnecessary ambient
 timezone-data dependency. Post-h source now pins both application roles to the exact
-`TimeZone=UTC` session default, which Psycopg handles directly. That change alters the ACL and
-commissioning receipt chain: h qualifies only the frozen `e0dc06ce` deployment, and the hardened
-source must receive a new freeze and target qualification before it can claim the same result.
+`TimeZone=UTC` session default, which Psycopg handles directly, and binds every service's
+`PYTHONTZPATH` to the frozen runtime's reviewed in-tree `share/zoneinfo`. Runtime preparation now
+requires that directory and actually loads both UTC names under the relocated interpreter. Those
+changes alter unit bytes, the ACL and the commissioning receipt chain: h qualifies only the frozen
+`e0dc06ce` deployment, and the hardened source must receive a new freeze and target qualification
+before it can claim the same result.
 
 PR-8h is therefore complete for the exact generation-h deployment. It does not establish ARL-1,
 scientific validity, independent replication or autonomous scientific authority. The next

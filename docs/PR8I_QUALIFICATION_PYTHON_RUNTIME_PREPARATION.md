@@ -31,6 +31,14 @@ silently reintroducing ambient native dependencies. It still unsets `LD_LIBRARY_
 `LD_PRELOAD`; the closure works through the reviewed ELF interpreter/RPATH, not environment
 injection.
 
+Generation h later exposed a separate relocation detail: CPython's compiled `TZPATH` retained the
+disposable source prefix, whose root-only parent was deliberately inaccessible to the service UID,
+even though the frozen target tree contained its own complete `share/zoneinfo`. New preparation
+probes set `PYTHONTZPATH` to that in-tree directory, require it to be a real directory, and actually
+load both `UTC` and `Etc/UTC`. The deployment spec requires those reviewed files and every rendered
+service receives the same exact in-tree assignment. Timezone lookup therefore no longer depends on
+the retained build environment.
+
 ## Operator flow
 
 The source environment and native sources are staging inputs, not qualified artifacts. Build them

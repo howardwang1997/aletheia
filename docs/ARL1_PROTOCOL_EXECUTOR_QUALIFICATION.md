@@ -100,12 +100,13 @@ campaigns, all preregistered reexecutions, scientific validation/admission/Kerne
 disjoint source verification, qualification signature and fresh keyless audit have not run as one
 retained bundle.
 
-Later source hardens the commissioned PostgreSQL application roles with an exact `TimeZone=UTC`
-session default after generation h exposed a safe Psycopg fallback from the cluster's `Etc/UTC`
-name. That ACL change is not retroactively covered by h. Either ARL-1 must use the unchanged exact h
-deployment and receipt, or a newly frozen hardened generation must repeat PR-8f/PR-8g/PR-8b/PR-8h
-before its evidence can enter this gate. Local synthetic host ports remain intentionally ineligible
-because every ARL evidence contract requires `synthetic_evidence=false`.
+Later source binds the frozen runtime's in-tree timezone database and hardens the commissioned
+PostgreSQL application roles with an exact `TimeZone=UTC` session default after generation h
+exposed a safe Psycopg fallback from the cluster's `Etc/UTC` name. Those unit/ACL changes are not
+retroactively covered by h. Either ARL-1 must use the unchanged exact h deployment and receipt, or
+a newly frozen hardened generation must repeat PR-8f/PR-8g/PR-8b/PR-8h before its evidence can
+enter this gate. Local synthetic host ports remain intentionally ineligible because every ARL
+evidence contract requires `synthetic_evidence=false`.
 
 Therefore the honest current status remains **ARL-1 qualification gate implemented, deployed
 system not ARL-1 qualified**.

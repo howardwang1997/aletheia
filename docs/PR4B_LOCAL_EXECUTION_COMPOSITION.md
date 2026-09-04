@@ -273,8 +273,9 @@ replay created no second workload and returned byte-identical receipt output.
 
 This closes the original deployment-evidence gate only for the frozen h instance. A Darwin/Colima
 run, mocked root/kernel evidence or a later source tree still cannot borrow that verdict. The
-post-h UTC role hardening changes rendered ACL bytes and therefore requires its own newly frozen
-campaign before that version can be described as deployment-qualified.
+post-h relocatable-timezone and UTC-role hardening changes rendered unit and ACL bytes and therefore
+requires its own newly frozen campaign before that version can be described as
+deployment-qualified.
 
 ## Explicit non-capabilities and next boundary
 

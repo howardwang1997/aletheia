@@ -99,11 +99,12 @@ That run also exposed repeated Psycopg warnings when the target cluster reported
 minimal service runtime. Psycopg safely fell back to UTC and the independently observed campaign
 still qualified, but relying on the fallback is unnecessary ambient behavior. The current ACL and
 commissioning projection therefore require both application roles to start new sessions with the
-exact `TimeZone=UTC` default. Because this changes the rendered ACL and commissioned-state digest,
-it must be frozen and independently qualified in a later generation before that updated deployment
-can inherit generation h's claim. Scientific admission remains false in every PR-8g/PR-8h receipt;
-the next capability gate is the production ARL-1 given-protocol campaign and independent
-qualification flow.
+exact `TimeZone=UTC` default. The companion runtime repair binds `PYTHONTZPATH` to the frozen
+runtime's own reviewed `share/zoneinfo` directory and probes both UTC names. Because these changes
+alter the rendered ACL, unit bytes and commissioned-state digest, they must be frozen and
+independently qualified in a later generation before that updated deployment can inherit
+generation h's claim. Scientific admission remains false in every PR-8g/PR-8h receipt; the next
+capability gate is the production ARL-1 given-protocol campaign and independent qualification flow.
 
 See [ADR 0080](architecture/0080-qualification-authority-commissioning.md), the
 [PR-8h target campaign guide](PR8H_QUALIFICATION_TARGET_CAMPAIGN.md), the
