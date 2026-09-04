@@ -1799,6 +1799,8 @@ def render_postgresql_acl(spec: QualificationDeploymentSpecV1) -> bytes:
         "  END IF;",
         "END",
         "$aletheia_acl$;",
+        f"ALTER ROLE {allocator} SET TimeZone = 'UTC';",
+        f"ALTER ROLE {outbox} SET TimeZone = 'UTC';",
         f"ALTER ROLE {allocator} SET search_path = pg_catalog, public;",
         f"ALTER ROLE {outbox} SET search_path = pg_catalog, public;",
         "COMMIT;",

@@ -1239,7 +1239,7 @@ def test_postgresql_acl_is_deterministic_explicit_and_contains_no_secret() -> No
     second = deployment.render_postgresql_acl(spec)
     assert first == second
     assert hashlib.sha256(first).hexdigest() == (
-        "2fe77e0375d9700df17ba4ba95ea91bb77d9aa455b92211c59d296f96a860e34"
+        "7dce6a50f5aa59e98c334393fd5463354e9317d77a15debc9b5f38174153ba74"
     )
     text = first.decode()
     assert text.count("ALTER TABLE public.") == 27
@@ -1289,6 +1289,8 @@ def test_postgresql_acl_is_deterministic_explicit_and_contains_no_secret() -> No
     assert "REVOKE DELETE, TRUNCATE, REFERENCES, TRIGGER" in text
     assert "GRANT USAGE ON SCHEMA public" in text
     assert "NOBYPASSRLS" in text and "NOINHERIT" in text
+    assert "ALTER ROLE \"aletheia_exec_allocator\" SET TimeZone = 'UTC';" in text
+    assert "ALTER ROLE \"aletheia_exec_outbox\" SET TimeZone = 'UTC';" in text
     assert "CREATE ROLE" not in text
     assert "PASSWORD" not in text
     assert "GRANT DELETE" not in text

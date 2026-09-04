@@ -857,10 +857,10 @@ def load_qualification_python_runtime_preparation_request(
 
 
 def _emit(value: ExecutionModel) -> None:
-    print(
-        json.dumps(value.model_dump(mode="json"), sort_keys=True, separators=(",", ":")),
-        flush=True,
-    )
+    """Write one canonical JSON record with an explicit line delimiter."""
+
+    sys.stdout.buffer.write(canonical_json_bytes(value) + b"\n")
+    sys.stdout.buffer.flush()
 
 
 def run_qualification_python_runtime_preparation_cli(

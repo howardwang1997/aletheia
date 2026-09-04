@@ -468,7 +468,9 @@ class _FakeHost:
                     -1 if role == intent.owner_role else intent.application_role_connection_limit
                 ),
                 role_config=(
-                    ("search_path=pg_catalog, public",) if role != intent.owner_role else ()
+                    ("TimeZone=UTC", "search_path=pg_catalog, public")
+                    if role != intent.owner_role
+                    else ()
                 ),
                 target_privileges_sha256=(
                     postgresql_role_privileges_sha256(spec, role_name=role)
@@ -789,7 +791,7 @@ class _RoleConnection:
                     "rolconnlimit": 16,
                     "password_is_null": True,
                     "valid_until_is_infinite": True,
-                    "role_config": ["search_path=pg_catalog, public"],
+                    "role_config": ["search_path=pg_catalog, public", "TimeZone=UTC"],
                 }
             )
         return _RoleRows(rows=())
@@ -1092,7 +1094,7 @@ def test_role_projection_reads_unmasked_password_authority(
     )
     assert projection is not None
     assert projection.password_is_null is True
-    assert projection.role_config == ("search_path=pg_catalog, public",)
+    assert projection.role_config == ("TimeZone=UTC", "search_path=pg_catalog, public")
     assert any("JOIN pg_catalog.pg_authid AS authority" in sql for sql in connection.statements)
 
 

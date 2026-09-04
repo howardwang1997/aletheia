@@ -249,6 +249,18 @@ def test_loader_requires_exact_canonical_bytes_and_rejects_duplicate_keys(
         )
 
 
+def test_emit_writes_exactly_one_canonical_json_line(
+    capfdbinary: pytest.CaptureFixture[bytes],
+) -> None:
+    plan = preparation.build_qualification_python_runtime_preparation_plan(_request())
+
+    preparation._emit(plan)  # noqa: SLF001
+
+    captured = capfdbinary.readouterr()
+    assert captured.out == canonical_json_bytes(plan) + b"\n"
+    assert captured.err == b""
+
+
 def test_apply_fails_before_mutation_outside_linux_root(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(preparation.sys, "platform", "darwin")
     with pytest.raises(preparation.QualificationTargetPreparationError, match="Linux root"):
