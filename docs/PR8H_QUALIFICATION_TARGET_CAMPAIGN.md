@@ -718,8 +718,8 @@ the live-service scan could not see: the five qualification units for each of ge
 `20260831z`, `20260901a`, `20260901b` and `20260901e` are inactive but enabled. All twenty can
 reacquire execution or mount authority after reboot. They were outside the c/d/g retirement
 authorization and remain unchanged. The campaign now rejects this non-inert state, so generation h
-must not run on this target until an operator has exactly disabled or retired those twenty units
-after identity checks, or a genuinely fresh target is selected.
+could not run on this target until an operator exactly disabled or retired those twenty units after
+identity checks, or selected a genuinely fresh target.
 
 The follow-up identity check at `2026-09-04T04:47:41Z` found every one of the twenty units loaded,
 `inactive/dead`, `MainPID=0` and enabled, and bound each five-unit generation to a root-owned,
@@ -735,6 +735,17 @@ root-grouped mode-`0444` manifest and one exact release:
   release `/opt/aletheia/release-3fcdb57-e1`.
 
 That check changed no target state.
+
+At `2026-09-04T07:21:55Z`, the operator explicitly authorized and completed that exact disable-only
+retirement. A fail-closed precheck revalidated all four manifest hashes above and every one of the
+twenty exact unit files, then required each unit to be loaded, enabled, `inactive/dead` and
+`MainPID=0`. The operation passed those twenty explicit names to `systemctl disable` without
+`--now`; it removed only their `multi-user.target.wants` links. A postcheck found all twenty
+`disabled`, still `inactive/dead` with `MainPID=0`, while every unit-file hash and manifest hash was
+unchanged. No qualification or ARL-1 sibling service was live. The operation did not delete unit
+files, manifests, containers, mounts, backing images, journals or database state. This closes the
+known reboot-capable z/a/b/e service boundary, but generation h still requires its fresh isolated
+database and final read-only container/mount/resource review before the request is frozen.
 
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the
