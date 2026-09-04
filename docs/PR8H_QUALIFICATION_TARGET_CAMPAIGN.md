@@ -721,6 +721,21 @@ authorization and remain unchanged. The campaign now rejects this non-inert stat
 must not run on this target until an operator has exactly disabled or retired those twenty units
 after identity checks, or a genuinely fresh target is selected.
 
+The follow-up identity check at `2026-09-04T04:47:41Z` found every one of the twenty units loaded,
+`inactive/dead`, `MainPID=0` and enabled, and bound each five-unit generation to a root-owned,
+root-grouped mode-`0444` manifest and one exact release:
+
+- `20260831z`: manifest `1e3d0f82607da60915fe92bfb65b1456054ffe4e8446e7579e261b6b2cbd1052`,
+  release `/opt/aletheia/release-2146ab5-z1`;
+- `20260901a`: manifest `96022566c6b28de63812b5eb4cca036a71c0e9faad2671409b39fac104756121`,
+  release `/opt/aletheia/release-8386fb5-a1`;
+- `20260901b`: manifest `9697118033fe7439052f1b8eae4d725cb3273485e1caf4885da11339c5dca9c9`,
+  release `/opt/aletheia/release-7afb64d-b1`; and
+- `20260901e`: manifest `4ad084d534604d195fdcfeff23117d980d1a39d9d023449de48bb93b2f164890`,
+  release `/opt/aletheia/release-3fcdb57-e1`.
+
+That check changed no target state.
+
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the
 [PR-8b installer guide](PR8B_DISABLED_QUALIFICATION_INSTALLER.md).
