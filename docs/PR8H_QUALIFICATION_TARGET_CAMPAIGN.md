@@ -636,14 +636,20 @@ exact container started before ticket expiry, that attempt must not be relabelle
 or passed through the attempt-scoped pre-runtime cleanup protocol.
 
 The next ordered source operation is to merge and freeze the complete-launch-window and
-node-scoped expiry-reconciliation repairs. The dependency security floor also forbids reuse of
-generation g's reviewed Python runtime: prepare and rehash a fresh runtime
-that resolves non-yanked `transformers>=5.10.4,<6` and passes both `pip check` and
-`pip-audit --local` before freezing the deployment request. A fresh superseding generation must use
-a fresh database and non-reused authority identities, the already-proven five-minute observation
-budget, an explicit bounded initial-assignment window, a short runtime heartbeat, a launch
-authorization whose complete configured window is retained by the lease, and the exact
-1,800-second workload. The complete campaign must then run—not more controller authority.
+node-scoped expiry-reconciliation repairs. The complete repository Conda environment must continue
+to resolve non-yanked `transformers>=5.10.4,<6` and pass both `pip check` and
+`pip-audit --local`. That floor does not by itself invalidate generation g's separately prepared
+PR-8i service runtime: a read-only inspection of the frozen tree found 27 distributions and neither
+Transformers nor sentence-transformers. Before freezing generation h, independently rehash,
+re-probe and audit the exact minimal runtime tree it will pin. Reuse is admissible only if its
+bytes, immutable custody, required imports, native-mapping closure and actual installed dependency
+set all revalidate unchanged; otherwise prepare and rehash a fresh minimal runtime. Do not add the
+unrelated research/model stack merely to make this service runtime resemble the complete repository
+environment. A fresh superseding generation must use a fresh database and non-reused authority
+identities, the already-proven five-minute observation budget, an explicit bounded
+initial-assignment window, a short runtime heartbeat, a launch authorization whose complete
+configured window is retained by the lease, and the exact 1,800-second workload. The complete
+campaign must then run—not more controller authority.
 
 A read-only target reinspection at `2026-09-03T17:23:58Z` also found all five qualification units
 from each of generations `20260901c`, `20260901d` and `20260903g` still enabled and live. The
