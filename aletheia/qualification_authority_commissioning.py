@@ -2603,6 +2603,19 @@ class LinuxQualificationAuthorityCommissioningHost:
         )
 
     @staticmethod
+    def _preexisting_role_is_commissionable(
+        observed: QualificationPostgreSQLRoleProjectionV1,
+        expected: QualificationPostgreSQLRoleProjectionV1,
+    ) -> bool:
+        """Allow only a monotonic role-config upgrade to the exact expected authority."""
+        if observed.model_copy(update={"role_config": expected.role_config}) != expected:
+            return False
+        observed_config = set(observed.role_config)
+        return len(observed_config) == len(observed.role_config) and observed_config.issubset(
+            expected.role_config
+        )
+
+    @staticmethod
     def _execution_catalog(
         connection: Connection,
         spec: QualificationDeploymentSpecV1,
@@ -3016,9 +3029,7 @@ class LinuxQualificationAuthorityCommissioningHost:
                                 connection_limit=connection_limit,
                             )
                         )
-                    elif observed.model_copy(
-                        update={"role_config": expected.role_config}
-                    ) != expected or observed.role_config not in ((), expected.role_config):
+                    elif not self._preexisting_role_is_commissionable(observed, expected):
                         raise QualificationAuthorityCommissioningError(
                             "pre-existing PostgreSQL role has variant authority"
                         )

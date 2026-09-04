@@ -1098,6 +1098,60 @@ def test_role_projection_reads_unmasked_password_authority(
     assert any("JOIN pg_catalog.pg_authid AS authority" in sql for sql in connection.statements)
 
 
+@pytest.mark.parametrize(
+    "role_config",
+    (
+        (),
+        ("TimeZone=UTC",),
+        ("search_path=pg_catalog, public",),
+        ("TimeZone=UTC", "search_path=pg_catalog, public"),
+    ),
+)
+def test_preexisting_role_accepts_only_monotonic_config_upgrade(
+    role_config: tuple[str, ...],
+) -> None:
+    expected = commissioning.QualificationPostgreSQLRoleProjectionV1(
+        role_name="aletheia_exec_allocator",
+        can_login=True,
+        connection_limit=16,
+        role_config=("TimeZone=UTC", "search_path=pg_catalog, public"),
+    )
+    observed = expected.model_copy(update={"role_config": role_config})
+
+    assert (
+        commissioning.LinuxQualificationAuthorityCommissioningHost._preexisting_role_is_commissionable(
+            observed, expected
+        )
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    "updates",
+    (
+        {"role_config": ("TimeZone=Pacific/Auckland",)},
+        {"role_config": ("statement_timeout=0",)},
+        {"role_config": ("TimeZone=UTC", "TimeZone=UTC")},
+        {"superuser": True},
+    ),
+)
+def test_preexisting_role_rejects_variant_authority(updates: dict[str, object]) -> None:
+    expected = commissioning.QualificationPostgreSQLRoleProjectionV1(
+        role_name="aletheia_exec_allocator",
+        can_login=True,
+        connection_limit=16,
+        role_config=("TimeZone=UTC", "search_path=pg_catalog, public"),
+    )
+    observed = expected.model_copy(update=updates)
+
+    assert (
+        commissioning.LinuxQualificationAuthorityCommissioningHost._preexisting_role_is_commissionable(
+            observed, expected
+        )
+        is False
+    )
+
+
 class _HbaRows:
     def __init__(self, rows):
         self.rows = rows
