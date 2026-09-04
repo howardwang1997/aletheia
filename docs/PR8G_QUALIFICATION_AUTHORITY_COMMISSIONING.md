@@ -45,13 +45,15 @@ PostgreSQL commissioning requires two unshadowed, option-free `local`/`peer` HBA
 application role. The connected admin must be the separately pinned superuser. Creation of the
 NOLOGIN owner plus two passwordless LOGIN roles, database ownership transfer and the existing
 exhaustive ACL run in one database transaction; after ownership transfer, any explicit database
-grant retained by the separately pinned former admin is revoked. Pre-existing roles are accepted only when every
-login, membership, password, validity and connection-limit field is safe; their config must be
-either pristine or already equal to the final `TimeZone=UTC` plus
-`search_path=pg_catalog, public` tuple. The role-local UTC default prevents a host-cluster timezone
-name from becoming an ambient Python timezone-data dependency and makes timestamp display and
-interpretation deterministic for every new application session. The transaction normalizes the
-target ACL, and the committed state then requires the exact role config and direct
+grant retained by the separately pinned former admin is revoked. Pre-existing roles are accepted
+only when every login, membership, password, validity and connection-limit field is safe; each
+existing config entry must be an exact member of the final `TimeZone=UTC` plus
+`search_path=pg_catalog, public` tuple. This permits a monotonic upgrade from a pristine or older
+partial config while rejecting conflicting, unknown or duplicate settings. The same transaction
+completes the exact role config and normalizes the target ACL. The role-local UTC default prevents a
+host-cluster timezone name from becoming an ambient Python timezone-data dependency and makes
+timestamp display and interpretation deterministic for every new application session. The
+committed state then requires the exact role config and direct
 database/schema/table/column/sequence/routine privilege projection. Exact retry runs the exhaustive
 catalog block inside a read-only transaction and reconstructs those direct privilege hashes, so
 later ACL drift cannot be mistaken for the original receipt. The PostgreSQL system identifier,
