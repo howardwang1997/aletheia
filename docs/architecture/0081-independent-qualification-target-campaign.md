@@ -36,9 +36,12 @@ certify its own host would collapse the authority boundary.
    cannot run the allocator's unscoped maintenance sweep over sibling nodes.
 5. Before campaign mutation, the pinned systemd boundary must reject every live sibling
    `aletheia-qualification-*` or `aletheia-arl1-*` service outside the request's exact five units.
-   The same check surrounds activation and installed-manifest observation and is repeated when a
-   completed receipt is revalidated. It has no stop/disable authority: older generations must be
-   explicitly retired or the campaign must move to a fresh disposable target.
+   It must also reject every sibling unit file whose state is not persistently `disabled` or
+   `masked`; an inactive but enabled, static, indirect, linked, generated, transient or
+   runtime-masked service can regain authority on activation or reboot. Both checks surround
+   activation and installed-manifest observation and are repeated when a completed receipt is
+   revalidated. The campaign has no stop/disable authority: older generations must be explicitly
+   retired or the campaign must move to a fresh disposable target.
 6. The outbox is stopped before the selected attempt becomes terminal. The node process is killed,
    one immutable successful v2 terminal row must commit, the outbox is restarted to publish a
    canonical spool envelope, then its process is killed and the same inode/bytes must survive.

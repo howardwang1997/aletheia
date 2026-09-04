@@ -673,14 +673,16 @@ while the generation-g node had restarted once. Follow-up checks found one share
 connections, and retained c/d/g quota devices `/dev/loop26`-`27`, `/dev/loop28`-`29`, and
 `/dev/loop6`. Those sibling workers are background execution and I/O authority, not inert retained
 evidence; their database and mount residue also cannot be called a fresh h environment. The
-concrete campaign host now enumerates all systemd
-services through the pinned `systemctl` executable and fails before campaign mutation if any live
+concrete campaign host now enumerates all systemd services and unit files through the pinned
+`systemctl` executable. It fails before campaign mutation if any
 `aletheia-qualification-*` or `aletheia-arl1-*` service outside the request's exact five units is
-active, activating, reloading or deactivating. It repeats that check around activation,
-installed-manifest observation and completed receipt revalidation. The check only rejects; it
-never stops or disables a unit. Generation h therefore requires exact reviewed retirement of every
-older active generation plus a fresh isolated database and mount review, or a fresh disposable
-target, before its request is frozen.
+active, activating, reloading or deactivating, or if any sibling unit file is not persistently
+`disabled` or `masked`. An inactive but enabled, static, indirect, linked, generated, transient or
+runtime-masked unit can regain authority on activation or reboot and is therefore not inert. The
+host repeats both checks around activation, installed-manifest observation and completed receipt
+revalidation. It only rejects; it never stops or disables a unit. Generation h therefore requires
+exact reviewed retirement of every older active or reboot-capable generation plus a fresh isolated
+database and mount review, or a fresh disposable target, before its request is frozen.
 
 At `2026-09-04T03:47:23Z`, an explicitly authorized operator retirement preserved the historical
 request, database, journals, manifests, unit files, workspace sources and quota backing images,
@@ -710,6 +712,14 @@ fresh. Inactive historical generations, their retained containers, loops and mou
 that exact authorization. A generation-h request still requires a fresh isolated database and a
 complete read-only mount/container review (or a new disposable target) after the repaired source
 has merged and been frozen.
+
+A subsequent read-only unit-file audit at `2026-09-04T04:42:16Z` found another latent boundary that
+the live-service scan could not see: the five qualification units for each of generations
+`20260831z`, `20260901a`, `20260901b` and `20260901e` are inactive but enabled. All twenty can
+reacquire execution or mount authority after reboot. They were outside the c/d/g retirement
+authorization and remain unchanged. The campaign now rejects this non-inert state, so generation h
+must not run on this target until an operator has exactly disabled or retired those twenty units
+after identity checks, or a genuinely fresh target is selected.
 
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the

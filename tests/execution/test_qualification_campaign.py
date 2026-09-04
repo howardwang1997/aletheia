@@ -940,7 +940,40 @@ def test_live_qualification_service_projection_is_closed() -> None:
         )
 
 
-def test_campaign_rejects_live_sibling_qualification_services() -> None:
+def test_qualification_unit_file_projection_rejects_reboot_authority() -> None:
+    output = "\n".join(
+        (
+            "ssh.service enabled enabled",
+            "aletheia-qualification-node-disabled.service disabled enabled",
+            "aletheia-qualification-node-masked.service masked enabled",
+            "aletheia-qualification-node-enabled.service enabled enabled",
+            "aletheia-qualification-node-runtime-mask.service masked-runtime enabled",
+            "aletheia-arl1-campaign-static.service static -",
+        )
+    )
+    assert campaign._non_inert_qualification_unit_file_names(output) == (  # noqa: SLF001
+        "aletheia-arl1-campaign-static.service",
+        "aletheia-qualification-node-enabled.service",
+        "aletheia-qualification-node-runtime-mask.service",
+    )
+
+    with pytest.raises(
+        campaign.QualificationCampaignError,
+        match="unit-file output is ambiguous",
+    ):
+        campaign._non_inert_qualification_unit_file_names(  # noqa: SLF001
+            "aletheia-qualification-node-old.service enabled enabled extra"
+        )
+    with pytest.raises(
+        campaign.QualificationCampaignError,
+        match="qualification unit-file projection is ambiguous",
+    ):
+        campaign._non_inert_qualification_unit_file_names(  # noqa: SLF001
+            "\n".join((output.splitlines()[3], output.splitlines()[3]))
+        )
+
+
+def test_campaign_rejects_sibling_qualification_authority() -> None:
     host = object.__new__(campaign.LinuxQualificationTargetCampaignHost)
     object.__setattr__(
         host,
@@ -958,13 +991,18 @@ def test_campaign_rejects_live_sibling_qualification_services() -> None:
         "ssh.service loaded active running ssh",
         "aletheia-qualification-node-arl1-next.service loaded active running current node",
     ]
+    unit_files = [
+        "ssh.service enabled enabled",
+        "aletheia-qualification-node-arl1-next.service enabled enabled",
+        "aletheia-qualification-node-arl1-retired.service disabled enabled",
+    ]
 
     def systemctl(*arguments: str) -> str:
         invocations.append(arguments)
-        return "\n".join(active)
+        return "\n".join(unit_files if arguments[0] == "list-unit-files" else active)
 
     object.__setattr__(host, "_systemctl", systemctl)
-    host._assert_no_live_sibling_qualification_services()  # noqa: SLF001
+    host._assert_no_sibling_qualification_authority()  # noqa: SLF001
 
     active.extend(
         (
@@ -980,9 +1018,9 @@ def test_campaign_rejects_live_sibling_qualification_services() -> None:
             "aletheia-qualification-node-arl1-old[.]service"
         ),
     ):
-        host._assert_no_live_sibling_qualification_services()  # noqa: SLF001
+        host._assert_no_sibling_qualification_authority()  # noqa: SLF001
 
-    expected_invocation = (
+    expected_live_invocation = (
         "list-units",
         "--all",
         "--type=service",
@@ -991,7 +1029,30 @@ def test_campaign_rejects_live_sibling_qualification_services() -> None:
         "--no-pager",
         "--full",
     )
-    assert invocations == [expected_invocation, expected_invocation]
+    expected_unit_file_invocation = (
+        "list-unit-files",
+        "--type=service",
+        "--plain",
+        "--no-legend",
+        "--no-pager",
+        "--full",
+    )
+    assert invocations == [
+        expected_live_invocation,
+        expected_unit_file_invocation,
+        expected_live_invocation,
+    ]
+
+    active[:] = active[:2]
+    unit_files.append("aletheia-arl1-campaign-old.service enabled enabled")
+    with pytest.raises(
+        campaign.QualificationCampaignError,
+        match=(
+            "non-inert sibling qualification unit files must be disabled or masked.*"
+            "aletheia-arl1-campaign-old[.]service"
+        ),
+    ):
+        host._assert_no_sibling_qualification_authority()  # noqa: SLF001
 
 
 def test_attempt_projection_sql_parses_on_ci_postgresql() -> None:
