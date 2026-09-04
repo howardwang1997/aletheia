@@ -635,12 +635,9 @@ journal requires reconciliation, but the database has not persisted that transit
 exact container started before ticket expiry, that attempt must not be relabelled as never-started
 or passed through the attempt-scoped pre-runtime cleanup protocol.
 
-The next ordered operation is to merge and freeze the complete-launch-window and node-scoped
-expiry-reconciliation repairs. Preserve the generation-g request, database, journal and backing
-evidence, then decommission only its exact generation-scoped units, exited container and mounts
-after read-only identity checks; this is failed-deployment retirement, not an allocator state
-rewrite. The new dependency security floor
-also forbids reuse of generation g's reviewed Python runtime: prepare and rehash a fresh runtime
+The next ordered source operation is to merge and freeze the complete-launch-window and
+node-scoped expiry-reconciliation repairs. The dependency security floor also forbids reuse of
+generation g's reviewed Python runtime: prepare and rehash a fresh runtime
 that resolves non-yanked `transformers>=5.10.4,<6` and passes both `pip check` and
 `pip-audit --local` before freezing the deployment request. A fresh superseding generation must use
 a fresh database and non-reused authority identities, the already-proven five-minute observation
@@ -664,6 +661,35 @@ installed-manifest observation and completed receipt revalidation. The check onl
 never stops or disables a unit. Generation h therefore requires exact reviewed retirement of every
 older active generation plus a fresh isolated database and mount review, or a fresh disposable
 target, before its request is frozen.
+
+At `2026-09-04T03:47:23Z`, an explicitly authorized operator retirement preserved the historical
+request, database, journals, manifests, unit files, workspace sources and quota backing images,
+while removing only c/d/g execution and mount authority. Read-only checks first bound all fifteen
+units to their exact generation manifests and releases, and bound three exact Docker containers to
+their exited/PID-zero identities. The operator then stopped and disabled the five c, five d and
+five g units. All fifteen became `inactive/dead`, `MainPID=0` and `disabled` before further
+cleanup. The exact exited containers were removed by full ID:
+
+- c: `a50dd7ce1ed15d72b15840c28b117efb11688981d9ee0da6ece58cf65560c801`, exit 0;
+- d: `0bb03fea5517bab6edc84ed282afde0185091888ba21ecf30b6ee9b59fb0e594`, exit 0; and
+- g: `49120073870a3421a052b711168277a32cfef01faa53d3e0fa57192f1bf3b95e`, exit 126.
+
+The five exact output mounts were ordinarily unmounted without lazy, recursive or forced
+semantics; `/dev/loop26`, `/dev/loop27`, `/dev/loop28`, `/dev/loop29` and `/dev/loop6` were detached
+only after all five had no mountpoint. The c/d/g workspace bind targets were then ordinarily
+unmounted. Their five 16 MiB backing images remain root-owned, root-grouped mode `0600`; the three
+runtime-journal control roots remain in allocator custody mode `0700`; and all three manifest bytes
+still match the SHA-256 values embedded in their retained units. A fresh closed-system service
+scan found no live sibling qualification or ARL-1 service. A forced-read-only peer query finally
+confirmed that generation g is still `starting@v2`, has no reconciliation reason, runtime identity
+or launch receipt, and retains both resource and budget holds. Retirement did not rewrite the
+allocator.
+
+This retirement removes the known live c/d/g contamination but does not certify the target as
+fresh. Inactive historical generations, their retained containers, loops and mounts remain outside
+that exact authorization. A generation-h request still requires a fresh isolated database and a
+complete read-only mount/container review (or a new disposable target) after the repaired source
+has merged and been frozen.
 
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the
