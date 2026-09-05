@@ -30,7 +30,9 @@ scientific authority.
 7. Exact cluster/database identity and unshadowed local-peer HBA rules are immutable preconditions.
    A separate pinned superuser creates/adopts the three exact application roles, transfers database
    ownership, removes the former admin's now-unneeded explicit database grant and applies the
-   rendered ACL in one transaction. The post-transaction state freezes
+   rendered ACL in one transaction. Adoption accepts only existing role-config entries that form an
+   exact, duplicate-free subset of the final config, allowing monotonic upgrade while rejecting
+   conflicting or unknown ambient settings. The post-transaction state freezes
    exact role config and direct target privilege hashes; retry recomputes them while executing the
    exhaustive catalog validation block in a read-only transaction.
 8. Systemd units must be absent both before and after this stage. Installation, enablement, start,
