@@ -142,21 +142,29 @@ envelopes in an inode-pinned write-once spool, and marks legacy v1 published onl
 durability while leaving v2 immutable. PR-8f now supplies a separate disabled-only host bootstrap:
 it creates the two exact locked Linux peer identities and fifteen empty custody roots behind a
 crash-replayable journal, and pins distinct passwordless `/run/postgresql` URLs into only the node
-and outbox units. It has not been executed on a target host. A separate explicit PR-8b installer can atomically publish the exact
+and outbox units. A separate explicit PR-8b installer can atomically publish the exact
 manifest and five disabled unit files, journal crash recovery and invoke only pinned `systemctl
 daemon-reload`; it cannot create principals, apply the PostgreSQL ACL, enable/start services,
 qualify a host or admit science. PR-8g now supplies the intervening disabled authority
 commissioning stage: it finalizes only the manifest digest after live bootstrap inodes exist,
 publishes three public-identity-verified private keys and five process-bound configs, and atomically
-creates/adopts the three exact passwordless peer roles plus rendered PostgreSQL ACL. It has not been
-executed on a target host; all units remain absent and every scientific/deployment verdict remains
-false. PR-8h now supplies the concrete independent Linux observer and opt-in campaign runner: it
+creates/adopts the three exact passwordless peer roles plus rendered PostgreSQL ACL. PR-8f, PR-8g
+and PR-8b have now each been executed on the real qualification target — most recently under the
+fresh, non-reused identities of deployment generation `20260904h`. PR-8h now supplies the concrete independent Linux observer and opt-in campaign runner: it
 freshly binds loaded unit bytes plus live process argv/identity/capabilities, rootful Docker,
 shared namespaces, AppArmor/image/ACL custody, and a destructive node/quota/watchdog/outbox/
-PostgreSQL recovery sequence around one pre-registered successful v2 execution. Its source and
-synthetic replay tests are complete, but the exact Linux/rootful-Docker/systemd/loop/ext4/cgroup-v2/
-shared-mount campaign has not run. No target-host manifest/campaign receipt exists, and PR-4b is
-therefore still nondeployable. The target-preparation slice now materializes a Conda environment
+PostgreSQL recovery sequence around one pre-registered successful v2 execution. The exact
+Linux/rootful-Docker/systemd/loop/ext4/cgroup-v2/shared-mount campaign ran on that target and
+generation `20260904h` produced the first complete qualified target-campaign receipt
+(`qtx_1a32860767fa6804960f6ec8425bea60`, `deployment_qualified=true`,
+`qualification_only=true`, `scientific_admission_allowed=false`) after an explicitly authorized
+retirement of every older active or reboot-capable generation. That receipt qualifies only the
+frozen `e0dc06c` deployment; post-h source changes (timezone binding, role-config convergence)
+alter unit bytes and require a new freeze and target re-qualification before deployment. The
+PR-8j attempt-scoped cleanup recovery is permanently superseded by that authorized retirement —
+see
+[`docs/PR8J_ATTEMPT_SCOPED_PRE_RUNTIME_CLEANUP.md`](docs/PR8J_ATTEMPT_SCOPED_PRE_RUNTIME_CLEANUP.md).
+The target-preparation slice now materializes a Conda environment
 into an exhaustive root-owned no-link tree, binds Python to an explicitly pinned in-tree
 loader/glibc closure, and rejects any ambient native mapping under the same `-S` isolation used by
 the service units. Its receipt is preparation evidence only. The ARL-1 source slice now adds a cumulative, signed system
@@ -169,8 +177,10 @@ Kernel/F9-v2 source verifier, a keyless given-protocol campaign runtime, and sep
 prepare/issue/keyless-audit entrypoints. The campaign treats only a signed terminal-material-
 pending source status as retryable and bounds that wait by the authorization's admission deadline.
 Qualification and audit timestamps are derived after fresh replay from the pinned PostgreSQL clock,
-not from caller-supplied evidence or receipt JSON. No complete target-campaign receipt or
-production source-verification receipt exists, so the **ARL-1 software closure is implemented, but Aletheia is
+not from caller-supplied evidence or receipt JSON. A complete generation-h target-campaign receipt
+now exists, but no production source-verification or qualification receipt has been issued — the
+given-protocol campaign and the disjoint prepare/issue/verify phases (ARL-1 exit steps 4–9) remain
+unexecuted — so the **ARL-1 software closure is implemented, but Aletheia is
 not ARL-1 qualified**. See
 [`docs/ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md`](docs/ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md).
 PR-5 now adds

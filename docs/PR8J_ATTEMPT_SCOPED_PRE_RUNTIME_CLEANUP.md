@@ -1,7 +1,8 @@
 # PR-8j attempt-scoped pre-runtime cleanup recovery
 
-- Status: watchdog replay repair merged and target-replayed; recovery remains paused on the same
-  raw-inspection comparison independently exposed in the node cleanup replay
+- Status: permanently superseded by the 2026-09-04 authorized generation retirement; no fourth
+  invocation will run; the merged stable-semantics repairs remain active for live never-started
+  cleanups
 - Scope: release one retained never-started qualification attempt after its source node key expired
 - Scientific authority: none
 
@@ -100,6 +101,50 @@ historical digest. The next repair applies the same rule at that second boundary
 historical digest, freshly revalidate the complete OCI/process projection, and compare every
 security-relevant rejection field while excluding only the newly observed raw digest. A changed
 configuration or start/finish timestamp remains rejected in regression tests.
+
+## 2026-09-06 closure: superseded by the authorized generation retirement
+
+The planned fourth invocation will not run. The explicitly authorized operator retirement of
+2026-09-04 (recorded in
+[`PR8H_QUALIFICATION_TARGET_CAMPAIGN.md`](PR8H_QUALIFICATION_TARGET_CAMPAIGN.md)) removed the
+physical preconditions this recovery depends on, and generation h's qualification required that
+retirement to happen first. The sequencing in this document's "Required order" — release the
+attempt, and only then unmount/detach the old loop/ext4 generation — was therefore inverted by an
+authorized operation, not by a defect.
+
+At `2026-09-04T03:47:23Z` that retirement stopped and disabled all fifteen c/d/g units (including
+the g root-watchdog unit), removed the three exact exited containers by full ID, ordinarily
+unmounted the five output mounts, detached `/dev/loop26`, `/dev/loop27`, `/dev/loop28`,
+`/dev/loop29` and `/dev/loop6` only after none retained a mountpoint, and unmounted the c/d/g
+workspace bind targets. It deliberately preserved journals, manifests, unit files, backing images
+and workspace sources, and deliberately did not rewrite the allocator. Generation
+`20260904h` subsequently qualified on a fresh isolated database.
+
+Against that retained state, the one-shot recovery cannot re-execute, for four independent
+source-level reasons. `QualificationNodeAgent.run_assignment` unconditionally resolves the
+inode-pinned workspace roots, and an unmounted bind target no longer exposes the pinned underlay
+inode at the configured path. It revalidates the materialized inputs, which are unreachable behind
+the unmounted workspace bind. It fresh-verifies the output quota against the expected durable
+receipt, and `OutputQuotaProvisioningReceipt` binds `mount_id`/`mount_parent_id` from
+`/proc/self/mountinfo`: even re-attaching the preserved backing image and re-mounting at the same
+path yields a new mount ID, so receipt equality is physically unrecoverable rather than merely
+unset. The cleanup replay additionally requires the pinned root-watchdog deployment to answer
+quiescence, and that unit is stopped. Restoring the preconditions is therefore impossible, and no
+compatible relaxation exists that does not introduce cleanup without live custody verification.
+
+The retained attempt `iat_07e6426dda2ce12096885b033d3ebe8c`, its exclusive holds, and every
+journal/database evidence row remain immutable negative engineering evidence in the historical
+`aletheia_qualification` database, exactly like the c/d/e/g campaign records. No forward gate
+depends on releasing them: generation h and every later generation qualify on fresh isolated
+databases, and the physical loop/ext4 capacity was already released by the retirement. A new
+"operator-retired workspace" cleanup authority form was considered and deliberately rejected —
+it would create a precedent for cleanup without live custody verification in exchange for hygiene
+rows in a historical database.
+
+The merged repairs from PR #139/#140/#141 keep their value for every future live never-started
+attempt: the deliverability-beyond-artifact-grace rule, the stable-semantics watchdog quiescence
+replay, and the stable-semantics node cleanup replay with their regression tests all remain active
+source. Nothing in this closure weakens them.
 
 ## Focused verification
 
