@@ -3,6 +3,14 @@
 - Status: operator runbook for Horizon-1 items 1–2 of
   [`LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md`](LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md); no code or
   authority change
+- **2026-09-06 update: Phases A–C are complete.** The operator executed them on 2026-09-05 as
+  generations `20260904i` (fail-closed at PR-8g commissioning: `pre-existing PostgreSQL role has
+  variant authority` — the live incident behind #144) and `20260904j` (frozen from `3e65cca`,
+  full chain on fresh isolated database, byte-identical exact-retry receipt
+  `qtx_5a6fd1d4c725f990507c07cdf5b7d713`, `deployment_qualified=true`, completed
+  `2026-09-05T05:37:20.406653Z`). See the PR-8h guide's generation-i/j record for the authoritative
+  detail. **Phase D (ARL-1 exit steps 4–9) is the remaining work**; all Phase-B/D identity notes
+  below now refer to generation j
 - Scope: freeze current `main` as a new deployment generation, re-qualify it on the retained Linux
   target through PR-8f→8g→8b→8h, then execute ARL-1 exit steps 4–9
 - Scientific authority: none. Every phase below keeps `qualification_only=true` and

@@ -103,10 +103,16 @@ retained bundle.
 Later source binds the frozen runtime's in-tree timezone database and hardens the commissioned
 PostgreSQL application roles with an exact `TimeZone=UTC` session default after generation h
 exposed a safe Psycopg fallback from the cluster's `Etc/UTC` name. Those unit/ACL changes are not
-retroactively covered by h. Either ARL-1 must use the unchanged exact h deployment and receipt, or
-a newly frozen hardened generation must repeat PR-8f/PR-8g/PR-8b/PR-8h before its evidence can
-enter this gate. Local synthetic host ports remain intentionally ineligible because every ARL
-evidence contract requires `synthetic_evidence=false`.
+retroactively covered by h. The required repetition has now run: generation `20260904i` (frozen
+from `dd84581`) stopped fail-closed at PR-8g commissioning with
+`pre-existing PostgreSQL role has variant authority` — the live incident behind the #144 monotonic
+role-config convergence repair — and generation `20260904j`, frozen from `3e65cca` after green
+pull-request and main CI, repeated PR-8f/PR-8g/PR-8b/PR-8h on a fresh isolated database with
+byte-identical exact-retry receipt `qtx_5a6fd1d4c725f990507c07cdf5b7d713`
+(`deployment_qualified=true`, `scientific_admission_allowed=false`) at
+`2026-09-05T05:37:20.406653Z`. See the PR-8h guide's generation-i/j record. Local synthetic host
+ports remain intentionally ineligible because every ARL evidence contract requires
+`synthetic_evidence=false`.
 
 Therefore the honest current status remains **ARL-1 qualification gate implemented, deployed
 system not ARL-1 qualified**.
@@ -187,9 +193,10 @@ The real exit procedure must use a disposable qualified Linux target:
    third, keyless auditor principal with `VERIFY_ARL1_QUALIFICATION`; and
 9. tamper one byte in every retained source class and require verification to fail.
 
-For the exact generation-h deployment, the fresh exact-head database, commissioning/installation
-chain and target receipt required by steps 1–3 are retained; steps 4–9 remain. Procedural checks not
-embedded in those receipts must still be repeated, and a deployment containing any post-h ACL or
-runtime change must repeat steps 1–3 instead of borrowing h's qualification.
+For the exact generation-j deployment (frozen `3e65cca`), the fresh exact-head database,
+commissioning/installation chain and target receipt required by steps 1–3 are retained; steps 4–9
+remain. Procedural checks not embedded in those receipts must still be repeated, and a deployment
+containing any post-j ACL or runtime change must repeat steps 1–3 instead of borrowing j's
+qualification.
 
 No local test or CI badge substitutes for those target-host steps.
