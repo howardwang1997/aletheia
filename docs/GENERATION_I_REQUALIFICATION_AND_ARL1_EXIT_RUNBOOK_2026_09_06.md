@@ -25,6 +25,20 @@
   on fresh identities, then execute Phase D inside the new 24 h window). Lesson: Phase D must
   follow Phase C immediately; the window is measured from commissioning, not from
   qualification.
+- **2026-09-06 update 3: generation `20260906k` executed the fresh arc and Phase D ended as an
+  honest negative at step 6.** Steps 1–3 re-qualified cleanly (receipt
+  `qtx_b985598bbcf9f1e1ad1a4d9162c085c7`, byte-identical exact-retry replay). Steps 4–6 then
+  ran live for the first time: both preregistered attempts executed in the OCI sandbox and
+  were terminally accepted, across five repaired fail-closed stops (stale node inventory,
+  PR-8h/scientific custody eras bridged by receipted transitions, CAS 0400-exact
+  materialization, a foundation ACL gap on the row-lock privilege). The sixth stop is
+  terminal: the scientific composer hardcoded generation-t's expected observation digest
+  instead of deriving it from the sealed CAS input, the F9-v2 exact-content validator
+  correctly returned `blocked_execution`, and the committed receipt is immutable per slot —
+  no campaign receipt, and steps 7–9 never ran. Composition rule for the next generation:
+  derive `raw_observation_content_sha256` from the sealed input as
+  `sha256(hex(sha256(input_bytes)) + "\n")`, never copy a historical digest. See the PR-8h
+  guide's generation-k section for the authoritative detail.
 - Scope: freeze current `main` as a new deployment generation, re-qualify it on the retained Linux
   target through PR-8f→8g→8b→8h, then execute ARL-1 exit steps 4–9
 - Scientific authority: none. Every phase below keeps `qualification_only=true` and
@@ -101,8 +115,9 @@ record it and repair at source — never adapt the target to pass.
 
 ## Phase D — ARL-1 exit steps 4–9
 
-**Status 2026-09-06: blocked on j (see the top-of-file update 2) — requires a fresh generation
-arc before these steps can run.**
+**Status 2026-09-06: generation k executed these steps and stopped terminal at step 6 (see the
+top-of-file update 3 and the PR-8h generation-k record); a further fresh generation arc with the
+corrected scientific composer is required before steps 6–9 can complete.**
 
 Execute [`ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md`](ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md)
 steps 4–9 unchanged, on the qualified generation-i deployment:
