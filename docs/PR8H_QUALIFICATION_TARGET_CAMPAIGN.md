@@ -806,12 +806,68 @@ changes alter unit bytes, the ACL and the commissioning receipt chain: h qualifi
 `e0dc06ce` deployment, and the hardened source must receive a new freeze and target qualification
 before it can claim the same result.
 
-PR-8h is therefore complete for the exact generation-h deployment. It does not establish ARL-1,
-scientific validity, independent replication or autonomous scientific authority. The next
-end-to-end gate is to execute the production given-protocol campaign on a qualified target with all
-preregistered reexecutions, then perform disjoint source verification, qualification signing and a
-fresh keyless audit. Reboot/restart qualification remains a separate deployment gate for any
-newly frozen generation.
+## Generation-i commissioning stop and generation-j re-qualification
+
+The post-h timezone binding (#143) and role-config convergence (#144) changes required a new
+freeze and full target repetition before any deployment could claim h's result. The operator ran
+that repetition on the retained target across 2026-09-04/05.
+
+Generation `20260904i`, frozen from merge `dd84581` (#143), stopped fail-closed at PR-8g
+commissioning. Its apply exited `2` with the single-line error
+`pre-existing PostgreSQL role has variant authority` and an empty receipt: the commissioning
+chain refused to adopt the pre-existing application roles because their authority variant did not
+converge with the new chain. No unit files were installed for generation i, no campaign request
+was frozen, and no container ran. Its bootstrap journal, database preparation receipts, staging
+pipeline and separately generated authority-key directory remain retained as negative evidence.
+That stop is the live incident behind the #144 monotonic role-config convergence repair and its
+commissioning regression tests.
+
+Generation `20260904j`, frozen from merge `3e65cca` (#144, green pull-request and main CI),
+repeated the full chain on a fresh isolated database `aletheia_qualification_20260904j` at exact
+schema head `20260903_0032`, under fresh non-reused identities (node UID/GID `2101`, outbox
+`2102`), with `code_root` `/opt/aletheia/release-3e65cca-j1`, deployment
+`qualification:arl1-ubuntu22-20260904j` and deployment-manifest SHA-256
+`0823b7edf6d3d87a2949a8489a49b0a3d7ec439ef541de0714094adff1e64a04`. This was the first live
+execution of the #144 convergence path in PR-8g commissioning and the first live deployment of
+the #143 `TimeZone=UTC`/in-tree `PYTHONTZPATH` unit bytes. The five generation-h units were
+stopped and disabled before j's request froze — the closed-system sibling check the campaign host
+repeats around activation cannot pass with any enabled sibling, so the observed j receipt implies
+that h retirement. The h journals, manifests and database remain untouched.
+
+The j campaign request `qtr_e4e1a6e869fdda0643c2754d8eb92c72` (SHA-256
+`39151b8383106f55e45cb0aaa8b02e50e96471145c721e4ef2b3178aad5cf516`) and canonical plan
+`qtp_d28b51281ba700eff0801696f7729e80` (SHA-256
+`11fd86483571aca877d6947cc89217f29440e48aaf10ac99aa265e66e823fc7e`) drove container
+`6944caa91ae9...` from `2026-09-05T05:04:19.10864352Z` through `2026-09-05T05:34:19.790166358Z`,
+exit zero. Receipt `qtx_5a6fd1d4c725f990507c07cdf5b7d713` completed at
+`2026-09-05T05:37:20.406653Z` with `campaign_executed=true`, `deployment_qualified=true`,
+`qualification_only=true` and `scientific_admission_allowed=false`, binding all ten ordered
+scenario-evidence SHA-256 values:
+
+```text
+1489042c97c0e04eae6977d3c69f96f337103b7d119abd1e089b1e145b68dd91
+3e0d0afcbcd31c7d7e8907d2b3939b071822f6738a2785b965d9c4a5e785d81d
+d4610d702073ffcc60000b21af5be01e9eb5c8ea06e035a6f899b2bfadb425bd
+d4f09271589c86fc78bd2b316a3f0725c2ed83d4941b67cfd73873c85366311c
+4222e7c3ab10f9aa777daa2d30224da5b6a523bbc689826f7d181e54a9ed157b
+e2fa76d1845534cbfcf1c88edeaa1aef5e49045bd6e972900d8c3504fcc1cb66
+287f32ec2896bc01641215a3d6d0e1b1bd3a07ff58e9b8f70b0241c1272cf9f8
+990738686087d82c4869de275758fc925db300ee71f1591ebed41b730729aa6d
+4d98cf1dc121fde0c286b96d349e926c428e9d109753ebda2f6c829d62f53cbf
+6b42abd92bbe449a533bf088fe242702f973be27455fc2abebefa5ae364c330a
+```
+
+The retained apply stdout (7,091,655 bytes) and the repeated exact apply both have file SHA-256
+`eb208bce36c916d36d165a627256d1a4ef3ad8678b18843865d44aac6e7a6c8c` — byte-identical — and both
+exited zero. The five j units remain enabled and active, which is the receipt's explicitly
+observed final activation state.
+
+PR-8h is therefore complete for the exact generation-h and generation-j deployments. Neither
+establishes ARL-1, scientific validity, independent replication or autonomous scientific
+authority. The next end-to-end gate is to execute the production given-protocol campaign on the
+qualified generation-j target with all preregistered reexecutions, then perform disjoint source
+verification, qualification signing and a fresh keyless audit. Reboot/restart qualification
+remains a separate deployment gate for any newly frozen generation.
 
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the

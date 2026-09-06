@@ -22,7 +22,7 @@
 | 等级 | 状态 | 依据 / 缺口 |
 |---|---|---|
 | ARL-0 Integrity | **已具备** | ledger、sandbox、hidden boundary、all-attempt、replay、claim ceiling 不变量已实现并有 ARL-1 合同内的 canonical replay |
-| ARL-1 Protocol Executor | **差最后一段执行** | 软件闭环完成;generation `20260904h` 目标 campaign 已合格(receipt `qtx_1a328607...`,`deployment_qualified=true`);但 ARL-1 出口步骤 4–9 未执行,**尚无可签发的 ARL-1 资格 receipt** |
+| ARL-1 Protocol Executor | **差最后一段执行** | 软件闭环完成;generation `20260904h` 与重认证代 `20260904j`(冻结 `3e65cca`,2026-09-05 operator 执行,receipt `qtx_5a6fd1d4...`,`deployment_qualified=true`)目标 campaign 均已合格;但 ARL-1 出口步骤 4–9 未执行,**尚无可签发的 ARL-1 资格 receipt** |
 | ARL-2 Question-bound Scientist | **原语齐备,未贯通** | F8 知识边界、F9 竞争假设/因果链、F10 能力注册、K2/F9 信念回路均已建成,但"未由主控制面贯通"(§13.1 原话);无 ARL-2 证据 |
 | ARL-3 Mission-bound Researcher | 无证据 | mission→问题的自主形成、measurement/design space 演化、按 modality 获取新 evidence 均未建 |
 | ARL-4 独立确认的自主发现 | 无证据 | Prospective Discovery Suite、按 claim type 的独立确认(F12)未建 |
@@ -47,8 +47,10 @@
 ### 2.3 工程/部署状态(资格基底)
 
 - PR-0→PR-8i:本地源码/测试闭合;PR-8h generation h 在真实 Linux 目标合格。
-- **generation h 之后 main 又改了 unit 字节**(timezone 绑定 #143、role-config 收敛 #144):
-  h 只认证冻结的 `e0dc06c` 部署;当前树需要**新的 freeze + 目标重认证**才能部署为合格代。
+- **重认证已完成(2026-09-05,operator 执行)**:generation i(#143 树)在 PR-8g commissioning
+  fail-closed(`pre-existing PostgreSQL role has variant authority`,即 #144 修复的收敛缺陷);
+  generation j(#144 合并 `3e65cca`)在新隔离库上全链重跑,产出第二份完整合格 receipt
+  `qtx_5a6fd1d4c725f990507c07cdf5b7d713`(apply/replay 字节一致)。j 只认证冻结的 `3e65cca`。
 - **PR-8j 清理恢复已闭环为"被授权退役合法取代"**(2026-09-06 决策):generation h 的前置退役
   (2026-09-04)移除了第 4 次调用依赖的全部物理前提(quota receipt 绑定 `mount_id` 不可复原、
   workspace bind/inode pin 失效、watchdog unit 已停),且无任何前向 gate 依赖释放这些历史库 holds。
@@ -59,8 +61,8 @@
 
 ## 3. 距离终极目标还差什么(按层级)
 
-1. **ARL-1 收尾**(工程执行,非新能力):新 freeze → 目标重认证 →
-   步骤 4–9 → 第一份 ARL-1 资格 receipt。(PR-8j 已按 2026-09-06 决策闭环,不再阻塞。)
+1. **ARL-1 收尾**(工程执行,非新能力):~~新 freeze → 目标重认证~~(已由 generation j 于
+   2026-09-05 完成)→ 步骤 4–9 → 第一份 ARL-1 资格 receipt。(PR-8j 已按 2026-09-06 决策闭环,不再阻塞。)
 2. **ARL-2 贯通**(能力整合,真正的第一道科学关):把 F8 新颖性门、F9 竞争假设/因果链、
    F10 能力注册、K2/F9 信念回路接进 research-kernel 主控制面;在真实问题(首选已 commission 的
    phonon Quest)上跑完整的"竞争解释→判别实验→负结果处理→回退"闭环。这一步开始产生
@@ -88,9 +90,9 @@
 目标:拿到第一份可独立重验的 ARL-1 资格 receipt。**只做资格,不扩权**;
 `scientific_admission_allowed=false` 与 engineering claim ceiling 全程不动。
 
-1. **新 freeze + 目标重认证**:当前 main(含 #143/#144,CI 绿、focused 门绿)冻结为新一代
-   (generation i);重跑 PR-8f→8g→8b→8h 全链,沿用 generation h 的 sibling-unit/非惰性检查;
-   显式记录"h 只认证 `e0dc06c`,新代认证新冻结字节"。
+1. **新 freeze + 目标重认证**:**已完成**——operator 于 2026-09-05 冻结 `3e65cca` 为
+   generation `20260904j` 并重跑 PR-8f→8g→8b→8h 全链(receipt `qtx_5a6fd1d4...`,apply/replay
+   字节一致);generation i 的 commissioning fail-closed 是 #144 收敛修复的实战来源。
 2. **ARL-1 步骤 4–9**:生产 given-protocol campaign(含全部预注册 exact reexecution)→
    证据/all-attempt manifest → `prepare`(source-verifier principal)→ `issue`(资格 signer)→
    重启后 `verify`(无密钥 auditor)→ 每类证据单字节篡改必须失败。
@@ -159,8 +161,7 @@
 
 ## 6. 下一步(唯一)
 
-按 Horizon 1 第 1 项启动:**新 freeze + 目标重认证**——把当前 main(`3e65cca`,CI 绿、
-focused 门绿)冻结为新一代 release,在资格目标上重跑 PR-8f bootstrap → PR-8g commissioning
-→ PR-8b installation → PR-8h campaign 全链(新隔离数据库、非复用身份、sibling 非惰性检查)。
-随后执行 ARL-1 步骤 4–9,签发第一份 ARL-1 资格 receipt。
-(原第 1 项"PR-8j 收尾"已按 2026-09-06 决策闭环为被授权退役取代,见 §2.3。)
+**ARL-1 步骤 4–9**(在已合格的 generation `20260904j` 目标上):生产 given-protocol campaign
+(含全部预注册 exact reexecution)→ 证据/all-attempt manifest → `prepare`(source-verifier
+principal)→ `issue`(资格 signer)→ 重启后 `verify`(无密钥 auditor)→ 每类证据单字节篡改
+必须失败。(重认证已由 generation j 于 2026-09-05 完成;PR-8j 已按 2026-09-06 决策闭环,见 §2.3。)

@@ -3,6 +3,28 @@
 - Status: operator runbook for Horizon-1 items 1–2 of
   [`LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md`](LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md); no code or
   authority change
+- **2026-09-06 update: Phases A–C are complete.** The operator executed them on 2026-09-05 as
+  generations `20260904i` (fail-closed at PR-8g commissioning: `pre-existing PostgreSQL role has
+  variant authority` — the live incident behind #144) and `20260904j` (frozen from `3e65cca`,
+  full chain on fresh isolated database, byte-identical exact-retry receipt
+  `qtx_5a6fd1d4c725f990507c07cdf5b7d713`, `deployment_qualified=true`, completed
+  `2026-09-05T05:37:20.406653Z`). See the PR-8h guide's generation-i/j record for the authoritative
+  detail. **Phase D (ARL-1 exit steps 4–9) is the remaining work**; all Phase-B/D identity notes
+  below now refer to generation j
+- **2026-09-06 update 2: Phase D step 4 on j is blocked by a fail-closed commissioning-window
+  expiry.** The scientific host foundation for j completed cleanly (receipt
+  `0d20c084fe35b764afb1bd89fbf38bf617b750c62aca399447759176ee3d3a8a`: identities 2300–2309, shared
+  group `aletheia_arl1_shared_j`, verified database ACL including the `UPDATE` row-lock grants
+  generation e died on, `acl_verified=true`, all six role peer probes passed), but the scientific
+  campaign composition stopped at `qualification custody authority is inactive at preparation
+  time`: the commissioning foundation pins custody authorities valid only
+  `2026-09-05T03:31:17Z → 2026-09-06T03:31:17Z` (24 h), and composition began `2026-09-06T03:42Z`
+  — 11 minutes past expiry. There is no authority-renewal flow, and per
+  `ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md` a deployment may not borrow another arc's
+  commissioning; steps 4–9 therefore require a freshly commissioned generation (repeat steps 1–3
+  on fresh identities, then execute Phase D inside the new 24 h window). Lesson: Phase D must
+  follow Phase C immediately; the window is measured from commissioning, not from
+  qualification.
 - Scope: freeze current `main` as a new deployment generation, re-qualify it on the retained Linux
   target through PR-8f→8g→8b→8h, then execute ARL-1 exit steps 4–9
 - Scientific authority: none. Every phase below keeps `qualification_only=true` and
@@ -78,6 +100,9 @@ generation-h record format. A fail-closed stop at any boundary is negative engin
 record it and repair at source — never adapt the target to pass.
 
 ## Phase D — ARL-1 exit steps 4–9
+
+**Status 2026-09-06: blocked on j (see the top-of-file update 2) — requires a fresh generation
+arc before these steps can run.**
 
 Execute [`ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md`](ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md)
 steps 4–9 unchanged, on the qualified generation-i deployment:

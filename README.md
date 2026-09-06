@@ -150,7 +150,7 @@ commissioning stage: it finalizes only the manifest digest after live bootstrap 
 publishes three public-identity-verified private keys and five process-bound configs, and atomically
 creates/adopts the three exact passwordless peer roles plus rendered PostgreSQL ACL. PR-8f, PR-8g
 and PR-8b have now each been executed on the real qualification target — most recently under the
-fresh, non-reused identities of deployment generation `20260904h`. PR-8h now supplies the concrete independent Linux observer and opt-in campaign runner: it
+fresh, non-reused identities of deployment generations `20260904h` and `20260904j`. PR-8h now supplies the concrete independent Linux observer and opt-in campaign runner: it
 freshly binds loaded unit bytes plus live process argv/identity/capabilities, rootful Docker,
 shared namespaces, AppArmor/image/ACL custody, and a destructive node/quota/watchdog/outbox/
 PostgreSQL recovery sequence around one pre-registered successful v2 execution. The exact
@@ -158,9 +158,14 @@ Linux/rootful-Docker/systemd/loop/ext4/cgroup-v2/shared-mount campaign ran on th
 generation `20260904h` produced the first complete qualified target-campaign receipt
 (`qtx_1a32860767fa6804960f6ec8425bea60`, `deployment_qualified=true`,
 `qualification_only=true`, `scientific_admission_allowed=false`) after an explicitly authorized
-retirement of every older active or reboot-capable generation. That receipt qualifies only the
-frozen `e0dc06c` deployment; post-h source changes (timezone binding, role-config convergence)
-alter unit bytes and require a new freeze and target re-qualification before deployment. The
+retirement of every older active or reboot-capable generation. Post-h source changes (timezone
+binding, role-config convergence) altered unit bytes and required exactly that repetition:
+generation `20260904i` stopped fail-closed at PR-8g commissioning (`pre-existing PostgreSQL role
+has variant authority` — the live incident behind the role-config convergence repair), and
+generation `20260904j`, frozen from the hardened merge, repeated the full chain on a fresh
+isolated database and produced the second complete qualified receipt
+(`qtx_5a6fd1d4c725f990507c07cdf5b7d713`, byte-identical exact-retry). Each receipt qualifies only
+its own frozen deployment bytes. The
 PR-8j attempt-scoped cleanup recovery is permanently superseded by that authorized retirement —
 see
 [`docs/PR8J_ATTEMPT_SCOPED_PRE_RUNTIME_CLEANUP.md`](docs/PR8J_ATTEMPT_SCOPED_PRE_RUNTIME_CLEANUP.md).
@@ -177,8 +182,8 @@ Kernel/F9-v2 source verifier, a keyless given-protocol campaign runtime, and sep
 prepare/issue/keyless-audit entrypoints. The campaign treats only a signed terminal-material-
 pending source status as retryable and bounds that wait by the authorization's admission deadline.
 Qualification and audit timestamps are derived after fresh replay from the pinned PostgreSQL clock,
-not from caller-supplied evidence or receipt JSON. A complete generation-h target-campaign receipt
-now exists, but no production source-verification or qualification receipt has been issued — the
+not from caller-supplied evidence or receipt JSON. Complete generation-h and generation-j target-campaign receipts
+now exist, but no production source-verification or qualification receipt has been issued — the
 given-protocol campaign and the disjoint prepare/issue/verify phases (ARL-1 exit steps 4–9) remain
 unexecuted — so the **ARL-1 software closure is implemented, but Aletheia is
 not ARL-1 qualified**. See
