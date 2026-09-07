@@ -1,8 +1,13 @@
 # PR-8h independent observer and qualification target campaign
 
-- Status: generation h qualified on the exact frozen target and replayed byte-for-byte;
-  qualification-only, with no scientific admission
-- Date: 2026-09-05
+- Status: generations h and j qualified on the exact frozen target with byte-identical
+  replays; generation k re-qualified and then executed the first ARL-1 exit runbook, ending
+  as an honest negative at step 6 — qualification-only, with no scientific admission;
+  generation l repeated the exit with both k-lesson source fixes carried — steps 1–5 ran
+  fully live and both protocol attempts terminally accepted, ending one layer deeper as an
+  honest negative at the runner's unsatisfiable custody pin (a release defect queued for
+  generation m) — qualification-only, with no scientific admission
+- Date: 2026-09-07
 
 ## What this slice closes
 
@@ -868,6 +873,305 @@ authority. The next end-to-end gate is to execute the production given-protocol 
 qualified generation-j target with all preregistered reexecutions, then perform disjoint source
 verification, qualification signing and a fresh keyless audit. Reboot/restart qualification
 remains a separate deployment gate for any newly frozen generation.
+
+## Generation-k target campaign and the first ARL-1 exit execution
+
+Generation `20260906k`, frozen from merge `3e65cca` (#144), repeated the full chain on a fresh
+isolated database `aletheia_qualification_20260906k` under fresh identities, with `code_root`
+`/opt/aletheia/release-3e65cca-k1`, deployment `qualification:arl1-ubuntu22-20260906k` and
+deployment-manifest SHA-256
+`51bd35fa596924883d4dd4a2f04309edf9b48cd0e9e6f11daf34b54a71c578f6` (prepared
+`2026-09-06T04:55:48Z`). The campaign request `qtr_be0ea90ddde411839d1be56805edcc82` (SHA-256
+`d6721c40c5df9c9827b9e3a5fca8680962c895a28600a52033719bd6cfd1fe84`), canonical plan
+`qtp_550fff7b277bc78c7ba4b778de044ca1` (SHA-256
+`33862228c632f798feb45bd35c396e0601c1aac53fe5a7f118cf25df115d960b`) and receipt
+`qtx_b985598bbcf9f1e1ad1a4d9162c085c7` (completed `2026-09-06T06:24:27.852536Z` with
+`campaign_executed=true`, `deployment_qualified=true`, `qualification_only=true` and
+`scientific_admission_allowed=false`) bound the ten ordered scenario-evidence SHA-256 values:
+
+```text
+b8d3d3d33f3a0f6584a30c6490e177e8f3f6d9640781eed7228a85701306c830
+2fbe7bfaccd456b2c3262eeca4153cad24c642676a6c99711a76d78c472f76e6
+0e4e5a9a0af2bebff7c1f72ba8a3ea160794d846d1d8e09bdac5958821bff309
+4bd9bd2742c814d8e3cb4e7b6be2179f57aaa3164286e3f1abbd62c72f052321
+51e82f3f908a304adf03576b0e8061557ce24534cd775e57a4946377fb7b7860
+393a55f812154fc0fa987f552e77e428fb5bae36d0e34de734f20d4da39674a8
+7c83796fa423af8fdd50bf3a1c6b06db97214526846197acc2e4269ebb91c6f5
+1f9e29c83393f03084b25fa005ab9e385b3027fbc304206c6402728f0d31de13
+383744617301c65204180ab0eb3c75658e2c7008255a2c52cb1b4aa1e4064458
+5cfdf3a34699d680d6b4252aa42947ef321025372d01f13ddfa56306135c3e21
+```
+
+The retained apply stdout (7,091,659 bytes) and its exact retry replay were byte-identical with
+file SHA-256 `d3588e98414beacb68d27dde5356b93b25cf451a9e77314493f49e3c2aa4e0d5`, and both
+exited zero — the steps-1–3 re-qualification gate for generation k.
+
+That qualified target then carried the first live execution of the ARL-1 exit runbook
+(steps 4–9) inside generation k's commissioning window (foundation pinned
+`[prepared_at−1h, +23h]`, campaign admission deadline `2026-09-06T11:01:48Z`):
+
+- **Steps 4–5 (scientific composition).** The ARL-1 scientific host foundation created the
+  shared identity group `aletheia_arl1_shared_k` (GID 2310), the campaign identity (UID 2310),
+  the six RPC authority identities, and provisioned their database roles and peer
+  authentication. The scientific composer (r1) froze the six RPC service deployments, the
+  campaign request/config/deployment, and the composition receipt.
+- **Step 6 (protocol campaign) — six fail-closed stops; the first five were repaired at
+  source, and the sixth is terminal for this generation.**
+  1. The first campaign launch exited on `RPC socket is unavailable`: the allocator rejected
+     admission against a stale node inventory (30 s TTL) and the registration service exited,
+     unlinking its socket during the systemd restart gap. Repair: an operator inventory
+     refresh tool that republishes a signed `NodeInventoryAttestation` through the release's own
+     `append_inventory` (sequences 2 and 3), run immediately before launch.
+  2. Registration then replayed green for 34 minutes while the raw-run source polled
+     `raw_run:terminal_material_pending`: the two campaign attempts (iat_c3f1a2d8…, iat_eac46b4d…)
+     were reserved but no node executor had ever run in the scientific era — the frozen PR-8h
+     node unit had been crash-looping since the foundation shared the artifact-store root,
+     because the node config model pins the store root at owner 2101:2101 mode 0700
+     (`Literal[448]`) and the release forbids expressing shared custody there.
+  3. The artifact-custody eras are therefore bridged by receipted host transitions, not by
+     re-pinning frozen configs: a seconds-long private window (transition receipt
+     `5845c6f5…`) let the original PR-8h node unit pass its startup boundary at
+     `2026-09-06T08:26:54Z`, after which the store returned to shared custody (receipt
+     `aa3656f5…`) so the RPC authorities stay restartable — the registration service opens the
+     store root at composition time. Attempt 1 (`iat_c3f1a2d8…`) then claimed, ran the
+     1,800-second OCI-sandbox workload and reached terminal acceptance at `08:57:03Z`
+     (`succeeded 08:57:04Z`) — the first node execution of the ARL-1 scientific era.
+  4. One second later the worker fail-closed again: its next tick began attempt 2's input
+     materialization and `input_materializer.py` rejected the sealed CAS sources, because it
+     accepts mode exactly `0400` — stricter than the store reader's `{0400, 0440}` — and the
+     shared sweep had made them `0440`. Every systemd restart then failed the startup pin
+     again (restart counter above 1400). A second receipted bridge (private receipt
+     `f86d4c0c…` at `09:04:54Z`, a ~15-second window) let a fresh worker claim attempt 2 and
+     materialize its inputs while the objects were still `0400`, after which the store
+     returned to shared custody (receipt `943db05b…` at `09:05:09Z`); attempt 2
+     (`iat_eac46b4d…`) entered `running` inside the private window and completed under
+     shared custody. A final shared sweep after terminal acceptance made the worker-written
+     0400 objects group-readable (the store reader accepts exactly {0400, 0440}).
+  5. Attempt 2 reached terminal acceptance at `09:35:04Z`; the post-attempt sweep (shared
+     receipt `8655fc65…`) and campaign relaunch then exposed a foundation ACL gap on a path
+     no earlier generation had ever executed: the campaign's first
+     `issue_validation_challenge` made the database_observation service take
+     `SELECT … FOR UPDATE` on `research_scientific_execution_authorizations`
+     (observations/store.py `lock_scientific_execution_authorization_by_slot` and the
+     same table lock in the issuance-challenge recording path), PostgreSQL requires the
+     UPDATE privilege for row locks, and the r1 foundation had granted that role only
+     SELECT — the unhandled `InsufficientPrivilege` crashed the service mid-exchange and
+     the campaign fail-closed on the vanished socket (run-r2 capture). The foundation's
+     own charter derives grants from release code paths; the derivation had covered the
+     generation-e `research_quest_streams` lock class but missed this table. Repair: a
+     receipted ACL revision granting exactly `UPDATE` on that one table to the one role
+     whose runtime hosts all three locking handlers
+     (`arl1-foundation-acl-repair-20260906k-r1-receipt.json`, `09:43:41Z`, privilege
+     false→true with the extended expectation set re-verified); privileges apply
+     per-statement, so no service restart was required, and the crashed transaction had
+     rolled back leaving zero half-issued challenge rows.
+  6. The relaunched campaign (run-r3) crossed validation challenge, ACL row lock and
+     terminal-disposition verification, and the independent F9-v2 validator then returned
+     `blocked_execution` for the first replicate slot (`sos_79ee4774…`, attempt
+     `iat_c3f1a2d8…`): the frozen exact-content assessment catalog did not recognize the
+     observation. Root cause, confined entirely to the step-4/5 scientific composition: the
+     composer had hardcoded `raw_observation_content_sha256` as generation-t's calibration
+     digest `25e0da1d…` instead of deriving it from the campaign's own sealed CAS input.
+     The workload is deterministic over its input — it writes
+     `hex(sha256(input_bytes)) + "\n"` — so the correct pre-registration value was
+     derivable before execution: input object `1d0de1c6…` (64 bytes) → expected content
+     `4e377985…` (65 bytes), exactly what both attempts produced. The authorization pins
+     were sound (no content sha is pinned there; the `validator_manifest_sha256` chain is
+     identity-level and would have survived a corrected catalog), but the committed
+     validation receipt for the slot is immutable by design
+     (`ObservationIdentityConflict` on any different receipt), so the slot is permanently
+     `blocked_execution` and the two-replicate campaign cannot complete in generation k's
+     window. Two fresh attempts cannot fit before the `11:01:48Z` admission deadline. This
+     stop ends generation k's ARL-1 exit as a negative engineering result; the composition
+     rule for every later generation is that the expected observation content must be
+     computed from the sealed input (`sha256(hex(sha256(input)) + "\n")`), never copied
+     from a historical run.
+- **Step 6 outcome.** Both preregistered attempts executed and were terminally accepted:
+  `iat_c3f1a2d827504b6361c908a32e76773a` `succeeded` at `08:57:04Z` (acceptance
+  `08:57:03.862952Z`) and `iat_eac46b4de23ae0ad5bd2253e3491ae6b` `succeeded` (acceptance
+  `09:35:04.446310Z`), giving exactly three terminal acceptances in the database together
+  with the PR-8h calibration attempt. The store ended in shared custody (transition
+  receipts private `5845c6f5…`, shared `aa3656f5…`, private `f86d4c0c…`, shared
+  `943db05b…`, final sweep `8655fc65…`) and the node worker was stopped. The protocol
+  campaign itself never completed: run-r3 committed `blocked_execution` for the first
+  replicate slot (stop 6 above) and exited nonzero, so generation k has no campaign run
+  receipt and no scientific admission ids. The run-r1/r2/r3 captures
+  (`arl1-protocol-campaign-20260906k-run-r{1,2,3}.{json,err}`) are retained verbatim on the
+  target as fail-closed records.
+- **Steps 7–9 (disjoint qualification).** Not executed: step 6 never produced a completing
+  campaign, so disjoint source verification, qualification signing and the one-byte-per-class
+  tamper checks had no campaign output to bind. The qualification composer's placeholders
+  (campaign run receipt path and sha) remain unset on the target.
+
+Generation k's ARL-1 exit therefore ends as an **honest negative at step 6**. The target is
+re-qualified (receipt `qtx_b985598bbcf9f1e1ad1a4d9162c085c7`, byte-identical replay), the
+scientific era's first two node executions ran and were terminally accepted, three real
+boundary defects were found and repaired at source (stale node inventory, custody-era CAS
+materialization, the foundation ACL gap), and a fourth — the hardcoded expected-content
+digest in the scientific composer — is retained as the terminal composition defect with its
+derivation rule recorded in stop 6. No scientific admission was requested or granted, and
+the five generation-k qualification units plus the six scientific RPC services remain the
+explicitly observed final state of the target.
+
+## Generation-l target campaign and the second ARL-1 exit execution
+
+Generation `20260907l`, frozen from the same merge `3e65cca` (#144), repeated the full chain on
+a fresh isolated database `aletheia_qualification_20260907l` under fresh identities — shared
+group `aletheia_arl1_shared_l` (GID 2320), campaign UID 2320, the six RPC authorities UIDs
+2321–2326, and the steps-7–9 source-verifier/signer/auditor UIDs 2327–2329 — with `code_root`
+`/opt/aletheia/release-3e65cca-l1`, deployment `qualification:arl1-ubuntu22-20260907l`
+(deployment-manifest SHA-256 `3b3d537e650202e56ddf5ba2276d1942436edbc73a020bae0ed2dc53862e4580`).
+The generation existed to carry the two generation-k terminal lessons through a live exit:
+the scientific composer must **derive** `raw_observation_content_sha256` from the sealed CAS
+input (`sha256(input_receipt.content_sha256 + "\n")`, never copied from a historical run), and
+the foundation must grant `UPDATE` on `research_scientific_execution_authorizations` to the
+database_observation role with the extended expectation set. Both fixes were carried in the
+composer and foundation scripts before anything ran.
+
+- **Steps 1–3 (commissioning, install, PR-8h registration) — six fail-closed stops, all
+  repaired at source.**
+  1. Commissioning apply died on a stale container file-bind: the postgres container still
+     held the pre-edit `pg_hba.conf` bind-mount inode, so the new l peer-authentication rules
+     never reached the live server (the host file was correct). Repair: `docker restart` of
+     the database container, per generation-j's own precedent. Generation-m prep must treat
+     the restart as a standard step after any hba edit.
+  2. A cross-generation role membership survived retirement: the j-era Phase-D grant
+     `aletheia_exec_allocator`←`aletheia_arl1_exec_reg_j` was still live in the shared
+     cluster. Repair: receipted `REVOKE` (`arl1-shared-role-membership-repair-20260907l-r1`
+     receipt), keeping role convergence monotonic.
+  3. The r1 apply died at the `independent_installed_manifest` scenario with `reviewed tree
+     directory custody differs`: the operator's bootstrap launch omitted
+     `PYTHONDONTWRITEBYTECODE=1`, and root ignores the 0555 tree bits on import — seven
+     `__pycache__` directories (56 files) had been written into the frozen release. Repair:
+     receipted removal after proving the k1↔l1 diff was *purely* additive pycache and
+     re-proving byte-identity of every reviewed file
+     (`arl1-release-tree-pycache-removal-20260907l-r1` receipt). Rule recorded: every
+     root-run launch that puts the release tree on `sys.path` carries
+     `PYTHONDONTWRITEBYTECODE=1`.
+  4. The r1 crash orphaned its calibration attempt: it ran its full 1,800 s and terminally
+     accepted without ever passing the node-kill checkpoint, and the frozen request embedded
+     that registration, so the r1 chain could never pass scenario 3. Repair: a fresh r2
+     registration chain (new SEA, labels, journal `campaign-20260907l-r2`, new CAS root).
+  5. The ported registration prep carried a hardcoded `chown 2206:2200` — generation-e's
+     identities — from its script lineage; the r1 CAS root had been sealed to the wrong
+     custody, and the r2 root-run correctly failed the custody gate. Repair: a fresh `-r2`
+     CAS root with correct l identities (0700, 2101:2320 era shape), plus the missing
+     explicit `ALETHEIA_DATABASE_URL` for one subprocess. The `2206:2200` hardcode itself is
+     recorded as a generation-m script-lineage defect.
+  6. `source_budget_id="budget:arl1-pr8h-qualification-20260907l"` was the one registry
+     namespace literal not bumped for r2: the r2 run appended its recomputed documents next
+     to r1's and the registry tree conflicted. Repair: receipted removal of exactly the six
+     appended files (restoring r1's eight-file shape, DB verified clean — the run had died
+     before registration commit) and the literal bumped to `-r2`
+     (`arl1-authority-registry-r2-append-removal-20260907l-r1` receipt).
+
+  The r2 chain then completed: campaign request `qtr_6e75e0f51e15177110ee0e71f36b83a4`
+  (SHA-256 `2d497880a5058fc3…`), canonical plan `qtp_f76a95527b0221aef920b9f21a2fbcbb`, receipt
+  `qtx_cbf321f505678cc4693f5fecbada701f` completed `2026-09-06T18:32:41.346489Z`
+  (registration anchor prepared `17:48:21Z`, calibration attempt `iat_f7e2aef4…` succeeded
+  `18:28:49Z`). The retained apply-r3 stdout (7,091,735 bytes) and its exact retry replay were
+  byte-identical with file SHA-256
+  `193fcf16dde697d1647d50acfae65be1eeec5f7be4fbe9d2e8ff4c9219941f55`, both exiting zero
+  (`19:17:38Z`). The seven ARL0 gate proofs (root ×2 and nobody determinism runs) were staged
+  and receipted at `19:20:01Z`, and both composers were filled with the r2 identities and
+  receipt digests and copied to `/root` with both k-lesson fixes verified present.
+
+- **Steps 4–5 (scientific composition) — three stops, then the first fully successful live
+  composition.** The scientific host foundation completed at `19:21:49Z`. The composer then
+  fail-closed three times, all porting-alignment defects repaired at source: (7) three r1
+  path literals (registration material, target request, target receipt) still bound to the
+  burned r1 chain — the templates predate the r2 variant; (8) `KERNEL_CAS` pointed at the
+  unsuffixed r1 root, which lacks the r2 charter object (`1559e4dc…` exists only in the r2
+  root's 18 objects); (9) the ported digest fix left the consumer site referencing the bare
+  derivation name from a different function scope (`NameError`) — the derived value now
+  travels through the `science` dict with its sealed-input provenance. The fourth run
+  completed at `2026-09-06T19:29:14.604455Z` with assessment-catalog SHA-256
+  `3f7a8e56c4c0468abed1e7eff0aef1b87827d40875af14f400e2af45a153972f` — the corrected
+  composer's first successful live composition, redeeming generation-k's terminal stop 6 —
+  and deployed the six RPC service units.
+
+- **Step 6 (protocol campaign) — both attempts executed and terminally accepted; the runner's
+  custody pin is a terminal release defect (stops 10–14).**
+  1. (10) The custody flip script refused its private transition: the artifact-store root
+     had been rebuilt (inode 1229281→1229285) during the r2 registration campaign's
+     kill scenarios. Repair: re-pin after verifying the genuine store shape (same st_dev,
+     the five standard subdirectories, 2101:2320, 0750).
+  2. (11) The first campaign launch (19:31Z) fail-closed: launched before any bridge, the
+     node worker crash-looped on the custody-era startup pin and the registration service's
+     socket vanished mid-RPC. Repair: bridge b1 (private receipt `4a0be5f6…`, shared
+     `20520106…`), captures retained as `-failed1`, relaunch. Ordering rule: the custody
+     bridge precedes or accompanies campaign launch.
+  3. Run 2 executed attempt 1 — reservation, OCI-sandbox claim, 1,800 s workload, terminal
+     acceptance (`iat_914c6a691184870b5ddf4bc356869322` succeeded `20:02:46Z`, admission
+     `bfe35978631f3704…`) — then (12) the worker's next tick began attempt 2's input
+     materialization and fail-closed on the CAS 0400 rule (generation-k stop-4's class).
+     Repair: bridge b2 (private `c002d01c…`, shared `21acc8f9…`) while attempt 2 launched;
+     captures retained as `-failed2`; relaunch. Attempt 2
+     (`iat_2d6462053b2cfabf21ae54ade4ad7e11`) then ran to terminal acceptance
+     (`succeeded 20:35:13Z`) — the second node execution of the scientific era, and the
+     run-3 relaunch got past the F9-v2 exact-content validator, proving live that the
+     **derived-digest catalog fix works**: the validator that terminally blocked generation
+     k accepted both attempts' observations.
+  4. (13) Run 3 then died at the runner-side raw-run custody verification:
+     `pricing/allocator lineage differs from its deployment authority pin`
+     (`observations/adapters.py:688-692`). The lineage loader attributes allocation to the
+     cost quote's quoter (`execution/allocator.py:2900`,
+     `allocator_principal_id=quote.quoted_by_principal_id` = `principal:arl1-pricing-authority`,
+     forced by the quote registry at `execution/authority_registry.py:544`), while the
+     composer had pinned the reader's `allocator_principal_id` from
+     `registration.allocator_principal_id` = `principal:arl1-node-allocator` (the DB
+     reservation-writer role), and `arl1_runtime.py:319-321` glues the adapter's pin to the
+     reader field.
+  5. (14, terminal) The attempted source repair — pinning the reader's allocator to the
+     pricing principal — was rejected by the reader config model itself:
+     `terminal runtime authorities must use distinct principals and keys`
+     (`execution/terminal_runtime.py`, `_config_is_canonical_and_separated`). The four
+     release invariants are jointly unsatisfiable at `3e65cca`: the adapter demands
+     pin = quote quoter = pricing authority; the distinctness validator demands the
+     allocator principal differ from the pricing authority; the runtime validator glues the
+     pin to the reader's allocator field. "Allocator" names two different roles — the DB
+     reservation writer in config-land and the cost-quote quoter in lineage-land — and no
+     composer-emitted configuration can satisfy both. Generation k never reached this check
+     (its validator stop hid the deeper layer); generation l's digest fix unmasked it. The
+     pin edit was reverted with the contradiction documented in place; the r2
+     `SERVICE_REVISION` bump (0400 write-once configs demand a new revision for any
+     recompose) was retained harmlessly, and the recompose died pre-write, so no r2
+     composition artifacts exist.
+
+- **Step 6 outcome.** Both preregistered attempts executed and were terminally accepted
+  (`iat_914c6a69…` `20:02:46Z`, `iat_2d646205…` `20:35:13Z`; four terminal acceptances in the
+  database together with the two registration-era calibration attempts). The store ended in
+  shared custody (transition receipts b1 `4a0be5f6…`, b1b `20520106…`, b2 `c002d01c…`, b2b
+  `21acc8f9…`). The protocol campaign never completed: run 3 exited nonzero at the custody
+  pin (stop 13) and no repair exists at this release, so generation l has no campaign run
+  receipt and no scientific admission ids. The run-r1 failed captures
+  (`arl1-protocol-campaign-20260907l-run-r1-failed{1,2,3}.{json,err}`) are retained verbatim
+  as fail-closed records. Final observed state: the six scientific RPC units stopped during
+  the recompose attempt, the node worker active and idle, database rows, CAS objects and all
+  receipts retained.
+
+- **Steps 7–9 (disjoint qualification).** Not executed: step 6 never produced a completing
+  campaign, so disjoint source verification, qualification signing and the tamper checks had
+  no campaign output to bind. The qualification composer's placeholders remain unset.
+
+Generation l's ARL-1 exit therefore ends as an **honest negative at step 6, one layer deeper
+than generation k**. The two carried lessons were proven live (the derived-digest composition
+succeeded and its catalog passed the F9-v2 validator; the foundation UPDATE grant carried
+without incident), steps 1–5 ran fully live for the first time, and both protocol attempts
+executed and terminally accepted — but the runner's raw-run custody verification is
+unsatisfiable at release `3e65cca`, a genuine release defect requiring a generation-m source
+fix with exactly two candidate semantics: either the adapter's allocator projection is
+derived from the pricing authority pin (the quoter it actually compares against, per its own
+policy_sha256 semantics), dropping the separate glued field; or the verified lineage records
+the DB allocator principal instead of the quote quoter. No scientific admission was
+requested or granted. Beyond the terminal defect, the generation-m list from this arc:
+the hba bind-mount restart as a standard prep step; the `2206:2200` custody hardcode in the
+registration script lineage; the post-attempts helper's fixed acceptance-count expectation
+(3) going stale for multi-calibration registrations (l has 4); the
+`PYTHONDONTWRITEBYTECODE=1` discipline on every root launch over the release tree; the rule
+that a re-registration variant must bump every id *and path* literal in every downstream
+consumer, including templates that predate the variant; and bridge-before-campaign ordering
+with a live inode pin in the flip script.
 
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the
