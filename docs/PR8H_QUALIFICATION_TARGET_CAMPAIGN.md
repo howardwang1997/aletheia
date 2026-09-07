@@ -1163,7 +1163,11 @@ unsatisfiable at release `3e65cca`, a genuine release defect requiring a generat
 fix with exactly two candidate semantics: either the adapter's allocator projection is
 derived from the pricing authority pin (the quoter it actually compares against, per its own
 policy_sha256 semantics), dropping the separate glued field; or the verified lineage records
-the DB allocator principal instead of the quote quoter. No scientific admission was
+the DB allocator principal instead of the quote quoter. The first semantics is the one the
+five RPC service runtimes already implement — the campaign runner and the steps-7–9
+qualification runtime were the only two sites taking a separately glued config field, and the
+generation-m fix removes that field and derives the projection from the reader's pricing
+authority pin at both sites. No scientific admission was
 requested or granted. Beyond the terminal defect, the generation-m list from this arc:
 the hba bind-mount restart as a standard prep step; the `2206:2200` custody hardcode in the
 registration script lineage; the post-attempts helper's fixed acceptance-count expectation

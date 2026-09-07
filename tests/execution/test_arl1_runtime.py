@@ -152,11 +152,6 @@ def _runtime_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         rpc_services=services,
         kernel_reader=worker.kernel_reader,
         qualification_reader=worker.terminal_reader,
-        allocator_authority=VerifiedExecutionAuthorityProjection(
-            principal_id=worker.terminal_reader.allocator_principal_id,
-            key_id=_sha("allocator-runtime-key"),
-            policy_sha256=_sha("allocator-runtime-policy"),
-        ),
         artifact_authority=VerifiedExecutionAuthorityProjection(
             principal_id=worker.terminal_reader.artifact_verifier_principal_id,
             key_id=_sha("artifact-runtime-key"),
