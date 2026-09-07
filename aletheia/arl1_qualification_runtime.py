@@ -62,6 +62,7 @@ from aletheia.observations.scientific_bridge import (
     ObservationDatabaseAuthorityPin,
     ScientificBridgeAuthorityPin,
     ScientificBridgeRole,
+    VerifiedExecutionAuthorityProjection,
 )
 from aletheia.research_controller.step_executor import ControllerStepAuthorityRole
 from aletheia.research_controller.worker_composition import (
@@ -835,7 +836,15 @@ def compose_arl1_evidence_verifier(
             read_only=True,
         ),
         sea_sessions=sessions,
-        allocator_authority=campaign.allocator_authority,
+        # The raw-run lineage attributes allocation to the cost quote's
+        # quoter, so the custody projection is the pricing authority pin —
+        # the same derivation the five RPC service runtimes and the campaign
+        # runner use (the generation-l unsatisfiable glued field is gone).
+        allocator_authority=VerifiedExecutionAuthorityProjection(
+            principal_id=reader.pricing_authority_pin.principal_id,
+            key_id=reader.pricing_authority_pin.key_id,
+            policy_sha256=reader.pricing_authority_pin.policy_sha256,
+        ),
         artifact_authority=campaign.artifact_authority,
     )
     validation_campaign = WriteOnceF9V2ValidationCampaignArchive(

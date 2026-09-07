@@ -252,7 +252,6 @@ class ARL1CampaignRuntimeConfigV1(KernelModel):
     rpc_services: ARL1CampaignRPCServiceSetV1
     kernel_reader: ResearchKernelReadOnlyConfig
     qualification_reader: QualificationTerminalReaderConfig
-    allocator_authority: VerifiedExecutionAuthorityProjection
     artifact_authority: VerifiedExecutionAuthorityProjection
     evidence_archive: ARL1EvidenceArchiveRuntimeConfigV1
     campaign_implementation_source_path: str
@@ -316,8 +315,6 @@ class ARL1CampaignRuntimeConfigV1(KernelModel):
             self.process_principal_id
             in authority_principals | terminal_principals | service_principals | kernel_principals
             or self.qualification_reader.prepared_at != self.prepared_at
-            or self.allocator_authority.principal_id
-            != self.qualification_reader.allocator_principal_id
             or self.artifact_authority.principal_id
             != self.qualification_reader.artifact_verifier_principal_id
         ):
@@ -656,7 +653,17 @@ def compose_arl1_campaign_service(
                 read_only=True,
             ),
             sea_sessions=session_factory(),
-            allocator_authority=config.allocator_authority,
+            # The raw-run lineage attributes allocation to the cost quote's
+            # quoter, so the custody projection is the pricing authority pin,
+            # derived exactly like the five RPC service runtimes rather than
+            # an independently glued config field (the generation-l exit
+            # proved no separate value can satisfy both the quoter
+            # comparison and the reader's role separation).
+            allocator_authority=VerifiedExecutionAuthorityProjection(
+                principal_id=reader.pricing_authority_pin.principal_id,
+                key_id=reader.pricing_authority_pin.key_id,
+                policy_sha256=reader.pricing_authority_pin.policy_sha256,
+            ),
             artifact_authority=config.artifact_authority,
         )
     if kernel_store is None:
