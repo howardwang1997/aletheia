@@ -1357,6 +1357,99 @@ loop.
   first scientific observation admission — no scientific admission has yet been requested
   or granted in any generation.
 
+## Generation-o target campaign and the fifth ARL-1 exit execution
+
+Generation `20260908o` (2026-09-08, release `release-52095d4-o1` from merge `52095d4`,
+PR #151 — the validation load-first fix that generation n's terminal stop prescribed) ran
+on the same v100ts target with identities 2350–2359, store `2101:2350`, and database
+`aletheia_qualification_20260908o`. The arc cleared every generation-n stop at source,
+took both preregistered attempts to terminal acceptance, and — for the first time in any
+generation — committed independent validation receipts live under PR #151's load-first
+path. It then terminated one layer deeper than generation n: inside the **atomic
+admission commit itself**, the first-ever scientific observation admission request, on
+the sixth distinct live-only latent defect in this exit path.
+
+- **Steps 1–5 (re-qualification through composition).** Membership repair (revoked
+  generation n's execution registration), retirement of generation n's units, fresh
+  database, foundation, commissioning, install, registration, and chained apply→replay
+  all completed without a source stop (chain acceptance `iat_ab8bf77a…` 11:49:42Z;
+  worker from 11:49:50Z). Composition produced the campaign slots with the six RPC
+  services pinned for the campaign driver.
+
+- **Orchestration stops (all known classes, none a source defect).** The units-era
+  postgres restart (12:30:28Z) killed the running units — the accepted side effect of
+  the custody sequencing. Bridge b1's private window (flips 12:33:42Z) was spent
+  unusably: the foundation's shared transition had already swept the registration-era
+  objects to 0440 before 12:30, so the startup-pin window had no claimable material —
+  a sequencing miss recorded here, costless only because the worker was already
+  running. Bridge b2 traded driver death for attempt-1 execution (driver r1 died
+  ~12:46:41Z with the registration socket during the private window; the registration
+  service restarted clean and was active by 12:46:57Z) — the same accepted trade
+  generation m made. After attempt 1's terminal acceptance (13:16:52Z) the worker
+  claimed attempt 2, died on 0440 materialization (objects still shared-swept),
+  crash-looped under the custody pin, and bridge b3 let a fresh worker claim and
+  materialize at 0400; attempt 2 ran its full 1,800 s and was terminally accepted
+  (`iat_57cb7224…` 13:47:43Z). The post-attempts helper then stopped the worker,
+  receipted the shared sweep (`bdc44bd5…`, store 29 directories / 18 files), and
+  relaunched the driver as r2.
+
+- **r2: both prior fixes proven live, then Stop o1 — terminal: the admission trigger's
+  property trap.** Under PR #151's load-first coordinator, r2 committed both
+  independent validation receipts — `sos_0425520e…` 13:49:18Z and `sos_490ff2f7…`
+  13:49:28Z (both `outcome=negative` under the target-digest qualification action) —
+  the first live validation commits since generation n's conflict lock, proving the
+  load-first fix and, at the earlier registration-era appends, the m6 append-exact
+  `created` flag end-to-end. The first admission commit then raised
+  `CheckViolation: observation_incorporated event lacks its exact admission row` at
+  COMMIT (13:49:44Z); the transaction rolled back atomically (admissions = 0, issuance
+  challenges = 3, kernel `observation_incorporated` events = 0), the
+  database-observation service exited fail-closed (auto-restart receipt 13:49:50Z),
+  and the driver died on the vanished socket.
+
+- **Root cause (proven at source, never adapted on the target).** The 0027
+  incorporation-complete trigger compares the Kernel event payload's
+  `source_world_model_sha256` (a required 64-hex digest the coordinator derives from
+  `protocol.world_model.world_model_sha256`) against an `admission_json` navigation
+  ending at that same key. But `world_model_sha256` is a computed `canonical_sha256`
+  **property** on `WorldModelSnapshotV2` (`aletheia/protocols/world_models.py`) —
+  pydantic never serializes properties, so `_model_json`'s `model_dump` omits it: the
+  JSON side of the comparison is always NULL while the payload side is a required
+  digest, `IS DISTINCT FROM` is always true, and **every admission commit on any
+  PostgreSQL deployment deterministically fails**. Empirical confirmation on the two
+  committed production receipts: the deep path
+  `#>> '{…,protocol,world_model,world_model_sha256}'` is NULL for both slots, and an
+  audit of every migration JSON-path navigation shows this is the only property-trap in
+  any trigger path (the three other deep navigations — action, graph-scope branch,
+  outcome — resolve on every committed row). The portable fixtures never saw it because
+  the SQLite harness creates tables without triggers at all.
+
+- **Source fix (PR #152).** Column promotion at the defect's own layer: migration
+  `20260909_0033` self-verifies the installed 0027 function shape (counted needles:
+  the broken path exactly twice, zero column references), adds
+  `source_world_model_sha256 varchar(64) NOT NULL` plus a pattern check to
+  `research_observation_admissions` — the table has never accepted a row in any
+  deployment, so no default is needed — and replaces the trigger function so both
+  branches compare the column exactly like `admitted_observation_sha256`.
+  `ObservationAdmissionWrite.from_contract` derives the column from the same property
+  the event payload uses (fail-closed if the graph-scoped world model is absent); the
+  coordinator is unchanged. The new opt-in PostgreSQL regression
+  (`tests/observations/test_admission_incorporation_trigger_postgresql.py`) reproduces
+  the failure under the captured 0027 function, proves the absent key was the only
+  defect (hand-injecting the never-serialized key makes the original trigger pass),
+  and verifies the captured 0033 function commits the faithful shape while rejecting a
+  tampered digest — 3/3 green on a real PostgreSQL 17 probe (ephemeral container,
+  throwaway `aletheia_test*` databases, production database untouched), alongside a
+  full-chain `alembic upgrade head` and a downgrade round-trip on a scratch database.
+
+- **Steps 7–9 (disjoint qualification).** Not executed: no campaign receipt. Generation
+  o ends as an **honest negative at the atomic admission commit** — one layer deeper
+  than generation n, with both prior fixes (m6 append-exact, n1 load-first) proven
+  live in the same run and the terminal stop root-caused to a serializable-property
+  asymmetry that no portable fixture could have caught. Generation p (fresh
+  identities, new freeze carrying PR #152) owes: the campaign receipt, steps 7–9, and
+  the first scientific observation admission — no scientific admission has yet been
+  requested or granted in any generation.
+
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the
 [PR-8b installer guide](PR8B_DISABLED_QUALIFICATION_INSTALLER.md).
