@@ -140,8 +140,25 @@ def engine():
             _INCORPORATION_FUNCTION,
         )
         assert len(original) == 1, "expected one captured function-and-triggers statement"
-        # text() carries the multi-statement DDL without psycopg3 client-side
-        # %-interpolation (exec_driver_sql would choke on plpgsql "%ROWTYPE").
+        # The 0027 statement uses plain CREATE FUNCTION / CREATE TRIGGER, so a
+        # throwaway database reused across pytest runs needs the prior install
+        # dropped first; text() carries the multi-statement DDL without psycopg3
+        # client-side %-interpolation (exec_driver_sql chokes on "%ROWTYPE").
+        connection.execute(
+            text(
+                "DROP TRIGGER IF EXISTS trg_roa_incorporation_complete "
+                "ON research_observation_admissions"
+            )
+        )
+        connection.execute(
+            text(
+                "DROP TRIGGER IF EXISTS trg_rke_observation_incorporation_complete "
+                "ON research_kernel_events"
+            )
+        )
+        connection.execute(
+            text(f"DROP FUNCTION IF EXISTS {_INCORPORATION_FUNCTION}()")
+        )
         connection.execute(text(original[0]))
     yield postgres
 
