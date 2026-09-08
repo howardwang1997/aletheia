@@ -3,6 +3,12 @@
 This directory contains the architecture, project review, roadmap, and implementation RFCs for
 Aletheia.
 
+Current status (2026-09-09): no production ARL-1 qualification receipt has been issued. Use
+`LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md` and
+`GENERATION_I_REQUALIFICATION_AND_ARL1_EXIT_RUNBOOK_2026_09_06.md` for the fresh-generation sequence.
+Public outputs follow `PUBLICATION_BOUNDARY.md`; private/internal audit records remain outside
+version control and source exports.
+
 Current target-architecture RFC:
 
 - `END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md` — the first-principles architecture for

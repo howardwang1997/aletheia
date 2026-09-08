@@ -50,6 +50,18 @@ jobs:
           conda run -n aletheia python -c "from aletheia.schema_migrations import require_schema_exact; require_schema_exact()"
       - name: Audit Python dependencies
         run: conda run -n aletheia pip-audit --local
+      - name: Run required PostgreSQL observation regressions
+        env:
+          ALETHEIA_REQUIRE_POSTGRES_TESTS: "1"
+        run: |
+          docker exec "${{ job.services.postgres.id }}" createdb -U aletheia aletheia_test_append_ci
+          docker exec "${{ job.services.postgres.id }}" createdb -U aletheia aletheia_test_trigger_ci
+          docker exec "${{ job.services.postgres.id }}" createdb -U aletheia aletheia_test_full_ci
+          ALETHEIA_TEST_POSTGRES_URL=postgresql+psycopg://aletheia:aletheia-ci@localhost:5432/aletheia_test_append_ci conda run --no-capture-output -n aletheia python -m pytest -q tests/observations/test_append_exact_postgresql.py
+          ALETHEIA_TEST_POSTGRES_URL=postgresql+psycopg://aletheia:aletheia-ci@localhost:5432/aletheia_test_trigger_ci conda run --no-capture-output -n aletheia python -m pytest -q tests/observations/test_admission_incorporation_trigger_postgresql.py
+          ALETHEIA_DATABASE_URL=postgresql+psycopg://aletheia:aletheia-ci@localhost:5432/aletheia_test_full_ci conda run --no-capture-output -n aletheia alembic upgrade head
+          ALETHEIA_DATABASE_URL=postgresql+psycopg://aletheia:aletheia-ci@localhost:5432/aletheia_test_full_ci conda run --no-capture-output -n aletheia alembic check
+          ALETHEIA_TEST_MIGRATED_POSTGRES_URL=postgresql+psycopg://aletheia:aletheia-ci@localhost:5432/aletheia_test_full_ci conda run --no-capture-output -n aletheia python -m pytest -q tests/observations/test_migrated_observation_postgresql.py
       - name: Lint Python
         run: |
           conda run -n aletheia ruff --version

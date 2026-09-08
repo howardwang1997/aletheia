@@ -121,7 +121,12 @@ def _protocol_campaign(
     replicate_count: int = 2,
     not_before: datetime | None = None,
 ):
-    cases = _replicate_bridge_cases(replicate_count)
+    controller_tests = Path(__file__).resolve().parents[1] / "research_controller"
+    if str(controller_tests) not in sys.path:
+        sys.path.insert(0, str(controller_tests))
+    from test_vertical_cut import _f9_enriched_grouped_fixture
+
+    cases = _replicate_bridge_cases(replicate_count, fixture=_f9_enriched_grouped_fixture())
     first_case = cases[0]
     binding = first_case.binding
     request = binding.compilation_request
@@ -209,7 +214,7 @@ def _protocol_campaign(
             committed_admission_sha256=committed_admission.committed_admission_sha256,
             scientific_observation_sha256=primary.scientific_observation_sha256,
             outcome=ARL1Outcome.NEGATIVE.value,
-            source_world_model_sha256=_sha("arl1-source-world-model"),
+            source_world_model_sha256=protocol.world_model.world_model_sha256,
         ),
         command_sha256=_sha("arl1-incorporation-command"),
         principal_id="principal:arl1-kernel-incorporation",

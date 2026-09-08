@@ -44,9 +44,10 @@ _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", None})
 
 
 def _isolated_postgres_engine():
+    unavailable = pytest.fail if os.environ.get("ALETHEIA_REQUIRE_POSTGRES_TESTS") == "1" else pytest.skip
     raw_url = os.environ.get("ALETHEIA_TEST_POSTGRES_URL")
     if not raw_url:
-        pytest.skip(
+        unavailable(
             "append-exact PostgreSQL regression requires explicit ALETHEIA_TEST_POSTGRES_URL"
         )
     url = make_url(raw_url)
@@ -56,7 +57,7 @@ def _isolated_postgres_engine():
         or url.database is None
         or not url.database.startswith("aletheia_test")
     ):
-        pytest.skip("append-exact PostgreSQL regression requires loopback aletheia_test* database")
+        unavailable("append-exact PostgreSQL regression requires loopback aletheia_test* database")
     return create_engine(raw_url, future=True)
 
 

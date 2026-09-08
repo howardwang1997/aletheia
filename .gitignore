@@ -221,6 +221,7 @@ __marimo__/
 # --- Aletheia ---
 # per-run scratch + AI-generated repo checkouts
 /workspaces/
+/docs/internal/
 # human-inspectable run reports (e2e summaries, generated papers) — products of a run, not source
 /artifacts/
 # frontend

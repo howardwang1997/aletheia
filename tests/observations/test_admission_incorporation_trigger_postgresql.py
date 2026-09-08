@@ -113,9 +113,10 @@ def _sqlstate(integrity_error: IntegrityError) -> str | None:
 
 @pytest.fixture(scope="module")
 def engine():
+    unavailable = pytest.fail if os.environ.get("ALETHEIA_REQUIRE_POSTGRES_TESTS") == "1" else pytest.skip
     raw_url = os.environ.get("ALETHEIA_TEST_POSTGRES_URL")
     if not raw_url:
-        pytest.skip(
+        unavailable(
             "incorporation-trigger PostgreSQL regression requires "
             "explicit ALETHEIA_TEST_POSTGRES_URL"
         )
@@ -126,7 +127,7 @@ def engine():
         or url.database is None
         or not url.database.startswith("aletheia_test")
     ):
-        pytest.skip(
+        unavailable(
             "incorporation-trigger PostgreSQL regression requires "
             "loopback aletheia_test* database"
         )

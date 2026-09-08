@@ -401,7 +401,7 @@ class LocalCASInputMaterializer:
             if (
                 not stat.S_ISREG(source_metadata.st_mode)
                 or source_metadata.st_nlink != 1
-                or stat.S_IMODE(source_metadata.st_mode) != 0o400
+                or stat.S_IMODE(source_metadata.st_mode) not in {0o400, 0o440}
             ):
                 raise InputMaterializationError("CAS source is not one immutable regular object")
             destination = os.open(

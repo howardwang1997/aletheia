@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 def build_atomic_admission_rpc_service(*, deployment, configuration_bytes):
-    """Compose exactly ``COMMIT_AND_INCORPORATE`` with DB and ordinary Kernel keys."""
+    """Compose atomic admission, with optional read-only campaign recovery."""
 
     import hashlib
     import json
@@ -33,6 +33,7 @@ def build_atomic_admission_rpc_service(*, deployment, configuration_bytes):
         PostgreSQLResearchActionAuthorityAdapter,
     )
     from aletheia.observations.coordinator import (
+        CommittedAdmissionNotLoaded,
         ObservationAdmissionVerificationContext,
         PostgreSQLAtomicObservationAdmissionCoordinator,
     )
@@ -55,6 +56,8 @@ def build_atomic_admission_rpc_service(*, deployment, configuration_bytes):
         AdmissionCommitRPCPayload,
         ControllerWorkerRPCHandlerBinding,
         ControllerWorkerRPCHandlerSet,
+        ControllerWorkerRPCServiceBlocked,
+        ScientificSlotLookupRPCPayload,
     )
     from aletheia.research_controller.step_executor import (
         ControllerStepAuthorityBinding,
@@ -543,7 +546,13 @@ def build_atomic_admission_rpc_service(*, deployment, configuration_bytes):
         ),
     }
     if (
-        pin.operations != (ControllerWorkerRPCOperation.COMMIT_AND_INCORPORATE,)
+        pin.operations not in (
+            (ControllerWorkerRPCOperation.COMMIT_AND_INCORPORATE,),
+            (
+                ControllerWorkerRPCOperation.COMMIT_AND_INCORPORATE,
+                ControllerWorkerRPCOperation.LOAD_COMMITTED_ADMISSION,
+            ),
+        )
         or pin.authority_binding_sha256s != tuple(item.binding_sha256 for item in bindings)
         or config.controller_id != deployment.controller_id
         or config.controller_manifest_sha256 != deployment.controller_manifest_sha256
@@ -750,6 +759,18 @@ def build_atomic_admission_rpc_service(*, deployment, configuration_bytes):
             raise TypeError("atomic admission RPC handler received another payload type")
         return coordinator.commit_and_incorporate(payload.decision)
 
+    def load_committed_admission(payload):
+        if type(payload) is not ScientificSlotLookupRPCPayload:
+            raise TypeError("atomic admission lookup received another payload type")
+        try:
+            return coordinator.load_committed_admission(
+                quest_id=payload.quest_id,
+                action_sha256=payload.action_sha256,
+                scientific_slot_id=payload.scientific_slot_id,
+            )
+        except CommittedAdmissionNotLoaded as exc:
+            raise ControllerWorkerRPCServiceBlocked(("no_committed_admission",)) from exc
+
     after_coordinator = fresh_regular_bytes(
         coordinator_path,
         expected_sha256=config.coordinator_source_sha256,
@@ -796,6 +817,15 @@ def build_atomic_admission_rpc_service(*, deployment, configuration_bytes):
                 operation=ControllerWorkerRPCOperation.COMMIT_AND_INCORPORATE,
                 handler=commit_and_incorporate,
             ),
+        ) + (
+            (
+                ControllerWorkerRPCHandlerBinding(
+                    operation=ControllerWorkerRPCOperation.LOAD_COMMITTED_ADMISSION,
+                    handler=load_committed_admission,
+                ),
+            )
+            if ControllerWorkerRPCOperation.LOAD_COMMITTED_ADMISSION in pin.operations
+            else ()
         ),
     )
 

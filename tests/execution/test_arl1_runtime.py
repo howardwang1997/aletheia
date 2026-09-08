@@ -87,6 +87,18 @@ def _campaign_database_pin(pin: ControllerWorkerRPCServicePin) -> ControllerWork
     )
 
 
+def _campaign_atomic_pin(pin: ControllerWorkerRPCServicePin) -> ControllerWorkerRPCServicePin:
+    return ControllerWorkerRPCServicePin.model_validate(
+        {
+            **pin.model_dump(mode="python", exclude={"service_id"}),
+            "operations": (
+                ControllerWorkerRPCOperation.COMMIT_AND_INCORPORATE,
+                ControllerWorkerRPCOperation.LOAD_COMMITTED_ADMISSION,
+            ),
+        }
+    )
+
+
 def _external_server_pin(
     pin: ControllerWorkerRPCServicePin,
     *,
@@ -131,7 +143,7 @@ def _runtime_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
             server_uid=server_uid,
         ),
         atomic_admission=_external_server_pin(
-            worker.rpc_services.atomic_admission,
+            _campaign_atomic_pin(worker.rpc_services.atomic_admission),
             server_uid=server_uid,
         ),
     )
@@ -347,9 +359,11 @@ def test_runtime_manifest_freshly_binds_config_and_request(
         load_arl1_campaign_runtime_inputs(loaded)
 
 
+@pytest.mark.parametrize("register_only", (False, True))
 def test_runtime_refuses_non_linux_execution_before_opening_authority_ports(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
+    register_only,
 ) -> None:
     config, _controller_manifest = _runtime_config(monkeypatch, tmp_path)
     deployment = ARL1CampaignRuntimeDeploymentV1(
@@ -367,12 +381,14 @@ def test_runtime_refuses_non_linux_execution_before_opening_authority_ports(
     monkeypatch.setattr("aletheia.arl1_runtime.sys.platform", "darwin")
 
     with pytest.raises(ARL1RuntimeError, match="requires Linux"):
-        execute_arl1_campaign_deployment(deployment)
+        execute_arl1_campaign_deployment(deployment, register_only=register_only)
 
 
+@pytest.mark.parametrize("register_only", (False, True))
 def test_programmatic_runtime_requires_exact_schema_before_loading_inputs(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
+    register_only,
 ) -> None:
     config, _controller_manifest = _runtime_config(monkeypatch, tmp_path)
     deployment = ARL1CampaignRuntimeDeploymentV1(
@@ -397,12 +413,14 @@ def test_programmatic_runtime_requires_exact_schema_before_loading_inputs(
     monkeypatch.setattr("aletheia.arl1_runtime.require_schema_exact", reject_schema)
 
     with pytest.raises(RuntimeError, match="schema drift sentinel"):
-        execute_arl1_campaign_deployment(deployment)
+        execute_arl1_campaign_deployment(deployment, register_only=register_only)
 
 
+@pytest.mark.parametrize("register_only", (False, True))
 def test_linux_runtime_boundedly_retries_only_typed_terminal_pending(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
+    register_only,
 ) -> None:
     config, _controller_manifest = _runtime_config(monkeypatch, tmp_path)
     request = _standalone_campaign_request()
@@ -423,6 +441,12 @@ def test_linux_runtime_boundedly_retries_only_typed_terminal_pending(
     class _PendingService:
         def __init__(self) -> None:
             self.calls = 0
+            self.registrations = 0
+
+        def register(self, observed_request):
+            assert observed_request == request
+            self.registrations += 1
+            return expected
 
         def execute(self, observed_request):
             assert observed_request == request
@@ -460,11 +484,13 @@ def test_linux_runtime_boundedly_retries_only_typed_terminal_pending(
         deployment,
         clock=lambda: observed_at[0],
         sleeper=sleep,
+        register_only=register_only,
     )
 
     assert result is expected
-    assert service.calls == 3
-    assert sleeps == [0.25, 0.25]
+    assert service.registrations == (1 if register_only else 0)
+    assert service.calls == (0 if register_only else 3)
+    assert sleeps == ([] if register_only else [0.25, 0.25])
 
 
 def test_linux_runtime_stops_pending_retries_at_signed_admission_deadline(

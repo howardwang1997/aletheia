@@ -111,6 +111,7 @@ class ControllerWorkerRPCOperation(str, Enum):
     ISSUE_ADMISSION_CHALLENGE = "issue_admission_challenge"
     ISSUE_ADMISSION_DECISION = "issue_admission_decision"
     COMMIT_AND_INCORPORATE = "commit_and_incorporate"
+    LOAD_COMMITTED_ADMISSION = "load_committed_admission"
     DERIVE_CONTINUATION = "derive_continuation"
 
 
@@ -746,6 +747,24 @@ class RPCAtomicObservationAdmission:
         self.database_authority_binding = _binding(database_binding, pin=client.pin)
         self.kernel_authority_binding = _binding(kernel_binding, pin=client.pin)
         self.admission_authority_binding = _binding(admission_binding, pin=client.pin)
+
+    def load_committed_admission(
+        self, *, quest_id: str, action_sha256: str, scientific_slot_id: str
+    ) -> AtomicObservationAdmissionReceipt | None:
+        try:
+            return self._client.call(
+                ControllerWorkerRPCOperation.LOAD_COMMITTED_ADMISSION,
+                payload={
+                    "quest_id": quest_id,
+                    "action_sha256": action_sha256,
+                    "scientific_slot_id": scientific_slot_id,
+                },
+                result_type=AtomicObservationAdmissionReceipt,
+            )
+        except ControllerWorkerRPCBlocked as exc:
+            if exc.blocker_codes == ("no_committed_admission",):
+                return None
+            raise
 
     def commit_and_incorporate(
         self, decision: ObservationAdmissionDecision

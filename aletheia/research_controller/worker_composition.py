@@ -144,7 +144,11 @@ class ControllerWorkerRPCServiceSet(ControllerModel):
         observed_operations = tuple(operation for pin in pins for operation in pin.operations)
         if len(observed_operations) != len(set(observed_operations)) or frozenset(
             observed_operations
-        ) != frozenset(ControllerWorkerRPCOperation):
+        ) != frozenset(ControllerWorkerRPCOperation) - {
+            # The ARL-1 campaign has a separate recovery surface; the worker's
+            # operation pins do not acquire that additional permission.
+            ControllerWorkerRPCOperation.LOAD_COMMITTED_ADMISSION,
+        }:
             raise ValueError("controller worker RPC operations are not an exhaustive partition")
         for label, values in (
             ("service ids", tuple(pin.service_id for pin in pins)),

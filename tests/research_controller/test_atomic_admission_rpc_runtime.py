@@ -18,7 +18,10 @@ from aletheia.observations.adapters import (
     PostgreSQLRawRunCustodyVerificationAdapter,
     PostgreSQLResearchActionAuthorityAdapter,
 )
-from aletheia.observations.coordinator import ObservationAdmissionVerificationContext
+from aletheia.observations.coordinator import (
+    CommittedAdmissionNotLoaded,
+    ObservationAdmissionVerificationContext,
+)
 from aletheia.observations.f9_v2_validation import (
     WriteOnceF9V2ValidationCampaignArchive,
 )
@@ -83,7 +86,7 @@ def _sha(label: str) -> str:
     return hashlib.sha256(label.encode()).hexdigest()
 
 
-def _fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def _fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, campaign_recovery=False):
     source_root = tmp_path / "independent-admission-base"
     source_root.mkdir()
     _source_deployment, source, _source_path, case, admission_binding = _admission_fixture(
@@ -151,7 +154,9 @@ def _fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         service_principal_id="principal.observation.atomic-admission-service",
         service_manifest_sha256=_sha("atomic-admission-service-manifest"),
         service_policy_sha256=_sha("atomic-admission-service-policy"),
-        operations=(ControllerWorkerRPCOperation.COMMIT_AND_INCORPORATE,),
+        operations=(ControllerWorkerRPCOperation.COMMIT_AND_INCORPORATE,) + (
+            (ControllerWorkerRPCOperation.LOAD_COMMITTED_ADMISSION,) if campaign_recovery else ()
+        ),
         authority_binding_sha256s=tuple(item.binding_sha256 for item in bindings),
         socket_path=str(roots["socket"] / "atomic-admission.sock"),
         socket_owner_uid=process_uid,
@@ -276,11 +281,15 @@ def _fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     return deployment, config, config_path, case, bindings
 
 
+@pytest.mark.parametrize("campaign_recovery", (False, True))
 def test_checked_in_atomic_admission_factory_owns_exact_database_and_kernel_keys(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    campaign_recovery: bool,
 ) -> None:
-    deployment, config, config_path, case, bindings = _fixture(monkeypatch, tmp_path)
+    deployment, config, config_path, case, bindings = _fixture(
+        monkeypatch, tmp_path, campaign_recovery=campaign_recovery,
+    )
     decision, _committed_validation = _issue_admission_decision(
         case,
         receipt=_validated_receipt(case),
@@ -294,6 +303,10 @@ def test_checked_in_atomic_admission_factory_owns_exact_database_and_kernel_keys
         kernel_binding=by_role[ControllerStepAuthorityRole.KERNEL_COMMAND],
     )
     calls = []
+    loaded = expected.model_copy(update={
+        "created": False,
+        "kernel_receipt": expected.kernel_receipt.model_copy(update={"created": False}),
+    })
 
     class _Coordinator:
         def __init__(
@@ -346,6 +359,11 @@ def test_checked_in_atomic_admission_factory_owns_exact_database_and_kernel_keys
             calls.append(observed_decision)
             return expected
 
+        def load_committed_admission(self, **lookup):
+            if loaded is None:
+                raise CommittedAdmissionNotLoaded("empty slot")
+            return loaded
+
     monkeypatch.setattr(
         coordinator_module,
         "PostgreSQLAtomicObservationAdmissionCoordinator",
@@ -356,7 +374,7 @@ def test_checked_in_atomic_admission_factory_owns_exact_database_and_kernel_keys
         configuration_bytes=config_path.read_bytes(),
     )
     payload = AdmissionCommitRPCPayload(decision=decision)
-    assert handlers.operations == (ControllerWorkerRPCOperation.COMMIT_AND_INCORPORATE,)
+    assert handlers.operations == deployment.service_pin.operations
     assert (
         handlers.handler_for(ControllerWorkerRPCOperation.COMMIT_AND_INCORPORATE)(payload)
         == expected
@@ -388,6 +406,21 @@ def test_checked_in_atomic_admission_factory_owns_exact_database_and_kernel_keys
         == expected
     )
     assert calls == [decision, decision]
+    if campaign_recovery:
+        facade = RPCAtomicObservationAdmission(
+            client,
+            database_binding=by_role[ControllerStepAuthorityRole.DATABASE_ATTESTATION],
+            kernel_binding=by_role[ControllerStepAuthorityRole.KERNEL_COMMAND],
+            admission_binding=by_role[ControllerStepAuthorityRole.INDEPENDENT_ADMISSION],
+        )
+        lookup = dict(
+            quest_id=case.binding.action.quest_id,
+            action_sha256=case.binding.action.object_sha256,
+            scientific_slot_id=decision.message.scientific_slot_id,
+        )
+        assert facade.load_committed_admission(**lookup) == loaded
+        loaded = None
+        assert facade.load_committed_admission(**lookup) is None
     with pytest.raises(TypeError, match="another payload"):
         handlers.handler_for(ControllerWorkerRPCOperation.COMMIT_AND_INCORPORATE)(object())
     assert config["database_signing_key_loaded"] is True

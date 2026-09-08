@@ -145,6 +145,7 @@ class _DatabaseRPC:
         }
         self.committed_by_slot = {}
         self.challenges_issued = 0
+        self.admission_challenges_issued = 0
         self.admission_challenge = (
             campaign.committed_admission.message.decision.message.issuance_challenge
         )
@@ -177,6 +178,7 @@ class _DatabaseRPC:
         return committed
 
     def issue_admission_challenge(self, committed_validation):
+        self.admission_challenges_issued += 1
         assert (
             self.admission_challenge.message.committed_validation_receipt_sha256
             == committed_validation.committed_receipt_sha256
@@ -220,8 +222,10 @@ class _AdmissionRPC:
     def __init__(self, campaign, binding) -> None:
         self.authority_binding = binding
         self.decision = campaign.committed_admission.message.decision
+        self.decisions_issued = 0
 
     def issue_admission_decision(self, *, committed_validation, issuance_challenge):
+        self.decisions_issued += 1
         assert self.decision.message.committed_validation_receipt == committed_validation
         assert self.decision.message.issuance_challenge == issuance_challenge
         return self.decision
@@ -233,9 +237,27 @@ class _AtomicRPC:
         self.admission_authority_binding = admission
         self.kernel_authority_binding = kernel
         self.receipt = _Admission(campaign).receipt
+        self.committed = False
+        self.lose_response = False
+        self.commits = 0
+
+    def load_committed_admission(self, *, quest_id, action_sha256, scientific_slot_id):
+        if not self.committed:
+            return None
+        return self.receipt.model_copy(
+            update={
+                "created": False,
+                "kernel_receipt": self.receipt.kernel_receipt.model_copy(update={"created": False}),
+            }
+        )
 
     def commit_and_incorporate(self, decision):
         assert self.receipt.committed_admission.message.decision == decision
+        self.committed = True
+        self.commits += 1
+        if self.lose_response:
+            self.lose_response = False
+            raise ConnectionError("committed response was lost")
         return self.receipt
 
 
@@ -267,11 +289,12 @@ def test_given_protocol_campaign_runs_every_slot_before_primary_admission_and_re
         archive=LocalARL1EvidenceArchive(tmp_path / "campaign-archive"),
     )
 
+    assert service.register(request) == source_campaign.campaign_registration
     first_receipt = service.execute(request)
     replayed = service.execute(request)
 
     assert replayed == first_receipt
-    assert registrar.calls == 2
+    assert registrar.calls == 3
     assert len(first_receipt.campaign.replicate_executions) == 2
     assert all(
         item.committed_validation.message.committed_at <= first_receipt.campaign.admitted_at
@@ -282,9 +305,12 @@ def test_given_protocol_campaign_runs_every_slot_before_primary_admission_and_re
     assert first_receipt.campaign.report.autonomous_research_design_claimed is False
 
 
+@pytest.mark.parametrize("failure_point", ("none", "lost_response", "archive_failure"))
 def test_given_protocol_campaign_uses_keyless_independent_rpc_authority_chain(
     arl1_case,
     tmp_path,
+    monkeypatch,
+    failure_point,
 ) -> None:
     bundle, _private_key, _source_verifier = arl1_case
     campaign = bundle.protocol_campaigns[0]
@@ -361,7 +387,27 @@ def test_given_protocol_campaign_uses_keyless_independent_rpc_authority_chain(
         archive=LocalARL1EvidenceArchive(tmp_path / "rpc-campaign-archive"),
     )
 
+    if failure_point == "lost_response":
+        atomic.lose_response = True
+        with pytest.raises(ARL1ProtocolCampaignError, match="admission failed closed"):
+            service.execute(request)
+    elif failure_point == "archive_failure":
+        with monkeypatch.context() as patch:
+            def fail_publication(*args, **kwargs):
+                raise OSError("archive publication interrupted")
+            patch.setattr("aletheia.arl1_campaign.retain_protocol_campaign_archive", fail_publication)
+            with pytest.raises(ARL1ProtocolCampaignError, match="campaign failed closed"):
+                service.execute(request)
+
     receipt = service.execute(request)
+    # Reconstruct the coordinator from durable ports, as a restarted driver does.
+    service._admission = ARL1PrimaryAdmissionCoordinator(
+        database=database, admission=admission, coordinator=atomic,
+    )
+    assert service.execute(request) == receipt
+    assert database.admission_challenges_issued == 1
+    assert admission.decisions_issued == 1
+    assert atomic.commits == 1
 
     assert receipt.campaign.campaign_registration.authorizations == request.authorizations
     assert receipt.campaign.committed_admission == campaign.committed_admission

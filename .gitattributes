@@ -1,2 +1,7 @@
 # Preserve the reviewed upstream bytes of the frozen ESOL benchmark.
 aletheia/domains/molecules/data/delaney-processed.csv -text -whitespace
+
+# Private/internal evidence is never included in default source exports.
+/workspaces export-ignore
+/artifacts export-ignore
+/docs/internal export-ignore

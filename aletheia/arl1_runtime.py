@@ -38,6 +38,9 @@ from aletheia.execution.terminal_runtime import (
     compose_qualification_run_lineage_reader,
 )
 from aletheia.observations.adapters import PostgreSQLRawRunCustodyVerificationAdapter
+from aletheia.observations.execution_registration import (
+    AtomicScientificExecutionCampaignRegistrationReceipt,
+)
 from aletheia.observations.scientific_bridge import VerifiedExecutionAuthorityProjection
 from aletheia.research_controller.external_rpc import (
     ControllerWorkerRPCClient,
@@ -116,7 +119,10 @@ _SERVICE_OPERATIONS = {
         ControllerWorkerRPCOperation.PREPARE_VALIDATION_CAMPAIGN,
     ),
     "independent_admission": _operations(ControllerWorkerRPCOperation.ISSUE_ADMISSION_DECISION),
-    "atomic_admission": _operations(ControllerWorkerRPCOperation.COMMIT_AND_INCORPORATE),
+    "atomic_admission": _operations(
+        ControllerWorkerRPCOperation.COMMIT_AND_INCORPORATE,
+        ControllerWorkerRPCOperation.LOAD_COMMITTED_ADMISSION,
+    ),
 }
 
 _SERVICE_ROLES = {
@@ -658,12 +664,8 @@ def compose_arl1_campaign_service(
                 read_only=True,
             ),
             sea_sessions=session_factory(),
-            # The raw-run lineage attributes allocation to the cost quote's
-            # quoter, so the custody projection is the pricing authority pin,
-            # derived exactly like the five RPC service runtimes rather than
-            # an independently glued config field (the generation-l exit
-            # proved no separate value can satisfy both the quoter
-            # comparison and the reader's role separation).
+            # Raw-run lineage attributes allocation to the quote's pricing
+            # authority. Derive that custody projection from its signed pin.
             allocator_authority=VerifiedExecutionAuthorityProjection(
                 principal_id=reader.pricing_authority_pin.principal_id,
                 key_id=reader.pricing_authority_pin.key_id,
@@ -717,7 +719,8 @@ def execute_arl1_campaign_deployment(
     *,
     clock: Callable[[], datetime] | None = None,
     sleeper: Callable[[float], None] | None = None,
-) -> ARL1ProtocolCampaignRunReceiptV1:
+    register_only: bool = False,
+) -> ARL1ProtocolCampaignRunReceiptV1 | AtomicScientificExecutionCampaignRegistrationReceipt:
     """Execute on the exact Linux identity, waiting only for signed terminal-pending results."""
 
     if sys.platform != "linux":
@@ -729,6 +732,8 @@ def execute_arl1_campaign_deployment(
     runtime_clock = clock or (lambda: datetime.now(timezone.utc))
     runtime_sleeper = sleeper or time.sleep
     service = compose_arl1_campaign_service(config, clock=runtime_clock)
+    if register_only:
+        return service.register(request)
     deadline = request.authorizations[0].message.observation_admission_deadline
     while True:
         try:
