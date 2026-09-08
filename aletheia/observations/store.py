@@ -689,6 +689,11 @@ class ObservationAdmissionWrite(_WriteModel):
     issuance_challenge_sha256: str = Field(pattern=_SHA256_PATTERN)
     disposition: Literal["admitted"]
     admitted_observation_sha256: str = Field(pattern=_SHA256_PATTERN)
+    # Real column, not admission_json navigation: world_model_sha256 is a
+    # computed property on the snapshot model, so it never serializes into the
+    # JSON the incorporation-complete trigger would have to walk (the JSON side
+    # was always NULL while the event payload side is a required digest).
+    source_world_model_sha256: str = Field(pattern=_SHA256_PATTERN)
     admission_json: dict[str, Any]
     registered_at: AwareDatetime
     committed_at: AwareDatetime
@@ -730,6 +735,11 @@ class ObservationAdmissionWrite(_WriteModel):
         validation = decision_message.committed_validation_receipt
         validation_message = validation.message.receipt.message
         authorization = validation_message.raw_run.scientific_authorization
+        protocol = (
+            authorization.message.action_protocol_binding.compilation_request.protocol
+        )
+        if protocol.world_model is None:
+            raise ValueError("admitted observation requires its graph-scoped world model")
         return cls(
             committed_admission_sha256=admission.committed_admission_sha256,
             decision_sha256=decision.decision_sha256,
@@ -741,6 +751,7 @@ class ObservationAdmissionWrite(_WriteModel):
             issuance_challenge_sha256=commit.issuance_challenge_sha256,
             disposition=_enum_value(decision_message.disposition),
             admitted_observation_sha256=decision_message.admitted_observation_sha256,
+            source_world_model_sha256=protocol.world_model.world_model_sha256,
             admission_json=_model_json(admission),
             registered_at=commit.registered_at,
             committed_at=commit.committed_at,
