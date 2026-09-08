@@ -102,6 +102,15 @@ def _fresh_suffix() -> str:
     return f"{int(datetime.now(UTC).strftime('%H%M%S%f')):032d}"[-32:]
 
 
+def _sqlstate(integrity_error: IntegrityError) -> str | None:
+    # psycopg3 surfaces the SQLSTATE either as pgcode on the error or on its
+    # diag, depending on how the driver handed the commit-time failure up.
+    original = integrity_error.orig
+    return getattr(original, "pgcode", None) or getattr(
+        getattr(original, "diag", None), "sqlstate", None
+    )
+
+
 @pytest.fixture(scope="module")
 def engine():
     raw_url = os.environ.get("ALETHEIA_TEST_POSTGRES_URL")
@@ -448,7 +457,7 @@ def test_faithful_admission_rolls_back_under_original_trigger(engine) -> None:
 
     with pytest.raises(IntegrityError, match="lacks its exact") as failure:
         _seed_and_commit(engine, suffix, embed_world_model_path=False)
-    assert failure.value.orig.pgcode == "23514"
+    assert _sqlstate(failure.value) == "23514"
 
     with Session(engine) as session:
         assert (
@@ -510,4 +519,4 @@ def test_fixed_trigger_commits_faithful_admission_and_rejects_tampering(engine) 
                 {"scenario": suffix, "seed": "tampered-world-model"}
             ),
         )
-    assert failure.value.orig.pgcode == "23514"
+    assert _sqlstate(failure.value) == "23514"
