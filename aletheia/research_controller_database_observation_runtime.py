@@ -4,7 +4,14 @@ from __future__ import annotations
 
 
 def build_database_observation_rpc_service(*, deployment, configuration_bytes):
-    """Compose the three DB-attestation operations with one isolated signing key."""
+    """Compose the DB-attestation operations with one isolated signing key.
+
+    The factory serves exactly one of two frozen compositions: the controller
+    worker's three-operation bridge, or the ARL-1 campaign's four-operation
+    bridge whose extra ``LOAD_COMMITTED_VALIDATION`` lets the driver's poll loop
+    read a committed receipt back rather than re-challenge it after the
+    issuance-challenge TTL lapses.
+    """
 
     import hashlib
     import json
@@ -48,6 +55,8 @@ def build_database_observation_rpc_service(*, deployment, configuration_bytes):
         AdmissionChallengeIssuanceRPCPayload,
         ControllerWorkerRPCHandlerBinding,
         ControllerWorkerRPCHandlerSet,
+        ControllerWorkerRPCServiceBlocked,
+        ScientificSlotLookupRPCPayload,
         ValidationChallengeIssuanceRPCPayload,
         ValidationCommitRPCPayload,
     )
@@ -316,16 +325,22 @@ def build_database_observation_rpc_service(*, deployment, configuration_bytes):
     binding = config.authority_binding
     database = config.database_authority_pin
     reader = config.qualification_reader
-    expected_operations = tuple(
-        sorted(
-            (
-                ControllerWorkerRPCOperation.ISSUE_VALIDATION_CHALLENGE,
-                ControllerWorkerRPCOperation.COMMIT_VALIDATION,
-                ControllerWorkerRPCOperation.ISSUE_ADMISSION_CHALLENGE,
-            ),
-            key=lambda item: item.value,
-        )
+
+    def _sorted_operations(*values):
+        return tuple(sorted(values, key=lambda item: item.value))
+
+    worker_bridge_operations = _sorted_operations(
+        ControllerWorkerRPCOperation.ISSUE_VALIDATION_CHALLENGE,
+        ControllerWorkerRPCOperation.COMMIT_VALIDATION,
+        ControllerWorkerRPCOperation.ISSUE_ADMISSION_CHALLENGE,
     )
+    campaign_bridge_operations = _sorted_operations(
+        ControllerWorkerRPCOperation.ISSUE_VALIDATION_CHALLENGE,
+        ControllerWorkerRPCOperation.COMMIT_VALIDATION,
+        ControllerWorkerRPCOperation.ISSUE_ADMISSION_CHALLENGE,
+        ControllerWorkerRPCOperation.LOAD_COMMITTED_VALIDATION,
+    )
+    expected_operation_shapes = (worker_bridge_operations, campaign_bridge_operations)
     kernel_keys = tuple(config.kernel_reader.trust_root.commissioning_keys)
     signed_public_keys = {
         database.public_key_ed25519_hex,
@@ -365,7 +380,7 @@ def build_database_observation_rpc_service(*, deployment, configuration_bytes):
         *(item.key_id for item in kernel_keys),
     }
     if (
-        pin.operations != expected_operations
+        pin.operations not in expected_operation_shapes
         or pin.authority_binding_sha256s != (binding.binding_sha256,)
         or pin.service_principal_id != binding.principal_id
         or pin.service_manifest_sha256 != binding.service_manifest_sha256
@@ -554,6 +569,21 @@ def build_database_observation_rpc_service(*, deployment, configuration_bytes):
             raise TypeError("database observation RPC handler received another payload type")
         return service.issue_admission_challenge(payload.committed_validation)
 
+    def load_committed_validation(payload):
+        if type(payload) is not ScientificSlotLookupRPCPayload:
+            raise TypeError("database observation RPC handler received another payload type")
+        try:
+            return service.load_committed_validation(
+                quest_id=payload.quest_id,
+                action_sha256=payload.action_sha256,
+                scientific_slot_id=payload.scientific_slot_id,
+            )
+        except service_module.CommittedValidationNotLoaded as exc:
+            # An empty slot is the load path's expected answer, not a service
+            # failure: answer it with the one signed blocker so the campaign
+            # driver's commit-or-load can fall through to a fresh challenge.
+            raise ControllerWorkerRPCServiceBlocked(("no_committed_validation",)) from exc
+
     after = fresh_regular_bytes(
         implementation_path,
         expected_sha256=config.service_implementation_source_sha256,
@@ -572,22 +602,30 @@ def build_database_observation_rpc_service(*, deployment, configuration_bytes):
     )
     if before != after or private_key != final_key:
         raise ValueError("database observation implementation or signing key changed")
+    bindings = [
+        ControllerWorkerRPCHandlerBinding(
+            operation=ControllerWorkerRPCOperation.COMMIT_VALIDATION,
+            handler=commit_validation,
+        ),
+        ControllerWorkerRPCHandlerBinding(
+            operation=ControllerWorkerRPCOperation.ISSUE_ADMISSION_CHALLENGE,
+            handler=issue_admission_challenge,
+        ),
+        ControllerWorkerRPCHandlerBinding(
+            operation=ControllerWorkerRPCOperation.ISSUE_VALIDATION_CHALLENGE,
+            handler=issue_validation_challenge,
+        ),
+    ]
+    if ControllerWorkerRPCOperation.LOAD_COMMITTED_VALIDATION in pin.operations:
+        bindings.append(
+            ControllerWorkerRPCHandlerBinding(
+                operation=ControllerWorkerRPCOperation.LOAD_COMMITTED_VALIDATION,
+                handler=load_committed_validation,
+            )
+        )
     return ControllerWorkerRPCHandlerSet(
         operations=pin.operations,
-        bindings=(
-            ControllerWorkerRPCHandlerBinding(
-                operation=ControllerWorkerRPCOperation.COMMIT_VALIDATION,
-                handler=commit_validation,
-            ),
-            ControllerWorkerRPCHandlerBinding(
-                operation=ControllerWorkerRPCOperation.ISSUE_ADMISSION_CHALLENGE,
-                handler=issue_admission_challenge,
-            ),
-            ControllerWorkerRPCHandlerBinding(
-                operation=ControllerWorkerRPCOperation.ISSUE_VALIDATION_CHALLENGE,
-                handler=issue_validation_challenge,
-            ),
-        ),
+        bindings=tuple(bindings),
     )
 
 

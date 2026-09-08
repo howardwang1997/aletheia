@@ -284,6 +284,14 @@ class DatabaseObservationBridgePort(Protocol):
         receipt: ObservationValidationReceipt,
     ) -> ValidationCommitReceipt: ...
 
+    def load_committed_validation(
+        self,
+        *,
+        quest_id: str,
+        action_sha256: str,
+        scientific_slot_id: str,
+    ) -> CommittedObservationValidationReceipt | None: ...
+
     def issue_admission_challenge(
         self,
         committed_validation: CommittedObservationValidationReceipt,
@@ -376,6 +384,7 @@ class ARL1IndependentValidationCoordinator:
             raw_run = RawRunEnvelope.model_validate(raw_run.model_dump(mode="python"))
             authorization = raw_run.scientific_authorization.message
             validator = self._validator_binding
+            database = self._database_binding
             if (
                 authorization.validator_principal_id != validator.principal_id
                 or authorization.validator_key_id != validator.key_id
@@ -385,6 +394,38 @@ class ARL1IndependentValidationCoordinator:
                 raise ARL1ProtocolCampaignError(
                     "ARL-1 raw run changed the deployment-pinned validator"
                 )
+            # Load first: a slot that already holds a committed receipt must be
+            # returned as the committed fact, never re-validated.  A re-pass
+            # over a committed slot (the runtime's poll loop re-executes this
+            # coordinator while a later replicate is still executing) would
+            # otherwise issue a fresh challenge once the previous one expires
+            # and can never reproduce the committed receipt's bytes.
+            loaded = self._database.load_committed_validation(
+                quest_id=authorization.action_protocol_binding.action.quest_id,
+                action_sha256=authorization.action_protocol_binding.action.object_sha256,
+                scientific_slot_id=authorization.scientific_slot_id,
+            )
+            if loaded is not None:
+                loaded_message = loaded.message.receipt.message
+                loaded_projection = loaded_message.validation_campaign_projection
+                if (
+                    loaded_message.raw_run != raw_run
+                    or loaded_message.validated_by_principal_id != validator.principal_id
+                    or loaded_message.validation_key_id != validator.key_id
+                    or loaded_message.validator_authority_policy_sha256 != validator.policy_sha256
+                    or (
+                        loaded_projection is not None
+                        and loaded_projection.validator_manifest_sha256
+                        != validator.service_manifest_sha256
+                    )
+                    or loaded.message.committed_by_principal_id != database.principal_id
+                    or loaded.message.commit_key_id != database.key_id
+                    or loaded.message.database_authority_policy_sha256 != database.policy_sha256
+                ):
+                    raise ARL1ProtocolCampaignError(
+                        "ARL-1 loaded validation rebound its receipt or database authority"
+                    )
+                return loaded
             campaign_sha256 = self._validator.prepare_validation_campaign(raw_run=raw_run)
             process_succeeded = (
                 raw_run.accepted_terminal_submission.disposition == "process_succeeded"
@@ -407,7 +448,6 @@ class ARL1IndependentValidationCoordinator:
             )
             challenge = challenge_receipt.challenge
             challenge_message = challenge.message
-            database = self._database_binding
             if (
                 challenge_message.raw_run_sha256 != raw_run.raw_run_sha256
                 or challenge_message.scientific_slot_id != authorization.scientific_slot_id

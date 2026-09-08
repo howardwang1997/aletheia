@@ -657,6 +657,28 @@ class RPCDatabaseObservationBridge:
             result_type=ValidationCommitReceipt,
         )
 
+    def load_committed_validation(
+        self,
+        *,
+        quest_id: str,
+        action_sha256: str,
+        scientific_slot_id: str,
+    ) -> CommittedObservationValidationReceipt | None:
+        try:
+            return self._client.call(
+                ControllerWorkerRPCOperation.LOAD_COMMITTED_VALIDATION,
+                payload={
+                    "quest_id": quest_id,
+                    "action_sha256": action_sha256,
+                    "scientific_slot_id": scientific_slot_id,
+                },
+                result_type=CommittedObservationValidationReceipt,
+            )
+        except ControllerWorkerRPCBlocked as exc:
+            if exc.blocker_codes == ("no_committed_validation",):
+                return None
+            raise
+
     def issue_admission_challenge(
         self, committed_validation: CommittedObservationValidationReceipt
     ) -> AdmissionChallengeRegistrationReceipt:

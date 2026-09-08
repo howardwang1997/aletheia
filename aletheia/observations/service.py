@@ -48,6 +48,10 @@ class ScientificBridgeServiceError(RuntimeError):
     """A durable scientific-bridge operation failed closed."""
 
 
+class CommittedValidationNotLoaded(ScientificBridgeServiceError):
+    """The slot lookup found no committed validation receipt (an expected empty)."""
+
+
 class ValidationChallengeRegistrationReceipt(ScientificBridgeModel):
     schema_name: Literal["aletheia.validation_challenge_registration_receipt"] = (
         "aletheia.validation_challenge_registration_receipt"
@@ -321,6 +325,65 @@ class PostgreSQLScientificBridgeService:
             return ValidationCommitReceipt(
                 committed_validation=committed,
             )
+
+    def load_committed_validation(
+        self,
+        *,
+        quest_id: str,
+        action_sha256: str,
+        scientific_slot_id: str,
+    ) -> CommittedObservationValidationReceipt:
+        """Return the slot's committed receipt without re-challenging it.
+
+        The commit path's idempotent branch can only replay a receipt whose
+        embedded challenge is still recoverable, so a caller that re-passes a
+        committed slot after the challenge TTL (for example, a campaign driver
+        whose runtime polls while a later replicate is still executing) would
+        otherwise validate over a fresh challenge and conflict with the
+        immutable committed receipt.  Loading reads the committed fact itself.
+        """
+
+        with self._session_scope_factory() as session:
+            observed_at = self._database_clock(session)
+            existing = get_observation_validation_receipt_by_slot(
+                session,
+                quest_id=quest_id,
+                scientific_slot_id=scientific_slot_id,
+            )
+            if existing is None:
+                raise CommittedValidationNotLoaded(
+                    "scientific slot has no committed validation receipt"
+                )
+            committed = CommittedObservationValidationReceipt.model_validate(
+                existing.committed_receipt_json
+            )
+            authorization = committed.message.receipt.message.raw_run.scientific_authorization
+            persisted_quest_id, persisted_slot_id, _ = _quest_and_authorization(authorization)
+            binding = authorization.message.action_protocol_binding
+            if (
+                existing
+                != ObservationValidationReceiptWrite.from_contract(committed, quest_id=quest_id)
+                or persisted_quest_id != quest_id
+                or persisted_slot_id != scientific_slot_id
+                or binding.action.object_sha256 != action_sha256
+            ):
+                raise ScientificBridgeServiceError(
+                    "committed validation receipt was rebound from its action or canonical bytes"
+                )
+            verify_committed_observation_validation_receipt(
+                committed_receipt=committed,
+                qualification_authority=self._verification.qualification_authority,
+                action_authority=self._verification.action_authority,
+                qualification_custody=self._verification.qualification_custody,
+                raw_run_custody=self._verification.raw_run_custody,
+                validation_campaign_custody=(self._verification.validation_campaign_custody),
+                execution_authority_pin=self._verification.execution_authority_pin,
+                validator_authority_pin=self._verification.validator_authority_pin,
+                admission_authority_pin=self._verification.admission_authority_pin,
+                database_authority_pin=self._verification.database_authority_pin,
+                observed_at=observed_at,
+            )
+            return committed
 
     def issue_admission_challenge(
         self,

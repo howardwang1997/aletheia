@@ -193,6 +193,7 @@ _SIGNED_BLOCKER_OPERATIONS = frozenset(
         ControllerWorkerRPCOperation.MATERIALIZE_ACTION_PROPOSAL,
         ControllerWorkerRPCOperation.COMPILE_PROTOCOL,
         ControllerWorkerRPCOperation.DERIVE_CONTINUATION,
+        ControllerWorkerRPCOperation.LOAD_COMMITTED_VALIDATION,
     }
 )
 

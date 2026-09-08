@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from aletheia.arl1_campaign import (
     ARL1IndependentValidationCoordinator,
+    ARL1ProtocolCampaignError,
     ARL1PrimaryAdmissionCoordinator,
     ARL1ProtocolCampaignRequestV1,
     ARL1ProtocolCampaignService,
@@ -140,11 +143,14 @@ class _DatabaseRPC:
             item.raw_run.raw_run_sha256: item.committed_validation
             for item in campaign.replicate_executions
         }
+        self.committed_by_slot = {}
+        self.challenges_issued = 0
         self.admission_challenge = (
             campaign.committed_admission.message.decision.message.issuance_challenge
         )
 
     def issue_validation_challenge(self, *, raw_run, validation_campaign_sha256):
+        self.challenges_issued += 1
         committed = self.validations[raw_run.raw_run_sha256]
         challenge = committed.message.receipt.message.issuance_challenge
         assert challenge.message.validation_campaign_sha256 == validation_campaign_sha256
@@ -156,7 +162,19 @@ class _DatabaseRPC:
     def commit_validation(self, receipt):
         committed = self.validations[receipt.message.raw_run.raw_run_sha256]
         assert committed.message.receipt == receipt
+        message = committed.message.receipt.message.raw_run.scientific_authorization.message
+        self.committed_by_slot[message.scientific_slot_id] = committed
         return ValidationCommitReceipt(committed_validation=committed)
+
+    def load_committed_validation(self, *, quest_id, action_sha256, scientific_slot_id):
+        committed = self.committed_by_slot.get(scientific_slot_id)
+        if committed is None:
+            return None
+        message = committed.message.receipt.message.raw_run.scientific_authorization.message
+        binding = message.action_protocol_binding
+        assert binding.action.quest_id == quest_id
+        assert binding.action.object_sha256 == action_sha256
+        return committed
 
     def issue_admission_challenge(self, committed_validation):
         assert (
@@ -348,3 +366,74 @@ def test_given_protocol_campaign_uses_keyless_independent_rpc_authority_chain(
     assert receipt.campaign.campaign_registration.authorizations == request.authorizations
     assert receipt.campaign.committed_admission == campaign.committed_admission
     assert receipt.campaign.incorporation_event == campaign.incorporation_event
+
+
+def _validation_coordinator(arl1_case, *, database=None):
+    bundle, _private_key, _source_verifier = arl1_case
+    campaign = bundle.protocol_campaigns[0]
+    primary = next(
+        item
+        for item in campaign.replicate_executions
+        if item.scientific_slot_id == campaign.scientific_slot_id
+    )
+    authorization = primary.authorization.message
+    committed = primary.committed_validation.message
+    database_binding = _binding(
+        ControllerStepAuthorityRole.DATABASE_ATTESTATION,
+        principal_id=committed.committed_by_principal_id,
+        key_id=committed.commit_key_id,
+        policy_sha256=committed.database_authority_policy_sha256,
+        service_manifest_sha256="5" * 64,
+    )
+    validator_binding = _binding(
+        ControllerStepAuthorityRole.INDEPENDENT_VALIDATION,
+        principal_id=authorization.validator_principal_id,
+        key_id=authorization.validator_key_id,
+        policy_sha256=authorization.validator_authority_policy_sha256,
+        service_manifest_sha256=authorization.validator_manifest_sha256,
+    )
+    if database is None:
+        database = _DatabaseRPC(campaign, database_binding)
+    return (
+        campaign,
+        database,
+        ARL1IndependentValidationCoordinator(
+            database=database,
+            validator=_ValidatorRPC(campaign, validator_binding),
+        ),
+    )
+
+
+def test_validation_coordinator_returns_committed_slot_without_issuing_a_new_challenge(
+    arl1_case,
+) -> None:
+    campaign, database, coordinator = _validation_coordinator(arl1_case)
+    replicate = campaign.replicate_executions[0]
+    message = replicate.authorization.message
+
+    # Simulate the generation-n failure shape: the slot already holds its
+    # committed receipt, and the driver's poll loop re-passes it after the
+    # issuance-challenge TTL has lapsed.  The committed fact must be returned
+    # without any fresh challenge that could never byte-equal it.
+    database.committed_by_slot[message.scientific_slot_id] = replicate.committed_validation
+
+    loaded = coordinator.commit_or_load_validation(raw_run=replicate.raw_run)
+
+    assert loaded == replicate.committed_validation
+    assert database.challenges_issued == 0
+
+
+def test_validation_coordinator_rejects_a_loaded_receipt_rebound_to_another_run(
+    arl1_case,
+) -> None:
+    campaign, database, _coordinator = _validation_coordinator(arl1_case)
+    first, second = campaign.replicate_executions[0], campaign.replicate_executions[1]
+    first_slot = first.authorization.message.scientific_slot_id
+
+    # A corrupt or rebound slot whose stored receipt belongs to another
+    # replicate's raw run must fail closed instead of loading as fact.
+    database.committed_by_slot[first_slot] = second.committed_validation
+
+    _campaign, _database, coordinator = _validation_coordinator(arl1_case, database=database)
+    with pytest.raises(ARL1ProtocolCampaignError, match="rebound"):
+        coordinator.commit_or_load_validation(raw_run=first.raw_run)
