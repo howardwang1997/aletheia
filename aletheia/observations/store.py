@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, TypeVar, cast
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, TypeAdapter, model_validator
-from sqlalchemy import and_, or_, select
+from sqlalchemy import Insert, and_, or_, select
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
@@ -855,8 +856,17 @@ def _append_exact(
         )
 
     dialect_name = session.get_bind().dialect.name
+    statement: Insert
     if dialect_name == "postgresql":
-        statement = postgresql_insert(record_type).values(**values).on_conflict_do_nothing()
+        # An ORM-enabled INSERT with ON CONFLICT DO NOTHING cannot report rowcount under
+        # psycopg3 (SQLAlchemy returns -1, "unknown"), so ask the statement itself: RETURNING
+        # yields the row only when this INSERT inserted it, never when the conflict skipped it.
+        statement = (
+            postgresql_insert(record_type)
+            .values(**values)
+            .on_conflict_do_nothing()
+            .returning(*record_type.__table__.primary_key.columns)
+        )
     elif dialect_name == "sqlite":
         statement = sqlite_insert(record_type).values(**values).on_conflict_do_nothing()
     else:  # pragma: no cover - production and contract-test dialects are deliberately explicit
@@ -875,7 +885,12 @@ def _append_exact(
         raise ObservationIdentityConflict(
             f"{record_type.__tablename__} concurrent append committed another variant"
         )
-    return AppendReceipt(identity_sha256=identity_sha256, created=result.rowcount == 1)
+    if dialect_name == "postgresql":
+        created = result.first() is not None
+    else:
+        # SQLite's CursorResult reports rowcount for single-row INSERT statements.
+        created = cast("CursorResult[Any]", result).rowcount == 1
+    return AppendReceipt(identity_sha256=identity_sha256, created=created)
 
 
 _WriteT = TypeVar("_WriteT", bound=_WriteModel)

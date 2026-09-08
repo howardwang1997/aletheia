@@ -1177,6 +1177,107 @@ that a re-registration variant must bump every id *and path* literal in every do
 consumer, including templates that predate the variant; and bridge-before-campaign ordering
 with a live inode pin in the flip script.
 
+## Generation-m target campaign and the third ARL-1 exit execution
+
+Generation `20260907m` (2026-09-07, release `release-72615ff-m1` from merge `72615ff`,
+PR #149 — the custody-projection fix that generation l's terminal stop prescribed) ran on the
+same v100ts target with identities 2330–2339 and database `aletheia_qualification_20260907m`.
+The arc carried every generation-l lesson as a source fix and reached one layer deeper still:
+the runner-side custody pin passed its first live test, both protocol attempts executed and
+were terminally accepted, and the arc terminated at the atomic observation-admission commit
+itself — a latent PostgreSQL-only defect in the append-once persistence seam that no prior
+generation had ever executed.
+
+- **Steps 1–3 (re-qualification).** Membership repair (receipted REVOKE of the cross-generation
+  `aletheia_arl1_exec_reg_l` grant), retirement of generation l's eleven units, foundation,
+  commissioning, install and registration all completed. Four stops, all repaired at source:
+  (m1) git-archive extraction left the release tree 0664/0775 instead of the canonical
+  0444/0555 — chmod before receipting, supersession receipt, re-freeze byte-identical;
+  (m2) three stale generation-l pins in the foundation script (hba sha, archive sha, file
+  count 1093→1095); (m3) the campaign apply needs both `ALETHEIA_DATABASE_URL` and
+  `ALETHEIA_QUALIFICATION_ADMIN_DATABASE_URL` as root socket URLs; (m4) the replay missed the
+  frozen 2-hour campaign window by ~3 minutes — `assert_target` checks the window at runner
+  startup only, and the completion watcher had died on a network blip. Nothing was burned
+  (the attempt had terminal-succeeded), so the repair was a fresh r2 registration chain with
+  every persistent id and path literal bumped, plus the structural fix: apply and replay
+  chained in one detached `setsid` process with no operator between them. The r2 chain
+  qualified with receipt `qtx_94c1711b81782895a45ac7a816d4d4a3a3` and a byte-identical
+  apply/replay pair (`1ae7b3ae…`, 7,092,270 bytes each); seven ARL-0 determinism gates
+  staged and proven.
+
+- **Step 4–5 (foundation, composition).** Foundation clean first try. Composition stopped
+  twice fail-closed (m5): the live-contracts module was absent from the composer's path, and
+  then the r2 chain rippled into every downstream pin — the composers' target-receipt journal
+  path, the registration material path, the qualification composer's target request path, and
+  the composer's kernel CAS root all still pointed at r1 artifacts. The ripple rule from
+  generation l generalizes: a re-registration variant must update every downstream *path*
+  pin, not just identity labels. Composition then completed (`ee919db8…`, manifest
+  `623fbd92…`) with six RPC services and the two campaign slots `sos_47c8102f…` /
+  `sos_ec926fe8…` on the r2 qualification quest `qst_a2547c34…`.
+
+- **Step 6 (protocol campaign).** The 72615ff custody fix — deriving the runner's custody
+  projection from the pricing authority pin, generation l's unsatisfiable stop — **passed its
+  first live test**: the node worker claimed both attempts under the receipted custody
+  bridges (b1/b2/b3, transition receipts `c78f991d…`, `a4cab4f6…`, `ed3cb754…`, `7a02316c…`,
+  `e48be93c…`, `072a1bec…`), both preregistered attempts executed in the OCI sandbox and were
+  terminally accepted (`iat_ba37df37…` 15:13:14Z, `iat_5977b0c4…` 15:45:07Z; four terminal
+  acceptances in the database together with the two registration-era calibration attempts —
+  the post-attempts helper's expectation was corrected from 3 to 4 at source before it could
+  fail closed). The campaign r1 driver itself died at 14:43Z in a custody-bridge RPC restart
+  gap (`FileNotFoundError` on the execution-registration socket), the known generation-l
+  pattern: driver death does not stop node-side attempts, and the campaign receipt is
+  produced by relaunch.
+
+- **Stop m6 — terminal: the atomic admission replay guard.** The campaign r2 relaunch
+  (15:46:20Z) re-loaded both replicates, committed both independent validation receipts
+  (15:47:05Z, 15:47:17Z) and one admission challenge (15:47:21Z), and then the
+  atomic-admission service failed closed at `observations/coordinator.py:364` —
+  *"new admission transaction unexpectedly replayed one of its authorities"* — rolling back
+  the admission, its Kernel event, and the command receipt together (by design), leaving the
+  capture 0 bytes. The forensic audit that followed: the admission table was empty, the
+  quest's command-receipt table held only the five genesis PR-8h commands, the journal
+  showed a single request chain across all six services with no retry and no concurrent
+  writer — the guard's precondition (a persisted authority with the same command, idempotency
+  or source-event key) was **unsatisfiable against the committed state**. The remaining
+  suspect was the `created` flag itself, and a probe against a scratch clone of the schema
+  proved it: under SQLAlchemy 2.0.52 + psycopg3, an ORM-enabled
+  `INSERT … ON CONFLICT DO NOTHING` reports `rowcount == -1` ("unknown"), so
+  `_append_exact` derived `created = (rowcount == 1) = False` for **every first append on
+  PostgreSQL**. The atomic admission coordinator treats a first-insert `created=False` as an
+  unexpected replay and fails closed — so the first live ARL-1 observation admission in any
+  deployment of this release deterministically fails. The path had never been exercised:
+  generation k died at validation, generation l at the custody pin, and the portable SQLite
+  fixtures report `rowcount` reliably (the JSONB authority checks and this rowcount behavior
+  are both PostgreSQL-only). Probes retained on the target as
+  `/root/arl1m-rowcount-probe.py` and `/root/arl1m-rowcount-probe2.py` against scratch
+  database `aletheia_rowcount_probe`.
+
+- **Source fix (this PR).** `_append_exact` now derives `created` on PostgreSQL from the
+  statement itself — `.returning()` the primary key yields the row only when this INSERT
+  inserted it, never when the conflict skipped it — while the SQLite branch keeps its
+  reliable `rowcount`. Exact-replay semantics are unchanged (the pre-read still returns
+  `created=False` for byte-identical replays before any INSERT runs), and no other consumer
+  of `AppendReceipt.created` regresses: the validation and challenge services accept either
+  value (their `commit_or_load` seam), and the controller-launch aggregation goes from
+  always-False to correct. Validation, both directions: with the unmodified release file the
+  new PostgreSQL regression test fails with exactly the production assertion
+  (`first append through psycopg3 must report created=True`); with the fix it passes,
+  including the exact-replay `created=False` branch. The regression test
+  (`tests/observations/test_append_exact_postgresql.py`) is opt-in via
+  `ALETHEIA_TEST_POSTGRES_URL` pointing at an isolated `aletheia_test*` database, following
+  the repo's destructive-test gating pattern.
+
+- **Steps 7–9 (disjoint qualification).** Not executed: step 6 never produced a completing
+  campaign receipt, so the qualification composer, bundle preparation, disjoint signing and
+  tamper checks had no campaign output to bind. Generation m ends as an **honest negative at
+  the admission commit, one layer deeper than generation l**: the custody fix l prescribed is
+  proven live end-to-end through both attempts' terminal acceptance, the replay-window
+  failure mode is structurally closed by chained apply→replay, and the newly exposed defect
+  is a narrow, deterministic persistence bug with a root-caused fix rather than a design
+  contradiction. Generation n (fresh identities, new freeze carrying this fix) owes: the
+  campaign receipt, steps 7–9, and the first scientific observation admission — no
+  scientific admission has yet been requested or granted in any generation.
+
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the
 [PR-8b installer guide](PR8B_DISABLED_QUALIFICATION_INSTALLER.md).
