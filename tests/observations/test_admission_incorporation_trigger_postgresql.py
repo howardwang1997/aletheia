@@ -140,7 +140,9 @@ def engine():
             _INCORPORATION_FUNCTION,
         )
         assert len(original) == 1, "expected one captured function-and-triggers statement"
-        connection.exec_driver_sql(original[0])
+        # text() carries the multi-statement DDL without psycopg3 client-side
+        # %-interpolation (exec_driver_sql would choke on plpgsql "%ROWTYPE").
+        connection.execute(text(original[0]))
     yield postgres
 
 
@@ -468,7 +470,7 @@ def test_fixed_trigger_commits_faithful_admission_and_rejects_tampering(engine) 
     )
     assert len(fixed) == 1, "expected one captured replacement function statement"
     with engine.begin() as connection:
-        connection.exec_driver_sql(fixed[0])
+        connection.execute(text(fixed[0]))
 
     admitted = _seed_and_commit(engine, _fresh_suffix(), embed_world_model_path=False)
     with Session(engine) as session:
