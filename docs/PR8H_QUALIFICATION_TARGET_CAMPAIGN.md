@@ -1278,6 +1278,85 @@ generation had ever executed.
   campaign receipt, steps 7–9, and the first scientific observation admission — no
   scientific admission has yet been requested or granted in any generation.
 
+## Generation-n target campaign and the fourth ARL-1 exit execution
+
+Generation `20260908n` (2026-09-08, release `release-10675d7-n1` from merge `10675d7`,
+PR #150 — the append-exact `created` fix that generation m's terminal stop prescribed) ran on
+the same v100ts target with identities 2340–2349 and database
+`aletheia_qualification_20260908n`. The arc cleared every generation-m stop at source on the
+first live attempt and then terminated inside the independent-validation commit itself — the
+fifth distinct live-only latent defect in this exit path, and the first that is not a
+persistence bug but a **structural re-entrance contradiction** in the campaign driver's poll
+loop.
+
+- **Steps 1–5 (re-qualification through composition).** Membership repair, retirement of
+  generation m's units, fresh database, foundation, commissioning, install, registration,
+  and scientific composition all completed without a source stop: every generation-m repair
+  (canonical extraction modes, r2 path-ripple rule, socket database URLs, chained
+  apply→replay, post-attempts expectation) carried forward as source, and the m6 append-exact
+  fix passed its first live exercise at the registration-era appends. Composition produced
+  the four campaign slots on the n-generation qualification quest with the six RPC services
+  pinned for the campaign driver.
+
+- **Step 6 (protocol campaign).** Both preregistered attempts executed in the OCI sandbox
+  and were terminally accepted (`iat_deca1c9e…` 05:21:27Z, `iat_db0a8146…` 05:55:27Z —
+  exactly the run-post-attempts arithmetic), and the runner-side custody chain held
+  throughout. The driver-level history: r1 died before any validation commit (driver death
+  does not stop node-side attempts); r2 was relaunched at 05:25 while attempt 2 was still
+  executing — an operator error against generation m's own discipline (relaunch only after
+  every attempt is terminal), recorded here as such. r2's first pass committed slot 1's
+  independent validation receipt, then polled for attempt 2.
+
+- **Stop n1 — terminal: the validation re-commit conflict.** The campaign runtime's poll
+  loop re-executes the full replicate comprehension on every retry. Once attempt 2's wait
+  outlived slot 1's issuance-challenge TTL (300 s), the re-pass could no longer recover the
+  live challenge (journal: last recovery at 297 s, first fresh issuance at 313 s), so the
+  database service issued a **fresh challenge with a fresh nonce**; the validator's new
+  receipt could never byte-equal the committed one, and `commit_validation` raised
+  `ObservationIdentityConflict` (`observations/service.py`). The database-observation RPC
+  process then exited fail-closed on the unhandled handler exception, and the driver died
+  with `ARL-1 independent validation failed closed` chained from the socket
+  `FileNotFoundError` — 19 passes in the journal, all over the same committed slot. The slot
+  is **permanently conflict-locked**: the original challenge is unrecoverable once expired,
+  and `commit_or_load_validation` had no load-first path, so every relaunch deterministically
+  re-conflicts. Root cause, five layers: (1) the poll loop re-executes the coordinator while
+  later replicates are still executing; (2) a committed slot's challenge TTL lapses during
+  that wait; (3) re-pass issues a fresh-nonce challenge; (4) the idempotent commit path
+  requires byte-equality with the committed receipt; (5) no committed-receipt load path
+  exists on the campaign's database bridge. The mistimed r2 relaunch shifted which pass hit
+  the boundary, but the defect is structural: any driver that waits more than one TTL over
+  an already-committed replicate — which a 30-minute attempt 2 guarantees — dies the same
+  way. No scientific admission was requested; the campaign receipt was never produced, so
+  steps 7–9 were unreachable (the qualification composer hard-reads the campaign run
+  receipt). Arc-end custody: post-acceptance shared sweep receipted
+  (`0823b58a…`, 2026-09-08T05:56:39Z, 33 directories / 22 files, store 2101:2340 0750).
+
+- **Source fix (this PR).** Load-first at the defect's own layer, not a weaker retry: the
+  database-observation RPC factory now serves the campaign composition with a fourth
+  operation, `LOAD_COMMITTED_VALIDATION` (the controller worker's three-operation bridge is
+  unchanged and keeps its disjoint operation partition — the worker's admission step already
+  loads through its dedicated read-only service, and its validation step refuses to
+  re-run over a committed slot by projection). An empty slot answers with the one signed
+  blocker `no_committed_validation`, which the client bridge translates to `None`; a
+  committed slot returns the committed receipt itself after full row-integrity
+  (`ObservationValidationReceiptWrite.from_contract` equality), action-binding, and
+  authority re-verification. The validation coordinator now loads first and returns an
+  already-committed slot as the committed fact — it never re-challenges it — and fails
+  closed if the loaded receipt was rebound to another raw run or authority. Late loads are
+  safe by design: the committed-receipt verifier rejects only future-dated commits and
+  authority-window violations, which the dedicated committed-validation source runtime has
+  proven live in production since generation m.
+
+- **Steps 7–9 (disjoint qualification).** Not executed: no campaign receipt. Generation n
+  ends as an **honest negative at the independent-validation commit**: the m6 fix is proven
+  live (every first append on PostgreSQL now reports `created=True` end-to-end), both
+  attempts terminally accepted for the first time without a custody stop anywhere in the
+  arc, and the newly exposed defect is a re-entrance gap between the driver's poll loop and
+  the challenge TTL with a root-caused, least-privilege-preserving fix. Generation o (fresh
+  identities, new freeze carrying this fix) owes: the campaign receipt, steps 7–9, and the
+  first scientific observation admission — no scientific admission has yet been requested
+  or granted in any generation.
+
 See [ADR 0081](architecture/0081-independent-qualification-target-campaign.md), the
 [PR-8g commissioning guide](PR8G_QUALIFICATION_AUTHORITY_COMMISSIONING.md), and the
 [PR-8b installer guide](PR8B_DISABLED_QUALIFICATION_INSTALLER.md).

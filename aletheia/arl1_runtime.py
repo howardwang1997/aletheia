@@ -105,6 +105,11 @@ _SERVICE_OPERATIONS = {
         ControllerWorkerRPCOperation.COMMIT_VALIDATION,
         ControllerWorkerRPCOperation.ISSUE_ADMISSION_CHALLENGE,
         ControllerWorkerRPCOperation.ISSUE_VALIDATION_CHALLENGE,
+        # Load-first custody: the campaign driver's poll loop re-executes the
+        # validation coordinator while later replicates are still executing, so
+        # its database bridge must be able to read a slot's committed receipt
+        # instead of re-challenging it once the issuance challenge TTL lapses.
+        ControllerWorkerRPCOperation.LOAD_COMMITTED_VALIDATION,
     ),
     "independent_validation": _operations(
         ControllerWorkerRPCOperation.ISSUE_VALIDATION_RECEIPT,

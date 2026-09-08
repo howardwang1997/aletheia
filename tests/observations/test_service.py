@@ -352,3 +352,98 @@ def test_database_rpc_receipts_have_stable_canonical_retry_bytes(
 
     assert first.model_dump_json() == replayed.model_dump_json()
     assert type(first).model_validate_json(first.model_dump_json()) == first
+
+
+def _committed_validations_case(monkeypatch: pytest.MonkeyPatch):
+    case = _bridge_case()
+    authorizations, challenges, validations = _install_memory_store(monkeypatch)
+    registered_at = case.authorization.message.authorized_at + timedelta(seconds=1)
+    authorizations[case.authorization.message.scientific_slot_id] = (
+        ScientificExecutionAuthorizationWrite.from_contract(
+            case.authorization,
+            registered_at=registered_at,
+        )
+    )
+    validation = _validated_receipt(case)
+    authorization = validation.message.raw_run.scientific_authorization
+    challenge = validation.message.issuance_challenge
+    challenges.append(
+        ObservationIssuanceChallengeWrite.from_contract(
+            challenge,
+            quest_id=authorization.message.action_protocol_binding.action.quest_id,
+            authorization_sha256=authorization.authorization_sha256,
+            recorded_at=challenge.message.issued_at,
+        )
+    )
+    commit_at = validation.message.validated_at + timedelta(seconds=1)
+    commit_service = PostgreSQLScientificBridgeService(
+        verification=_verification(case),
+        session_scope_factory=_session_scope,
+        database_clock=_Clock(
+            commit_at,
+            commit_at + timedelta(seconds=1),
+            commit_at + timedelta(seconds=2),
+            commit_at + timedelta(seconds=3),
+        ),
+        nonce_factory=lambda: _digest("admission-service-nonce"),
+    )
+    committed = commit_service.commit_validation(validation).committed_validation
+    return case, authorization, challenge, committed
+
+
+def test_committed_validation_loads_as_the_committed_fact_after_the_challenge_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _case, authorization, challenge, committed = _committed_validations_case(monkeypatch)
+    load_at = challenge.message.expires_at + timedelta(minutes=10)
+    load_service = PostgreSQLScientificBridgeService(
+        verification=_verification(_case),
+        session_scope_factory=_session_scope,
+        database_clock=_Clock(load_at),
+    )
+
+    loaded = load_service.load_committed_validation(
+        quest_id=authorization.message.action_protocol_binding.action.quest_id,
+        action_sha256=authorization.message.action_protocol_binding.action.object_sha256,
+        scientific_slot_id=authorization.message.scientific_slot_id,
+    )
+
+    assert loaded == committed
+
+
+def test_committed_validation_load_fails_closed_for_an_empty_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bridge_case()
+    _install_memory_store(monkeypatch)
+    authorization = case.authorization
+    load_service = PostgreSQLScientificBridgeService(
+        verification=_verification(case),
+        session_scope_factory=_session_scope,
+        database_clock=_Clock(authorization.message.authorized_at + timedelta(hours=1)),
+    )
+
+    with pytest.raises(service_module.CommittedValidationNotLoaded):
+        load_service.load_committed_validation(
+            quest_id=authorization.message.action_protocol_binding.action.quest_id,
+            action_sha256=authorization.message.action_protocol_binding.action.object_sha256,
+            scientific_slot_id=authorization.message.scientific_slot_id,
+        )
+
+
+def test_committed_validation_load_rejects_a_lookup_for_another_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _case, authorization, _challenge, _committed = _committed_validations_case(monkeypatch)
+    load_service = PostgreSQLScientificBridgeService(
+        verification=_verification(_case),
+        session_scope_factory=_session_scope,
+        database_clock=_Clock(_committed.message.committed_at + timedelta(minutes=1)),
+    )
+
+    with pytest.raises(service_module.ScientificBridgeServiceError, match="rebound"):
+        load_service.load_committed_validation(
+            quest_id=authorization.message.action_protocol_binding.action.quest_id,
+            action_sha256="f" * 64,
+            scientific_slot_id=authorization.message.scientific_slot_id,
+        )

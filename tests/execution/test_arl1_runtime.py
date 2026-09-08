@@ -73,6 +73,20 @@ def _campaign_only_pin(pin: ControllerWorkerRPCServicePin) -> ControllerWorkerRP
     )
 
 
+def _campaign_database_pin(pin: ControllerWorkerRPCServicePin) -> ControllerWorkerRPCServicePin:
+    return ControllerWorkerRPCServicePin.model_validate(
+        {
+            **pin.model_dump(mode="python", exclude={"service_id"}),
+            "operations": tuple(
+                sorted(
+                    (*pin.operations, ControllerWorkerRPCOperation.LOAD_COMMITTED_VALIDATION),
+                    key=lambda item: item.value,
+                )
+            ),
+        }
+    )
+
+
 def _external_server_pin(
     pin: ControllerWorkerRPCServicePin,
     *,
@@ -105,7 +119,7 @@ def _runtime_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
             server_uid=server_uid,
         ),
         database_observation=_external_server_pin(
-            worker.rpc_services.database_observation,
+            _campaign_database_pin(worker.rpc_services.database_observation),
             server_uid=server_uid,
         ),
         independent_validation=_external_server_pin(

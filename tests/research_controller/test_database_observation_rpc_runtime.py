@@ -40,6 +40,8 @@ from aletheia.research_controller.external_rpc import (
 from aletheia.research_controller.external_rpc_server import (
     AdmissionChallengeIssuanceRPCPayload,
     ControllerWorkerRPCService,
+    ControllerWorkerRPCServiceBlocked,
+    ScientificSlotLookupRPCPayload,
     ValidationChallengeIssuanceRPCPayload,
     ValidationCommitRPCPayload,
 )
@@ -534,3 +536,89 @@ def test_database_observation_runtime_rejects_factory_source_drift(
     )
     with pytest.raises(ControllerWorkerRPCProcessError, match="byte pin"):
         build_controller_worker_rpc_server_runtime(drifted)
+
+
+def test_campaign_database_factory_serves_the_load_first_bridge_operation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    deployment, config, config_path, case = _fixture(monkeypatch, tmp_path)
+    _raw_run, _validation, committed, *_rest = _receipts(case)
+    message = committed.message.receipt.message.raw_run.scientific_authorization.message
+    quest_id = message.action_protocol_binding.action.quest_id
+    action_sha256 = message.action_protocol_binding.action.object_sha256
+    scientific_slot_id = message.scientific_slot_id
+
+    campaign_operations = tuple(
+        sorted(
+            (
+                ControllerWorkerRPCOperation.ISSUE_VALIDATION_CHALLENGE,
+                ControllerWorkerRPCOperation.COMMIT_VALIDATION,
+                ControllerWorkerRPCOperation.ISSUE_ADMISSION_CHALLENGE,
+                ControllerWorkerRPCOperation.LOAD_COMMITTED_VALIDATION,
+            ),
+            key=lambda item: item.value,
+        )
+    )
+    campaign_pin = ControllerWorkerRPCServicePin.model_validate(
+        {
+            **deployment.service_pin.model_dump(mode="python", exclude={"service_id"}),
+            "operations": campaign_operations,
+        }
+    )
+    campaign_config = dict(config)
+    campaign_config["service_id"] = campaign_pin.service_id
+    campaign_config["service_pin_sha256"] = campaign_pin.pin_sha256
+    campaign_config_path = config_path.with_name("database-observation-campaign.json")
+    campaign_config_path.write_bytes(canonical_json_bytes(campaign_config))
+    campaign_deployment = ControllerWorkerRPCServerDeployment.model_validate(
+        {
+            **deployment.model_dump(mode="python", exclude={"runtime_id"}),
+            "service_pin": campaign_pin.model_dump(mode="python", exclude={"service_id"}),
+            "composition_config_path": str(campaign_config_path),
+            "composition_config_file_sha256": hashlib.sha256(
+                campaign_config_path.read_bytes()
+            ).hexdigest(),
+        }
+    )
+    committed_slots = {scientific_slot_id: committed}
+
+    class _CampaignService:
+        def __init__(self, *, verification, challenge_ttl) -> None:
+            assert challenge_ttl == timedelta(minutes=5)
+
+        def load_committed_validation(self, *, quest_id, action_sha256, scientific_slot_id):
+            del quest_id, action_sha256
+            existing = committed_slots.get(scientific_slot_id)
+            if existing is None:
+                raise service_module.CommittedValidationNotLoaded(
+                    "scientific slot has no committed validation receipt"
+                )
+            return existing
+
+    monkeypatch.setattr(service_module, "PostgreSQLScientificBridgeService", _CampaignService)
+    handlers = build_database_observation_rpc_service(
+        deployment=campaign_deployment,
+        configuration_bytes=campaign_config_path.read_bytes(),
+    )
+
+    assert handlers.operations == campaign_operations
+    lookup = ScientificSlotLookupRPCPayload(
+        quest_id=quest_id,
+        action_sha256=action_sha256,
+        scientific_slot_id=scientific_slot_id,
+    )
+    assert (
+        handlers.handler_for(ControllerWorkerRPCOperation.LOAD_COMMITTED_VALIDATION)(lookup)
+        == committed
+    )
+    empty_lookup = ScientificSlotLookupRPCPayload(
+        quest_id=quest_id,
+        action_sha256=action_sha256,
+        scientific_slot_id="sos_" + "f" * 32,
+    )
+    with pytest.raises(ControllerWorkerRPCServiceBlocked) as caught:
+        handlers.handler_for(ControllerWorkerRPCOperation.LOAD_COMMITTED_VALIDATION)(empty_lookup)
+    assert caught.value.blocker_codes == ("no_committed_validation",)
+    with pytest.raises(TypeError, match="another payload"):
+        handlers.handler_for(ControllerWorkerRPCOperation.LOAD_COMMITTED_VALIDATION)(object())

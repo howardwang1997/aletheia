@@ -497,3 +497,59 @@ def test_rpc_facades_cover_each_closed_operation_without_a_catch_all() -> None:
 
     assert len(observed) == len(ControllerWorkerRPCOperation)
     assert frozenset(observed) == frozenset(ControllerWorkerRPCOperation)
+
+
+def test_database_bridge_load_committed_validation_uses_the_slot_lookup_operation() -> None:
+    database = _authority(ControllerStepAuthorityRole.DATABASE_ATTESTATION)
+    client = _RecordingClient(database)
+    bridge = RPCDatabaseObservationBridge(client, database)
+
+    with pytest.raises(_StopRPC):
+        bridge.load_committed_validation(
+            quest_id="qst_" + "1" * 32,
+            action_sha256=_sha("action"),
+            scientific_slot_id="sos_" + "2" * 32,
+        )
+
+    assert client.operations == [ControllerWorkerRPCOperation.LOAD_COMMITTED_VALIDATION]
+
+
+class _NoCommittedValidationClient(_RecordingClient):
+    def __init__(
+        self, *bindings: ControllerStepAuthorityBinding, blocker_codes: tuple[str, ...]
+    ) -> None:
+        super().__init__(*bindings)
+        self.blocker_codes = blocker_codes
+
+    def call(self, operation, **_kwargs):
+        self.operations.append(operation)
+        raise ControllerWorkerRPCBlocked(self.blocker_codes)
+
+
+def test_database_bridge_translates_only_the_empty_slot_blocker_to_none() -> None:
+    database = _authority(ControllerStepAuthorityRole.DATABASE_ATTESTATION)
+    empty = RPCDatabaseObservationBridge(
+        _NoCommittedValidationClient(database, blocker_codes=("no_committed_validation",)),
+        database,
+    )
+    foreign = RPCDatabaseObservationBridge(
+        _NoCommittedValidationClient(
+            database, blocker_codes=("another_blocker", "no_committed_validation")
+        ),
+        database,
+    )
+
+    assert (
+        empty.load_committed_validation(
+            quest_id="qst_" + "1" * 32,
+            action_sha256=_sha("action"),
+            scientific_slot_id="sos_" + "2" * 32,
+        )
+        is None
+    )
+    with pytest.raises(ControllerWorkerRPCBlocked):
+        foreign.load_committed_validation(
+            quest_id="qst_" + "1" * 32,
+            action_sha256=_sha("action"),
+            scientific_slot_id="sos_" + "2" * 32,
+        )
