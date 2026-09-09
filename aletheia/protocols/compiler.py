@@ -87,6 +87,11 @@ def _execution_command_sha256(*, step: ProtocolStep, manifest: CapabilityManifes
             "execution_parameters_sha256": step.execution_parameters_sha256,
             "input_port_ids": step.input_port_ids,
             "output_port_ids": step.output_port_ids,
+            "archived_observation_input": (
+                step.archived_observation_input.model_dump(mode="json")
+                if step.archived_observation_input is not None
+                else None
+            ),
         }
     )
 
@@ -161,6 +166,7 @@ def _build_work_order(
                     ),
                     input_port_ids=step.input_port_ids,
                     output_port_ids=step.output_port_ids,
+                    archived_observation_input=step.archived_observation_input,
                     resource_request=step.resource_request,
                     retry_policy=_execution_retry_policy(manifest),
                     expected_artifacts=step.expected_artifacts,

@@ -44,7 +44,7 @@ from aletheia.research_controller.step_executor import (
 )
 from aletheia.research_kernel.policy import ed25519_key_id, ed25519_public_key_hex
 from aletheia.research_kernel.schemas import canonical_json_bytes
-from aletheia.protocols import capability_sources as capability_source_module
+from aletheia.execution import capability_sources as capability_source_module
 
 from .test_arl1_qualification import (
     VERIFIER_PRIVATE_KEY,

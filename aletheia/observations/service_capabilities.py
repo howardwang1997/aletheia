@@ -38,7 +38,10 @@ def local_service_capability_sources(
 
     root = Path(__file__).resolve().parents[1]
     common = (
-        "protocols/service_capabilities.py",
+        "observations/service_capabilities.py",
+        "protocols/schemas.py",
+        "protocols/compiler.py",
+        "protocols/typecheck.py",
         "observations/scientific_bridge.py",
         "research_controller/external_rpc.py",
         "research_controller/external_rpc_server.py",
@@ -67,6 +70,12 @@ def local_service_capability_sources(
             "side_effect_class": "read_only_external",
             "role": "observation_parser",
             "invocation": {"keyword_arguments_from": "input.raw_run_lookup"},
+            "archive_input": {
+                "contract": "ProtocolStep.archived_observation_input",
+                "source": "registered ScientificExecutionAuthorization.scientific_observation_artifact_binding",
+                "slot_mapping": "same_slot_index",
+                "custody": "Load the producer slot's verified terminal material from its signed registration; preserve its observation artifact binding in the returned envelope.",
+            },
             "return_value": "intermediate.raw_run",
             "pending": "Signed terminal-material-pending status becomes RawRunEnvelopePending; no envelope is emitted.",
             "ready": "Verify the preregistered quest, action, slot and terminal artifacts before returning the envelope.",

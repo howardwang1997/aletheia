@@ -64,7 +64,7 @@ from aletheia.observations.scientific_bridge import (
     ScientificBridgeRole,
     VerifiedExecutionAuthorityProjection,
 )
-from aletheia.protocols.capability_sources import (
+from aletheia.execution.capability_sources import (
     CapabilitySourceRuntimeConfigV1,
     PinnedCapabilitySourceVerifier,
 )

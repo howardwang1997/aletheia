@@ -13,7 +13,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from aletheia.protocols import capability_sources as closure
+from aletheia.execution import capability_sources as closure
 from aletheia.protocols.capabilities import CapabilityManifestV2
 from aletheia.protocols.schemas import CapabilityAuditBinding, CapabilityAuditKind
 from tests.protocols.fixtures import fixture_by_name
@@ -108,7 +108,7 @@ def case(tmp_path, request):
     service_materials = set()
     provider_artifacts = ()
     if service_operation is not None:
-        from aletheia.protocols.service_capabilities import local_service_capability_sources
+        from aletheia.observations.service_capabilities import local_service_capability_sources
 
         service = local_service_capability_sources(service_operation)
         contract = service.contract
@@ -278,6 +278,15 @@ def case(tmp_path, request):
                         else "scientific_executor"
                     ),
                     expected_artifacts=provider_artifacts,
+                    archived_observation_input=(
+                        NS(
+                            lookup_input_port_id="input.raw_run_lookup",
+                            envelope_output_port_id="intermediate.raw_run",
+                            replicate_mapping="same_slot_index",
+                        )
+                        if service_operation == "load_raw_run"
+                        else None
+                    ),
                     capability_requirement=NS(
                         manifest_sha256=manifest.manifest_sha256, audit_bindings=bindings
                     ),
@@ -345,6 +354,22 @@ def test_signed_local_service_contract_covers_actual_io_and_sources(case):
         manifest.output_ports[0].schema_ref.schema_sha256
         == case.service.contract["schema_sources"]["output"]
     )
+
+
+@pytest.mark.parametrize("case", ["load_raw_run"], indirect=True)
+@pytest.mark.parametrize("change", ["missing", "lookup", "envelope", "slot_mapping"])
+def test_raw_service_requires_its_archive_input_contract(case, change):
+    step = case.request.protocol.steps[0]
+    if change == "missing":
+        step.archived_observation_input = None
+    elif change == "lookup":
+        step.archived_observation_input.lookup_input_port_id = "input.other"
+    elif change == "envelope":
+        step.archived_observation_input.envelope_output_port_id = "output.other"
+    else:
+        step.archived_observation_input.replicate_mapping = "any_slot"
+    with pytest.raises(closure.CapabilitySourceVerificationError, match="archive input"):
+        verify(case)
 
 
 @pytest.mark.parametrize("case", ["load_raw_run", "prepare_validation_campaign"], indirect=True)
@@ -562,7 +587,7 @@ def test_optimized_python_cannot_disable_verification():
             sys.executable,
             "-O",
             "-c",
-            "from aletheia.protocols.capability_sources import utc; utc('2026-09-09T00:00:00')",
+            "from aletheia.execution.capability_sources import utc; utc('2026-09-09T00:00:00')",
         ],
         capture_output=True,
     )

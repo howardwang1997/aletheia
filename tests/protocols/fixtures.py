@@ -158,6 +158,8 @@ class _StepPlan:
     principal_kind: PrincipalKind = PrincipalKind.SERVICE
     physical_hazard: bool = False
     calibrated: bool = False
+    external_action_kind: str = "measurement.acquire"
+    adapter_ref: str | None = None
 
 
 def _schema_ref(port_id: str) -> JsonSchemaRef:
@@ -414,7 +416,7 @@ def _manifest(
         semantic_version="2.0.0",
         operation_id=plan.operation_id,
         external_action_kind=(
-            "measurement.acquire"
+            plan.external_action_kind
             if plan.runtime_kind
             in {
                 RuntimeKind.EXTERNAL_SERVICE,
@@ -441,7 +443,8 @@ def _manifest(
         ),
         runtime=RuntimeContract(
             runtime_kind=plan.runtime_kind,
-            adapter_ref=f"fixture_adapters:{plan.operation_id.replace('.', '_')}",
+            adapter_ref=plan.adapter_ref
+            or f"fixture_adapters:{plan.operation_id.replace('.', '_')}",
             implementation_sha256=digest(f"implementation:{plan.capability_id}"),
             environment_sha256=digest(f"environment:{plan.capability_id}"),
             determinism=plan.determinism,

@@ -91,10 +91,50 @@ def _committed_verification(case) -> CommittedValidationSourceVerificationContex
     )
 
 
+def _archive_bridge_case():
+    from aletheia.execution.schemas import InputArtifactBinding
+    from aletheia.protocols.compiler import compile_protocol
+    from tests.protocols.test_archived_observation_inputs import archive_request
+    from test_runtime_contracts import NOW, _intent, _protocol_input_resolution, _signed_case
+
+    request = archive_request()
+    result = compile_protocol(request)
+    assert result.report.accepted and result.work_order is not None
+    node = next(n for n in result.work_order.nodes if n.protocol_step_id == "step.01_execute")
+    observed_at = NOW + timedelta(minutes=5)
+    resolution = _protocol_input_resolution(
+        request=request,
+        input_port_id=node.input_port_ids[0],
+        resolved_at=observed_at,
+    )
+    intent = _intent(
+        work_order=result.work_order,
+        node=node,
+        input_bindings=(
+            InputArtifactBinding(
+                input_port_id=node.input_port_ids[0],
+                source_kind="protocol_input",
+                artifact_verified_receipt_sha256=resolution.verified_receipt_sha256,
+            ),
+        ),
+    )
+    return _bridge_case(
+        _signed_case(
+            request=request,
+            result=result,
+            intent=intent,
+            resolution=resolution,
+            observed_at=observed_at,
+        )
+    )
+
+
+@pytest.mark.parametrize("archived", [False, True])
 def test_raw_run_source_rebuilds_exact_deterministic_envelope(
     monkeypatch: pytest.MonkeyPatch,
+    archived: bool,
 ) -> None:
-    case = _bridge_case()
+    case = _archive_bridge_case() if archived else _bridge_case()
     original = _raw_run(case)
     verified_at = original.assembled_at + timedelta(seconds=1)
     material = _material(original, verified_at=verified_at)

@@ -176,6 +176,19 @@ class PostgreSQLRawRunEnvelopeSourceAdapter:
                 observed_at=observed_at,
             )
             message = authorization.message
+            archive_inputs = tuple(
+                step.archived_observation_input
+                for step in message.action_protocol_binding.compilation_request.protocol.steps
+                if step.archived_observation_input is not None
+            )
+            if archive_inputs and not any(
+                item.observable_output_binding
+                == message.scientific_observation_artifact_binding.observable_output_binding
+                for item in archive_inputs
+            ):
+                raise ObservationAdapterVerificationError(
+                    "raw-run source observation differs from its preregistered archive input"
+                )
             intent = message.qualification_bundle.intent
             expected_registration = ScientificExecutionAuthorizationWrite.from_contract(
                 authorization,

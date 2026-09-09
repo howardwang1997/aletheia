@@ -82,6 +82,14 @@ contracts require one invocation per batch, no new infrastructure attempts and n
 Static resources must support the exact external action. Signed capability audits, deployment
 bindings and source replay remain required before qualification.
 
+An archive reader declares `archived_observation_input`: the exact observable output binding,
+lookup input, envelope output and same-index producer slot mapping. The compiler requires the
+registered raw-envelope service, its producer dependency and matching replicate counts before
+counting this as a data path to independent validation. The compiled node and command retain this
+binding, and the reader checks it against the registered scientific authorization. A dependency
+alone does not establish observation data flow. Operational capability source verification lives
+in the execution and observation layers; pure protocol contracts do not import service runtimes.
+
 Qualification and later audit timestamps are not accepted from evidence JSON. The issuance and
 verification manifests contain at most a 24-hour approved operation window; after fresh source
 replay the runtime reads PostgreSQL `clock_timestamp()` through the pinned database, derives the

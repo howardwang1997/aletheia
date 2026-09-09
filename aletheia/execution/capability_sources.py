@@ -240,7 +240,7 @@ def contract_sources(root, manifest):
 
 
 def _verify_local_service_sources(root, manifest, runtime, step):
-    from aletheia.protocols.service_capabilities import local_service_capability_sources
+    from aletheia.observations.service_capabilities import local_service_capability_sources
 
     operation = runtime["service_operation"]
     _require(operation == manifest.external_action_kind, "local service operation differs")
@@ -300,6 +300,14 @@ def _verify_local_service_sources(root, manifest, runtime, step):
         )
     else:
         _require(not provider_artifacts, "read-only local service declares a write receipt")
+        archive_input = getattr(step, "archived_observation_input", None)
+        _require(
+            archive_input is not None
+            and archive_input.lookup_input_port_id == "input.raw_run_lookup"
+            and archive_input.envelope_output_port_id == "intermediate.raw_run"
+            and archive_input.replicate_mapping == "same_slot_index",
+            "local raw-run service requires its registered observation archive input",
+        )
     paths = runtime["service_source_paths"]
     _require(set(paths) == set(expected.source_paths), "local service source inventory differs")
     digests = {digest}
