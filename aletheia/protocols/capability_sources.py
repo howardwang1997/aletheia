@@ -38,6 +38,7 @@ RULE = {
     "retained_check_results_required": True,
     "retained_contract_sources_required": True,
     "runtime_source_required": True,
+    "local_service_contract_sources_required": True,
     "scientific_authority": False,
 }
 
@@ -238,6 +239,87 @@ def contract_sources(root, manifest):
     return digests
 
 
+def _verify_local_service_sources(root, manifest, runtime, step):
+    from aletheia.protocols.service_capabilities import local_service_capability_sources
+
+    operation = runtime["service_operation"]
+    _require(operation == manifest.external_action_kind, "local service operation differs")
+    expected = local_service_capability_sources(operation, read_bytes=fresh)
+    contract = expected.contract
+    digest = canonical_sha256(contract)
+    _require(
+        digest == runtime["service_contract_sha256"]
+        and digest in manifest.applicability.required_condition_sha256s,
+        "local service contract is not bound by the capability definition",
+    )
+    payload = source(root, digest)
+    _require(
+        payload == canonical_json_bytes(contract)
+        and fresh(runtime["service_contract_path"]) == payload,
+        "local service contract differs from the actual service",
+    )
+    _require(
+        Path(runtime["implementation_path"]) == expected.implementation_path
+        and manifest.runtime.adapter_ref == contract["adapter_ref"]
+        and manifest.operation_id == "operation." + operation,
+        "local service implementation or operation identity differs",
+    )
+    behavior = contract["behavior"]
+    _require(
+        step.role.value == behavior["role"]
+        and manifest.side_effect_class.value == behavior["side_effect_class"]
+        and manifest.runtime.determinism.value == "declared_stochastic"
+        and manifest.license_egress.network_egress.value == "none"
+        and manifest.applicability.minimum_batch_size == 1
+        and manifest.applicability.maximum_batch_size == 1
+        and not manifest.runtime.checkpoint_supported
+        and manifest.retry.mode.value == "never",
+        "local service effects, role or invocation bounds differ",
+    )
+    for direction in ("input", "output"):
+        ports = getattr(manifest, direction + "_ports")
+        declared = contract[direction + "_ports"]
+        _require(len(ports) == len(declared), "local service port set differs")
+        for port, spec in zip(ports, declared, strict=True):
+            _require(
+                port.port_id == spec["port_id"]
+                and port.artifact_kind.value == spec["artifact_kind"]
+                and port.schema_ref.schema_sha256 == contract["schema_sources"][spec["schema"]]
+                and port.multiplicity.value == "one",
+                "local service port differs from its actual input or result",
+            )
+    provider_artifacts = [a for a in step.expected_artifacts if a.role.value == "provider_receipt"]
+    if operation == "prepare_validation_campaign":
+        _require(
+            manifest.runtime.reconciliation_supported
+            and len(provider_artifacts) == 1
+            and provider_artifacts[0].required
+            and provider_artifacts[0].schema_sha256
+            == contract["schema_sources"]["committed_campaign"],
+            "local service does not retain the committed campaign receipt",
+        )
+    else:
+        _require(not provider_artifacts, "read-only local service declares a write receipt")
+    paths = runtime["service_source_paths"]
+    _require(set(paths) == set(expected.source_paths), "local service source inventory differs")
+    digests = {digest}
+    for name, path in expected.source_paths.items():
+        _require(Path(paths[name]) == path, "local service source path differs")
+        digest = contract["source_files"][name]
+        _require(
+            source(root, digest) == expected.source_bytes[name],
+            "retained local service source differs",
+        )
+        digests.add(digest)
+    for name, schema in expected.schemas.items():
+        digest = contract["schema_sources"][name]
+        _require(
+            source(root, digest) == canonical_json_bytes(schema), "local service schema differs"
+        )
+        digests.add(digest)
+    return digests
+
+
 def verify_capability_sources(request, *, root, trust, runtime_sources):
     """Close every selected operation over trusted signatures and real retained bytes.
 
@@ -345,7 +427,9 @@ def verify_capability_sources(request, *, root, trust, runtime_sources):
             sha(fresh(runtime["environment_source_path"])) == runtime["environment_source_sha256"],
             "capability runtime identity is invalid or differs from its binding",
         )
-        if manifest.runtime.runtime_kind is RuntimeKind.DETERMINISTIC_FUNCTION:
+        if manifest.runtime.runtime_kind is RuntimeKind.EXTERNAL_SERVICE:
+            required_sources.update(_verify_local_service_sources(root, manifest, runtime, step))
+        elif manifest.runtime.runtime_kind is RuntimeKind.DETERMINISTIC_FUNCTION:
             module, qualified_name = manifest.runtime.adapter_ref.split(":", 1)
             _require(
                 Path(runtime["implementation_path"])

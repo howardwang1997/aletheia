@@ -20,7 +20,8 @@ from tests.protocols.fixtures import fixture_by_name
 
 
 @pytest.fixture
-def case(tmp_path):
+def case(tmp_path, request):
+    service_operation = getattr(request, "param", None)
     now = datetime(2026, 9, 9, tzinfo=timezone.utc)
     source_root = tmp_path / "sources"
     keys = {name: Ed25519PrivateKey.generate() for name in ("auditor", "qualifier")}
@@ -102,9 +103,77 @@ def case(tmp_path):
                 retain_schema_refs(nested)
 
     retain_schema_refs(base)
+    service = None
+    service_runtime = {}
+    service_materials = set()
+    provider_artifacts = ()
+    if service_operation is not None:
+        from aletheia.protocols.service_capabilities import local_service_capability_sources
+
+        service = local_service_capability_sources(service_operation)
+        contract = service.contract
+        contract_payload = closure.canonical_json_bytes(contract)
+        service_sha = put(contract_payload)
+        service_path = tmp_path / "service-contract.json"
+        service_path.write_bytes(contract_payload)
+        service_path.chmod(0o400)
+        service_materials.update(put(payload) for payload in service.source_bytes.values())
+        service_materials.update(
+            put(closure.canonical_json_bytes(s)) for s in service.schemas.values()
+        )
+        service_materials.add(service_sha)
+        impl = service.implementation_path
+        impl_sha = closure.sha(impl.read_bytes())
+        base.update(
+            external_action_kind=service_operation,
+            operation_id="operation." + service_operation,
+            side_effect_class=contract["behavior"]["side_effect_class"],
+        )
+        base["runtime"].update(
+            adapter_ref=contract["adapter_ref"],
+            runtime_kind="external_service",
+            implementation_sha256=impl_sha,
+            determinism="declared_stochastic",
+            frozen_seeds=[],
+            checkpoint_supported=False,
+            reconciliation_supported=True,
+        )
+        base["applicability"].update(
+            minimum_batch_size=1,
+            maximum_batch_size=1,
+            required_condition_sha256s=sorted(
+                [*base["applicability"]["required_condition_sha256s"], service_sha]
+            ),
+        )
+        base["retry"] = {"mode": "never", "maximum_attempts_per_scientific_slot": 1}
+        for failure in base["failure_modes"]:
+            failure["disposition"] = "blocked"
+        for direction in ("input", "output"):
+            port = copy.deepcopy(base[direction + "_ports"][0])
+            spec = contract[direction + "_ports"][0]
+            port.update(
+                port_id=spec["port_id"], artifact_kind=spec["artifact_kind"], multiplicity="one"
+            )
+            port["schema_ref"]["schema_sha256"] = contract["schema_sources"][spec["schema"]]
+            base[direction + "_ports"] = [port]
+        if service_operation == "prepare_validation_campaign":
+            provider_artifacts = (
+                NS(
+                    role=NS(value="provider_receipt"),
+                    required=True,
+                    schema_sha256=contract["schema_sources"]["committed_campaign"],
+                ),
+            )
+        service_runtime = dict(
+            service_operation=service_operation,
+            service_contract_sha256=service_sha,
+            service_contract_path=str(service_path),
+            service_source_paths={n: str(p) for n, p in service.source_paths.items()},
+        )
     draft = CapabilityManifestV2.model_validate(base)
     definition = closure.definition_sha256(draft)
     required_sources = closure.contract_sources(source_root, draft) | {impl_sha, env_sha}
+    required_sources.update(service_materials)
 
     def issue(role, kind, issued_at, materials, **fields):
         pin = pins[role]
@@ -203,9 +272,15 @@ def case(tmp_path):
             ),
             steps=(
                 NS(
+                    role=NS(
+                        value=service.contract["behavior"]["role"]
+                        if service
+                        else "scientific_executor"
+                    ),
+                    expected_artifacts=provider_artifacts,
                     capability_requirement=NS(
                         manifest_sha256=manifest.manifest_sha256, audit_bindings=bindings
-                    )
+                    ),
                 ),
             ),
         ),
@@ -218,12 +293,13 @@ def case(tmp_path):
     )
     runtime = {
         manifest.manifest_sha256: dict(
-            adapter_ref="check_impl:execute",
+            adapter_ref=manifest.runtime.adapter_ref,
             implementation_path=str(impl),
             implementation_sha256=impl_sha,
             environment_sha256=env_sha,
             environment_source_sha256=env_sha,
             environment_source_path=str(env),
+            **service_runtime,
         )
     }
     return NS(
@@ -236,6 +312,7 @@ def case(tmp_path):
         put=put,
         contract_digests=contract_digests,
         required_sources=required_sources,
+        service=service,
     )
 
 
@@ -257,6 +334,100 @@ def test_environment_identity_cannot_alias_another_retained_source(case):
     runtime["environment_source_sha256"] = runtime["implementation_sha256"]
     with pytest.raises(closure.CapabilitySourceVerificationError, match="retained source bytes"):
         verify(case)
+
+
+@pytest.mark.parametrize("case", ["load_raw_run", "prepare_validation_campaign"], indirect=True)
+def test_signed_local_service_contract_covers_actual_io_and_sources(case):
+    assert verify(case)["verified_capabilities"]
+    manifest = case.request.capability_catalog.manifests[0]
+    assert manifest.runtime.runtime_kind.value == "external_service"
+    assert (
+        manifest.output_ports[0].schema_ref.schema_sha256
+        == case.service.contract["schema_sources"]["output"]
+    )
+
+
+@pytest.mark.parametrize("case", ["load_raw_run", "prepare_validation_campaign"], indirect=True)
+@pytest.mark.parametrize(
+    "change",
+    [
+        "contract_bytes",
+        "source_missing",
+        "source_path",
+        "schema_missing",
+        "wrong_operation",
+        "wrong_role",
+    ],
+)
+def test_local_service_closure_rejects_rebound_contracts(case, change):
+    runtime = next(iter(case.runtime.values()))
+    if change == "contract_bytes":
+        path = Path(runtime["service_contract_path"])
+        path.chmod(0o600)
+        path.write_bytes(b"{}")
+        path.chmod(0o400)
+    elif change == "source_missing":
+        digest = case.service.contract["source_files"]["research_controller/external_rpc_server.py"]
+        (case.root / "objects" / digest[:2] / digest).unlink()
+    elif change == "source_path":
+        runtime["service_source_paths"]["research_controller/external_rpc_server.py"] = str(
+            case.impl
+        )
+    elif change == "schema_missing":
+        digest = case.service.contract["schema_sources"]["wire_response"]
+        (case.root / "objects" / digest[:2] / digest).unlink()
+    elif change == "wrong_operation":
+        runtime["service_operation"] = "issue_validation_receipt"
+    elif change == "wrong_role":
+        case.request.protocol.steps[0].role = NS(value="scientific_executor")
+    with pytest.raises((closure.CapabilitySourceVerificationError, FileNotFoundError)):
+        verify(case)
+
+
+@pytest.mark.parametrize("case", ["prepare_validation_campaign"], indirect=True)
+@pytest.mark.parametrize("change", ["missing", "wrong_schema", "optional"])
+def test_validation_service_requires_the_persistent_campaign_artifact(case, change):
+    step = case.request.protocol.steps[0]
+    if change == "missing":
+        step.expected_artifacts = ()
+    elif change == "wrong_schema":
+        step.expected_artifacts[0].schema_sha256 = case.service.contract["schema_sources"]["output"]
+    else:
+        step.expected_artifacts[0].required = False
+    with pytest.raises(
+        closure.CapabilitySourceVerificationError, match="committed campaign receipt"
+    ):
+        verify(case)
+
+
+@pytest.mark.parametrize("case", ["prepare_validation_campaign"], indirect=True)
+@pytest.mark.parametrize(
+    "change", ["pure", "no_write", "wrong_output", "extra_port", "unbound_contract"]
+)
+def test_validation_service_rejects_inaccurate_capability_declarations(case, change):
+    value = case.request.capability_catalog.manifests[0].model_dump(mode="json")
+    runtime = next(iter(case.runtime.values()))
+    if change == "pure":
+        value["runtime"]["determinism"] = "deterministic"
+    elif change == "no_write":
+        value["side_effect_class"] = "none"
+    elif change == "wrong_output":
+        value["output_ports"][0]["schema_ref"]["schema_sha256"] = case.service.contract[
+            "schema_sources"
+        ]["committed_campaign"]
+    elif change == "extra_port":
+        extra = copy.deepcopy(value["output_ports"][0])
+        extra["port_id"] = "output.whole_assessment"
+        value["output_ports"].append(extra)
+    else:
+        value["applicability"]["required_condition_sha256s"].remove(
+            runtime["service_contract_sha256"]
+        )
+    manifest = CapabilityManifestV2.model_validate(value)
+    with pytest.raises(closure.CapabilitySourceVerificationError, match="local service"):
+        closure._verify_local_service_sources(
+            case.root, manifest, runtime, case.request.protocol.steps[0]
+        )
 
 
 @pytest.mark.parametrize(

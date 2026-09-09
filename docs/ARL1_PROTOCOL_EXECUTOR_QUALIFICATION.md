@@ -71,6 +71,17 @@ Preparation, issuance and keyless audit freshly reopen these materials. The sour
 authenticity, custody and contract bindings; the delegated capability auditor remains responsible
 for the meaning and adequacy of the checks. These engineering records confer no scientific authority.
 
+The local `load_raw_run` and `prepare_validation_campaign` operations use explicit
+`external_service` capabilities and Unix-domain RPC. Their retained contracts bind the actual
+service factories, implementation files and request/result schemas. Raw-run lookup takes the exact
+quest/action/slot selector and returns a verified envelope; a signed pending status remains a typed
+wait condition. Validation preparation returns a nullable campaign digest and separately retains the
+committed signed campaign as a required provider receipt. Its first call uses service-owned clocks
+and durable publication; later calls verify and return the original committed campaign. These service
+contracts require one invocation per batch, no new infrastructure attempts and no network egress.
+Static resources must support the exact external action. Signed capability audits, deployment
+bindings and source replay remain required before qualification.
+
 Qualification and later audit timestamps are not accepted from evidence JSON. The issuance and
 verification manifests contain at most a 24-hour approved operation window; after fresh source
 replay the runtime reads PostgreSQL `clock_timestamp()` through the pinned database, derives the
