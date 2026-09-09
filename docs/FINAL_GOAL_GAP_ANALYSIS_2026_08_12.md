@@ -13,19 +13,6 @@ Claude and GPT are now interchangeable at the orchestrator/worker boundary. That
 lock-in, but it does not prove scientific or operational parity; both providers still need the same
 live evaluation matrix.
 
-## High-priority defects fixed in this change
-
-| Defect | Consequence before | Resolution |
-|---|---|---|
-| Discovery screened on the full dataset | Candidate selection could see rows later described as confirmation data | Discovery now receives only the harness-owned exploration partition and must reuse the exact split hash downstream |
-| Literature retrieval error was fail-open | `grounded=None` could still become a survivor | A survivor now requires `grounded is True`; unavailable retrieval is an explicit rejection |
-| Reviewer author was hard-coded incorrectly | Pure Grok discovery could be reviewed by Grok, and a GPT-authored demonstration could be audited by OpenAI | Discovery excludes every actual author; demonstration audit dynamically excludes the configured orchestrator vendor and fails closed if it leaks back in |
-| Exploratory prefilter conflated signal with support | A candidate promoted on separation could be labelled `holds=True` even when its pre-registration did not fire | `survives` is now explicitly exploratory; `holds` records only the actual pre-registered rule, control, and probe verdict |
-| Claude-specific tool/runtime boundary | GPT could not run scoping, workers, literature tools, or demonstrations | Tools now have one provider-neutral contract, adapted to Claude MCP or strict OpenAI Responses functions |
-
-These repairs close real defects. They do not make exploratory discovery itself confirmatory: only
-the untouched confirmation partition can do that.
-
 ## P0 blockers before unattended real science
 
 ### 1. A campaign can adapt to a reused confirmation set

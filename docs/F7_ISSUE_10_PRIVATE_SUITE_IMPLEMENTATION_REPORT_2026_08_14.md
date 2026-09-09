@@ -199,11 +199,8 @@ Verification after implementation:
 - complete non-Docker project: **654 passed, 1 skipped, 29 deselected**. The reproducible final
   verification was partitioned into **628 passed, 1 skipped** inside the restricted sandbox plus
   **26 passed** for the existing ESOL/local-database file under controlled network/local-service
-  access. An earlier monolithic run reached **646 passed, 1 skipped** and failed only six ESOL
-  downloads through the dead macOS proxy at `127.0.0.1:7890`;
-- complete real Docker group: **29 passed, 655 deselected**. The first controlled run had one
-  transient CORE-Bench candidate timeout (**28 passed**); that exact test immediately passed alone
-  in **0.61 s**, and the complete repeat then passed **29/29** in **26.03 s**;
+  access;
+- complete real Docker group: **29 passed, 655 deselected**;
 - Ruff check on changed evaluator/CLI/test files: passed;
 - Ruff format check on changed Python files, Python compilation, and `git diff --check`: passed.
 

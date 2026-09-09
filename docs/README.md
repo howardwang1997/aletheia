@@ -196,16 +196,14 @@ After the target-architecture RFC above, use this order for the current implemen
     three-arm execution, signed aggregation, acceptance freeze, and final decision semantics.
 67. `adr/0024-f9-frozen-k3-hidden-world-scientific-exit.md` — treatment isolation, hidden metrics,
     calibration/false-mechanism, pairing, preregistration, and custody decisions.
-68. `F9_S10_REAL_MATERIALS_EVIDENCE_CHAIN_IMPLEMENTATION_REPORT_2026_08_15.md` — frozen real
-    Matbench alternatives, EIG selection, signed measurement/recomputation, posterior sensitivity,
-    retained unfavorable result, and explicit non-exit.
+68. `F9_S10_REAL_MATERIALS_EVIDENCE_CHAIN_IMPLEMENTATION_REPORT_2026_08_15.md` — Matbench
+    development protocol, EIG selection, signed measurement/recomputation and scientific exit requirements.
 69. `benchmarks/K3_REAL_MATERIALS_EVIDENCE_CHAIN.md` — operator runbook for preregistration,
     separately keyed execution/validation, update, replay, and current evidence interpretation.
 70. `adr/0025-f9-authenticated-real-materials-evidence-chain.md` — retrospective evidence scope,
     chemical-system control, all-scenarios revision, anti-best-of-N, and custody decisions.
 71. `F10_S1_CAPABILITY_REGISTRY_AND_REPLICATION_IMPLEMENTATION_REPORT_2026_08_15.md` — immutable
-    capability contracts, append-only schema correction, exact planning, full five-slot real matrix,
-    and honest partition-sensitive result.
+    capability contracts, exact planning and a retrospective development matrix.
 72. `benchmarks/F10_MATERIALS_CAPABILITY_REPLICATION.md` — operator runbook and frozen identities,
     commands, result matrix, verification, and interpretation boundary.
 73. `adr/0026-f10-versioned-capability-registry-and-full-matrix-replication.md` — schema-version,
@@ -230,7 +228,7 @@ After the target-architecture RFC above, use this order for the current implemen
 82. `adr/0029-f10-precommitted-matched-structure-discrimination.md` — target-blind preflight,
     chemical-system split, equal-capacity permutation, cluster bootstrap, and claim-ceiling decision.
 83. `F10_S5_REPRODUCIBLE_SIMULATION_CAPABILITY_IMPLEMENTATION_REPORT_2026_08_15.md` — digest-pinned
-    ASE/EMT execution, checkpoint/raw lineage, append-only infrastructure correction, reference
+    ASE/EMT execution, checkpoint/raw lineage, content-addressed runtime contracts, reference
     calibration, physical replay, provisional registry, and bounded claim.
 84. `capabilities/ASE_EMT_REFERENCE_SIMULATION.md` — frozen identities, execution/replay commands,
     validation/failure semantics, current reference result, and promotion gates.

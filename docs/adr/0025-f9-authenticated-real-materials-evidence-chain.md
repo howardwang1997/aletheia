@@ -35,37 +35,14 @@ it cannot be relabeled as a prospective laboratory result or external replicatio
    scenario. Otherwise narrow it. Nominal evidence alone cannot retire an explanation.
 9. Withhold mechanism claims: this experiment diagnoses model generalization, not a physical band-gap
    mechanism.
-10. Label the evidence `retrospective_internal_confirmation`; distinct local keys authenticate
+10. Label public analysis as a retrospective development diagnostic; distinct local keys authenticate
     artifacts and process separation but do not establish external custody.
-
-## Consequences
-
-- The selected controlled experiment had 0.3804 nats expected information gain, versus 0.00315 for
-  the random-holdout-only candidate.
-- The first 20260816 run observed an unseen-specific pattern, but its original implementation used
-  nominal-only retirement. The immutable artifacts and exact source were retained; the terminal
-  revision was superseded rather than overwritten.
-- A new implementation and new 20260817 partition were frozen after that audit. It reproduced the
-  existence of compression but classified it as generic shrinkage, with only 1.34% worst-case
-  effective-count contraction. The real alternatives → experiment → validated update chain is
-  complete, but the substantial-contraction scientific gate is not.
-- Cross-partition instability becomes a registered-replication target for F10 rather than being
-  hidden or resolved by choosing the favorable seed.
 
 ## Rejected alternatives
 
 ### Treat the exploratory aggregate as confirmation
 
-Rejected because thresholds were chosen after inspecting that result.
-
-### Keep the favorable v1 result and ignore v2
-
-Rejected as best-of-N selection. Both attempts and their opposite classifications are material
-scientific evidence.
-
-### Retire H0 from the nominal posterior alone
-
-Rejected after audit. Under the frozen skeptical likelihood, v1 left H0 above the retirement floor.
+An outcome used to select thresholds cannot independently confirm those thresholds.
 
 ### Call distinct local HMAC keys independent replication
 

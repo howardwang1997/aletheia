@@ -1407,7 +1407,7 @@ suite、passing F7 custody 与 live receipts。完整报告见
 
 ### F9-S10：Authenticated real-materials evidence chain
 
-**工程状态（2026-08-15）：真实链已完成；robust contraction 未通过，scientific exit 仍 blocked。**
+**工程状态：协议实现可用；科学出口仍须独立验收。**
 新增独立 materials K3 protocol：在 `matbench_expt_gap` 上同时维护“无实质压缩”、“未见化学体系产生额外
 外推压缩”和“随机森林通用收缩”三种解释。两个 observation-blind 候选实验共享 prior；EIG 机械选择
 unseen-system vs represented-system control（0.380368 nats），而不是 random-holdout-only（0.003148
@@ -1419,12 +1419,9 @@ Magpie features、重新分区/训练/预测/自助法，只有 exact result mat
 该 signed validation，完整重算三组 posterior；mechanism claim 因为只是 model diagnostic 而强制 withheld。
 retirement 必须在所有 likelihood-sensitivity scenario 中低于 floor，nominal-only retirement 已被拒绝。
 
-v1/seed 20260816 得到 unseen-specific outcome，但 audit 发现旧 revision 指令只看 nominal posterior；证据和
-对应源码保留，terminal revision 明确 superseded。v2 使用新 implementation 与未打开的 seed 20260817，得到
-unseen/control compression 0.2409/0.1948，delta 0.0461，95% cluster-bootstrap CI
-[-0.0140, 0.1145]，按 frozen rule 为 `generic_model_shrinkage`。H2 在所有 sensitivity scenario 中获胜，
-但最弱 effective-hypothesis-count contraction 仅 0.0134，低于 0.10 gate；最终 disposition 是
-`valid_update_without_robust_contraction`，不得挑选较有利的 v1 伪造 exit。
+该公共 benchmark 路径属于 retrospective development diagnostic。结果须来自实现当前协议的
+已验证 bundle，并保留 development 标签；本地重复计算不构成独立确证。
+科学出口要求完整预注册矩阵、robust contraction 门槛及与主张匹配的独立 custody。
 
 完整实现与运行报告见
 `F9_S10_REAL_MATERIALS_EVIDENCE_CHAIN_IMPLEMENTATION_REPORT_2026_08_15.md`，operator runbook 见
@@ -1746,8 +1743,7 @@ ceiling、controls/assumptions/failure/resource/nondeterminism/reproduction/safe
 create-only CLI。confirmatory query 对 provisional capability 同时返回 `capability_not_registered` 与
 `evidence_level_insufficient`，不做 fuzzy fallback。
 
-首次冻结的 v1 manifest 被发现 output schema 与真实 executor result 不一致；该对象没有改写。v2.0.0 以
-exact v1 hash supersede，schema 内容变化现在强制 major bump，registry v2 同时保留两版。真实 replication
+Capability schema 内容变化要求 major version 更新，每版保留显式 predecessor 绑定。Development replication
 plan 在任何测量前冻结 20260818–20260822 五个 seed、每槽一次 measurement、两次 exact recomputation、
 全槽保留和 4/5 consensus；同一公开数据集的 partitions 禁止做 joint Bayesian pseudo-replication。
 
@@ -2983,8 +2979,7 @@ trigger 拒绝 UPDATE/DELETE，四个 concurrent identical writers 收敛为一�
 JSON，执行 validate/persist/inspect，不联网且 DB 中不保存文献原文。聚焦 schema/access/
 persistence/migration 验收为 40 passed；此能力仍未接入当前 SURVEY/driver，也没有 live provider、
 PDF/HTML/OCR extractor、response archive、coverage/novelty calibration 或真实科学结论。最终全项目
-为 697 个非 Docker 测试通过（另 1 skip）及 29 个真实 Docker 测试通过；首次 Docker run 的一个
-client-exit transient 已由 exact 单测与完整 29 项复跑通过确认并如实记录。下一切片为 F8-S2
+为 697 个非 Docker 测试通过（另 1 skip）及 29 个真实 Docker 测试通过。下一切片为 F8-S2
 deterministic query planning、multi-source response caching 与 citation traversal。
 
 F8-S2 isolated evidence harness 也已工程完成：`QueryTermSet` 强制九类 deterministic core axes，

@@ -10,19 +10,14 @@ would permit optional stopping and result selection. F10 also needs an explicit 
 planner, executor, observation parser, and validator, with provisional capabilities unable to emit
 confirmatory or mechanism evidence.
 
-The first frozen capability manifest exposed a contract defect: its output schema described a
-summary containing `result_sha256`, while the bound executor actually returned a complete
-`MaterialsExperimentResult`. Replacing that manifest in place would destroy the audit trail.
-
 ## Decision
 
 1. Capability manifests are immutable, semantic-versioned objects in append-only registry
    snapshots. Discovery is exact; unknown or ineligible capabilities return `unsupported`.
 2. Any input, output, or preregistration schema-content change is breaking and requires a major
    version increment. Adding newly required metadata is also breaking.
-3. The defective provisional v1 manifest remains frozen. Provisional v2.0.0 explicitly supersedes
-   it and its schemas validate the actual preregistration, complete executor result, and replication
-   plan objects.
+3. Provisional capability schemas must validate the complete preregistration, executor result
+   and replication plan objects. Each new version binds its exact predecessor.
 4. Provisional capabilities are limited to exploratory evidence and cannot support mechanism or
    experimental-causal claims. Registered promotion requires independent validation and review
    evidence that this local run does not possess.
@@ -36,7 +31,7 @@ summary containing `result_sha256`, while the bound executor actually returned a
 
 ## Consequences
 
-- The registry can retain and explain contract mistakes without rewriting history.
+- The registry preserves each immutable contract and its explicit version lineage.
 - A capability query cannot silently cross evidence, metadata, safety, or approval boundaries.
 - The completed materials matrix is an auditable capability demonstration, not a registered
   capability or external replication.

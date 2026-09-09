@@ -129,11 +129,6 @@ Focused acceptance after implementation:
 - authoritative complete real Docker isolation rerun:
   **29 passed, 698 deselected** in **41.56 s**.
 
-The first Docker pass had **28 passed, 1 failed** when a CORE-Bench environment probe container
-printed its complete valid JSON but the Docker client did not exit cleanly. The exact failed test
-passed alone immediately in **0.80 s**, and the full 29-test rerun then passed. This is recorded as a
-container-runtime transient, not hidden or counted as the acceptance result.
-
 ## Limits and next work
 
 - The store records raw-response hashes but does not retain replay bytes. A reviewed,
