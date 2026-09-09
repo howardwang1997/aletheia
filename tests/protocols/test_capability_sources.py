@@ -69,8 +69,42 @@ def case(tmp_path):
     base["qualification"] = dict(
         status="provisional", qualification_rule_sha256=closure.canonical_sha256(closure.RULE)
     )
+    contract_digests = {"qualification_rule": put(closure.canonical_json_bytes(closure.RULE))}
+
+    def policy(name):
+        digest = put(closure.canonical_json_bytes({"unit_test_contract": name}))
+        contract_digests[name] = digest
+        return digest
+
+    base["principal"]["authority_policy_sha256"] = policy("authority")
+    base["applicability"]["required_condition_sha256s"] = [policy("required_condition")]
+    base["applicability"]["excluded_condition_sha256s"] = [policy("excluded_condition")]
+    for failure in base["failure_modes"]:
+        failure["detection_rule_sha256"] = policy("failure_" + failure["failure_id"])
+    base["safety"]["approval_policy_sha256"] = policy("safety_approval")
+    base["safety"]["hazard_sha256s"] = [policy("hazard")]
+    for name in ("license", "egress", "retention"):
+        base["license_egress"][name + "_policy_sha256"] = policy(name)
+    for name in ("idempotency_rule_sha256", "reconciliation_rule_sha256"):
+        if base["retry"].get(name) is not None:
+            base["retry"][name] = policy(name)
+
+    def retain_schema_refs(value):
+        if isinstance(value, dict):
+            if value.get("schema_name") == "aletheia.json_schema_ref":
+                digest = put(closure.canonical_json_bytes({"type": "object"}))
+                value["schema_sha256"] = digest
+                contract_digests["schema"] = digest
+            for nested in value.values():
+                retain_schema_refs(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                retain_schema_refs(nested)
+
+    retain_schema_refs(base)
     draft = CapabilityManifestV2.model_validate(base)
     definition = closure.definition_sha256(draft)
+    required_sources = closure.contract_sources(source_root, draft) | {impl_sha, env_sha}
 
     def issue(role, kind, issued_at, materials, **fields):
         pin = pins[role]
@@ -111,7 +145,7 @@ def case(tmp_path):
                         {
                             "check_id": "unit-test-source-contract",
                             "passed": True,
-                            "source_sha256s": sorted([impl_sha, env_sha]),
+                            "source_sha256s": sorted(required_sources),
                         }
                     ],
                 }
@@ -121,7 +155,7 @@ def case(tmp_path):
             "auditor",
             "audit",
             now - timedelta(seconds=10),
-            [impl_sha, env_sha, check_result],
+            [*required_sources, check_result],
             check_result_sha256=check_result,
             audit_kind=kind.value,
             audit_policy_sha256=closure.expected_capability_audit_policy_sha256(draft, kind),
@@ -200,6 +234,8 @@ def case(tmp_path):
         impl=impl,
         audits=audits,
         put=put,
+        contract_digests=contract_digests,
+        required_sources=required_sources,
     )
 
 
@@ -213,6 +249,70 @@ def test_signed_sources_and_separate_qualification_are_verified(case):
     result = verify(case)
     assert len(result["verified_capabilities"]) == 1
     assert result["scientific_authority"] is False
+
+
+def test_environment_identity_cannot_alias_another_retained_source(case):
+    runtime = next(iter(case.runtime.values()))
+    runtime["environment_source_path"] = str(case.impl)
+    runtime["environment_source_sha256"] = runtime["implementation_sha256"]
+    with pytest.raises(closure.CapabilitySourceVerificationError, match="retained source bytes"):
+        verify(case)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "qualification_rule",
+        "authority",
+        "required_condition",
+        "excluded_condition",
+        "safety_approval",
+        "hazard",
+        "license",
+        "egress",
+        "retention",
+        "schema",
+    ],
+)
+def test_signed_capability_requires_retained_contract_bodies(case, name):
+    assert verify(case)["verified_capabilities"]
+    digest = case.contract_digests[name]
+    (case.root / "objects" / digest[:2] / digest).unlink()
+    with pytest.raises((closure.CapabilitySourceVerificationError, FileNotFoundError)):
+        verify(case)
+
+
+def test_failure_and_retry_rule_bodies_are_required(case):
+    manifest = case.request.capability_catalog.manifests[0]
+    for digest in {
+        *(f.detection_rule_sha256 for f in manifest.failure_modes),
+        *filter(
+            None,
+            (manifest.retry.idempotency_rule_sha256, manifest.retry.reconciliation_rule_sha256),
+        ),
+    }:
+        path = case.root / "objects" / digest[:2] / digest
+        original = path.read_bytes()
+        path.unlink()
+        with pytest.raises((closure.CapabilitySourceVerificationError, FileNotFoundError)):
+            verify(case)
+        case.put(original)
+
+
+def test_calibration_operating_envelope_source_is_required(case):
+    value = case.request.capability_catalog.manifests[0].model_dump(mode="json")
+    envelope = case.put(b"actual unit-test operating envelope")
+    value["calibration"] = {
+        "mode": "self_check",
+        "maximum_age_seconds": 60,
+        "calibration_receipt_schema": value["output_ports"][0]["schema_ref"],
+        "operating_envelope_sha256": envelope,
+    }
+    manifest = CapabilityManifestV2.model_validate(value)
+    assert envelope in closure.contract_sources(case.root, manifest)
+    (case.root / "objects" / envelope[:2] / envelope).unlink()
+    with pytest.raises((closure.CapabilitySourceVerificationError, FileNotFoundError)):
+        closure.contract_sources(case.root, manifest)
 
 
 @pytest.mark.parametrize(
@@ -327,7 +427,8 @@ def test_source_root_cannot_be_rebound_through_a_symlink(case, tmp_path):
 
 
 @pytest.mark.parametrize(
-    "change", ["failed", "empty", "scope", "missing_input", "late", "unretained"]
+    "change",
+    ["failed", "empty", "scope", "missing_input", "late", "unretained", "unchecked_policy"],
 )
 def test_audit_requires_a_retained_scoped_check_result(case, change):
     audit = closure.signed_record(
@@ -347,6 +448,8 @@ def test_audit_requires_a_retained_scoped_check_result(case, change):
         result["checks"][0]["source_sha256s"] = ["0" * 64]
     elif change == "late":
         result["checked_at"] = "2026-09-10T00:00:00+00:00"
+    elif change == "unchecked_policy":
+        result["checks"][0]["source_sha256s"].remove(case.contract_digests["authority"])
     new_digest = case.put(closure.canonical_json_bytes(result))
     audit["check_result_sha256"] = new_digest
     if change != "unretained":
@@ -354,7 +457,7 @@ def test_audit_requires_a_retained_scoped_check_result(case, change):
     else:
         audit["materials"] = [item for item in audit["materials"] if item != new_digest]
     with pytest.raises((closure.CapabilitySourceVerificationError, FileNotFoundError)):
-        closure._verify_check_result(case.root, audit)
+        closure._verify_check_result(case.root, audit, required_sources=case.required_sources)
 
 
 def _pinned_verifier(case, tmp_path):

@@ -64,7 +64,9 @@ exact canonical JSON accepted by the next phase, without an added newline.
 The verifier runtime also requires a byte-pinned capability-source configuration. Its separate
 trust and runtime inventories bind the auditor and qualifier public keys, implementation sources,
 environment identities and every selected capability. Each audit retains its signed decision and
-scoped check results with their source inputs; every referenced schema must retain its actual bytes.
+scoped check results with their source inputs. Authority, applicability, failure, retry, calibration,
+safety, license, egress and retention rules must retain their referenced bodies, as must every schema.
+Signed audit materials and checked inputs cover these contract sources as well as the runtime sources.
 Preparation, issuance and keyless audit freshly reopen these materials. The source verifier checks
 authenticity, custody and contract bindings; the delegated capability auditor remains responsible
 for the meaning and adequacy of the checks. These engineering records confer no scientific authority.

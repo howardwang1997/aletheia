@@ -8,6 +8,10 @@ No historical generation's receipt or expired commissioning window authorizes th
 
 - Reviewed source and migration inventories, backend checks and required PostgreSQL gates pass.
 - The given-protocol campaign supports recovery from its retained validation and admission rows.
+- Each selected capability binds its actual runtime and input/output contract. Retain schema and
+  policy bodies, scoped engineering checks, independent signed audits and a separate qualification
+  decision. Freeze the capability-source trust and runtime inventories outside the protocol;
+  preparation, issuance and fresh verification require the native source verifier.
 - The exact runtime tree, source archive, host identities, service operation pins, authority
   windows and resource envelope are recorded before commissioning.
 - Select an unused generation identity and database after inspecting existing target state.

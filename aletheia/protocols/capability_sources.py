@@ -36,6 +36,7 @@ RULE = {
     "distinct_auditor_and_qualifier_required": True,
     "retained_material_bytes_required": True,
     "retained_check_results_required": True,
+    "retained_contract_sources_required": True,
     "runtime_source_required": True,
     "scientific_authority": False,
 }
@@ -167,7 +168,7 @@ def signed_record(root, digest, pin, expected_schema):
     return message
 
 
-def _verify_check_result(root, record):
+def _verify_check_result(root, record, *, required_sources):
     digest = record["check_result_sha256"]
     _require(digest in record["materials"], "audit does not retain its check result")
     payload = source(root, digest)
@@ -193,6 +194,7 @@ def _verify_check_result(root, record):
         names == sorted(set(names)) and all(isinstance(n, str) and n for n in names),
         "capability check identifiers are not canonical",
     )
+    checked_sources = set()
     for check in checks:
         _require(check["passed"] is True, "capability audit contains a failed check")
         inputs = check["source_sha256s"]
@@ -202,6 +204,38 @@ def _verify_check_result(root, record):
         )
         for digest in inputs:
             source(root, digest)
+        checked_sources.update(inputs)
+    _require(
+        required_sources <= checked_sources,
+        "capability checks do not cover the retained contract sources",
+    )
+
+
+def contract_sources(root, manifest):
+    """Reopen policy, condition, rule and schema bodies referenced by one capability."""
+    digests = {
+        manifest.principal.authority_policy_sha256,
+        *manifest.applicability.required_condition_sha256s,
+        *manifest.applicability.excluded_condition_sha256s,
+        *(failure.detection_rule_sha256 for failure in manifest.failure_modes),
+        manifest.safety.approval_policy_sha256,
+        *manifest.safety.hazard_sha256s,
+        manifest.license_egress.license_policy_sha256,
+        manifest.license_egress.egress_policy_sha256,
+        manifest.license_egress.retention_policy_sha256,
+        manifest.qualification.qualification_rule_sha256,
+    }
+    for optional in (
+        manifest.calibration.operating_envelope_sha256,
+        manifest.retry.idempotency_rule_sha256,
+        manifest.retry.reconciliation_rule_sha256,
+    ):
+        if optional is not None:
+            digests.add(optional)
+    for digest in sorted(digests):
+        source(root, digest)
+    digests.update(schema_sources(root, manifest.model_dump(mode="json")))
+    return digests
 
 
 def verify_capability_sources(request, *, root, trust, runtime_sources):
@@ -283,6 +317,7 @@ def verify_capability_sources(request, *, root, trust, runtime_sources):
             "capability auditor independence is invalid or differs from its binding",
         )
         subject = definition_sha256(manifest)
+        required_sources = contract_sources(root, manifest)
         runtime = runtime_sources[manifest.manifest_sha256]
         _require(
             runtime["adapter_ref"] == manifest.runtime.adapter_ref,
@@ -403,7 +438,16 @@ def verify_capability_sources(request, *, root, trust, runtime_sources):
                 raise CapabilitySourceVerificationError(
                     "capability source verification failed: runtime['environment_source_sha256'] in record['materials']"
                 )
-            _verify_check_result(root, record)
+            _require(
+                required_sources <= set(record["materials"]),
+                "capability audit does not retain its contract sources",
+            )
+            _verify_check_result(
+                root,
+                record,
+                required_sources=required_sources
+                | {runtime["implementation_sha256"], runtime["environment_source_sha256"]},
+            )
             audit_hashes.add(binding.receipt_sha256)
         qualified_hashes = set(manifest.qualification.evidence_receipt_sha256s)
         _require(
