@@ -61,6 +61,14 @@ acknowledgement. The source verifier and qualification signer load only their ow
 the auditor loads neither private key and must use a third application principal. CLI output is the
 exact canonical JSON accepted by the next phase, without an added newline.
 
+The verifier runtime also requires a byte-pinned capability-source configuration. Its separate
+trust and runtime inventories bind the auditor and qualifier public keys, implementation sources,
+environment identities and every selected capability. Each audit retains its signed decision and
+scoped check results with their source inputs; every referenced schema must retain its actual bytes.
+Preparation, issuance and keyless audit freshly reopen these materials. The source verifier checks
+authenticity, custody and contract bindings; the delegated capability auditor remains responsible
+for the meaning and adequacy of the checks. These engineering records confer no scientific authority.
+
 Qualification and later audit timestamps are not accepted from evidence JSON. The issuance and
 verification manifests contain at most a 24-hour approved operation window; after fresh source
 replay the runtime reads PostgreSQL `clock_timestamp()` through the pinned database, derives the

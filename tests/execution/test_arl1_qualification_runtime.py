@@ -44,6 +44,7 @@ from aletheia.research_controller.step_executor import (
 )
 from aletheia.research_kernel.policy import ed25519_key_id, ed25519_public_key_hex
 from aletheia.research_kernel.schemas import canonical_json_bytes
+from aletheia.protocols import capability_sources as capability_source_module
 
 from .test_arl1_qualification import (
     VERIFIER_PRIVATE_KEY,
@@ -185,6 +186,17 @@ def _verifier_runtime_config(
     )
     return ARL1EvidenceVerifierRuntimeConfigV1(
         campaign_runtime=campaign,
+        capability_sources={
+            "source_root": str(tmp_path / "capability-sources"),
+            "trust_path": str(tmp_path / "capability-trust.json"),
+            "trust_sha256": _sha("capability-trust"),
+            "runtime_sources_path": str(tmp_path / "capability-runtime-sources.json"),
+            "runtime_sources_sha256": _sha("capability-runtime-sources"),
+            "implementation_source_path": str(Path(capability_source_module.__file__).resolve()),
+            "implementation_source_sha256": hashlib.sha256(
+                Path(capability_source_module.__file__).read_bytes()
+            ).hexdigest(),
+        },
         execution_authority_pin=bridge.execution_pin,
         validator_authority_pin=bridge.validator_pin,
         admission_authority_pin=bridge.admission_pin,
@@ -521,3 +533,21 @@ def test_every_programmatic_qualification_operation_checks_schema_before_inputs(
 
     with pytest.raises(RuntimeError, match="schema drift sentinel"):
         invoke(deployment)
+
+
+def test_qualification_config_requires_capability_sources_and_separates_keys(
+    monkeypatch, tmp_path, arl1_case
+):
+    bundle, _key, _verifier = arl1_case
+    config = _verifier_runtime_config(monkeypatch, tmp_path, bundle)
+    payload = config.model_dump(mode="python")
+    del payload["capability_sources"]
+    with pytest.raises(ValidationError, match="capability_sources"):
+        ARL1EvidenceVerifierRuntimeConfigV1.model_validate(payload)
+    for path in (
+        config.capability_sources.trust_path,
+        config.capability_sources.runtime_sources_path,
+        config.capability_sources.source_root + "/key.ed25519",
+    ):
+        with pytest.raises(ARL1QualificationRuntimeError, match="signing key overlaps"):
+            qualification_runtime._assert_secret_path_separation(config, path)

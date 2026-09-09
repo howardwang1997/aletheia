@@ -53,7 +53,7 @@ from aletheia.observations.store import (
     get_observation_admission_by_slot,
     get_scientific_execution_authorization_by_slot,
 )
-from aletheia.protocols.compiler import verify_compilation
+from aletheia.protocols.compiler import ProtocolCompilationRequest, verify_compilation
 from aletheia.qualification_campaign import (
     QualificationTargetCampaignReceiptV1,
     QualificationTargetCampaignRequestV1,
@@ -688,6 +688,12 @@ class ResearchKernelAuditPort(Protocol):
     def audit(self, quest_id: str, *, expected_scope_binding: object | None = None) -> object: ...
 
 
+class CapabilitySourceVerificationPort(Protocol):
+    def verify(
+        self, request: ProtocolCompilationRequest, *, observed_at: datetime
+    ) -> dict[str, object]: ...
+
+
 @dataclass(frozen=True)
 class _ExpectedArchiveObject:
     object_sha256: str
@@ -1048,6 +1054,7 @@ class PostgreSQLARL1EvidenceVerifier:
         committed_validation_source: CommittedValidationSourcePort,
         observation_verification: CommittedValidationSourceVerificationContext,
         kernel_store: ResearchKernelAuditPort,
+        capability_sources: CapabilitySourceVerificationPort,
         trusted_verifier_pins: tuple[ARL1EvidenceVerifierPinV1, ...],
         signing_private_key: bytes | None = None,
         signing_pin_sha256: str | None = None,
@@ -1069,6 +1076,9 @@ class PostgreSQLARL1EvidenceVerifier:
         self.committed_validation_source = committed_validation_source
         self.observation_verification = observation_verification
         self.kernel_store = kernel_store
+        if not callable(getattr(capability_sources, "verify", None)):
+            raise ValueError("ARL-1 requires a capability source verifier")
+        self.capability_sources = capability_sources
         self.trusted_verifier_pins = trusted_verifier_pins
         self._pins = {item.pin_sha256: item for item in trusted_verifier_pins}
         self._signing_private_key = signing_private_key
@@ -1189,6 +1199,20 @@ class PostgreSQLARL1EvidenceVerifier:
         *,
         observed_at: datetime,
     ) -> ARL1EvidenceArchiveManifestV1:
+        try:
+            sources = self.capability_sources.verify(
+                evidence.compilation_request, observed_at=observed_at
+            )
+            expected_capabilities = {
+                step.capability_requirement.manifest_sha256
+                for step in evidence.compilation_request.protocol.steps
+            }
+            if sources["scientific_authority"] is not False or set(
+                sources["verified_capabilities"]
+            ) != expected_capabilities:
+                raise ValueError("capability source verification returned another scope")
+        except Exception as exc:  # noqa: BLE001 - source authority must fail closed
+            raise ARL1SourceVerificationError("ARL-1 capability source verification failed") from exc
         manifest, _payloads = _verify_manifest(
             self.archive,
             manifest_sha256=evidence.source_evidence_archive_manifest_sha256,
