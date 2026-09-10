@@ -342,6 +342,80 @@ def test_load_committed_admission_recovers_after_restart_without_new_authority(
         recovered.load_committed_admission(**lookup)
 
 
+def test_load_committed_admission_replays_after_the_observation_window_closes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bridge, decision, audit, verification = _case(monkeypatch)
+    transaction = _TransactionProbe()
+    kernel = _KernelStore(audit)
+    rows = []
+    monkeypatch.setattr(
+        coordinator_module, "get_observation_admission_by_decision",
+        lambda _session, decision_sha256: next(
+            (row for row in rows if row.decision_sha256 == decision_sha256), None
+        ),
+    )
+    monkeypatch.setattr(
+        coordinator_module, "get_observation_admission_by_slot",
+        lambda _session, quest_id, scientific_slot_id: next(
+            (row for row in rows
+             if row.quest_id == quest_id and row.scientific_slot_id == scientific_slot_id), None
+        ),
+    )
+    monkeypatch.setattr(
+        coordinator_module, "record_observation_admission",
+        lambda _session, write: rows.append(write) or AppendReceipt(
+            identity_sha256=write.committed_admission_sha256, created=True,
+        ),
+    )
+    times = iter(decision.message.decided_at + timedelta(seconds=i) for i in range(1, 8))
+    coordinator = PostgreSQLAtomicObservationAdmissionCoordinator(
+        kernel_store=kernel, kernel_authority=_KernelAuthority(), verification=verification,
+        controller_principal_id="controller:observation-admission",
+        session_scope_factory=transaction.scope, database_clock=lambda _session: next(times),
+    )
+    action = decision.message.committed_validation_receipt.message.receipt.message.raw_run.scientific_authorization.message.action_protocol_binding.action
+    lookup = dict(
+        quest_id=action.quest_id, action_sha256=action.object_sha256,
+        scientific_slot_id=decision.message.scientific_slot_id,
+    )
+    first = coordinator.commit_and_incorporate(decision)
+
+    deadline = decision.message.committed_validation_receipt.message.receipt.message.raw_run.scientific_authorization.message.observation_admission_deadline
+
+    class NoNewAuthority:
+        def authorize_observation_incorporation(self, **kwargs):
+            raise AssertionError("recovery must not request another Kernel signature")
+
+    recovered = PostgreSQLAtomicObservationAdmissionCoordinator(
+        kernel_store=kernel, kernel_authority=NoNewAuthority(), verification=verification,
+        controller_principal_id="controller:observation-admission",
+        session_scope_factory=transaction.scope,
+        database_clock=lambda _session: deadline + timedelta(hours=1),
+    )
+    custody_calls = len(bridge.validation_campaign_custody.calls)
+    receipt = recovered.load_committed_admission(**lookup)
+    assert receipt.committed_admission == first.committed_admission
+    assert not receipt.created and not receipt.kernel_receipt.created
+    # The replay must re-derive the database authority's own commit-time evaluation, not
+    # evaluate the already-closed observation window against the current database clock.
+    replay_calls = bridge.validation_campaign_custody.calls[custody_calls:]
+    assert {call[-1] for call in replay_calls} == {
+        first.committed_admission.message.committed_at
+    }
+
+    future_dated = PostgreSQLAtomicObservationAdmissionCoordinator(
+        kernel_store=kernel, kernel_authority=NoNewAuthority(), verification=verification,
+        controller_principal_id="controller:observation-admission",
+        session_scope_factory=transaction.scope,
+        database_clock=lambda _session: (
+            first.committed_admission.message.committed_at - timedelta(seconds=1)
+        ),
+    )
+    with pytest.raises(AtomicObservationAdmissionError, match="future-dated"):
+        future_dated.load_committed_admission(**lookup)
+
+
 def test_failure_after_kernel_staging_rolls_back_the_outer_transaction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

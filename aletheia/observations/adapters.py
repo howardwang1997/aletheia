@@ -316,6 +316,15 @@ class PostgreSQLCommittedObservationValidationSource:
                 raise ObservationAdapterVerificationError(
                     "committed validation row was rebound from its action or canonical bytes"
                 )
+            # Re-derive the database authority's own commit-time evaluation: the nested
+            # windows bound the historical commitment, not the current wall clock, so a
+            # committed validation stays verifiable after its observation window closes.
+            # The live clock remains only as the future-dating guard.
+            committed_at = committed.message.committed_at
+            if committed_at > observed_at:
+                raise ObservationAdapterVerificationError(
+                    "committed validation commitment is future-dated"
+                )
             context = self._verification
             verify_committed_observation_validation_receipt(
                 committed_receipt=committed,
@@ -328,7 +337,7 @@ class PostgreSQLCommittedObservationValidationSource:
                 validator_authority_pin=context.validator_authority_pin,
                 admission_authority_pin=context.admission_authority_pin,
                 database_authority_pin=context.database_authority_pin,
-                observed_at=observed_at,
+                observed_at=committed_at,
             )
             return committed
         except ObservationAdapterVerificationError:

@@ -363,6 +363,72 @@ def test_committed_validation_source_rehashes_row_and_action(
         )
 
 
+def test_committed_validation_source_replays_after_the_observation_window_closes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bridge_case()
+    validation = _validated_receipt(case)
+    committed = _commit_validation(case, validation)
+    binding = case.authorization.message.action_protocol_binding
+    write = ObservationValidationReceiptWrite.from_contract(
+        committed,
+        quest_id=binding.action.quest_id,
+    )
+    monkeypatch.setattr(
+        adapters_module,
+        "get_observation_validation_receipt_by_slot",
+        lambda *_args, **_kwargs: write,
+    )
+    source = PostgreSQLCommittedObservationValidationSource(
+        sessions=_sessions,
+        verification=_committed_verification(case),
+        database_clock=lambda _session: (
+            case.authorization.message.observation_admission_deadline + timedelta(hours=1)
+        ),
+    )
+    custody_calls = len(case.validation_campaign_custody.calls)
+
+    loaded = source.load_committed_validation(
+        quest_id=binding.action.quest_id,
+        action_sha256=binding.action.object_sha256,
+        scientific_slot_id=case.authorization.message.scientific_slot_id,
+    )
+
+    assert loaded == committed
+    # The replay must re-derive the database authority's own commit-time evaluation, not
+    # evaluate the already-closed observation window against the current database clock.
+    replay_calls = case.validation_campaign_custody.calls[custody_calls:]
+    assert {call[-1] for call in replay_calls} == {committed.message.committed_at}
+
+
+def test_committed_validation_source_rejects_future_dated_commitment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bridge_case()
+    committed = _commit_validation(case, _validated_receipt(case))
+    binding = case.authorization.message.action_protocol_binding
+    monkeypatch.setattr(
+        adapters_module,
+        "get_observation_validation_receipt_by_slot",
+        lambda *_args, **_kwargs: ObservationValidationReceiptWrite.from_contract(
+            committed,
+            quest_id=binding.action.quest_id,
+        ),
+    )
+    source = PostgreSQLCommittedObservationValidationSource(
+        sessions=_sessions,
+        verification=_committed_verification(case),
+        database_clock=lambda _session: committed.message.committed_at - timedelta(seconds=1),
+    )
+
+    with pytest.raises(ObservationAdapterVerificationError, match="future-dated"):
+        source.load_committed_validation(
+            quest_id=binding.action.quest_id,
+            action_sha256=binding.action.object_sha256,
+            scientific_slot_id=case.authorization.message.scientific_slot_id,
+        )
+
+
 def test_committed_validation_source_rejects_unverified_raw_run_custody(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

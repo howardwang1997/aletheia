@@ -461,6 +461,16 @@ class PostgreSQLAtomicObservationAdmissionCoordinator:
                 "persisted observation admission row differs from its signed contract"
             )
         context = self._verification
+        # Re-derive the database authority's own commit-time evaluation: the nested
+        # windows bound the historical admission, not the current wall clock, so a
+        # committed admission stays verifiable after its observation window closes.
+        # The live clock remains only as the future-dating guard.
+        live_now = self._database_clock(session)
+        committed_at = committed.message.committed_at
+        if committed_at > live_now:
+            raise AtomicObservationAdmissionError(
+                "persisted admission commitment is future-dated"
+            )
         verify_committed_observation_admission(
             committed_admission=committed,
             qualification_authority=context.qualification_authority,
@@ -472,7 +482,7 @@ class PostgreSQLAtomicObservationAdmissionCoordinator:
             validator_authority_pin=context.validator_authority_pin,
             admission_authority_pin=context.admission_authority_pin,
             database_authority_pin=context.database_authority_pin,
-            observed_at=self._database_clock(session),
+            observed_at=committed_at,
         )
         kernel_receipt = self._kernel_store.load_command_receipt_for_event_in_session(
             session,
