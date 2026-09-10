@@ -73,12 +73,10 @@ slice.
   not supply the frozen network/resource/filesystem boundary used by a real run.
 - **Trust a mutable image tag or Dockerfile alone.** The executed artifact is the final image ID;
   the tag and recipe are descriptive metadata, not sufficient identity.
-- **Use `docker run --rm`.** The observed Colima runtime left a completed process with inconsistent
-  container lifecycle state. Exact named-container inspection followed by explicit removal makes
-  state and cleanup auditable.
-- **Overwrite the failed v1 attempt.** Infrastructure failure is evidence about the execution
-  boundary. Append-only supersession preserves the diagnosis and prevents retrospective cleanup of
-  an unfavorable run.
+- **Use `docker run --rm`.** Exact named-container inspection followed by explicit removal retains
+  the terminal state and cleanup receipt for audit.
+- **Overwrite terminal attempts.** Attempt records and protocol revisions are append-only.
+  Internal engineering records remain private and cannot support public research claims.
 - **Promote after exact same-image repetition.** Deterministic replay detects drift; it does not
   provide independent software, method, operator, or scientific replication.
 

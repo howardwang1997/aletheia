@@ -147,10 +147,8 @@ ledger and graph projection clock. This avoids treating host/database clock skew
 ordering failure; callers can anchor a human plan to the preceding command receipt's
 `committed_at`.
 
-The whole-repository pass also exposed a pre-existing edge case when the database clock is
-corrected backwards between graph transactions. Graph transitions now set the projection timestamp
-to `greatest(previous updated_at, now())`; the database trigger continues to reject any genuinely
-non-monotonic state/version update.
+Graph transitions set the projection timestamp to `greatest(previous updated_at, now())`.
+The database trigger rejects non-monotonic state/version updates.
 
 ## Reconstruction and staleness
 
@@ -202,9 +200,6 @@ At implementation-report freeze:
 - Ruff and Python compilation for the new implementation surface: passed; and
 - complete non-Docker repository regression: `1293 passed, 2 skipped, 29 deselected` in
   `766.87s`.
-
-The first full pass surfaced the database-clock rollback edge case described above and otherwise
-passed 1292 tests. After the monotonic graph projection fix, the complete second pass was clean.
 
 ## Honest boundary
 

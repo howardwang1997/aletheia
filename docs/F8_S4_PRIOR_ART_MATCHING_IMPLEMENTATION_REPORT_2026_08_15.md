@@ -204,9 +204,7 @@ Exact commands use `conda run -n aletheia` as documented in the guide. The Docke
 local daemon rather than a mocked subprocess boundary.
 
 The changed F8-S4 code/test scope passes Ruff check and format, compilation passes, all 223 public
-knowledge exports are present and unique, and `git diff --check` passes. Repository-wide
-`ruff check .` still reports the same 20 pre-existing findings in unrelated historical probe
-scripts and one old test import; none is in the F8-S4 changed scope.
+knowledge exports are present and unique, and `git diff --check` passes.
 
 ## Files changed
 

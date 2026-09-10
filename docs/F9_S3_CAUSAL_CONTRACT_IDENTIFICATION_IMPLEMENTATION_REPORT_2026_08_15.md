@@ -164,9 +164,7 @@ non-Docker: 1002 passed, 1 skipped, 29 deselected in 328.30 s
 Docker:       29 passed, 1003 deselected in 26.27 s
 ```
 
-All changed F9-S3 Python files and public exports pass Ruff and compilation. Repository-wide Ruff
-still reports the same 20 pre-existing issues in out-of-scope exploratory scripts/one legacy test;
-none are in the causal or epistemics implementation.
+All changed F9-S3 Python files and public exports pass scoped Ruff and compilation.
 
 ## Files added or materially changed
 

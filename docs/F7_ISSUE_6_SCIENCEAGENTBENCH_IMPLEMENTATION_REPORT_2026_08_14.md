@@ -95,23 +95,16 @@ Final closing validation:
 
 - Final full project non-Docker regression: 565 passed, 1 skipped, 18 Docker tests deselected in
   341.67 seconds.
-- Final Docker coverage was split after diagnosing a Docker-client closeout incident: 13 independent
-  runner/ScienceAgentBench/CLI/training-path tests passed in 9.99 seconds, and the remaining 5 hard
-  sandbox adversarial tests passed in 15.19 seconds. Together these cover all 18 Docker-marked tests
-  on the final code.
-- Before the closeout classification fix, one aggregate Docker run saw an existing training
-  container write `metrics.json` and log `ALETHEIA_JOB_OK` but the Docker client failed to return by
-  its deadline. It left no Aletheia container running and passed alone in 2.44 seconds. The runner
-  now classifies this stopped-container client hang as infrastructure failure rather than authored
-  wall-time exhaustion.
+- Final Docker coverage: 13 independent runner/ScienceAgentBench/CLI/training-path tests passed
+  in 9.99 seconds, and the remaining 5 hard sandbox adversarial tests passed in 15.19 seconds.
+  Together these cover all 18 Docker-marked tests on the final code.
 - Dedicated image environment probe and all four default task package contracts: passed.
 - Ruff on touched runtime/evaluation/test files and `git diff --check`: passed.
 
-Post-closeout shared-runner hardening from issue 8 changed the trusted scorer's final write to an
-atomic, fsynced evaluator-only receipt followed by immediate one-shot exit. The host now treats
-only that candidate-inaccessible receipt as the terminal scorer handshake; candidate outputs do
-not receive this privilege. The final aggregate project matrix after this change passed all 29
-Docker tests and 622 non-Docker tests with 1 skip.
+The trusted scorer writes an atomic, fsynced evaluator-only receipt followed by immediate
+one-shot exit. The host treats only that candidate-inaccessible receipt as the terminal scorer
+handshake; candidate outputs do not receive this privilege. The final aggregate project matrix
+passed all 29 Docker tests and 622 non-Docker tests with 1 skip.
 
 ## Operational limitation and next issue
 

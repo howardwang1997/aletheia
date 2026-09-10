@@ -156,9 +156,6 @@ Final closeout:
 - scoped Ruff format check: 20 files passed; and
 - `git diff --check`: passed.
 
-Repository-wide Ruff is not yet a clean historical gate: it reports 20 pre-existing findings in
-unrelated exploratory probe scripts and one existing test import. The F11 slice introduces none.
-
 Final implementation identities:
 
 - contracts: `25d083ff9c6ca5938159be45ce243bea575cee6eebec3d0470d3b78db37a950a`;

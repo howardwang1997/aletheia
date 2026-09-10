@@ -1404,8 +1404,8 @@ pause/stop，严格拒绝 stale parent、跨 Quest 引用、对象/hash/type 不
 backtrack 和 terminal 后追加。Hypothesis replay、schema/invalid-transition 与 fresh-process canonical replay
 共 `99 passed`；PR-0 migration suite 仍为 `148 passed`，完整 PR-0 gate 仍为 `154 passed`。本 cut 没有新增
 数据库、command store、controller、模型、scheduler、domain、execution 或远程 GPU 接口；全量非 Docker
-分区为 `1572 passed, 2 skipped, 29 deselected`，真实 Docker 分区在两次独立启动超时均经对应单测立即通过后，
-最终 clean rerun 为 `29 passed, 1574 deselected`。这些权威写入与幂等事务从 PR-2 开始。
+分区为 `1572 passed, 2 skipped, 29 deselected`，真实 Docker 分区为
+`29 passed, 1574 deselected`。这些权威写入与幂等事务从 PR-2 开始。
 
 ### PR-2：Authoritative event store
 

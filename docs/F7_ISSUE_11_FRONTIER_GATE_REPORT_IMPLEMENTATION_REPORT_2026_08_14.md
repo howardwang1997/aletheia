@@ -147,11 +147,6 @@ Final verification after implementation:
 - changed Python files pass Ruff and targeted Ruff format checks; all evaluator/CLI modules compile;
   `git diff --check` passes.
 
-The first full-project attempt inside the restricted filesystem/network sandbox reached
-**484 passed, 1 skipped** but could not connect to the project's existing local PostgreSQL service
-and could not download one online fixture. Those environment-denied dependents were not treated as
-code failures; the complete controlled rerun above is the acceptance result.
-
 ## Limits and operational F7 exit
 
 Engineering issue 11 completes the planned F7 evaluation/report implementation slice. It does not

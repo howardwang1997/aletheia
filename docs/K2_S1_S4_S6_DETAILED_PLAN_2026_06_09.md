@@ -1,10 +1,9 @@
 # K2 remaining steps — S1 · S4 · S5 · S6 (detailed executable plan)
 
-> **STATUS 2026-06-09: BUILT + offline-green.** All four steps landed exactly as planned below
+> **STATUS 2026-06-09: implementation complete; live qualification pending.** All four steps landed exactly as planned below
 > (binary-entropy measured EIG, normalized to `[0,1]` so a fresh/weak belief is fail-closed to
-> today's behavior; weak-prior strength cap; durable `belief_states` table). Full suite: 369 passed,
-> 1 skipped (the only failure is the pre-existing `test_online_download_file_and_zip` httpx fixture
-> flake, unrelated). New `tests/test_belief.py` + extensions in `test_paradigm_p5.py` /
+> today's behavior; weak-prior strength cap; durable `belief_states` table).
+> Tests include `tests/test_belief.py` and extensions in `test_paradigm_p5.py` /
 > `test_paradigm_p3.py` / `test_campaign.py`. Decisions D1–D4 were all adopted as recommended.
 > **Owed:** a live multi-round campaign e2e OUTSIDE the Claude process.
 

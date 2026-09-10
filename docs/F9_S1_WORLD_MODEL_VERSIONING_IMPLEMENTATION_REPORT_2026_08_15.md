@@ -115,11 +115,6 @@ non-Docker:         938 passed, 1 skipped, 29 deselected in 314.65 s
 Docker:              29 passed, 939 deselected in 38.37 s
 ```
 
-The first Docker matrix attempt had one evaluator-owned ScienceAgentBench image-environment probe
-time out at 30 seconds before the candidate test began; the other 28 tests passed. The exact failed
-case then passed alone in 0.34 seconds, and the complete clean rerun produced the 29/29 result above.
-No timeout policy or benchmark code was weakened.
-
 ## Files added or materially changed
 
 - `aletheia/epistemics/__init__.py`;

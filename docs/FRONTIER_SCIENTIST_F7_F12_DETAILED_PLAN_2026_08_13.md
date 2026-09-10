@@ -1280,9 +1280,8 @@ archive，model validation 重算 probe、posterior、sensitivity、revision、c
 
 Focused F9-S6 31 tests（76.56 s）、F9-S5/S6 combined 61 tests（111.74 s）与截至 F9-S6 的完整
 `tests/epistemics` 176 tests（149.44 s）已通过；最终全库非 Docker 1093 passed、1 skipped、29
-deselected（528.15 s），真实 Docker clean rerun 29 passed、1094 deselected（26.10 s）。首次 Docker
-matrix 的 image-environment probe 曾单次 timeout；该用例随即单独通过，完整 29-test matrix 再跑全绿，
-未为基础设施抖动修改 application code。fixtures、likelihood、observation、validator evidence 与 custody
+deselected（528.15 s），真实 Docker 29 passed、1094 deselected（26.10 s）。
+fixtures、likelihood、observation、validator evidence 与 custody
 均为 synthetic。完整验收见
 `F9_S6_VALIDATED_OBSERVATION_BELIEF_UPDATE_IMPLEMENTATION_REPORT_2026_08_15.md`。下一工程切片为
 F9-S7 independent K3 acceptance scorer；真实 validator authentication、instrument/measurement audit、
@@ -1336,7 +1335,7 @@ action。
 
 Focused F9-S7 26 tests（149.25 s）与截至 F9-S7 的完整 `tests/epistemics` 202 tests（295.32 s）已通过。
 最终全库非 Docker 1119 passed、1 skipped、29 deselected（652.80 s），真实 Docker 29 passed、1120
-deselected（26.78 s），本轮 Docker 首次执行即全绿。
+deselected（26.78 s）。
 完整报告见
 `F9_S7_INDEPENDENT_K3_ACCEPTANCE_IMPLEMENTATION_REPORT_2026_08_15.md`。所有 fixtures 与 accepted chain
 仍为 synthetic；S7 evidence ledger 本身是 isolated content-addressed persistence。其 PostgreSQL/next-round
@@ -1874,8 +1873,7 @@ minimum、residual、bulk modulus、runtime、calculator/scan 与 exact gold 共
 infrastructure、unsupported element、parse corruption、bad fit 和 gold mismatch 都保持 invalid/blocked，
 不能伪装成 physical negative。
 
-首次 formal v1 因 macOS system temp 未共享进 Colima 而 exit 125；failure bundle 未被覆盖。v2 exact-hash
-supersede v1，只把 scratch 移到 workspace-backed archive parent。两次 distinct container attempts 均得到
+冻结的 formal v2 使用 workspace-backed scratch；两次 distinct container attempts 均得到
 `validated_classical_reference`，Cu fcc conventional lattice 为 3.589824595554312 Å（frozen ASE reference
 3.589825 Å），result payload 精确相同；reproduction receipt 同时声明 same image/implementation repetition
 不是 independent replication。

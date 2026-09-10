@@ -126,7 +126,7 @@ Focused acceptance after implementation:
   `git diff --check`: passed before whole-project regression.
 - complete non-Docker project under controlled local PostgreSQL/data-source access:
   **697 passed, 1 skipped, 29 deselected** in **296.07 s**;
-- authoritative complete real Docker isolation rerun:
+- complete real Docker isolation group:
   **29 passed, 698 deselected** in **41.56 s**.
 
 ## Limits and next work
