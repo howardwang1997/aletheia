@@ -3,7 +3,8 @@
 This directory contains the architecture, project review, roadmap, and implementation RFCs for
 Aletheia.
 
-Current status (2026-09-09): no production ARL-1 qualification receipt has been issued. Use
+Current status (2026-09-10): a production ARL-1 qualification receipt was issued 2026-09-09 and
+keylessly verified; the exit runbook's tamper-rejection audit remains outstanding. Use
 `LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md` and
 `GENERATION_I_REQUALIFICATION_AND_ARL1_EXIT_RUNBOOK_2026_09_06.md` for the fresh-generation sequence.
 Public outputs follow `PUBLICATION_BOUNDARY.md`; private/internal audit records remain outside

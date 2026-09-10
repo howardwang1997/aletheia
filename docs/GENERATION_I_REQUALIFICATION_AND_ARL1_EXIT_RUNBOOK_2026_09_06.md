@@ -1,6 +1,6 @@
 # Fresh-generation re-qualification and ARL-1 exit runbook
 
-Updated 2026-09-09. The historical filename is retained for links. This procedure applies to a
+Updated 2026-09-10. The historical filename is retained for links. This procedure applies to a
 fresh deployment of the reviewed current source, with Alembic head `20260909_0033`.
 No historical generation's receipt or expired commissioning window authorizes this deployment.
 
@@ -60,8 +60,16 @@ or partially executed campaign cannot replace it.
    `ISSUE_ARL1_QUALIFICATION`. Each phase replays source evidence and uses pinned database time.
 8. Restart from empty process memory and run `verify` as a third, keyless auditor principal with
    `VERIFY_ARL1_QUALIFICATION`. Retain the exact inputs and outputs for independent replay.
-9. Use isolated copies to change one byte in every retained source class and require rejection.
-   Preserve original source material unchanged.
+9. Schedule this stage against the retained windows before running it. Inventory every window
+   the native verifier evaluates — qualification receipt validity, authority key windows, and
+   the observation and admission deadlines recorded in the retained evidence — and require the
+   full matrix to complete inside the earliest-closing one. Budget the measured single-case
+   verifier runtime against the retained case count and the available concurrency. Run the
+   native positive controls on unmodified copies before any tamper case, and stop on the first
+   control failure rather than record its cases as rejections. Use isolated copies to change
+   one byte in every retained source class and require rejection. Preserve original source
+   material unchanged. If the budgeted matrix cannot complete inside the window, stop and
+   requalify with a fresh generation rather than execute a partial matrix.
 
 ## Acceptance and authority
 
