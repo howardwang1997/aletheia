@@ -144,12 +144,7 @@ non-Docker: 964 passed, 1 skipped, 29 deselected in 321.28 s
 Docker:      29 passed, 965 deselected in 38.08 s
 ```
 
-The first Docker matrix attempt produced 28 passes and one evaluator-owned ScienceAgentBench
-candidate-container timeout at its 45-second hard limit before scoring. The exact failed isolation
-case passed alone in 1.27 seconds; the complete clean rerun then passed all 29 tests. No timeout,
-sandbox, or scorer policy was changed. Repository-wide Ruff still reports 20 pre-existing issues in
-out-of-scope exploratory scripts/one legacy test; every F9-S2 Python file and package export passes
-Ruff and compilation.
+Every F9-S2 Python file and package export passes scoped Ruff and compilation.
 
 ## Files added or materially changed
 

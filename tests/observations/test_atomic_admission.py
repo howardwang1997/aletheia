@@ -10,6 +10,7 @@ import pytest
 from aletheia.observations import coordinator as coordinator_module
 from aletheia.observations.coordinator import (
     AtomicObservationAdmissionError,
+    CommittedAdmissionNotLoaded,
     ObservationAdmissionVerificationContext,
     PostgreSQLAtomicObservationAdmissionCoordinator,
 )
@@ -276,6 +277,69 @@ def test_admission_kernel_event_and_outbox_share_one_outer_transaction(
     )
     with pytest.raises(ObservationIdentityConflict, match="signed contract"):
         coordinator.commit_and_incorporate(decision)
+
+
+@pytest.mark.parametrize("delay_seconds", (10, 360))
+def test_load_committed_admission_recovers_after_restart_without_new_authority(
+    monkeypatch: pytest.MonkeyPatch, delay_seconds: int,
+) -> None:
+    _bridge, decision, audit, verification = _case(monkeypatch)
+    transaction = _TransactionProbe()
+    kernel = _KernelStore(audit)
+    rows = []
+    monkeypatch.setattr(
+        coordinator_module, "get_observation_admission_by_decision",
+        lambda _session, decision_sha256: next(
+            (row for row in rows if row.decision_sha256 == decision_sha256), None
+        ),
+    )
+    monkeypatch.setattr(
+        coordinator_module, "get_observation_admission_by_slot",
+        lambda _session, quest_id, scientific_slot_id: next(
+            (row for row in rows
+             if row.quest_id == quest_id and row.scientific_slot_id == scientific_slot_id), None
+        ),
+    )
+    monkeypatch.setattr(
+        coordinator_module, "record_observation_admission",
+        lambda _session, write: rows.append(write) or AppendReceipt(
+            identity_sha256=write.committed_admission_sha256, created=True,
+        ),
+    )
+    times = iter(decision.message.decided_at + timedelta(seconds=i) for i in range(1, 8))
+    coordinator = PostgreSQLAtomicObservationAdmissionCoordinator(
+        kernel_store=kernel, kernel_authority=_KernelAuthority(), verification=verification,
+        controller_principal_id="controller:observation-admission",
+        session_scope_factory=transaction.scope, database_clock=lambda _session: next(times),
+    )
+    action = decision.message.committed_validation_receipt.message.receipt.message.raw_run.scientific_authorization.message.action_protocol_binding.action
+    lookup = dict(
+        quest_id=action.quest_id, action_sha256=action.object_sha256,
+        scientific_slot_id=decision.message.scientific_slot_id,
+    )
+    with pytest.raises(CommittedAdmissionNotLoaded):
+        coordinator.load_committed_admission(**lookup)
+    first = coordinator.commit_and_incorporate(decision)
+
+    class NoNewAuthority:
+        def authorize_observation_incorporation(self, **kwargs):
+            raise AssertionError("recovery must not request another Kernel signature")
+
+    recovered = PostgreSQLAtomicObservationAdmissionCoordinator(
+        kernel_store=kernel, kernel_authority=NoNewAuthority(), verification=verification,
+        controller_principal_id="controller:observation-admission",
+        session_scope_factory=transaction.scope,
+        database_clock=lambda _session: decision.message.decided_at + timedelta(seconds=delay_seconds),
+    )
+    receipt = recovered.load_committed_admission(**lookup)
+    assert receipt.committed_admission == first.committed_admission
+    assert not receipt.created and not receipt.kernel_receipt.created
+    assert len(rows) == len(kernel.commands) == 1
+    with pytest.raises(ObservationIdentityConflict, match="rebound"):
+        recovered.load_committed_admission(**{**lookup, "action_sha256": "f" * 64})
+    rows[0] = rows[0].model_copy(update={"source_world_model_sha256": "e" * 64})
+    with pytest.raises(ObservationIdentityConflict, match="signed contract"):
+        recovered.load_committed_admission(**lookup)
 
 
 def test_failure_after_kernel_staging_rolls_back_the_outer_transaction(

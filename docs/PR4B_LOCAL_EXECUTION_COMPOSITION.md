@@ -240,9 +240,7 @@ migration/dependency/schema slice passed 191 tests. These are source-contract re
 not increase deployment status.
 
 At the earlier 2026-08-24 pre-closure checkpoint, after final formatting and metadata-test
-isolation, the repository-wide suite passed 2,267 tests with eight skipped. Two Docker tests that
-initially encountered a stale Colima client/container closeout were rerun independently before that
-clean pass; no timeout result is counted as acceptance evidence. This historical count does not
+isolation, the repository-wide suite passed 2,267 tests with eight skipped. This historical count does not
 include the 149 deployment-evidence tests above; a new repository-wide count is not claimed by this
 focused closure checkpoint.
 

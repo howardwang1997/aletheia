@@ -96,17 +96,13 @@ probe closeout retry, and evidence hash binding.
   two hidden receipts, and immutable candidate/scorer image identities emitted.
 - Final full-project non-Docker regression: 590 passed, 1 skipped, 24 Docker tests deselected in
   271.05 seconds. The focused adapter/public-asset unit matrix passed 25/25.
-- Final all-Docker regression: 24 passed, 591 non-Docker tests deselected in 31.14 seconds. A prior
-  aggregate run exposed a stopped-container CLI closeout incident; the six affected CORE-Bench
-  Docker/CLI tests also passed alone in 6.00 seconds with an evaluator-only, one-retry closeout
-  policy. Running-container timeouts and every candidate failure remain non-retryable.
+- Final all-Docker regression: 24 passed, 591 non-Docker tests deselected in 31.14 seconds.
 - Ruff on every touched runtime/adapter/test file and `git diff --check`: passed.
 
-Post-closeout shared-runner hardening from issue 8 changed the trusted objective scorer to commit
-its evaluator-only result atomically with `fsync` and then exit without optional interpreter
-teardown. The host watches only this hidden receipt and explicitly cleans up the one-shot scorer;
-candidate reports cannot trigger that path. The final aggregate project matrix after this change
-passed all 29 Docker tests and 622 non-Docker tests with 1 skip.
+The trusted objective scorer commits its evaluator-only result atomically with `fsync` and
+then exits without optional interpreter teardown. The host watches only this hidden receipt and
+explicitly cleans up the one-shot scorer; candidate reports cannot trigger that path. The final
+aggregate project matrix passed all 29 Docker tests and 622 non-Docker tests with 1 skip.
 
 ## Limitations and next issue
 

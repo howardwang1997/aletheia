@@ -163,6 +163,7 @@ _OPERATION_PAYLOAD_MODELS: dict[ControllerWorkerRPCOperation, _PayloadModel] = {
     ControllerWorkerRPCOperation.ISSUE_ADMISSION_CHALLENGE: (AdmissionChallengeIssuanceRPCPayload),
     ControllerWorkerRPCOperation.ISSUE_ADMISSION_DECISION: AdmissionDecisionIssuanceRPCPayload,
     ControllerWorkerRPCOperation.COMMIT_AND_INCORPORATE: AdmissionCommitRPCPayload,
+    ControllerWorkerRPCOperation.LOAD_COMMITTED_ADMISSION: ScientificSlotLookupRPCPayload,
     ControllerWorkerRPCOperation.DERIVE_CONTINUATION: ControllerTickRPCPayload,
 }
 
@@ -185,6 +186,7 @@ _OPERATION_RESULT_MODELS: dict[ControllerWorkerRPCOperation, _ResultModel] = {
     ControllerWorkerRPCOperation.ISSUE_ADMISSION_CHALLENGE: (AdmissionChallengeRegistrationReceipt),
     ControllerWorkerRPCOperation.ISSUE_ADMISSION_DECISION: ObservationAdmissionDecision,
     ControllerWorkerRPCOperation.COMMIT_AND_INCORPORATE: AtomicObservationAdmissionReceipt,
+    ControllerWorkerRPCOperation.LOAD_COMMITTED_ADMISSION: AtomicObservationAdmissionReceipt,
     ControllerWorkerRPCOperation.DERIVE_CONTINUATION: ContinuationReceiptWrite,
 }
 
@@ -194,6 +196,7 @@ _SIGNED_BLOCKER_OPERATIONS = frozenset(
         ControllerWorkerRPCOperation.COMPILE_PROTOCOL,
         ControllerWorkerRPCOperation.DERIVE_CONTINUATION,
         ControllerWorkerRPCOperation.LOAD_COMMITTED_VALIDATION,
+        ControllerWorkerRPCOperation.LOAD_COMMITTED_ADMISSION,
     }
 )
 

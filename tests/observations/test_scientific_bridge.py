@@ -702,10 +702,10 @@ def _bridge_case(qualification: QualificationCase | None = None) -> BridgeCase:
     )
 
 
-def _replicate_bridge_cases(replicate_count: int = 2) -> tuple[BridgeCase, ...]:
+def _replicate_bridge_cases(replicate_count: int = 2, *, fixture=None) -> tuple[BridgeCase, ...]:
     """Build real signed SEA fixtures for every slot of one accepted replay-safe node."""
 
-    fixture = fixture_by_name("grouped_regression")
+    fixture = fixture or fixture_by_name("grouped_regression")
     original = fixture.request.protocol
     steps = tuple(
         type(step).model_validate(

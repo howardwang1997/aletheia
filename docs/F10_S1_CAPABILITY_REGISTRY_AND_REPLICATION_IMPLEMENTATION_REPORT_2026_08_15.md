@@ -29,14 +29,6 @@ The first real matrix completed successfully and produced an unfavorable-but-inf
 - `scripts/capability_registry.py` and `scripts/real_materials_replication_e2e.py`: create-only
   validation, freezing, inspection, execution, resumption, aggregation, and verification commands.
 
-## Append-only contract correction
-
-The frozen v1 output schema described a summary rather than the actual executor result. It was not
-edited. Version 2.0.0 changes the input, output, and matrix-preregistration schemas, binds the exact
-v1 manifest hash as its predecessor, and is stored with both versions in registry snapshot
-`56c167d9...`. Unit tests use JSON Schema to validate the actual Pydantic objects and prove that the
-old output schema rejects the real executor result.
-
 ## Capability gates
 
 The exploratory query selects v2.0.0 exactly. A confirmatory query returns `unsupported` with both
@@ -45,7 +37,7 @@ mechanism or experimental-causal claims. Registered manifests require positive a
 controls, a non-agent-authored validator, distinct domain reviewer and promotion auditor, and all
 promotion receipts.
 
-## Real matrix
+## Retrospective development matrix
 
 All five seeds were frozen in plan `55449225...` before measurement. Every slot completed one signed
 measurement and two separately keyed physical recomputations. A third audit physically reran all

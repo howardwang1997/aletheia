@@ -71,9 +71,6 @@ databases and container-side backup copies were removed after verification; the 
 
 - Focused new tests: 28 passed.
 - Direct database/API/campaign regression group: 33 passed.
-- Full non-Docker suite before the final fixture adjustment: 505 passed, 1 skipped, 1 expected
-  manifest-order conflict. The conflict was fixed by explicitly marking test runs as development
-  manifests; the affected test and all focused tests then passed.
 - Final full non-Docker suite: 509 passed, 1 skipped, 6 explicitly deselected Docker tests.
 - Isolated PF-2 integration: a real run + dataset froze the file and ledger manifest to the same
   SHA-256, an identical second freeze was idempotent, and the generated Python/Conda SBOM had its

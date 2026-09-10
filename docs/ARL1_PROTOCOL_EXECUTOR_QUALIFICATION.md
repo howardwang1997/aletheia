@@ -23,28 +23,11 @@ The final receipt is scope-specific and expires. Its immutable claim ceiling is
 `bounded_protocol_execution_engineering`. It explicitly sets autonomous research design,
 scientific validity, independent replication and scientific authority to false.
 
-## Security fixes included with the gate
+## Deployment requirements
 
-Runtime startup and `/readyz` now call `require_schema_exact()`. An Alembic head stamp without the
-matching ORM-managed tables, columns, indexes, foreign keys and constraints is rejected. This
-closes a real state in which a partially restored or previously stamped database reported ready
-despite missing Research Kernel/controller authority structures.
-
-The dashboard is upgraded from vulnerable Next.js 15.1.6 to 16.3.3. Production `npm audit` is
-clean at this checkpoint. The removed `next lint` command is replaced with ESLint's supported flat
-configuration, and the previously hidden TypeScript/React findings are fixed rather than ignored.
-
-The Conda environment now also carries explicit patched-version floors for the direct and
-transitive packages reported by `pip-audit`, including cryptography, MCP, Starlette,
-python-multipart, Pillow, Transformers, Torch and their HTTP/runtime dependencies. A resolved
-environment must pass both `pip check` and `pip-audit --local`; lowering those floors is not an
-ARL-1-compatible deployment change. On 2026-09-03 the audit newly classified Transformers versions
-below 5.10.0 as vulnerable to CVE-2026-9856. The nominal 5.10.0 fix release is yanked on PyPI, so
-the environment instead retains the verified non-yanked `transformers>=5.10.4,<6` floor. Every
-direct Python-base OCI source now upgrades to the audited pip/setuptools floor before installing
-anything; qualification, legacy-evaluation and sandbox sources also carry the patched
-cryptography, pydantic-settings and Torch floors. A static regression gate prevents the audited
-vulnerable pins from returning.
+Runtime startup and `/readyz` require the exact current Alembic revision and matching live schema.
+The resolved Conda environment must pass `pip check` and dependency audit. Deployment manifests
+pin the source, Python runtime, identities, keys, service operations and custody roots.
 
 The live Research Kernel CAS and F9-v2 campaign archive now support one closed shared-custody
 layout for UID-separated services: only the designated writer owns a `0750` tree, every published
@@ -78,6 +61,35 @@ acknowledgement. The source verifier and qualification signer load only their ow
 the auditor loads neither private key and must use a third application principal. CLI output is the
 exact canonical JSON accepted by the next phase, without an added newline.
 
+The verifier runtime also requires a byte-pinned capability-source configuration. Its separate
+trust and runtime inventories bind the auditor and qualifier public keys, implementation sources,
+environment identities and every selected capability. Each audit retains its signed decision and
+scoped check results with their source inputs. Authority, applicability, failure, retry, calibration,
+safety, license, egress and retention rules must retain their referenced bodies, as must every schema.
+Signed audit materials and checked inputs cover these contract sources as well as the runtime sources.
+Preparation, issuance and keyless audit freshly reopen these materials. The source verifier checks
+authenticity, custody and contract bindings; the delegated capability auditor remains responsible
+for the meaning and adequacy of the checks. These engineering records confer no scientific authority.
+
+The local `load_raw_run` and `prepare_validation_campaign` operations use explicit
+`external_service` capabilities and Unix-domain RPC. Their retained contracts bind the actual
+service factories, implementation files and request/result schemas. Raw-run lookup takes the exact
+quest/action/slot selector and returns a verified envelope; a signed pending status remains a typed
+wait condition. Validation preparation returns a nullable campaign digest and separately retains the
+committed signed campaign as a required provider receipt. Its first call uses service-owned clocks
+and durable publication; later calls verify and return the original committed campaign. These service
+contracts require one invocation per batch, no new infrastructure attempts and no network egress.
+Static resources must support the exact external action. Signed capability audits, deployment
+bindings and source replay remain required before qualification.
+
+An archive reader declares `archived_observation_input`: the exact observable output binding,
+lookup input, envelope output and same-index producer slot mapping. The compiler requires the
+registered raw-envelope service, its producer dependency and matching replicate counts before
+counting this as a data path to independent validation. The compiled node and command retain this
+binding, and the reader checks it against the registered scientific authorization. A dependency
+alone does not establish observation data flow. Operational capability source verification lives
+in the execution and observation layers; pure protocol contracts do not import service runtimes.
+
 Qualification and later audit timestamps are not accepted from evidence JSON. The issuance and
 verification manifests contain at most a 24-hour approved operation window; after fresh source
 replay the runtime reads PostgreSQL `clock_timestamp()` through the pinned database, derives the
@@ -91,31 +103,22 @@ only for that closed status, uses the service-signed bounded retry interval, and
 the authorization's observation-admission deadline. Missing registration, invalid signatures,
 database drift, rebound terminal material and custody failures are never retried as readiness.
 
-No production ARL-1 qualification receipt has been issued. Generation `20260904h` did emit and
-byte-identically replay the complete PR-8h target receipt for frozen merge
-`e0dc06ce23796aa9fc49d598c57bde6bbe7256fb`, with `deployment_qualified=true` and
-`scientific_admission_allowed=false`. The prerequisite has therefore moved from synthetic source
-tests to real target evidence, but it is only one input to this gate: the production given-protocol
-campaigns, all preregistered reexecutions, scientific validation/admission/Kernel evidence,
-disjoint source verification, qualification signature and fresh keyless audit have not run as one
-retained bundle.
+`--register-only` emits the complete registration receipt and exits before requesting terminal
+material. It uses the same deployment pins and acknowledgement as execution. This allows an
+operator to reserve the complete campaign, quiesce readers, run the node under its private custody
+pins, and publish terminal artifacts before restarting independent verification. The subsequent
+full invocation replays that registration and consumes the same scientific slots. The complete
+handoff procedure is in the [fresh-generation runbook](GENERATION_I_REQUALIFICATION_AND_ARL1_EXIT_RUNBOOK_2026_09_06.md).
 
-Later source binds the frozen runtime's in-tree timezone database and hardens the commissioned
-PostgreSQL application roles with an exact `TimeZone=UTC` session default after generation h
-exposed a safe Psycopg fallback from the cluster's `Etc/UTC` name. Those unit/ACL changes are not
-retroactively covered by h. The required repetition has now run: generation `20260904i` (frozen
-from `dd84581`) stopped fail-closed at PR-8g commissioning with
-`pre-existing PostgreSQL role has variant authority` — the live incident behind the #144 monotonic
-role-config convergence repair — and generation `20260904j`, frozen from `3e65cca` after green
-pull-request and main CI, repeated PR-8f/PR-8g/PR-8b/PR-8h on a fresh isolated database with
-byte-identical exact-retry receipt `qtx_5a6fd1d4c725f990507c07cdf5b7d713`
-(`deployment_qualified=true`, `scientific_admission_allowed=false`) at
-`2026-09-05T05:37:20.406653Z`. See the PR-8h guide's generation-i/j record. Local synthetic host
-ports remain intentionally ineligible because every ARL evidence contract requires
-`synthetic_evidence=false`.
+Committed validation and primary admission are recovered by scientific slot before any new
+challenge is requested. Admission recovery re-verifies the original signed validation/admission,
+row projection and Kernel receipt. A missing slot is distinct from corrupt or rebound authority.
+The campaign atomic-admission service permits `commit_and_incorporate` and
+`load_committed_admission`; the controller worker retains its original operation partition.
 
-Therefore the honest current status remains **ARL-1 qualification gate implemented, deployed
-system not ARL-1 qualified**.
+**No production ARL-1 qualification receipt has been issued.** The next complete deployment must
+use a fresh release and commissioning window. Local tests are development verification and cannot
+satisfy target-host qualification.
 
 ## Test commands
 
@@ -193,10 +196,6 @@ The real exit procedure must use a disposable qualified Linux target:
    third, keyless auditor principal with `VERIFY_ARL1_QUALIFICATION`; and
 9. tamper one byte in every retained source class and require verification to fail.
 
-For the exact generation-j deployment (frozen `3e65cca`), the fresh exact-head database,
-commissioning/installation chain and target receipt required by steps 1–3 are retained; steps 4–9
-remain. Procedural checks not embedded in those receipts must still be repeated, and a deployment
-containing any post-j ACL or runtime change must repeat steps 1–3 instead of borrowing j's
-qualification.
-
-No local test or CI badge substitutes for those target-host steps.
+The entire sequence must fit the freshly commissioned authority windows. Retain the campaign
+receipt and each disjoint qualification phase. No local test or CI badge substitutes for these
+Linux target-host steps.

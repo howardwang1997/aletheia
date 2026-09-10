@@ -127,6 +127,17 @@ class _KernelStore:
         )
 
 
+class _CapabilitySources:
+    def verify(self, request, *, observed_at):
+        assert observed_at >= request.protocol.authored_at
+        return {
+            "scientific_authority": False,
+            "verified_capabilities": {
+                step.capability_requirement.manifest_sha256: [] for step in request.protocol.steps
+            },
+        }
+
+
 @contextmanager
 def _session_scope():
     yield object()
@@ -277,6 +288,7 @@ def _production_verifier(
         committed_validation_source=_ValidationSource(campaign),
         observation_verification=observation_context,
         kernel_store=_KernelStore(campaign),
+        capability_sources=_CapabilitySources(),
         trusted_verifier_pins=(pin,),
         signing_private_key=signing_key,
         signing_pin_sha256=pin.pin_sha256,
@@ -465,3 +477,35 @@ def test_subprocess_arl0_replayer_runs_exact_pinned_command(tmp_path) -> None:
             verification_receipt=receipt,
             observed_at=completed_at + timedelta(seconds=1),
         )
+
+
+@pytest.mark.parametrize("failure", ["source_error", "wrong_scope", "scientific_authority"])
+def test_protocol_qualification_stops_on_capability_source_failure(
+    arl1_case, monkeypatch, tmp_path, failure
+):
+    original, _key, _recording = arl1_case
+    campaign = original.protocol_campaigns[0]
+    observed_at = campaign.report.reported_at + timedelta(seconds=1)
+    verifier = _production_verifier(
+        monkeypatch=monkeypatch,
+        archive=LocalARL1EvidenceArchive(tmp_path / "archive"),
+        campaign=campaign,
+        pin=original.policy.evidence_verifier_pins[0],
+        signing_key=VERIFIER_PRIVATE_KEY,
+        observed_at=observed_at,
+    )
+
+    def reject(request, *, observed_at):
+        if failure == "source_error":
+            raise ValueError("required audit source missing")
+        value = _CapabilitySources().verify(request, observed_at=observed_at)
+        if failure == "wrong_scope":
+            value["verified_capabilities"] = {}
+        else:
+            value["scientific_authority"] = True
+        return value
+
+    verifier.capability_sources = SimpleNamespace(verify=reject)
+    with pytest.raises(ARL1SourceVerificationError, match="capability source verification failed"):
+        verifier._verify_protocol_sources(campaign, observed_at=observed_at)
+    assert list(verifier.archive.root.rglob("*.json")) == []

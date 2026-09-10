@@ -29,6 +29,11 @@ def _parser() -> argparse.ArgumentParser:
         help="out-of-band SHA-256 pin for the deployment-manifest bytes",
     )
     parser.add_argument(
+        "--register-only",
+        action="store_true",
+        help="reserve all signed executions and emit their registration receipt before custody handoff",
+    )
+    parser.add_argument(
         "--apply",
         action="store_true",
         help="allow the already-authorized campaign to reserve and execute work",
@@ -51,7 +56,7 @@ def main() -> int:
         args.deployment_manifest,
         expected_file_sha256=args.deployment_manifest_sha256,
     )
-    receipt = execute_arl1_campaign_deployment(deployment)
+    receipt = execute_arl1_campaign_deployment(deployment, register_only=args.register_only)
     sys.stdout.buffer.write(canonical_json_bytes(receipt))
     sys.stdout.buffer.flush()
     return 0

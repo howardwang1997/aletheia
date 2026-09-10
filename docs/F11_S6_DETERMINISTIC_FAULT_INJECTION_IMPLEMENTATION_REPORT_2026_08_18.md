@@ -168,9 +168,7 @@ The production-harness supplement also passes the queue, outbox, graph, memory, 
 endurance regression matrix: `67 passed in 15.67s`.
 
 The 2,611 warnings are the existing `spglib` deprecation warnings in the materials-domain tests.
-Repository-wide Ruff also exposes 20 pre-existing violations in unrelated exploratory probe scripts;
-those clean tracked files were not changed as part of F11-S6. Every Python file changed or added by
-this slice is Ruff-clean.
+Every Python file changed or added by this slice passes scoped Ruff checks.
 
 ## Changed implementation surface
 

@@ -718,7 +718,68 @@ def _check_data_controls_and_lineage(protocol: ProtocolIR) -> list[ProtocolBlock
     return blockers
 
 
-def _check_dag(protocol: ProtocolIR) -> list[ProtocolBlocker]:
+def _check_archived_observation_inputs(
+    request: ProtocolCheckRequest,
+) -> tuple[list[ProtocolBlocker], tuple[tuple[str, str], ...]]:
+    """Admit archive data edges only for the exact registered raw-envelope reader."""
+    protocol = request.protocol
+    steps = {step.step_id: step for step in protocol.steps}
+    ports = {port.port_id: port for port in protocol.data_ports}
+    blockers: list[ProtocolBlocker] = []
+    edges: list[tuple[str, str]] = []
+    for index, step in enumerate(protocol.steps):
+        archive_input = step.archived_observation_input
+        if archive_input is None:
+            continue
+        binding = archive_input.observable_output_binding
+        producer = steps.get(binding.producer_step_id)
+        lookup = ports.get(archive_input.lookup_input_port_id)
+        envelope = ports.get(archive_input.envelope_output_port_id)
+        manifest, _ = _resolve_requirement(protocol, index, request.capability_catalog)
+        if (
+            manifest is None
+            or manifest.operation_id != "operation.load_raw_run"
+            or manifest.external_action_kind != "load_raw_run"
+            or manifest.runtime.runtime_kind is not RuntimeKind.EXTERNAL_SERVICE
+            or manifest.runtime.adapter_ref
+            != ("aletheia.observations.adapters:PostgreSQLRawRunEnvelopeSourceAdapter.load_raw_run")
+            or manifest.side_effect_class.value != "read_only_external"
+            or step.role is not ProtocolStepRole.OBSERVATION_PARSER
+            or producer is None
+            or producer.role is not ProtocolStepRole.SCIENTIFIC_EXECUTOR
+            or producer.step_id not in step.depends_on_step_ids
+            or producer.scientific_replicate_count != step.scientific_replicate_count
+            or binding not in protocol.observable_output_bindings
+            or binding.output_port_id not in producer.output_port_ids
+            or lookup is None
+            or lookup.port_id != "input.raw_run_lookup"
+            or lookup.port_id not in step.input_port_ids
+            or lookup.direction is not ProtocolPortDirection.INPUT
+            or lookup.artifact_kind is not ArtifactKind.JSON
+            or envelope is None
+            or envelope.port_id != "intermediate.raw_run"
+            or envelope.port_id not in step.output_port_ids
+            or envelope.direction is not ProtocolPortDirection.INTERMEDIATE
+            or envelope.artifact_kind is not ArtifactKind.RECEIPT
+        ):
+            blockers.append(
+                _blocker(
+                    ProtocolBlockerCode.PORT_UNBOUND,
+                    location=f"steps[{index}].archived_observation_input",
+                    subject_id=step.step_id,
+                    detail="archive input must bind the exact observable producer, slot mapping and registered raw-envelope service",
+                )
+            )
+        else:
+            edges.append((binding.output_port_id, step.step_id))
+    return blockers, tuple(edges)
+
+
+def _check_dag(
+    protocol: ProtocolIR,
+    *,
+    archive_edges: tuple[tuple[str, str], ...] = (),
+) -> list[ProtocolBlocker]:
     blockers: list[ProtocolBlocker] = []
     steps = {item.step_id: item for item in protocol.steps}
     ports = {item.port_id: item for item in protocol.data_ports}
@@ -884,6 +945,8 @@ def _check_dag(protocol: ProtocolIR) -> list[ProtocolBlocker]:
         for candidate_step in protocol.steps:
             for port_id in candidate_step.input_port_ids:
                 consumers.setdefault(port_id, set()).add(candidate_step.step_id)
+        for port_id, consumer_step_id in archive_edges:
+            consumers.setdefault(port_id, set()).add(consumer_step_id)
 
         def receives_data_from_port(step_id: str, source_port_id: str) -> bool:
             pending = list(consumers.get(source_port_id, ()))
@@ -1606,7 +1669,9 @@ def typecheck_protocol(request: ProtocolCheckRequest) -> ProtocolCheckReport:
     blockers: list[ProtocolBlocker] = []
     blockers.extend(_check_scope_and_epistemics(request.protocol))
     blockers.extend(_check_data_controls_and_lineage(request.protocol))
-    blockers.extend(_check_dag(request.protocol))
+    archive_blockers, archive_edges = _check_archived_observation_inputs(request)
+    blockers.extend(archive_blockers)
+    blockers.extend(_check_dag(request.protocol, archive_edges=archive_edges))
     capability_blockers, _ = _check_capability_and_resource(request)
     blockers.extend(capability_blockers)
     blockers.extend(_check_observable_capabilities(request))

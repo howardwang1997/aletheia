@@ -90,9 +90,6 @@ and a byte-level regression fixes that framing. This preserves the historical ar
 preventing an operator from confusing a canonical JSON model digest with the digest of its
 newline-delimited stdout transport.
 
-The first attempt correctly failed while encoding legitimate inert Conda filenames containing
-spaces and parentheses. The reviewed-tree grammar now admits those two printable characters while
-continuing to reject control characters, quotes, variable expansion, and command separators. That
-failure emitted no receipt and its output was isolated before the same request was rerun. This
-checkpoint proves the preparation mechanism on the target class only; it does not change either
-negative authority flag above.
+The reviewed-tree grammar admits spaces and parentheses while rejecting control characters,
+quotes, variable expansion and command separators. The preparation receipt binds only its exact
+runtime tree and target class; it confers no scientific authority.

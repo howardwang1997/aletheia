@@ -22,7 +22,7 @@ from aletheia.schema_migrations import require_schema_exact
 
 
 def test_repository_has_one_expected_alembic_head():
-    assert expected_schema_revision() == "20260903_0032"
+    assert expected_schema_revision() == "20260909_0033"
 
 
 def test_qualification_deployment_pins_the_repository_alembic_head():

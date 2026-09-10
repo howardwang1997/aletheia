@@ -154,17 +154,6 @@ All four are concrete artifacts the harness can re-run — so they plug into the
   driver runs it in `_run_eval` for paradigm runs (dry-run-skipped; reproduction re-enters
   `_run_eval` so the demonstration is recomputed + checked stable → P3 grounding).
 
-  Two real-run bugs surfaced + fixed by the first paradigm e2e: (a) the per-round `_claim_ids`
-  reset wiped IDEATE's `formulation` id before `_finalize_claims` — moved the reset to the
-  campaign-loop top; (b) a round where every critic provider errored returned empty critiques →
-  `_consensus([])` silently rejected — now it falls back to the last non-empty round, else fails
-  closed as a "peer review could not run" block (honest, not a fake reject).
-
-  Live status: the executor computes + reproduces the demonstration on real data end-to-end. A
-  full real e2e grounding the formulation to `moderate`/`strong` is gated on the (currently
-  intermittently-erroring) OpenAI Codex critic being available — the fail-closed fix correctly
-  PAUSES such a run rather than fabricating an approval.
-
 - **P5 — the AI-AUTHORED demonstration EXECUTOR: DONE (PRs #59–#61).** P4's executor was limited
   to hand-coded registered capabilities (one or two per domain). P5 lets the AI AUTHOR the
   discriminating computation itself while the **harness still owns the verdict** — the frontier

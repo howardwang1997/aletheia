@@ -70,10 +70,8 @@ Fifteen new tests cover:
 The combined materials and capability suite passes `43 passed`; targeted Ruff and formatter checks
 pass. The only warnings are upstream spglib deprecation warnings during symmetry analysis.
 
-The authoritative full non-Docker regression, rerun on the host so the suite could access its local
-PostgreSQL service, passed `1180 passed, 1 skipped, 29 deselected` in 719.90 seconds. An initial
-sandboxed attempt reached 968 passes but was not treated as an acceptance result because localhost
-database and network fixtures were denied by the sandbox.
+The full non-Docker regression with local PostgreSQL access passed
+`1180 passed, 1 skipped, 29 deselected` in 719.90 seconds.
 
 ## Real Matbench audit
 

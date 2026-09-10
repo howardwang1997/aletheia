@@ -61,6 +61,10 @@ class AtomicObservationAdmissionError(RuntimeError):
     """The observation could not be atomically admitted and incorporated."""
 
 
+class CommittedAdmissionNotLoaded(AtomicObservationAdmissionError):
+    """The requested scientific slot has no committed admission."""
+
+
 class ObservationKernelAuthorizationPort(Protocol):
     """External ordinary Kernel authority; the controller never signs its own proposal."""
 
@@ -242,6 +246,37 @@ class PostgreSQLAtomicObservationAdmissionCoordinator:
         self._controller_principal_id = controller_principal_id
         self._session_scope_factory = session_scope_factory
         self._database_clock = database_clock
+
+    def load_committed_admission(
+        self,
+        *,
+        quest_id: str,
+        action_sha256: str,
+        scientific_slot_id: str,
+    ) -> AtomicObservationAdmissionReceipt:
+        """Reverify the durable admission and its original Kernel receipt without signing."""
+
+        with self._session_scope_factory() as session:
+            existing = get_observation_admission_by_slot(
+                session,
+                quest_id=quest_id,
+                scientific_slot_id=scientific_slot_id,
+            )
+            if existing is None:
+                raise CommittedAdmissionNotLoaded("scientific slot has no committed admission")
+            committed = CommittedObservationAdmission.model_validate(existing.admission_json)
+            decision = committed.message.decision
+            authorization = decision.message.committed_validation_receipt.message.receipt.message.raw_run.scientific_authorization
+            binding = authorization.message.action_protocol_binding
+            if (
+                binding.action.quest_id != quest_id
+                or binding.action.object_sha256 != action_sha256
+                or decision.message.scientific_slot_id != scientific_slot_id
+            ):
+                raise ObservationIdentityConflict(
+                    "committed admission was rebound from its action or scientific slot"
+                )
+            return self._exact_retry(session=session, existing=existing, decision=decision)
 
     def commit_and_incorporate(
         self,
@@ -463,6 +498,7 @@ class PostgreSQLAtomicObservationAdmissionCoordinator:
 __all__ = [
     "AtomicObservationAdmissionError",
     "AtomicObservationAdmissionReceipt",
+    "CommittedAdmissionNotLoaded",
     "ObservationAdmissionVerificationContext",
     "ObservationKernelAuthorizationPort",
     "PostgreSQLAtomicObservationAdmissionCoordinator",

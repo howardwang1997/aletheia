@@ -969,6 +969,10 @@ class ResearchObservationAdmissionRecord(Base):
             "registered_at <= committed_at",
             name="ck_roa_time",
         ),
+        CheckConstraint(
+            _HASH_SQL.format(name="source_world_model_sha256"),
+            name="ck_roa_world_model",
+        ),
         _postgresql_json_check(
             "jsonb_typeof(admission_json) = 'object' AND "
             "admission_json->>'schema_name' = "
@@ -1101,6 +1105,7 @@ class ResearchObservationAdmissionRecord(Base):
     issuance_challenge_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     disposition: Mapped[str] = mapped_column(String(16), nullable=False)
     admitted_observation_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_world_model_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     admission_json: Mapped[dict[str, Any]] = mapped_column(_JSON, nullable=False)
     registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     committed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

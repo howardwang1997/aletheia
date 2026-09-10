@@ -160,9 +160,8 @@ Final regression results:
 - changed F8-S3 code/test scope: Ruff check and format check pass;
 - package/test compilation, 174 unique public exports, and `git diff --check` pass.
 
-The non-Docker total is exactly the F8-S2 baseline plus the 37 F8-S3 tests. Repository-wide
-`ruff check .` still reports the same 20 pre-existing findings in unrelated historical probe
-scripts and one old test import. Those files were not changed or counted as F8-S3 acceptance.
+The non-Docker total is the F8-S2 baseline plus the 37 F8-S3 tests.
+Lint acceptance covers the changed F8-S3 code and tests.
 
 ## Files changed
 

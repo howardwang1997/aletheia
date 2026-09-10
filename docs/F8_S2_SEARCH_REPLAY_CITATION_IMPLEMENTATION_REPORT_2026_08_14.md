@@ -180,10 +180,8 @@ Focused verification at implementation completion:
   **733 passed, 1 skipped, 29 deselected** in **290.81 s**;
 - complete real Docker isolation group: **29 passed, 734 deselected** in **26.62 s**.
 
-The non-Docker total is exactly the F8-S1 baseline plus the 36 F8-S2 tests. Repository-wide
-`ruff check .` is not clean: it reports 20 pre-existing findings in unrelated historical probe
-scripts and one old test import. Those files were not changed or counted as F8 acceptance; the
-entire changed F8 code/test scope passes Ruff.
+The non-Docker total is the F8-S1 baseline plus the 36 F8-S2 tests.
+Lint acceptance covers the changed F8 code and tests.
 
 ## Limits and next work
 

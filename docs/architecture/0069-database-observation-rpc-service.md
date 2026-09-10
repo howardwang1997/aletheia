@@ -5,17 +5,12 @@
 
 ## Context
 
-PR-5 defined DB-time validation/admission challenges and committed-validation receipts, while PR-7d
-routed their three database operations through one external authority port. There was no guarded
-factory for that port. The service responses also carried a transient `created` bit, validation
-commit accepted a correctly signed challenge without proving that the database had issued and
-stored it, and operations on one scientific slot were not explicitly serialized before sampling
-database time.
+The database-observation authority owns DB-time validation/admission challenges and durable
+committed-validation receipts. Its external RPC composition must verify stored challenges,
+serialize operations on each scientific slot and expose stable receipts for exact replay.
 
-The concrete raw-run adapter could prove full terminal and artifact lineage but could not implement
-the qualification-custody ports used by the bridge from its public projection. The F9-v2 campaign
-archive also lacked a read-only mode suitable for a database authority that must verify but never
-publish validator evidence.
+Raw-run and qualification-custody readers require the full terminal lineage. Database authorities
+read validator evidence through a read-only archive and cannot publish it.
 
 ## Decision
 

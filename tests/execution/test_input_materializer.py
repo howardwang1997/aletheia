@@ -190,6 +190,31 @@ def test_stream_rehash_atomic_publish_and_typed_exact_replay(tmp_path: Path) -> 
     assert materializer.load_receipt(intent=intent, destination=destination) == receipt
 
 
+def test_shared_read_only_cas_input_is_copied_to_private_runtime_custody(tmp_path: Path) -> None:
+    store, intent, _verified_sha256, materializer, destination = _case(tmp_path)
+    source = _cas_path(store)
+    source.chmod(0o440)
+    source_before = source.stat()
+
+    receipt = materializer.ensure_verified_inputs(intent=intent, destination=destination)
+    staged = destination / receipt.entries[0].relative_path
+    assert staged.read_bytes() == INPUT_BYTES
+    assert stat.S_IMODE(staged.stat().st_mode) == 0o400
+    assert staged.stat().st_ino != source_before.st_ino
+    assert source.stat() == source_before
+    assert materializer.load_receipt(intent=intent, destination=destination) == receipt
+    assert materializer.ensure_verified_inputs(intent=intent, destination=destination) == receipt
+
+
+@pytest.mark.parametrize("mode", (0o420, 0o460, 0o444, 0o600))
+def test_cas_input_rejects_uncommissioned_or_writable_modes(tmp_path: Path, mode: int) -> None:
+    store, intent, _verified_sha256, materializer, destination = _case(tmp_path)
+    _cas_path(store).chmod(mode)
+    with pytest.raises(InputMaterializationError):
+        materializer.ensure_verified_inputs(intent=intent, destination=destination)
+    assert not tuple(destination.rglob("*"))
+
+
 def test_partial_copy_is_rehashed_and_completed_after_interruption(tmp_path: Path) -> None:
     _, intent, _, materializer, destination = _case(tmp_path)
     partial_parent = destination / "dataset"

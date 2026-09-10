@@ -483,6 +483,20 @@ def test_rpc_facades_cover_each_closed_operation_without_a_catch_all() -> None:
             {"decision": tick},
         ),
         (
+            RPCAtomicObservationAdmission(
+                _RecordingClient(database, admission, kernel),
+                database_binding=database,
+                admission_binding=admission,
+                kernel_binding=kernel,
+            ),
+            "load_committed_admission",
+            {
+                "quest_id": "qst_" + "1" * 32,
+                "action_sha256": _sha("action"),
+                "scientific_slot_id": "sos_" + "2" * 32,
+            },
+        ),
+        (
             RPCContinuationMaterialization(_RecordingClient(continuation), continuation),
             "derive_and_register",
             {"wakeup": tick, "projection": tick, "plan": tick},
@@ -553,3 +567,31 @@ def test_database_bridge_translates_only_the_empty_slot_blocker_to_none() -> Non
             action_sha256=_sha("action"),
             scientific_slot_id="sos_" + "2" * 32,
         )
+
+
+@pytest.mark.parametrize(
+    "blocker_codes",
+    (("no_committed_admission",), ("another_blocker", "no_committed_admission")),
+)
+def test_atomic_bridge_translates_only_the_empty_admission_slot_to_none(blocker_codes) -> None:
+    database = _authority(ControllerStepAuthorityRole.DATABASE_ATTESTATION)
+    admission = _authority(ControllerStepAuthorityRole.INDEPENDENT_ADMISSION)
+    kernel = _authority(ControllerStepAuthorityRole.KERNEL_COMMAND)
+    atomic = RPCAtomicObservationAdmission(
+        _NoCommittedValidationClient(
+            database, admission, kernel, blocker_codes=blocker_codes
+        ),
+        database_binding=database,
+        admission_binding=admission,
+        kernel_binding=kernel,
+    )
+    lookup = dict(
+        quest_id="qst_" + "1" * 32,
+        action_sha256=_sha("action"),
+        scientific_slot_id="sos_" + "2" * 32,
+    )
+    if blocker_codes == ("no_committed_admission",):
+        assert atomic.load_committed_admission(**lookup) is None
+    else:
+        with pytest.raises(ControllerWorkerRPCBlocked):
+            atomic.load_committed_admission(**lookup)

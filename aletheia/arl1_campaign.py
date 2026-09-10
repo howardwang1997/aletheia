@@ -328,6 +328,14 @@ class AtomicAdmissionCoordinatorPort(Protocol):
     admission_authority_binding: ControllerStepAuthorityBinding
     kernel_authority_binding: ControllerStepAuthorityBinding
 
+    def load_committed_admission(
+        self,
+        *,
+        quest_id: str,
+        action_sha256: str,
+        scientific_slot_id: str,
+    ) -> AtomicObservationAdmissionReceipt | None: ...
+
     def commit_and_incorporate(
         self,
         decision: ObservationAdmissionDecision,
@@ -582,6 +590,35 @@ class ARL1PrimaryAdmissionCoordinator:
                 raise ARL1ProtocolCampaignError(
                     "ARL-1 admission source or deployment authority differs"
                 )
+            loaded = self._coordinator.load_committed_admission(
+                quest_id=authorization.action_protocol_binding.action.quest_id,
+                action_sha256=authorization.action_protocol_binding.action.object_sha256,
+                scientific_slot_id=authorization.scientific_slot_id,
+            )
+            if loaded is not None:
+                atomic = AtomicObservationAdmissionReceipt.model_validate(
+                    loaded.model_dump(mode="python")
+                )
+                stored = atomic.committed_admission.message
+                decision = stored.decision.message
+                if (
+                    atomic.created
+                    or atomic.kernel_receipt.created
+                    or decision.committed_validation_receipt != committed
+                    or decision.decided_by_principal_id != admission.principal_id
+                    or decision.decision_key_id != admission.key_id
+                    or decision.admission_authority_policy_sha256 != admission.policy_sha256
+                    or stored.committed_by_principal_id != database.principal_id
+                    or stored.commit_key_id != database.key_id
+                    or stored.database_authority_policy_sha256 != database.policy_sha256
+                    or atomic.kernel_receipt.principal_id != self._kernel_binding.principal_id
+                    or atomic.kernel_receipt.authorization_policy_sha256
+                    != self._kernel_binding.policy_sha256
+                ):
+                    raise ARL1ProtocolCampaignError(
+                        "ARL-1 loaded admission rebound its validation or deployment authority"
+                    )
+                return atomic
             challenge_receipt = AdmissionChallengeRegistrationReceipt.model_validate(
                 self._database.issue_admission_challenge(committed).model_dump(mode="python")
             )
@@ -669,10 +706,12 @@ class ARL1ProtocolCampaignService:
         self._kernel_store = kernel_store
         self._archive = archive
 
-    def execute(
+    def register(
         self,
         request: ARL1ProtocolCampaignRequestV1,
-    ) -> ARL1ProtocolCampaignRunReceiptV1:
+    ) -> AtomicScientificExecutionCampaignRegistrationReceipt:
+        """Reserve the complete signed campaign before handing custody to its executor."""
+
         try:
             request = ARL1ProtocolCampaignRequestV1.model_validate(
                 request.model_dump(mode="python")
@@ -686,6 +725,21 @@ class ARL1ProtocolCampaignService:
                 raise ARL1ProtocolCampaignError(
                     "campaign registrar returned another authorization set"
                 )
+            return registration
+        except ARL1ProtocolCampaignError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - external authority boundary
+            raise ARL1ProtocolCampaignError("ARL-1 campaign registration failed closed") from exc
+
+    def execute(
+        self,
+        request: ARL1ProtocolCampaignRequestV1,
+    ) -> ARL1ProtocolCampaignRunReceiptV1:
+        try:
+            request = ARL1ProtocolCampaignRequestV1.model_validate(
+                request.model_dump(mode="python")
+            )
+            registration = self.register(request)
             replicates = tuple(
                 self._load_replicate(
                     authorization=authorization,

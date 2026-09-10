@@ -93,24 +93,6 @@ source module with the same implementation hash. That satisfies deterministic ro
 this provisional exercise, not independent validator custody. The manifest marks every role
 `agent_authored: true`, carries no registration evidence, and caps evidence at exploratory.
 
-## Append-only protocol correction
-
-The first formal v1 execution was not erased. It failed before the worker because the macOS system
-temporary directory was not shared into the Colima VM, so Docker rejected the bind source with exit
-125. Finalization retained it as `rejected_execution`:
-
-| v1 object | Identity |
-|---|---|
-| protocol | `e6245206b59dbfd64b8d5f203311f02d780f2d844e3e39d2cbb8e62122ee14f5` |
-| raw run | `ea8bd99f7c4f6696ce46644d2c18afa60b046ec0849fab121f18831f1ed4c7d6` |
-| failed bundle | `e7e075f4b9fa6f6717ee661254bc01fb49b8abafa652a2dbb5994b4969bdf785` |
-| disposition | `rejected_execution` |
-
-Protocol v2 supersedes the exact v1 hash and explains the correction. It changes only the host
-scratch parent to the workspace-backed archive parent; the image, worker, job, scan, gold, quality,
-resource, and scientific claim contracts remain unchanged. Exact replay of the failed bundle also
-passes, showing that infrastructure failure is a stable evidence state.
-
 ## Gold and adversarial tests
 
 The simulation test module covers:

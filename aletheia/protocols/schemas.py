@@ -513,6 +513,19 @@ class ObservableOutputBinding(ProtocolModel):
     output_port_id: str = Field(pattern=LOCAL_ID_PATTERN)
 
 
+class ArchivedObservationInput(ProtocolModel):
+    """Read one producer observation through its registered, signed execution slot.
+
+    The lookup is a service argument. The observation bytes remain in the execution archive;
+    its verified envelope carries the exact producer artifact into independent validation.
+    """
+
+    observable_output_binding: ObservableOutputBinding
+    lookup_input_port_id: str = Field(pattern=LOCAL_ID_PATTERN)
+    envelope_output_port_id: str = Field(pattern=LOCAL_ID_PATTERN)
+    replicate_mapping: Literal["same_slot_index"] = "same_slot_index"
+
+
 def caller_parameter_manifest_sha256(
     bindings: tuple[CallerParameterBinding, ...],
 ) -> str:
@@ -528,6 +541,7 @@ class ProtocolStep(ProtocolModel):
     depends_on_step_ids: tuple[str, ...] = Field(default=(), max_length=128)
     input_port_ids: tuple[str, ...] = Field(default=(), max_length=128)
     output_port_ids: tuple[str, ...] = Field(min_length=1, max_length=128)
+    archived_observation_input: ArchivedObservationInput | None = None
     resource_request: ExecutionResourceRequest
     expected_artifacts: tuple[ExpectedArtifact, ...] = Field(min_length=1, max_length=128)
     contract_bindings: tuple[StepContractBinding, ...] = Field(default=(), max_length=256)
@@ -698,6 +712,7 @@ class WorkOrderNode(ProtocolModel):
     dependency_node_ids: tuple[str, ...] = Field(default=(), max_length=128)
     input_port_ids: tuple[str, ...] = Field(default=(), max_length=128)
     output_port_ids: tuple[str, ...] = Field(min_length=1, max_length=128)
+    archived_observation_input: ArchivedObservationInput | None = None
     resource_request: ExecutionResourceRequest
     retry_policy: ExecutionRetryPolicy
     expected_artifacts: tuple[ExpectedArtifact, ...] = Field(min_length=1, max_length=128)
@@ -783,6 +798,14 @@ class WorkOrderNode(ProtocolModel):
             for item in self.observable_output_bindings
         ):
             raise ValueError("work-order observable binding escaped its producer node")
+        archive_input = self.archived_observation_input
+        if archive_input is not None and (
+            self.role is not ProtocolStepRole.OBSERVATION_PARSER
+            or self.external_action_kind != "load_raw_run"
+            or archive_input.lookup_input_port_id not in self.input_port_ids
+            or archive_input.envelope_output_port_id not in self.output_port_ids
+        ):
+            raise ValueError("work-order archive input escaped its observation source node")
         return self
 
     @property
@@ -816,6 +839,20 @@ class WorkOrderDAG(ProtocolModel):
                     raise ValueError("work-order output port has multiple producers")
                 producers[port_id] = node.node_id
         for node in self.nodes:
+            archive_input = node.archived_observation_input
+            if archive_input is not None:
+                binding = archive_input.observable_output_binding
+                sources = tuple(
+                    item for item in self.nodes if item.protocol_step_id == binding.producer_step_id
+                )
+                if (
+                    len(sources) != 1
+                    or sources[0].node_id not in node.dependency_node_ids
+                    or sources[0].role is not ProtocolStepRole.SCIENTIFIC_EXECUTOR
+                    or binding not in sources[0].observable_output_bindings
+                    or sources[0].scientific_replicate_count != node.scientific_replicate_count
+                ):
+                    raise ValueError("work-order archive input is not bound to its exact producer")
             if any(
                 producers.get(port_id) is not None
                 and producers[port_id] not in node.dependency_node_ids

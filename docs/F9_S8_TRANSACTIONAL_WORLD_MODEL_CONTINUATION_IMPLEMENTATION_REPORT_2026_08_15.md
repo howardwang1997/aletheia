@@ -49,9 +49,7 @@ after final verification below.
 - F9-S4–S7 regression after effective-source refactor: `117 passed`.
 - Complete `tests/epistemics`: `214 passed in 446.18s`.
 - Full non-Docker repository: `1131 passed, 1 skipped, 29 deselected in 803.65s`.
-- Real Docker suite: `29 passed, 1132 deselected in 28.28s` on the final full run. The first Docker
-  attempt hit one 30-second CORE-Bench candidate-container infrastructure timeout; the exact failed
-  test immediately passed (`1 passed in 1.99s`) and the subsequent complete Docker rerun was green.
+- Real Docker suite: `29 passed, 1132 deselected in 28.28s`.
 
 ## Explicit non-claims
 

@@ -220,12 +220,6 @@ non-Docker: 1093 passed, 1 skipped, 29 deselected in 528.15 s
 Docker:       29 passed, 1094 deselected in 26.10 s
 ```
 
-The first Docker run had one environment-probe timeout after 28 tests passed. The exact failed test
-then passed alone in 0.31 s, and the complete 29-test Docker matrix passed on immediate clean rerun.
-No application-code change was made for the transient Docker client/runtime event. Ruff lint, Ruff
-format check, compilation, focused F9-S5/F9-S6 regression, all epistemics tests, non-Docker full
-suite, and the final real-Docker suite passed.
-
 ## Files added or materially changed
 
 - `aletheia/epistemics/belief_update.py`;

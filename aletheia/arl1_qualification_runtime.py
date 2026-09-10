@@ -64,6 +64,10 @@ from aletheia.observations.scientific_bridge import (
     ScientificBridgeRole,
     VerifiedExecutionAuthorityProjection,
 )
+from aletheia.execution.capability_sources import (
+    CapabilitySourceRuntimeConfigV1,
+    PinnedCapabilitySourceVerifier,
+)
 from aletheia.research_controller.step_executor import ControllerStepAuthorityRole
 from aletheia.research_controller.worker_composition import (
     require_effective_read_only_directory,
@@ -313,6 +317,7 @@ class ARL1EvidenceVerifierRuntimeConfigV1(KernelModel):
     admission_authority_pin: ScientificBridgeAuthorityPin
     database_authority_pin: ObservationDatabaseAuthorityPin
     validation_archive: ARL1F9V2ArchiveReadConfigV1
+    capability_sources: CapabilitySourceRuntimeConfigV1
     arl0_gate_command_pins: tuple[ARL0GateCommandPinV1, ...] = Field(
         min_length=len(ARL0GateKind),
         max_length=len(ARL0GateKind),
@@ -887,6 +892,7 @@ def compose_arl1_evidence_verifier(
         ),
         observation_verification=observation_verification,
         kernel_store=kernel_store,
+        capability_sources=PinnedCapabilitySourceVerifier(config.capability_sources),
         trusted_verifier_pins=config.trusted_verifier_pins,
         signing_private_key=source_signing_private_key,
         signing_pin_sha256=source_signing_pin_sha256,
@@ -934,11 +940,15 @@ def _assert_secret_path_separation(
         Path(campaign.qualification_reader.artifact_store_root),
         Path(campaign.qualification_reader.authority_registry_root),
         Path(config.validation_archive.root),
+        Path(config.capability_sources.source_root),
     )
     public_files = (
         Path(config.qualification_contract_source_path),
         Path(config.verifier_implementation_source_path),
         Path(config.runtime_implementation_source_path),
+        Path(config.capability_sources.trust_path),
+        Path(config.capability_sources.runtime_sources_path),
+        Path(config.capability_sources.implementation_source_path),
     )
     if any(_overlap(key_path, path) for path in (*public_roots, *public_files)):
         raise ARL1QualificationRuntimeError(
