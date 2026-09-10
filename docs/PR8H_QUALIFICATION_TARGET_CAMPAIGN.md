@@ -165,6 +165,8 @@ After target qualification, complete the production given-protocol campaign and 
 reexecutions, then prepare the evidence bundle, issue a qualification receipt and verify it in a
 fresh keyless auditor process. Every retained source class must reject byte tampering.
 
-Current system status: no production ARL-1 qualification receipt has been issued. Follow the
+Current system status: a production ARL-1 qualification receipt was issued on 2026-09-09 and
+passed fresh keyless verification; the tamper-rejection audit stage of the exit procedure is
+still outstanding. Follow the
 [current exit procedure](GENERATION_I_REQUALIFICATION_AND_ARL1_EXIT_RUNBOOK_2026_09_06.md)
 and [qualification contract](ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md).

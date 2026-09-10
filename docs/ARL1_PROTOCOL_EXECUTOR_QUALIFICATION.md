@@ -116,9 +116,13 @@ row projection and Kernel receipt. A missing slot is distinct from corrupt or re
 The campaign atomic-admission service permits `commit_and_incorporate` and
 `load_committed_admission`; the controller worker retains its original operation partition.
 
-**No production ARL-1 qualification receipt has been issued.** The next complete deployment must
-use a fresh release and commissioning window. Local tests are development verification and cannot
-satisfy target-host qualification.
+A production ARL-1 qualification receipt was issued on 2026-09-09 under the claim ceiling
+`bounded_protocol_execution_engineering` and passed fresh keyless verification from empty process
+memory. It is valid through 2026-09-10T18:24:07Z. The per-source-class tamper-rejection audit of
+the [exit runbook](GENERATION_I_REQUALIFICATION_AND_ARL1_EXIT_RUNBOOK_2026_09_06.md) is still
+outstanding, so the exit procedure is not complete. Any new deployment still requires a fresh
+release and commissioning window. Local tests are development verification and cannot satisfy
+target-host qualification.
 
 ## Test commands
 
