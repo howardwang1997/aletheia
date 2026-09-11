@@ -1605,6 +1605,74 @@ def _verify_pinned_directory(
         os.close(descriptor)
 
 
+def _ensure_runtime_socket_parent(
+    path: Path,
+    *,
+    owner_uid: int,
+    owner_gid: int,
+    mode: int,
+    label: str,
+    error_type: type[OCIDeploymentDependencyError],
+) -> None:
+    """Verify one volatile socket parent's custody, recreating it after a reboot.
+
+    Socket parents live under /run, whose tmpfs identity (device, inode, parent
+    chain) is boot-scoped: the deployment pin records that identity as
+    install-time evidence and commissioning compares it only within one boot.
+    A host reboot therefore leaves the pinned directory absent without any
+    tampering, so a starting service recreates the directory (and any missing
+    /run ancestors, world-traversable) with its pinned custody and serves; a
+    directory that already exists with any other custody still fails closed.
+    """
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        metadata = None
+    except OSError as exc:
+        raise error_type(f"{label} is unavailable") from exc
+    if metadata is None:
+        missing: list[Path] = []
+        cursor = path
+        while True:
+            try:
+                cursor.lstat()
+                break
+            except FileNotFoundError:
+                missing.append(cursor)
+            except OSError as exc:
+                raise error_type(f"{label} is unavailable") from exc
+            if cursor.parent == cursor:
+                break
+            cursor = cursor.parent
+        try:
+            for component in reversed(missing):
+                try:
+                    component.mkdir(mode=0o755)
+                except FileExistsError:
+                    continue
+                os.chmod(component, 0o755)
+            os.chown(path, owner_uid, owner_gid)
+            os.chmod(path, mode)
+        except OSError as exc:
+            raise error_type(f"{label} could not be recreated for this boot") from exc
+        try:
+            metadata = path.lstat()
+        except OSError as exc:
+            raise error_type(f"{label} is unavailable") from exc
+    try:
+        if (
+            path.resolve(strict=True) != path
+            or path.is_symlink()
+            or not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != owner_uid
+            or metadata.st_gid != owner_gid
+            or stat.S_IMODE(metadata.st_mode) != mode
+        ):
+            raise error_type(f"{label} differs from deployment pin")
+    except OSError as exc:
+        raise error_type(f"{label} is unavailable") from exc
+
+
 def _in_exact_systemd_unit(cgroup_payload: str, unit_name: str) -> bool:
     matches: list[str] = []
     for line in cgroup_payload.splitlines():
@@ -2000,6 +2068,8 @@ class LoopbackQuotaProvisionerDeploymentPin(ExecutionModel):
     state_root_inode: int = Field(ge=1)
     state_root_mode: Literal[0o700] = 0o700
     state_root_parent_chain_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    # Same semantics as the watchdog pin: tmpfs identity is install-time,
+    # same-boot evidence; runtime custody is owner/mode and reboot repair.
     socket_parent_device: int = Field(ge=0)
     socket_parent_inode: int = Field(ge=1)
     socket_parent_mode: Literal[0o755] = 0o755
@@ -3168,6 +3238,9 @@ class LoopbackOutputQuotaProvisioningService:
             self._deployment.service_executable,
             error_type=OCIOutputQuotaError,
         )
+        self._verify_deployment_roots()
+
+    def _verify_deployment_roots(self) -> None:
         _verify_pinned_directory(
             Path(self._deployment.workspace_root),
             owner_uid=0,
@@ -3197,14 +3270,6 @@ class LoopbackOutputQuotaProvisioningService:
                 self._deployment.state_root_parent_chain_sha256,
                 "quota state root",
             ),
-            (
-                Path(self._deployment.socket_path).parent,
-                self._deployment.socket_parent_device,
-                self._deployment.socket_parent_inode,
-                self._deployment.socket_parent_mode,
-                self._deployment.socket_parent_parent_chain_sha256,
-                "quota socket parent",
-            ),
         ):
             _verify_pinned_directory(
                 path,
@@ -3217,6 +3282,16 @@ class LoopbackOutputQuotaProvisioningService:
                 label=label,
                 error_type=OCIOutputQuotaError,
             )
+        # The socket parent is the one volatile (tmpfs) root: same reboot
+        # repair semantics as the watchdog service.
+        _ensure_runtime_socket_parent(
+            Path(self._deployment.socket_path).parent,
+            owner_uid=0,
+            owner_gid=0,
+            mode=self._deployment.socket_parent_mode,
+            label="quota socket parent",
+            error_type=OCIOutputQuotaError,
+        )
 
     def _create_server_socket(self) -> socket.socket:
         path = Path(self._deployment.socket_path)
@@ -3612,6 +3687,10 @@ class SystemdWatchdogDeploymentPin(ExecutionModel):
     state_root_mode: Literal[0o700] = 0o700
     state_root_parent_chain_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     socket_path: str = Field(min_length=2, max_length=4096)
+    # The socket parent sits on tmpfs: device/inode/parent-chain identity is
+    # install-time evidence compared within one boot (commissioning bindings,
+    # same-boot observation checks); the running service holds the directory
+    # to its pinned custody and recreates it across reboots.
     socket_parent_device: int = Field(ge=0)
     socket_parent_inode: int = Field(ge=1)
     socket_parent_mode: Literal[0o755] = 0o755
@@ -5116,35 +5195,28 @@ class DurableDeadlineWatchdogService:
             label="watchdog runtime journal root",
             error_type=OCIWatchdogError,
         )
-        for path, device, inode, mode, parent_chain, label in (
-            (
-                Path(self._deployment.state_root),
-                self._deployment.state_root_device,
-                self._deployment.state_root_inode,
-                self._deployment.state_root_mode,
-                self._deployment.state_root_parent_chain_sha256,
-                "watchdog state root",
-            ),
-            (
-                Path(self._deployment.socket_path).parent,
-                self._deployment.socket_parent_device,
-                self._deployment.socket_parent_inode,
-                self._deployment.socket_parent_mode,
-                self._deployment.socket_parent_parent_chain_sha256,
-                "watchdog socket parent",
-            ),
-        ):
-            _verify_pinned_directory(
-                path,
-                owner_uid=0,
-                owner_gid=0,
-                mode=mode,
-                device=device,
-                inode=inode,
-                parent_chain_sha256=parent_chain,
-                label=label,
-                error_type=OCIWatchdogError,
-            )
+        _verify_pinned_directory(
+            Path(self._deployment.state_root),
+            owner_uid=0,
+            owner_gid=0,
+            mode=self._deployment.state_root_mode,
+            device=self._deployment.state_root_device,
+            inode=self._deployment.state_root_inode,
+            parent_chain_sha256=self._deployment.state_root_parent_chain_sha256,
+            label="watchdog state root",
+            error_type=OCIWatchdogError,
+        )
+        # The socket parent is the one volatile (tmpfs) root: its pinned
+        # device/inode identity is install-time, same-boot evidence, and a
+        # reboot is an expected custody event that the service repairs.
+        _ensure_runtime_socket_parent(
+            Path(self._deployment.socket_path).parent,
+            owner_uid=0,
+            owner_gid=0,
+            mode=self._deployment.socket_parent_mode,
+            label="watchdog socket parent",
+            error_type=OCIWatchdogError,
+        )
 
     def _prepare_state_root(self) -> Path:
         root = Path(self._deployment.state_root)

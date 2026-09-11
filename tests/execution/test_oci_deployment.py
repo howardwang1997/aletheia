@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import stat
 import sys
 import tarfile
@@ -26,6 +27,7 @@ from aletheia.execution.oci_deployment import (
     LoopbackOutputQuotaController,
     LoopbackOutputQuotaProvisionerClient,
     LoopbackOutputQuotaProvisioningService,
+    LoopbackQuotaProvisionerDeploymentPin,
     OCIImageAttestationError,
     OCIOutputQuotaError,
     OCIWatchdogError,
@@ -39,6 +41,7 @@ from aletheia.execution.oci_deployment import (
     _QuotaLoopAttachment,
     _QuotaProvisioningIntent,
     _WatchdogArmedRecord,
+    _ensure_runtime_socket_parent,
 )
 from aletheia.execution.oci_runtime import DeploymentPinnedOCIPolicy
 from aletheia.execution.runtime_v2_contracts import (
@@ -2654,3 +2657,206 @@ def test_watchdog_cgroup_parser_binds_full_container_identity() -> None:
             f"0::/docker/{'b' * 64}\n",
             container_id=container_id,
         )
+
+
+def test_ensure_runtime_socket_parent_recreates_boot_missing_leaf(tmp_path: Path) -> None:
+    generation_root = tmp_path / "run" / "aletheia-qualification-test"
+    parent = generation_root / "watchdog"
+    parent.mkdir(parents=True)
+    generation_root.chmod(0o755)
+    parent.chmod(0o755)
+
+    def ensure() -> None:
+        _ensure_runtime_socket_parent(
+            parent,
+            owner_uid=os.geteuid(),
+            owner_gid=os.getegid(),
+            mode=0o755,
+            label="watchdog socket parent",
+            error_type=OCIWatchdogError,
+        )
+
+    ensure()
+    intact = parent.lstat()
+
+    # A host reboot wipes the tmpfs generation tree; the starting service
+    # recreates the missing ancestors and the leaf with pinned custody.
+    shutil.rmtree(generation_root)
+    ensure()
+    recreated = parent.lstat()
+    assert stat.S_ISDIR(recreated.st_mode)
+    assert recreated.st_uid == os.geteuid()
+    assert recreated.st_gid == os.getegid()
+    assert stat.S_IMODE(recreated.st_mode) == 0o755
+    assert stat.S_IMODE(generation_root.lstat().st_mode) == 0o755
+
+    # An intact parent is verified in place, never silently recreated.
+    ensure()
+    assert parent.lstat().st_ino == recreated.st_ino
+    assert parent.lstat().st_ino != intact.st_ino
+
+
+def test_ensure_runtime_socket_parent_fails_closed_on_foreign_custody(
+    tmp_path: Path,
+) -> None:
+    def ensure(path: Path) -> None:
+        _ensure_runtime_socket_parent(
+            path,
+            owner_uid=os.geteuid(),
+            owner_gid=os.getegid(),
+            mode=0o755,
+            label="watchdog socket parent",
+            error_type=OCIWatchdogError,
+        )
+
+    wrong_mode = tmp_path / "wrong-mode"
+    wrong_mode.mkdir(mode=0o755)
+    wrong_mode.chmod(0o711)
+    with pytest.raises(OCIWatchdogError, match="differs from deployment pin"):
+        ensure(wrong_mode)
+
+    regular_file = tmp_path / "regular-file"
+    regular_file.write_bytes(b"")
+    with pytest.raises(OCIWatchdogError, match="differs from deployment pin"):
+        ensure(regular_file)
+
+    target = tmp_path / "target"
+    target.mkdir(mode=0o755)
+    link = tmp_path / "symlink"
+    link.symlink_to(target, target_is_directory=True)
+    with pytest.raises(OCIWatchdogError, match="differs from deployment pin"):
+        ensure(link)
+
+
+def test_watchdog_roots_route_volatile_socket_parent_to_reboot_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = _policy(tmp_path / "policy")
+    deployment = _watchdog_deployment(tmp_path, policy)
+    service = DurableDeadlineWatchdogService(policy=policy, deployment=deployment)
+    verified: list[str] = []
+    ensured: list[tuple[Path, int, int, int, str]] = []
+
+    monkeypatch.setattr(
+        oci_deployment_module,
+        "_verify_pinned_directory",
+        lambda path, *, label, **_scope: verified.append(label),
+    )
+    monkeypatch.setattr(
+        oci_deployment_module,
+        "_ensure_runtime_socket_parent",
+        lambda path, *, owner_uid, owner_gid, mode, label, **_scope: ensured.append(
+            (path, owner_uid, owner_gid, mode, label)
+        ),
+    )
+
+    service._verify_deployment_roots()  # noqa: SLF001
+
+    assert verified == ["watchdog runtime journal root", "watchdog state root"]
+    assert len(ensured) == 1
+    path, owner_uid, owner_gid, mode, label = ensured[0]
+    assert path == Path(deployment.socket_path).parent
+    assert (owner_uid, owner_gid, mode) == (0, 0, 0o755)
+    assert label == "watchdog socket parent"
+
+
+def _quota_deployment(
+    tmp_path: Path, policy: DeploymentPinnedOCIPolicy
+) -> LoopbackQuotaProvisionerDeploymentPin:
+    executable = PinnedRootExecutable(
+        path=policy.runtime_binary_path,
+        sha256=policy.runtime_binary_sha256,
+        device=policy.runtime_binary_device,
+        inode=policy.runtime_binary_inode,
+        mode=policy.runtime_binary_mode,
+        parent_chain_sha256=policy.runtime_binary_parent_chain_sha256,
+    )
+    workspace = tmp_path / "workspaces"
+    return LoopbackQuotaProvisionerDeploymentPin(
+        deployment_id="quota.test",
+        systemd_unit_name="aletheia-qualification-output-quota-test.service",
+        workspace_root=str(workspace),
+        workspace_root_pin=PreinstalledOutputWorkspaceRootPin(
+            path=str(workspace),
+            device=1,
+            inode=1,
+            owner_gid=os.getegid(),
+            parent_chain_sha256=H0,
+        ),
+        backing_root=str(tmp_path / "quota-backing"),
+        state_root=str(tmp_path / "quota-state"),
+        socket_path=str(tmp_path / "run" / "quota.sock"),
+        allowed_client_uid=os.geteuid(),
+        allowed_client_gid=os.getegid(),
+        provisioner_policy_sha256=policy.policy_sha256,
+        provisioner_principal_id="principal.quota-test",
+        service_executable=executable,
+        losetup=executable,
+        mkfs=executable,
+        mount=executable,
+        service_module_sha256=H0,
+        service_module_device=1,
+        service_module_inode=1,
+        service_module_mode=0o400,
+        service_module_parent_chain_sha256=H0,
+        backing_root_device=1,
+        backing_root_inode=1,
+        backing_root_parent_chain_sha256=H0,
+        state_root_device=1,
+        state_root_inode=1,
+        state_root_parent_chain_sha256=H0,
+        socket_parent_device=1,
+        socket_parent_inode=1,
+        socket_parent_parent_chain_sha256=H0,
+    )
+
+
+def test_quota_roots_route_volatile_socket_parent_to_reboot_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = _policy(tmp_path / "policy")
+    deployment = _quota_deployment(tmp_path, policy)
+
+    class _StubQuotaController:
+        def __init__(self, *, policy: object, journal_root: Path, backing_root: Path) -> None:
+            return None
+
+    monkeypatch.setattr(
+        oci_deployment_module, "LoopbackOutputQuotaController", _StubQuotaController
+    )
+    service = LoopbackOutputQuotaProvisioningService(
+        deployment,
+        verification_policy=policy,
+        runtime_journal_root=tmp_path / "runtime-journal",
+    )
+    verified: list[str] = []
+    ensured: list[tuple[Path, int, int, int, str]] = []
+
+    monkeypatch.setattr(
+        oci_deployment_module,
+        "_verify_pinned_directory",
+        lambda path, *, label, **_scope: verified.append(label),
+    )
+    monkeypatch.setattr(
+        oci_deployment_module,
+        "_observe_live_output_workspace_root",
+        lambda expected: None,
+    )
+    monkeypatch.setattr(
+        oci_deployment_module,
+        "_ensure_runtime_socket_parent",
+        lambda path, *, owner_uid, owner_gid, mode, label, **_scope: ensured.append(
+            (path, owner_uid, owner_gid, mode, label)
+        ),
+    )
+
+    service._verify_deployment_roots()  # noqa: SLF001
+
+    assert verified == ["quota workspace root", "quota backing root", "quota state root"]
+    assert len(ensured) == 1
+    path, owner_uid, owner_gid, mode, label = ensured[0]
+    assert path == Path(deployment.socket_path).parent
+    assert (owner_uid, owner_gid, mode) == (0, 0, 0o755)
+    assert label == "quota socket parent"
