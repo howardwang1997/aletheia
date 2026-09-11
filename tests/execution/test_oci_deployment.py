@@ -2677,11 +2677,11 @@ def test_ensure_runtime_socket_parent_recreates_boot_missing_leaf(tmp_path: Path
         )
 
     ensure()
-    intact = parent.lstat()
 
     # A host reboot wipes the tmpfs generation tree; the starting service
     # recreates the missing ancestors and the leaf with pinned custody.
     shutil.rmtree(generation_root)
+    assert not parent.exists()
     ensure()
     recreated = parent.lstat()
     assert stat.S_ISDIR(recreated.st_mode)
@@ -2690,10 +2690,16 @@ def test_ensure_runtime_socket_parent_recreates_boot_missing_leaf(tmp_path: Path
     assert stat.S_IMODE(recreated.st_mode) == 0o755
     assert stat.S_IMODE(generation_root.lstat().st_mode) == 0o755
 
-    # An intact parent is verified in place, never silently recreated.
+    # An intact parent is verified in place, never silently recreated:
+    # contents survive and the directory entry is untouched.  (Inode
+    # non-reuse is not assertable — a freed inode can be reassigned
+    # immediately, as the CI runner's filesystem does.)
+    marker = parent / ".custody-intact"
+    marker.write_bytes(b"")
+    before = parent.lstat()
     ensure()
-    assert parent.lstat().st_ino == recreated.st_ino
-    assert parent.lstat().st_ino != intact.st_ino
+    assert parent.lstat().st_ino == before.st_ino
+    assert marker.exists()
 
 
 def test_ensure_runtime_socket_parent_fails_closed_on_foreign_custody(
