@@ -69,9 +69,17 @@ import fixtures as protocol_fixture_module  # noqa: E402
 class _AuditStore:
     result: ResearchReplayAudit
     calls: list[tuple[str, object]] = field(default_factory=list)
+    as_of_bounds: list[object] = field(default_factory=list)
 
-    def audit(self, quest_id: str, *, expected_scope_binding=None) -> ResearchReplayAudit:
+    def audit(
+        self,
+        quest_id: str,
+        *,
+        expected_scope_binding=None,
+        as_of=None,
+    ) -> ResearchReplayAudit:
         self.calls.append((quest_id, expected_scope_binding))
+        self.as_of_bounds.append(as_of)
         return self.result
 
     def audit_in_session(
@@ -153,6 +161,40 @@ def test_postgresql_action_adapter_consumes_exact_audited_authority(
             case.binding.compilation_request.protocol.graph_scope.scope_binding,
         )
     ]
+    # The historical seam bounds the audit at the signed observation time so the
+    # replay reproduces the verification the commit itself performed; without the
+    # bound the admission's own later incorporation event reads as a future
+    # commitment and every exact retry fails closed.
+    assert store.as_of_bounds == [observed_at]
+
+
+def test_postgresql_action_adapter_keeps_the_current_head_seam_unbounded(
+    action_bridge_case: BridgeCase,
+) -> None:
+    """New-execution registration must keep auditing the whole stream.
+
+    The ``audit_in_session`` seam proves the authorization event is still the Quest
+    head under the row lock.  Bounding it at ``observed_at`` would hide a concurrent
+    commit that landed between the observation and the lock, reopening the exact
+    time-of-check/time-of-use gap the head check exists to close.
+    """
+
+    case = action_bridge_case
+    store = _AuditStore(_action_audit(case))
+    adapter = PostgreSQLResearchActionAuthorityAdapter(store)  # type: ignore[arg-type]
+    observed_at = case.binding.bound_at + timedelta(minutes=1)
+
+    with Session() as session, session.begin():
+        assert (
+            adapter.verify_current_action_protocol_binding_in_session(
+                session,
+                binding=case.binding,
+                observed_at=observed_at,
+            )
+            == case.binding.binding_sha256
+        )
+
+    assert store.as_of_bounds == []
 
 
 def test_postgresql_action_adapter_locks_exact_current_authorized_head(

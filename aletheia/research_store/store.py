@@ -628,6 +628,7 @@ def _audit_stream(
     trust_root: ResearchAuthorizationTrustRootV1,
     expected_policy: ResearchAuthorizationPolicyV1 | None = None,
     allow_uncommitted_empty: bool = False,
+    as_of: datetime | None = None,
 ) -> ResearchReplayAudit:
     authority = session.get(_ResearchQuestAuthorityRecord, head.quest_id)
     if authority is None or authority.authority_kind != "research_kernel_v1":
@@ -655,6 +656,20 @@ def _audit_stream(
         raise ResearchStoreInvariantError("duplicate snapshot sequence")
     catalog = _load_catalog(session, quest_id=head.quest_id, archive=archive)
 
+    if as_of is not None:
+        _aware(as_of, label="audit bound")
+    if [row.sequence for row in event_rows] != list(range(1, len(event_rows) + 1)):
+        raise ResearchStoreInvariantError("persisted event stream has a sequence gap")
+    # The bound reproduces the commit-time view, so the stream is cut at the first
+    # event the bound cannot have seen.  Sequence order and commit order coincide
+    # because appends serialize on the Quest-stream row.
+    audited_rows = event_rows
+    if as_of is not None:
+        for index, row in enumerate(event_rows):
+            if row.committed_at > as_of:
+                audited_rows = event_rows[:index]
+                break
+
     if head.stream_version == 0 and not allow_uncommitted_empty:
         raise ResearchStoreInvariantError("a persisted authoritative Quest cannot be empty")
 
@@ -662,7 +677,7 @@ def _audit_stream(
     events: list[ResearchEvent] = []
     verified_snapshots: list[str] = []
     referenced_objects: set[str] = set()
-    for row in event_rows:
+    for row in audited_rows:
         event = _event_from_row(row)
         if event.sequence != len(events) + 1:
             raise ResearchStoreInvariantError("persisted event stream has a sequence gap")
@@ -737,15 +752,32 @@ def _audit_stream(
             _verify_snapshot(snapshot, state=state, event=event, archive=archive)
         )
 
-    if set(catalog) != referenced_objects:
+    # Tail invariants stay anchored to the complete stream: the catalog equality
+    # admits every object any event row indexes (the loop already proved each
+    # audited row's index equals its payload reference), snapshot coverage is
+    # counted against every row, and the head is compared against the full row
+    # count.  Only the replayed-state comparisons are prefix-scoped, and then
+    # solely on the unbounded path where prefix and stream coincide.
+    suffix_referenced = {
+        row.admitted_object_sha256
+        for row in event_rows[len(events):]
+        if row.admitted_object_sha256 is not None
+    }
+    if set(catalog) != referenced_objects | suffix_referenced:
         raise ResearchStoreInvariantError("object metadata catalog contains unadmitted payloads")
-    if len(snapshots) != len(events):
+    if len(snapshots) != len(event_rows):
         raise ResearchStoreInvariantError("snapshot history and event history differ")
     if (
         head.reducer_version != REDUCER_VERSION
-        or head.stream_version != state.stream_version
-        or head.tail_event_sha256 != state.tail_event_sha256
-        or head.stream_version != len(events)
+        or head.stream_version != len(event_rows)
+        or (
+            as_of is None
+            and (
+                head.stream_version != state.stream_version
+                or head.tail_event_sha256 != state.tail_event_sha256
+                or head.stream_version != len(events)
+            )
+        )
     ):
         raise ResearchStoreInvariantError("Quest stream head disagrees with canonical replay")
     return ResearchReplayAudit(
@@ -1372,6 +1404,7 @@ class ResearchKernelStore:
         quest_id: str,
         *,
         expected_scope_binding: ResearchScopeBinding | None = None,
+        as_of: datetime | None = None,
     ) -> ResearchReplayAudit:
         """Read and verify an entire Quest chain without acquiring a write-capable row lock.
 
@@ -1379,6 +1412,15 @@ class ResearchKernelStore:
         A concurrent append can make the independently read projections disagree, in which case
         ``_audit_stream`` fails closed.  Callers that must serialize a following mutation use
         ``audit_in_session`` instead.
+
+        ``as_of`` bounds the audited event stream to the prefix of events whose
+        ``committed_at`` it has already seen.  Receipt replay pins ``as_of`` to the signed
+        commitment time so the audit reproduces the verification the commit itself performed,
+        instead of failing on events the commitment cannot have observed (for example the
+        incorporation event the admission's own commit appends moments later).  The bound is
+        a view over the fully verified chain: every per-event invariant still runs on the
+        prefix, and the catalog, snapshot, and head totals are still checked against the
+        complete stream.  ``as_of=None`` audits the entire stream exactly as before.
         """
 
         with session_scope() as session:
@@ -1400,6 +1442,7 @@ class ResearchKernelStore:
                 archive=self._archive,
                 trust_root=self._trust_root,
                 expected_policy=self._expected_policy(quest_id),
+                as_of=as_of,
             )
 
     def audit_in_session(
