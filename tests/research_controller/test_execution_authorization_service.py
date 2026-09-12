@@ -265,7 +265,7 @@ class _Kernel:
     def __init__(self, audit) -> None:
         self._audit = audit
 
-    def audit(self, quest_id, *, expected_scope_binding=None):
+    def audit(self, quest_id, *, expected_scope_binding=None, as_of=None):
         assert quest_id == self._audit.quest_id
         assert expected_scope_binding == self._audit.scope_binding
         return self._audit
