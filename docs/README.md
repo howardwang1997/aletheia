@@ -3,8 +3,11 @@
 This directory contains the architecture, project review, roadmap, and implementation RFCs for
 Aletheia.
 
-Current status (2026-09-10): a production ARL-1 qualification receipt was issued 2026-09-09 and
-keylessly verified; the exit runbook's tamper-rejection audit remains outstanding. Use
+Current status (2026-09-13): generation 20260912t closed the full given-protocol campaign on
+2026-09-12 and issued a fresh ARL-1 qualification receipt; its keyless verification stage failed
+closed on a live-clock seam in the evidence verifier, fixed by pinning committed-receipt
+evaluation to each layer's own signed time. The exit runbook's tamper-rejection audit has never
+run, so a fresh generation must repeat the full exit sequence on the merged freeze. Use
 `LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md` and
 `GENERATION_I_REQUALIFICATION_AND_ARL1_EXIT_RUNBOOK_2026_09_06.md` for the fresh-generation sequence.
 Public outputs follow `PUBLICATION_BOUNDARY.md`; private/internal audit records remain outside
