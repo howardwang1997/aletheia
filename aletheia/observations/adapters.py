@@ -807,9 +807,15 @@ class PostgreSQLResearchActionAuthorityAdapter:
             if observed_at < binding.bound_at:
                 raise ValueError("action authority observation predates the binding")
             scope = binding.compilation_request.protocol.graph_scope
+            # The historical seam reproduces the verification the committing
+            # authority performed: the audit is bounded to the events the
+            # signed observation time had already seen.  Without the bound the
+            # audit enumerates the whole Quest and the admission's own later
+            # incorporation event reads as a future commitment.
             audit = self._store.audit(
                 binding.action.quest_id,
                 expected_scope_binding=scope.scope_binding,
+                as_of=observed_at,
             )
             audit = ResearchReplayAudit.model_validate(audit.model_dump(mode="python"))
             self._verify_audit(binding=binding, audit=audit, observed_at=observed_at)
