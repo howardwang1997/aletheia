@@ -689,7 +689,8 @@ class ControllerWorkerRPCServerRuntime:
 
     def serve_once(self) -> ControllerWorkerRPCServerCycleReceipt | None:
         self.start()
-        assert self._listener is not None and self._socket_identity is not None
+        if self._listener is None or self._socket_identity is None:
+            raise ControllerWorkerRPCProcessError("RPC server was closed before this serve cycle")
         self._parent_identity()
         if self._live_socket_identity() != self._socket_identity:
             raise ControllerWorkerRPCProcessError("RPC socket changed between cycles")

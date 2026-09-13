@@ -1025,3 +1025,22 @@ def test_parent_identity_anchors_generation_root_per_cycle(tmp_path: Path) -> No
     shutil.rmtree(socket_parent)
     with pytest.raises(ControllerWorkerRPCProcessError, match="RPC socket parent is unavailable"):
         runtime._parent_identity()  # noqa: SLF001
+
+
+def test_serve_once_after_close_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    deployment, _manifest_path = _runtime_fixture(tmp_path)
+    _force_linux_peer_credentials(monkeypatch)
+    runtime = build_controller_worker_rpc_server_runtime(deployment, clock=lambda: NOW)
+    runtime.start()
+    runtime.close()
+
+    # close() nulls the listener while keeping the startup receipt, so
+    # serve_once's start() early-returns; the cycle must fail closed instead
+    # of tripping an assertion.
+    with pytest.raises(
+        ControllerWorkerRPCProcessError, match="closed before this serve cycle"
+    ):
+        runtime.serve_once()
