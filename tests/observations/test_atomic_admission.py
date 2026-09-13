@@ -397,11 +397,13 @@ def test_load_committed_admission_replays_after_the_observation_window_closes(
     receipt = recovered.load_committed_admission(**lookup)
     assert receipt.committed_admission == first.committed_admission
     assert not receipt.created and not receipt.kernel_receipt.created
-    # The replay must re-derive the database authority's own commit-time evaluation, not
-    # evaluate the already-closed observation window against the current database clock.
+    # The replay must re-derive each layer's own signed-time evaluation, not
+    # evaluate the already-closed observation window against the current database
+    # clock: the campaign-custody layer is judged at the validation receipt's
+    # own commitment time, not at the admission's outer commit time.
     replay_calls = bridge.validation_campaign_custody.calls[custody_calls:]
     assert {call[-1] for call in replay_calls} == {
-        first.committed_admission.message.committed_at
+        decision.message.committed_validation_receipt.message.committed_at
     }
 
     future_dated = PostgreSQLAtomicObservationAdmissionCoordinator(
