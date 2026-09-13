@@ -1971,6 +1971,115 @@ def test_only_atomic_database_commit_confers_scientific_admission_authority() ->
     )
 
 
+def test_committed_validation_receipt_survives_a_closed_observation_window() -> None:
+    case = _bridge_case()
+    receipt = _validated_receipt(case, outcome_bin_id="outcome.negative")
+    committed = _commit_validation(case, receipt)
+    deadline = case.authorization.message.observation_admission_deadline
+    after_the_window = deadline + timedelta(hours=1)
+    assert committed.message.committed_at < deadline < after_the_window
+
+    assert (
+        verify_committed_observation_validation_receipt(
+            committed_receipt=committed,
+            qualification_authority=case.qualification_authority,
+            action_authority=case.action_authority,
+            qualification_custody=case.qualification_custody,
+            raw_run_custody=case.raw_run_custody,
+            validation_campaign_custody=case.validation_campaign_custody,
+            execution_authority_pin=case.execution_pin,
+            validator_authority_pin=case.validator_pin,
+            admission_authority_pin=case.admission_pin,
+            database_authority_pin=case.database_pin,
+            observed_at=after_the_window,
+        )
+        == committed
+    )
+    # The nested evaluation is pinned to the receipt's own signed commitment
+    # time — the evaluation the committing database performed — so a window
+    # that closed afterwards cannot fail a validly committed receipt.  Only
+    # the future-dating guard and the commitment signature see the caller's
+    # later clock.
+    assert case.validation_campaign_custody.calls[-1][4] == committed.message.committed_at
+    assert case.raw_run_custody.calls[-1][1] == committed.message.committed_at
+    assert case.action_authority.calls[-1][1] == committed.message.committed_at
+
+    before_commit = committed.message.committed_at - timedelta(seconds=1)
+    with pytest.raises(ScientificBridgeVerificationError, match="future-dated"):
+        verify_committed_observation_validation_receipt(
+            committed_receipt=committed,
+            qualification_authority=case.qualification_authority,
+            action_authority=case.action_authority,
+            qualification_custody=case.qualification_custody,
+            raw_run_custody=case.raw_run_custody,
+            validation_campaign_custody=case.validation_campaign_custody,
+            execution_authority_pin=case.execution_pin,
+            validator_authority_pin=case.validator_pin,
+            admission_authority_pin=case.admission_pin,
+            database_authority_pin=case.database_pin,
+            observed_at=before_commit,
+        )
+
+
+def test_committed_admission_survives_a_closed_observation_window() -> None:
+    case = _bridge_case()
+    receipt = _validated_receipt(case, outcome_bin_id="outcome.negative")
+    decision, _committed_validation = _issue_admission_decision(
+        case,
+        receipt=receipt,
+        disposition=ObservationAdmissionDisposition.ADMITTED,
+        reason_codes=(),
+    )
+    committed_admission = _commit_admission(case, decision)
+    deadline = case.authorization.message.observation_admission_deadline
+    after_the_window = deadline + timedelta(hours=1)
+    validation_committed_at = (
+        committed_admission.message.decision.message.committed_validation_receipt.message.committed_at
+    )
+    assert validation_committed_at < deadline
+    assert decision.message.decided_at < deadline
+    assert committed_admission.message.committed_at < after_the_window
+
+    assert (
+        verify_committed_observation_admission(
+            committed_admission=committed_admission,
+            qualification_authority=case.qualification_authority,
+            action_authority=case.action_authority,
+            qualification_custody=case.qualification_custody,
+            raw_run_custody=case.raw_run_custody,
+            validation_campaign_custody=case.validation_campaign_custody,
+            execution_authority_pin=case.execution_pin,
+            validator_authority_pin=case.validator_pin,
+            admission_authority_pin=case.admission_pin,
+            database_authority_pin=case.database_pin,
+            observed_at=after_the_window,
+        )
+        == committed_admission
+    )
+    # Each layer is re-derived at its own signed time: the nested validation
+    # receipt at its commitment, the decision at decided_at.  The caller's
+    # later clock never reaches the campaign window or the custody ports.
+    assert case.validation_campaign_custody.calls[-1][4] == validation_committed_at
+    assert case.raw_run_custody.calls[-1][1] == validation_committed_at
+    assert case.action_authority.calls[-1][1] == validation_committed_at
+
+    before_commit = committed_admission.message.committed_at - timedelta(seconds=1)
+    with pytest.raises(ScientificBridgeVerificationError, match="future-dated"):
+        verify_committed_observation_admission(
+            committed_admission=committed_admission,
+            qualification_authority=case.qualification_authority,
+            action_authority=case.action_authority,
+            qualification_custody=case.qualification_custody,
+            raw_run_custody=case.raw_run_custody,
+            validation_campaign_custody=case.validation_campaign_custody,
+            execution_authority_pin=case.execution_pin,
+            validator_authority_pin=case.validator_pin,
+            admission_authority_pin=case.admission_pin,
+            database_authority_pin=case.database_pin,
+            observed_at=before_commit,
+        )
+
+
 def test_admission_commit_clock_cannot_rollback_or_cross_challenge_expiry() -> None:
     case = _bridge_case()
     decision, _committed_validation = _issue_admission_decision(

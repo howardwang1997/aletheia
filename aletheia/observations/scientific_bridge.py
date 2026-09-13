@@ -2586,6 +2586,11 @@ def verify_committed_observation_validation_receipt(
             raise ScientificBridgeVerificationError(
                 "validation commitment is future-dated or outlives database authority"
             )
+        # Historical re-verification re-derives the evaluation the committing
+        # authority performed: the nested receipt is judged at its own signed
+        # commitment time, so an observation window that has since closed cannot
+        # fail a validly committed receipt.  The caller's observed_at keeps the
+        # future-dating guard above and the commitment signature below.
         verify_observation_validation_receipt(
             receipt=receipt,
             qualification_authority=qualification_authority,
@@ -2597,7 +2602,7 @@ def verify_committed_observation_validation_receipt(
             validator_authority_pin=validator_authority_pin,
             admission_authority_pin=admission_authority_pin,
             database_authority_pin=database_authority_pin,
-            observed_at=observed_at,
+            observed_at=message.committed_at,
         )
         _verify_signature(
             pin=database_authority_pin,
@@ -3105,6 +3110,12 @@ def verify_committed_observation_admission(
             raise ScientificBridgeVerificationError(
                 "admission commitment is future-dated or outlives database authority"
             )
+        # Historical re-verification re-derives the evaluation the decision
+        # signer performed: the nested decision is judged at its own signed
+        # decision time (the live issuance path verifies at exactly decided_at),
+        # so an observation window that has since closed cannot fail a validly
+        # committed admission.  The caller's observed_at keeps the future-dating
+        # guard above and the admission signature below.
         verify_observation_admission_decision(
             decision=decision,
             qualification_authority=qualification_authority,
@@ -3116,7 +3127,7 @@ def verify_committed_observation_admission(
             validator_authority_pin=validator_authority_pin,
             admission_authority_pin=admission_authority_pin,
             database_authority_pin=database_authority_pin,
-            observed_at=observed_at,
+            observed_at=decision.message.decided_at,
         )
         _verify_signature(
             pin=database_authority_pin,

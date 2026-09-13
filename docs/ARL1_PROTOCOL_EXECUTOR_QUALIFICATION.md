@@ -116,13 +116,19 @@ row projection and Kernel receipt. A missing slot is distinct from corrupt or re
 The campaign atomic-admission service permits `commit_and_incorporate` and
 `load_committed_admission`; the controller worker retains its original operation partition.
 
-A production ARL-1 qualification receipt was issued on 2026-09-09 under the claim ceiling
-`bounded_protocol_execution_engineering` and passed fresh keyless verification from empty process
-memory. It is valid through 2026-09-10T18:24:07Z. The per-source-class tamper-rejection audit of
-the [exit runbook](GENERATION_I_REQUALIFICATION_AND_ARL1_EXIT_RUNBOOK_2026_09_06.md) is still
-outstanding, so the exit procedure is not complete. Any new deployment still requires a fresh
-release and commissioning window. Local tests are development verification and cannot satisfy
-target-host qualification.
+Production ARL-1 qualification receipts have been issued under the claim ceiling
+`bounded_protocol_execution_engineering` on 2026-09-09 (keylessly verified the same day) and on
+2026-09-12 by generation 20260912t, which first closed the complete given-protocol campaign:
+both preregistered reexecutions terminally accepted, a byte-identical campaign replay, and the
+full observation chain from validation receipts through one atomic admission to kernel
+incorporation. The 2026-09-12 generation's keyless verification stage then failed closed on a
+live-clock seam in the evidence verifier — committed evidence was judged against the current
+time, past its admission window — fixed by pinning committed-receipt historical evaluation to
+each layer's own signed time. The per-source-class tamper-rejection audit of the
+[exit runbook](GENERATION_I_REQUALIFICATION_AND_ARL1_EXIT_RUNBOOK_2026_09_06.md) has never run,
+so the exit procedure is not complete; a fresh generation must repeat the full sequence on the
+merged freeze. Any new deployment still requires a fresh release and commissioning window. Local
+tests are development verification and cannot satisfy target-host qualification.
 
 ## Test commands
 

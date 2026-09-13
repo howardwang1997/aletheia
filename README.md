@@ -10,15 +10,19 @@ execution, validation, admission and qualification use separate authorities.
 
 ## Current status
 
-**The deployed system holds a production ARL-1 qualification receipt** — issued 2026-09-09,
-verified by a fresh keyless auditor process, valid through 2026-09-10T18:24:07Z. ARL-1 qualifies
-bounded protocol execution; it does not establish scientific validity, independent replication or
-autonomous research design.
+**The deployed system has produced ARL-1 qualification receipts, most recently on 2026-09-12** —
+generation 20260912t closed the full given-protocol campaign: both preregistered reexecutions
+were terminally accepted, the campaign replay proved byte-identical, and the complete observation
+chain committed through kernel incorporation. That generation's keyless verification stage failed
+closed on a live-clock seam in the evidence verifier, fixed by pinning committed-receipt
+evaluation to each layer's own signed time; the tamper-rejection audit has never run. ARL-1
+qualifies bounded protocol execution; it does not establish scientific validity, independent
+replication or autonomous research design.
 
-The immediate sequence is: complete the exit runbook's per-source-class tamper-rejection audit
-within a valid qualification window; then integrate a bounded ARL-2 campaign. F8 knowledge, F9
-world-model and F10 capability components exist, but their presence does not establish a
-qualified autonomous scientist.
+The immediate sequence is: repeat the full exit runbook on the merged freeze — keyless
+verification plus the per-source-class tamper-rejection audit inside a valid qualification
+window; then integrate a bounded ARL-2 campaign. F8 knowledge, F9 world-model and F10 capability
+components exist, but their presence does not establish a qualified autonomous scientist.
 
 - [Current roadmap](docs/LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md)
 - [ARL-1 qualification contract](docs/ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md)
