@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
+import socket
+import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -40,6 +43,7 @@ from aletheia.research_controller_rpc_runtime import (
     ControllerWorkerRPCServerCycleReceipt,
     ControllerWorkerRPCServerDeployment,
     ControllerWorkerRPCServerStartupReceipt,
+    _ensure_runtime_socket_parent,
     build_controller_worker_rpc_server_runtime,
     load_controller_worker_rpc_server_deployment,
 )
@@ -430,14 +434,27 @@ def _runtime_fixture(tmp_path: Path) -> tuple[ControllerWorkerRPCServerDeploymen
     code_root = tmp_path / "release"
     config_root = tmp_path / "config"
     secret_root = tmp_path / "secrets"
-    socket_root = tmp_path / "run"
-    for path in (code_root, config_root, secret_root, socket_root):
+    for path in (code_root, config_root, secret_root):
         path.mkdir()
+    # Mirror the deployed run tree: a root-commissioned generation root shared
+    # by every service uid, with one service-owned leaf below it.  pytest tmp
+    # dirs are 0700, so only the modes set here matter.  Component names stay
+    # short: bound paths must fit the kernel's unix socket name limit under
+    # CI's long basetemp.
+    generation_root = tmp_path / "run" / "g"
+    socket_root = generation_root / "c"
+    generation_root.mkdir(mode=0o750, parents=True)
+    generation_root.chmod(0o750)
+    socket_root.mkdir(mode=0o750)
     socket_root.chmod(0o750)
+    # Directories under a sticky basetemp (e.g. /tmp) inherit a foreign group;
+    # the deployment pins the process gid, so pin the group here too.
+    os.chown(generation_root, -1, os.getegid())
+    os.chown(socket_root, -1, os.getegid())
     source = code_root / "rpc_factory.py"
     config = config_root / "rpc_config.json"
     key_path = secret_root / "receipt.key"
-    socket_path = socket_root / "compiler.sock"
+    socket_path = socket_root / "s"
     result = _compilation_write()
     config.write_bytes(canonical_json_bytes({"result": result.model_dump(mode="json")}))
     source.write_text(
@@ -619,3 +636,417 @@ def test_operational_receipts_reject_partial_or_noncanonical_evidence() -> None:
             started_at=NOW,
             finished_at=NOW,
         )
+
+    valid = ControllerWorkerRPCServerStartupReceipt(
+        runtime_id="rpcsrv_" + "1" * 32,
+        deployment_sha256=_sha("deployment"),
+        service_id=pin.service_id,
+        receipt_key_id=pin.receipt_key_id,
+        operations=(ControllerWorkerRPCOperation.COMPILE_PROTOCOL,),
+        socket_device_id=1,
+        socket_inode=2,
+        boot_id="c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f",
+        started_at=NOW,
+    )
+    assert valid.boot_id == "c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f"
+    payload = valid.model_dump(mode="json")
+    del payload["boot_id"]
+    legacy = ControllerWorkerRPCServerStartupReceipt.model_validate(payload)
+    assert legacy.boot_id is None
+    with pytest.raises(ValidationError, match="boot_id"):
+        ControllerWorkerRPCServerStartupReceipt.model_validate(
+            payload | {"boot_id": "not-a-uuid"}
+        )
+
+
+def _force_linux_peer_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("aletheia.research_controller_rpc_runtime.sys.platform", "linux")
+    monkeypatch.setattr(socket, "SO_PEERCRED", 1, raising=False)
+
+
+def test_ensure_runtime_socket_parent_recreates_boot_missing_leaf(tmp_path: Path) -> None:
+    generation_root = (tmp_path / "run" / "aletheia-scientific").resolve()
+    parent = generation_root / "compiler"
+    generation_root.mkdir(mode=0o750, parents=True)
+    generation_root.chmod(0o750)
+    parent.mkdir(mode=0o750)
+    parent.chmod(0o750)
+
+    def ensure() -> tuple[tuple[int, int, int, int, int], tuple[int, int, int, int, int]]:
+        return _ensure_runtime_socket_parent(
+            parent,
+            owner_uid=os.geteuid(),
+            owner_gid=os.getegid(),
+            mode=0o750,
+        )
+
+    marker = generation_root / "commissioned"
+    marker.write_bytes(b"root-commissioned")
+    root_before = generation_root.stat()
+    intact = ensure()
+    intact_inode = parent.stat().st_ino
+    assert intact == (
+        (parent.stat().st_dev, intact_inode, os.geteuid(), os.getegid(), 0o750),
+        (
+            root_before.st_dev,
+            root_before.st_ino,
+            root_before.st_uid,
+            root_before.st_gid,
+            0o750,
+        ),
+    )
+    ensure()
+    assert parent.stat().st_ino == intact_inode
+
+    # A reboot keeps the provisioned generation root and loses only the
+    # service-owned leaf; the leaf returns with its pinned custody while the
+    # shared root keeps its identity and its commissioned contents.
+    shutil.rmtree(parent)
+    ensure()
+    recreated = parent.stat()
+    assert stat.S_ISDIR(recreated.st_mode)
+    assert (recreated.st_uid, recreated.st_gid, stat.S_IMODE(recreated.st_mode)) == (
+        os.geteuid(),
+        os.getegid(),
+        0o750,
+    )
+    assert generation_root.stat().st_ino == root_before.st_ino
+    assert marker.read_bytes() == b"root-commissioned"
+    # The recreated inode stays stable across further startups; it is never
+    # compared to the pre-reboot inode because CI filesystems reuse inodes.
+    ensure()
+    assert parent.stat().st_ino == recreated.st_ino
+
+    # The generation root is provisioner-owned: when a reboot takes it too,
+    # recreation fails closed naming the provisioner and mints no leaf.
+    shutil.rmtree(generation_root)
+    with pytest.raises(ControllerWorkerRPCProcessError, match="generation root is absent"):
+        ensure()
+    assert not parent.exists()
+
+
+def test_ensure_runtime_socket_parent_fails_closed_on_foreign_custody(tmp_path: Path) -> None:
+    parent = (tmp_path / "run").resolve()
+    parent.mkdir(mode=0o750)
+    parent.chmod(0o750)
+
+    def ensure() -> tuple[int, int, int, int, int]:
+        return _ensure_runtime_socket_parent(
+            parent,
+            owner_uid=os.geteuid(),
+            owner_gid=os.getegid(),
+            mode=0o750,
+        )
+
+    parent.chmod(0o711)
+    with pytest.raises(ControllerWorkerRPCProcessError, match="custody differs from its pin"):
+        ensure()
+
+    parent.chmod(0o750)
+    decoy = (tmp_path / "decoy").resolve()
+    decoy.mkdir(mode=0o750)
+    parent.rmdir()
+    parent.symlink_to(decoy, target_is_directory=True)
+    with pytest.raises(ControllerWorkerRPCProcessError, match="custody differs from its pin"):
+        ensure()
+
+    parent.unlink()
+    parent.write_bytes(b"")
+    with pytest.raises(ControllerWorkerRPCProcessError, match="custody differs from its pin"):
+        ensure()
+
+
+def test_ensure_runtime_socket_parent_rejects_foreign_generation_root(tmp_path: Path) -> None:
+    generation_root = (tmp_path / "run" / "aletheia-scientific").resolve()
+    parent = generation_root / "compiler"
+
+    def ensure() -> tuple[tuple[int, int, int, int, int], tuple[int, int, int, int, int]]:
+        return _ensure_runtime_socket_parent(
+            parent,
+            owner_uid=os.geteuid(),
+            owner_gid=os.getegid(),
+            mode=0o750,
+        )
+
+    generation_root.mkdir(mode=0o750, parents=True)
+    generation_root.chmod(0o750)
+    generation_root.chmod(0o757)
+    with pytest.raises(
+        ControllerWorkerRPCProcessError,
+        match="generation root custody is not a private directory",
+    ):
+        ensure()
+    assert not parent.exists()
+
+    generation_root.chmod(0o750)
+    shutil.rmtree(generation_root)
+    generation_root.write_bytes(b"")
+    with pytest.raises(
+        ControllerWorkerRPCProcessError,
+        match="generation root custody is not a private directory",
+    ):
+        ensure()
+    assert not parent.exists()
+
+    generation_root.unlink()
+    decoy = (tmp_path / "decoy-root").resolve()
+    decoy.mkdir(mode=0o750)
+    decoy.chmod(0o750)
+    generation_root.symlink_to(decoy, target_is_directory=True)
+    with pytest.raises(
+        ControllerWorkerRPCProcessError,
+        match="generation root custody is not a private directory",
+    ):
+        ensure()
+    assert not parent.exists()
+    # The recreate must never be attempted through the symlink.
+    assert not (decoy / "compiler").exists()
+
+
+def test_runtime_start_recreates_missing_socket_parent_after_reboot(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    deployment, _manifest_path = _runtime_fixture(tmp_path)
+    _force_linux_peer_credentials(monkeypatch)
+    socket_parent = Path(deployment.socket_parent_path)
+    socket_path = Path(deployment.service_pin.socket_path)
+
+    runtime = build_controller_worker_rpc_server_runtime(deployment, clock=lambda: NOW)
+    runtime.start()
+    assert stat.S_ISSOCK(socket_path.stat().st_mode)
+    runtime.close()
+    assert not os.path.lexists(socket_path)
+
+    # The reboot wipes the service-owned leaf while the provisioned generation
+    # root keeps the shared identity the deployment pin cannot carry across
+    # boots; startup must recover the leaf only.
+    shutil.rmtree(socket_parent)
+    ensure_calls = []
+
+    def _recording_ensure(path, *, owner_uid, owner_gid, mode):
+        ensure_calls.append((path, owner_uid, owner_gid, mode))
+        return _ensure_runtime_socket_parent(
+            path, owner_uid=owner_uid, owner_gid=owner_gid, mode=mode
+        )
+
+    monkeypatch.setattr(
+        "aletheia.research_controller_rpc_runtime._ensure_runtime_socket_parent",
+        _recording_ensure,
+    )
+    monkeypatch.setattr(
+        "aletheia.research_controller_rpc_runtime._boot_id",
+        lambda: "c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f",
+    )
+    rebound = build_controller_worker_rpc_server_runtime(deployment, clock=lambda: NOW)
+    receipt = rebound.start()
+    assert receipt.boot_id == "c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f"
+    recreated = socket_parent.stat()
+    generation_root = socket_parent.parent.stat()
+    assert stat.S_ISDIR(recreated.st_mode)
+    assert (recreated.st_uid, recreated.st_gid, stat.S_IMODE(recreated.st_mode)) == (
+        deployment.socket_parent_owner_uid,
+        deployment.socket_parent_owner_gid,
+        0o750,
+    )
+    assert stat.S_ISSOCK(socket_path.stat().st_mode)
+    assert ensure_calls == [
+        (socket_parent, os.geteuid(), os.getegid(), 0o750),
+    ]
+    assert rebound._socket_parent_identity == (  # noqa: SLF001
+        (
+            recreated.st_dev,
+            recreated.st_ino,
+            deployment.socket_parent_owner_uid,
+            deployment.socket_parent_owner_gid,
+            0o750,
+        ),
+        (
+            generation_root.st_dev,
+            generation_root.st_ino,
+            generation_root.st_uid,
+            generation_root.st_gid,
+            0o750,
+        ),
+    )
+    rebound.close()
+
+
+def test_runtime_start_fails_closed_on_foreign_socket_parent_custody(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    deployment, _manifest_path = _runtime_fixture(tmp_path)
+    _force_linux_peer_credentials(monkeypatch)
+    socket_parent = Path(deployment.socket_parent_path)
+    socket_path = Path(deployment.service_pin.socket_path)
+    runtime = build_controller_worker_rpc_server_runtime(deployment, clock=lambda: NOW)
+
+    socket_parent.chmod(0o711)
+    with pytest.raises(ControllerWorkerRPCProcessError, match="custody differs from its pin"):
+        runtime.start()
+    assert not os.path.lexists(socket_path)
+
+    socket_parent.chmod(0o750)
+    decoy = (tmp_path / "decoy-parent").resolve()
+    decoy.mkdir(mode=0o750)
+    socket_parent.rmdir()
+    socket_parent.symlink_to(decoy, target_is_directory=True)
+    with pytest.raises(ControllerWorkerRPCProcessError, match="custody differs from its pin"):
+        runtime.start()
+    assert not os.path.lexists(socket_path)
+
+
+def test_runtime_start_fails_closed_when_generation_root_absent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    deployment, _manifest_path = _runtime_fixture(tmp_path)
+    _force_linux_peer_credentials(monkeypatch)
+    socket_path = Path(deployment.service_pin.socket_path)
+    shutil.rmtree(tmp_path / "run")
+
+    # A reboot without the tmpfiles.d tree leaves no generation root to serve
+    # under: startup fails closed naming the provisioner, before any bind.
+    runtime = build_controller_worker_rpc_server_runtime(deployment, clock=lambda: NOW)
+    with pytest.raises(ControllerWorkerRPCProcessError, match="generation root is absent"):
+        runtime.start()
+    assert not os.path.lexists(socket_path)
+
+
+def test_runtime_parent_checks_stay_strict_after_startup_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    deployment, _manifest_path = _runtime_fixture(tmp_path)
+    _force_linux_peer_credentials(monkeypatch)
+    runtime = build_controller_worker_rpc_server_runtime(deployment, clock=lambda: NOW)
+    runtime.start()
+    observed = Path(deployment.socket_parent_path).stat()
+    generation_root = Path(deployment.socket_parent_path).parent.stat()
+    assert runtime._socket_parent_identity == (  # noqa: SLF001
+        (
+            observed.st_dev,
+            observed.st_ino,
+            observed.st_uid,
+            observed.st_gid,
+            0o750,
+        ),
+        (
+            generation_root.st_dev,
+            generation_root.st_ino,
+            generation_root.st_uid,
+            generation_root.st_gid,
+            0o750,
+        ),
+    )
+
+    def _refuse(*_args, **_kwargs):
+        raise AssertionError("per-cycle checks must not recreate the socket parent")
+
+    monkeypatch.setattr(
+        "aletheia.research_controller_rpc_runtime._ensure_runtime_socket_parent",
+        _refuse,
+    )
+    assert runtime._parent_identity() == runtime._socket_parent_identity  # noqa: SLF001
+
+    # A replaced leaf directory with identical custody is still foreign: the
+    # anchor keeps the per-cycle comparison on this boot's exact identity.
+    runtime._socket_parent_identity = (  # noqa: SLF001
+        (
+            observed.st_dev,
+            observed.st_ino + 1,
+            observed.st_uid,
+            observed.st_gid,
+            0o750,
+        ),
+        (
+            generation_root.st_dev,
+            generation_root.st_ino,
+            generation_root.st_uid,
+            generation_root.st_gid,
+            0o750,
+        ),
+    )
+    with pytest.raises(ControllerWorkerRPCProcessError, match="custody differs from its pin"):
+        runtime._parent_identity()  # noqa: SLF001
+    runtime.close()
+
+
+def test_parent_identity_anchors_generation_root_per_cycle(tmp_path: Path) -> None:
+    deployment, _manifest_path = _runtime_fixture(tmp_path)
+    socket_parent = Path(deployment.socket_parent_path)
+    generation_root_path = socket_parent.parent
+    leaf = socket_parent.stat()
+    generation_root = generation_root_path.stat()
+    runtime = build_controller_worker_rpc_server_runtime(deployment, clock=lambda: NOW)
+    runtime._socket_parent_identity = (  # noqa: SLF001
+        (
+            leaf.st_dev,
+            leaf.st_ino,
+            leaf.st_uid,
+            leaf.st_gid,
+            0o750,
+        ),
+        (
+            generation_root.st_dev,
+            generation_root.st_ino,
+            generation_root.st_uid,
+            generation_root.st_gid,
+            0o750,
+        ),
+    )
+
+    # A world-open generation root fails every cycle on every service.
+    generation_root_path.chmod(0o757)
+    with pytest.raises(
+        ControllerWorkerRPCProcessError,
+        match="generation root custody is not a private directory",
+    ):
+        runtime._parent_identity()  # noqa: SLF001
+
+    # A renamed-and-recreated generation root with identical custody is still
+    # foreign: the anchor keeps the per-cycle comparison on this boot's exact
+    # shared identity, not just its mode.
+    generation_root_path.chmod(0o750)
+    runtime._socket_parent_identity = (  # noqa: SLF001
+        (
+            leaf.st_dev,
+            leaf.st_ino,
+            leaf.st_uid,
+            leaf.st_gid,
+            0o750,
+        ),
+        (
+            generation_root.st_dev,
+            generation_root.st_ino + 1,
+            generation_root.st_uid,
+            generation_root.st_gid,
+            0o750,
+        ),
+    )
+    with pytest.raises(ControllerWorkerRPCProcessError, match="custody differs from its pin"):
+        runtime._parent_identity()  # noqa: SLF001
+
+    shutil.rmtree(socket_parent)
+    with pytest.raises(ControllerWorkerRPCProcessError, match="RPC socket parent is unavailable"):
+        runtime._parent_identity()  # noqa: SLF001
+
+
+def test_serve_once_after_close_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    deployment, _manifest_path = _runtime_fixture(tmp_path)
+    _force_linux_peer_credentials(monkeypatch)
+    runtime = build_controller_worker_rpc_server_runtime(deployment, clock=lambda: NOW)
+    runtime.start()
+    runtime.close()
+
+    # close() nulls the listener while keeping the startup receipt, so
+    # serve_once's start() early-returns; the cycle must fail closed instead
+    # of tripping an assertion.
+    with pytest.raises(
+        ControllerWorkerRPCProcessError, match="closed before this serve cycle"
+    ):
+        runtime.serve_once()

@@ -82,6 +82,11 @@ class ControllerWorkerRPCServerDeployment(ControllerModel):
     socket_parent_owner_uid: int = Field(ge=0, le=2**31 - 1)
     socket_parent_owner_gid: int = Field(ge=0, le=2**31 - 1)
     socket_parent_mode: int = Field(ge=0, le=0o777)
+    # The socket parent lives under /run: its device/inode identity is install-time,
+    # same-boot evidence compared by commissioning; the running service holds the
+    # parent to its pinned custody and recreates its own leaf after a reboot.  The
+    # shared generation root containing this parent is root-commissioned (tmpfiles.d)
+    # and is never created by the service.
     socket_parent_device_id: int = Field(ge=0)
     socket_parent_inode: int = Field(ge=1)
     receipt_private_key_path: str
@@ -185,6 +190,12 @@ class ControllerWorkerRPCServerStartupReceipt(ControllerModel):
     operations: tuple[ControllerWorkerRPCOperation, ...] = Field(min_length=1, max_length=15)
     socket_device_id: int = Field(ge=0)
     socket_inode: int = Field(ge=1)
+    # Distinguishes a new-boot parent identity from a within-boot swap; None
+    # covers pre-field evidence and non-Linux platforms.
+    boot_id: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    )
     started_at: AwareDatetime
     transport_receipt_grants_scientific_authority: Literal[False] = False
 
@@ -376,6 +387,126 @@ def _load_handlers(
     return handlers
 
 
+def _boot_id() -> str | None:
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+
+
+def _generation_root_identity(path: Path) -> tuple[int, int, int, int, int]:
+    """Observe the socket parent's immediate parent (the shared /run generation root).
+
+    The generation root is shared by every service uid of one generation and is
+    created only by root commissioning (tmpfiles.d, ordered before the units);
+    an unprivileged service never creates or repairs it.  Returns the root's
+    identity tuple, failing closed when it is absent, unavailable, or not a
+    private directory.
+    """
+    try:
+        observed = path.lstat()
+    except FileNotFoundError as exc:
+        raise ControllerWorkerRPCProcessError(
+            "RPC socket parent generation root is absent; its provisioner owns its recreation"
+        ) from exc
+    except OSError as exc:
+        raise ControllerWorkerRPCProcessError(
+            "RPC socket parent generation root is unavailable"
+        ) from exc
+    if (
+        stat.S_ISLNK(observed.st_mode)
+        or not stat.S_ISDIR(observed.st_mode)
+        or stat.S_IMODE(observed.st_mode) & 0o007
+    ):
+        raise ControllerWorkerRPCProcessError(
+            "RPC socket parent generation root custody is not a private directory"
+        )
+    return (
+        observed.st_dev,
+        observed.st_ino,
+        observed.st_uid,
+        observed.st_gid,
+        stat.S_IMODE(observed.st_mode),
+    )
+
+
+def _ensure_runtime_socket_parent(
+    path: Path,
+    *,
+    owner_uid: int,
+    owner_gid: int,
+    mode: int,
+) -> tuple[tuple[int, int, int, int, int], tuple[int, int, int, int, int]]:
+    """Verify the socket parent's custody, recreating only the service-owned leaf.
+
+    The leaf belongs to exactly one service uid and is recreated only when it
+    is absent while the generation root is present and private.  The generation
+    root is provisioner-owned: every service uid of the generation shares it,
+    and a recreate by the first starter would leave it owned by that uid,
+    blocking the other services' leaves and granting cross-tenant rename and
+    unlink over their sockets.  The pinned device/inode identity is install-time
+    same-boot evidence.
+    """
+    # The floor runs first and unconditionally, on parent-present startups too:
+    # the generation root must already exist as a private directory before this
+    # service observes or touches the leaf, and the observed identity anchors
+    # every per-cycle comparison.  Observing the root before the leaf also
+    # names a broken root (absent, file, symlink, world-open) as the defect
+    # instead of surfacing its ENOTDIR fallout from the leaf lstat.
+    parent_identity = _generation_root_identity(path.parent)
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        metadata = None
+    except OSError as exc:
+        raise ControllerWorkerRPCProcessError("RPC socket parent is unavailable") from exc
+    if metadata is None:
+        try:
+            path.mkdir(mode=0o700)
+        except FileExistsError:
+            # A provisioner race between the lstat and the mkdir: the strict
+            # verify below decides; the existing directory is never repaired.
+            pass
+        except OSError as exc:
+            raise ControllerWorkerRPCProcessError(
+                "RPC socket parent could not be recreated for this boot"
+            ) from exc
+        else:
+            try:
+                os.chown(path, owner_uid, owner_gid)
+                os.chmod(path, mode)
+            except OSError as exc:
+                raise ControllerWorkerRPCProcessError(
+                    "RPC socket parent could not be recreated for this boot"
+                ) from exc
+        try:
+            metadata = path.lstat()
+        except OSError as exc:
+            raise ControllerWorkerRPCProcessError("RPC socket parent is unavailable") from exc
+    try:
+        if (
+            path.resolve(strict=True) != path
+            or path.is_symlink()
+            or not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != owner_uid
+            or metadata.st_gid != owner_gid
+            or stat.S_IMODE(metadata.st_mode) != mode
+        ):
+            raise ControllerWorkerRPCProcessError("RPC socket parent custody differs from its pin")
+    except OSError as exc:
+        raise ControllerWorkerRPCProcessError("RPC socket parent is unavailable") from exc
+    return (
+        (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_uid,
+            metadata.st_gid,
+            stat.S_IMODE(metadata.st_mode),
+        ),
+        parent_identity,
+    )
+
+
 class ControllerWorkerRPCServerRuntime:
     """Own one Linux Unix listener and process one request per bounded cycle."""
 
@@ -391,11 +522,26 @@ class ControllerWorkerRPCServerRuntime:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._listener: socket.socket | None = None
         self._socket_identity: tuple[int, int] | None = None
+        self._socket_parent_identity: (
+            tuple[tuple[int, int, int, int, int], tuple[int, int, int, int, int]] | None
+        ) = None
         self._startup_receipt: ControllerWorkerRPCServerStartupReceipt | None = None
         self._cycle_number = 0
 
-    def _parent_identity(self) -> tuple[int, int, int, int, int]:
+    def _parent_identity(
+        self, *, recreate_if_absent: bool = False
+    ) -> tuple[tuple[int, int, int, int, int], tuple[int, int, int, int, int]]:
         path = Path(self.deployment.socket_parent_path)
+        if recreate_if_absent:
+            return _ensure_runtime_socket_parent(
+                path,
+                owner_uid=self.deployment.socket_parent_owner_uid,
+                owner_gid=self.deployment.socket_parent_owner_gid,
+                mode=self.deployment.socket_parent_mode,
+            )
+        # The floor runs first here too: a broken generation root is named as
+        # the defect before the leaf is observed.
+        parent_identity = _generation_root_identity(path.parent)
         try:
             if path.resolve(strict=True) != path:
                 raise ControllerWorkerRPCProcessError("RPC socket parent traverses a symlink")
@@ -409,16 +555,27 @@ class ControllerWorkerRPCServerRuntime:
             observed.st_gid,
             stat.S_IMODE(observed.st_mode),
         )
-        expected = (
-            self.deployment.socket_parent_device_id,
-            self.deployment.socket_parent_inode,
-            self.deployment.socket_parent_owner_uid,
-            self.deployment.socket_parent_owner_gid,
-            self.deployment.socket_parent_mode,
-        )
-        if not stat.S_ISDIR(observed.st_mode) or identity != expected:
+        # Outside startup the comparison anchors to the identities observed when
+        # this boot's parent was ensured, so a same-custody replacement of the
+        # leaf or of the shared generation root still fails.  Before start() the
+        # leaf falls back to its install-time pin; the generation root has no
+        # manifest pin, so pre-start it is floor-only.  That fallback is pre-start
+        # fail-closed semantics only: serve_once always calls start() first.
+        expected = self._socket_parent_identity
+        if expected is None:
+            expected = (
+                (
+                    self.deployment.socket_parent_device_id,
+                    self.deployment.socket_parent_inode,
+                    self.deployment.socket_parent_owner_uid,
+                    self.deployment.socket_parent_owner_gid,
+                    self.deployment.socket_parent_mode,
+                ),
+                parent_identity,
+            )
+        if not stat.S_ISDIR(observed.st_mode) or (identity, parent_identity) != expected:
             raise ControllerWorkerRPCProcessError("RPC socket parent custody differs from its pin")
-        return identity
+        return (identity, parent_identity)
 
     def _live_socket_identity(self) -> tuple[int, int]:
         path = Path(self.deployment.service_pin.socket_path)
@@ -445,7 +602,12 @@ class ControllerWorkerRPCServerRuntime:
             or os.getegid() != self.deployment.process_gid
         ):
             raise ControllerWorkerRPCProcessError("RPC process UID/GID differ from deployment")
-        parent_before = self._parent_identity()
+        # The socket parent is the one volatile (tmpfs) leaf: a reboot is an
+        # expected custody event that startup repairs for the service-owned leaf
+        # only, and every later check compares against this boot's observed leaf
+        # and generation-root identities.
+        parent_before = self._parent_identity(recreate_if_absent=True)
+        self._socket_parent_identity = parent_before
         socket_path = Path(self.deployment.service_pin.socket_path)
         if os.path.lexists(socket_path):
             raise ControllerWorkerRPCProcessError("RPC socket path already exists")
@@ -467,6 +629,9 @@ class ControllerWorkerRPCServerRuntime:
                 raise ControllerWorkerRPCProcessError("RPC socket parent changed during bind")
         except Exception:
             listener.close()
+            # Conceded residual: inside a foreign-recreated parent the unlink can
+            # fail EACCES and leak the socket file while this start fails; that
+            # is accepted, with no retries.
             try:
                 socket_path.unlink()
             except OSError:
@@ -482,6 +647,7 @@ class ControllerWorkerRPCServerRuntime:
             operations=self.deployment.service_pin.operations,
             socket_device_id=identity[0],
             socket_inode=identity[1],
+            boot_id=_boot_id(),
             started_at=self._clock(),
         )
         return self._startup_receipt
@@ -523,7 +689,8 @@ class ControllerWorkerRPCServerRuntime:
 
     def serve_once(self) -> ControllerWorkerRPCServerCycleReceipt | None:
         self.start()
-        assert self._listener is not None and self._socket_identity is not None
+        if self._listener is None or self._socket_identity is None:
+            raise ControllerWorkerRPCProcessError("RPC server was closed before this serve cycle")
         self._parent_identity()
         if self._live_socket_identity() != self._socket_identity:
             raise ControllerWorkerRPCProcessError("RPC socket changed between cycles")
