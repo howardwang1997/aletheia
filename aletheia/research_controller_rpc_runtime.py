@@ -190,6 +190,12 @@ class ControllerWorkerRPCServerStartupReceipt(ControllerModel):
     operations: tuple[ControllerWorkerRPCOperation, ...] = Field(min_length=1, max_length=15)
     socket_device_id: int = Field(ge=0)
     socket_inode: int = Field(ge=1)
+    # Distinguishes a new-boot parent identity from a within-boot swap; None
+    # covers pre-field evidence and non-Linux platforms.
+    boot_id: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    )
     started_at: AwareDatetime
     transport_receipt_grants_scientific_authority: Literal[False] = False
 
@@ -379,6 +385,13 @@ def _load_handlers(
     if handlers.operations != deployment.service_pin.operations:
         raise ControllerWorkerRPCProcessError("RPC factory operation set differs from deployment")
     return handlers
+
+
+def _boot_id() -> str | None:
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
 
 
 def _generation_root_identity(path: Path) -> tuple[int, int, int, int, int]:
@@ -634,6 +647,7 @@ class ControllerWorkerRPCServerRuntime:
             operations=self.deployment.service_pin.operations,
             socket_device_id=identity[0],
             socket_inode=identity[1],
+            boot_id=_boot_id(),
             started_at=self._clock(),
         )
         return self._startup_receipt

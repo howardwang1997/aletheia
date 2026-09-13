@@ -631,6 +631,27 @@ def test_operational_receipts_reject_partial_or_noncanonical_evidence() -> None:
             finished_at=NOW,
         )
 
+    valid = ControllerWorkerRPCServerStartupReceipt(
+        runtime_id="rpcsrv_" + "1" * 32,
+        deployment_sha256=_sha("deployment"),
+        service_id=pin.service_id,
+        receipt_key_id=pin.receipt_key_id,
+        operations=(ControllerWorkerRPCOperation.COMPILE_PROTOCOL,),
+        socket_device_id=1,
+        socket_inode=2,
+        boot_id="c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f",
+        started_at=NOW,
+    )
+    assert valid.boot_id == "c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f"
+    payload = valid.model_dump(mode="json")
+    del payload["boot_id"]
+    legacy = ControllerWorkerRPCServerStartupReceipt.model_validate(payload)
+    assert legacy.boot_id is None
+    with pytest.raises(ValidationError, match="boot_id"):
+        ControllerWorkerRPCServerStartupReceipt.model_validate(
+            payload | {"boot_id": "not-a-uuid"}
+        )
+
 
 def _force_linux_peer_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("aletheia.research_controller_rpc_runtime.sys.platform", "linux")
@@ -807,8 +828,13 @@ def test_runtime_start_recreates_missing_socket_parent_after_reboot(
         "aletheia.research_controller_rpc_runtime._ensure_runtime_socket_parent",
         _recording_ensure,
     )
+    monkeypatch.setattr(
+        "aletheia.research_controller_rpc_runtime._boot_id",
+        lambda: "c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f",
+    )
     rebound = build_controller_worker_rpc_server_runtime(deployment, clock=lambda: NOW)
-    rebound.start()
+    receipt = rebound.start()
+    assert receipt.boot_id == "c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f"
     recreated = socket_parent.stat()
     generation_root = socket_parent.parent.stat()
     assert stat.S_ISDIR(recreated.st_mode)
