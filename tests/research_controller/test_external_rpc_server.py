@@ -438,17 +438,23 @@ def _runtime_fixture(tmp_path: Path) -> tuple[ControllerWorkerRPCServerDeploymen
         path.mkdir()
     # Mirror the deployed run tree: a root-commissioned generation root shared
     # by every service uid, with one service-owned leaf below it.  pytest tmp
-    # dirs are 0700, so only the modes set here matter.
-    generation_root = tmp_path / "run" / "aletheia-scientific"
-    socket_root = generation_root / "compiler"
+    # dirs are 0700, so only the modes set here matter.  Component names stay
+    # short: bound paths must fit the kernel's unix socket name limit under
+    # CI's long basetemp.
+    generation_root = tmp_path / "run" / "g"
+    socket_root = generation_root / "c"
     generation_root.mkdir(mode=0o750, parents=True)
     generation_root.chmod(0o750)
     socket_root.mkdir(mode=0o750)
     socket_root.chmod(0o750)
+    # Directories under a sticky basetemp (e.g. /tmp) inherit a foreign group;
+    # the deployment pins the process gid, so pin the group here too.
+    os.chown(generation_root, -1, os.getegid())
+    os.chown(socket_root, -1, os.getegid())
     source = code_root / "rpc_factory.py"
     config = config_root / "rpc_config.json"
     key_path = secret_root / "receipt.key"
-    socket_path = socket_root / "compiler.sock"
+    socket_path = socket_root / "s"
     result = _compilation_write()
     config.write_bytes(canonical_json_bytes({"result": result.model_dump(mode="json")}))
     source.write_text(
