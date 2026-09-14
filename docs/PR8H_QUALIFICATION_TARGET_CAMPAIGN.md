@@ -165,15 +165,16 @@ After target qualification, complete the production given-protocol campaign and 
 reexecutions, then prepare the evidence bundle, issue a qualification receipt and verify it in a
 fresh keyless auditor process. Every retained source class must reject byte tampering.
 
-Current system status: on 2026-09-12, generation 20260912t closed the full given-protocol
-campaign — both preregistered reexecutions were terminally accepted, the campaign replay proved
-byte-identical, the complete observation chain committed (validation receipts, one atomic
-admission, kernel incorporation), and a fresh ARL-1 qualification receipt was issued. The
-keyless verification stage then failed closed on a live-clock seam in the evidence verifier:
-committed evidence was judged against the current time, past its admission window, so validly
-committed receipts stopped verifying once the window closed (the 2026-09-09 keyless pass had
-run inside its own window). This change pins committed-receipt historical evaluation to each
-layer's own signed time; a fresh generation must repeat the full exit sequence on the merged
-freeze, including keyless verification and the still-outstanding tamper-rejection audit. Follow
-the [current exit procedure](GENERATION_I_REQUALIFICATION_AND_ARL1_EXIT_RUNBOOK_2026_09_06.md)
+Current system status: on 2026-09-13, generation 20260913u closed the full given-protocol
+campaign on the merged freeze, issued a fresh ARL-1 qualification receipt, and passed the
+keyless verification stage — the first generation through the fix that pins committed-receipt
+historical evaluation to each layer's own signed time (the 2026-09-12 generation had failed
+closed there on a live-clock seam). The per-source-class tamper-rejection audit then ran for
+the first time: 29 of 87 cases passed, each with an unchanged-copy control, a rejected one-byte
+mutation and a fresh post-namespace recovery, before the verification deployment window closed
+mid-matrix. The window enforced correctly against the database clock and no partial matrix was
+recorded as complete; the composed span was simply shorter than the measured full-matrix
+budget. The exit procedure now sizes that window from the measured budget at composition time,
+and a fresh generation owes the complete audit plus the deployment reboot-recovery drill.
+Follow the [current exit procedure](GENERATION_I_REQUALIFICATION_AND_ARL1_EXIT_RUNBOOK_2026_09_06.md)
 and [qualification contract](ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md).
