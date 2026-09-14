@@ -64,12 +64,17 @@ or partially executed campaign cannot replace it.
    the native verifier evaluates — qualification receipt validity, authority key windows, and
    the observation and admission deadlines recorded in the retained evidence — and require the
    full matrix to complete inside the earliest-closing one. Budget the measured single-case
-   verifier runtime against the retained case count and the available concurrency. Run the
-   native positive controls on unmodified copies before any tamper case, and stop on the first
-   control failure rather than record its cases as rejections. Use isolated copies to change
-   one byte in every retained source class and require rejection. Preserve original source
-   material unchanged. If the budgeted matrix cannot complete inside the window, stop and
-   requalify with a fresh generation rather than execute a partial matrix.
+   verifier runtime against the retained case count and the available concurrency, and size
+   the verification deployment window at composition time from the same budget instead of
+   accepting a default span: the window must hold the projected full matrix with headroom
+   while staying inside the deployment contract's 24-hour maximum span, the authority windows
+   carried by the composed pins, and the qualification receipt validity that co-bounds
+   verification. Run the native positive controls on unmodified copies before any tamper case,
+   and stop on the first control failure rather than record its cases as rejections. Use
+   isolated copies to change one byte in every retained source class and require rejection.
+   Preserve original source material unchanged. If the budgeted matrix cannot complete inside
+   the window, stop and requalify with a fresh generation rather than execute a partial
+   matrix.
 
 ## Acceptance and authority
 
