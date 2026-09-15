@@ -18,7 +18,7 @@ from typing import Literal, Protocol
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from aletheia.observations.coordinator import AtomicObservationAdmissionReceipt
 from aletheia.observations.execution_registration import (
@@ -52,6 +52,7 @@ from aletheia.research_controller.external_rpc import (
     ControllerWorkerRPCRequest,
     ControllerWorkerRPCResponse,
     ControllerWorkerRPCServicePin,
+    CuprateDiagnosticResult,
     RawRunLoadResult,
     ValidationCampaignResult,
 )
@@ -113,6 +114,29 @@ class RawRunRPCPayload(ControllerModel):
     raw_run: RawRunEnvelope
 
 
+class CuprateDiagnosticRPCPayload(ControllerModel):
+    """One diagnostic request against the service's pinned staged dataset bytes.
+
+    The staged CSV path is deployment-pinned (never carried on the wire);
+    the payload declares the content identity to verify against and the
+    bound batch of formula-group ids to analyze.
+    """
+
+    expected_content_sha256: str = Field(pattern=_SHA256_PATTERN)
+    composition_column: str = Field(min_length=1, max_length=191)
+    target_column: str = Field(min_length=1, max_length=191)
+    bound_batch_group_ids: tuple[str, ...] = Field(min_length=1, max_length=100_000)
+    doping_optimum: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _batch_is_canonical(self) -> "CuprateDiagnosticRPCPayload":
+        if self.bound_batch_group_ids != tuple(sorted(set(self.bound_batch_group_ids))):
+            raise ValueError("cuprate bound batch group ids must be unique and sorted")
+        if any(not group or "\n" in group or "\r" in group for group in self.bound_batch_group_ids):
+            raise ValueError("cuprate bound batch group ids must be non-empty single lines")
+        return self
+
+
 class ValidationReceiptIssuanceRPCPayload(ControllerModel):
     raw_run: RawRunEnvelope
     validation_campaign_sha256: str | None = Field(default=None, pattern=_SHA256_PATTERN)
@@ -154,6 +178,7 @@ _OPERATION_PAYLOAD_MODELS: dict[ControllerWorkerRPCOperation, _PayloadModel] = {
     ),
     ControllerWorkerRPCOperation.LOAD_RAW_RUN: ScientificSlotLookupRPCPayload,
     ControllerWorkerRPCOperation.PREPARE_VALIDATION_CAMPAIGN: RawRunRPCPayload,
+    ControllerWorkerRPCOperation.RUN_CUPRATE_DIAGNOSTIC: CuprateDiagnosticRPCPayload,
     ControllerWorkerRPCOperation.ISSUE_VALIDATION_CHALLENGE: (
         ValidationChallengeIssuanceRPCPayload
     ),
@@ -177,6 +202,7 @@ _OPERATION_RESULT_MODELS: dict[ControllerWorkerRPCOperation, _ResultModel] = {
     ),
     ControllerWorkerRPCOperation.LOAD_RAW_RUN: RawRunLoadResult,
     ControllerWorkerRPCOperation.PREPARE_VALIDATION_CAMPAIGN: ValidationCampaignResult,
+    ControllerWorkerRPCOperation.RUN_CUPRATE_DIAGNOSTIC: CuprateDiagnosticResult,
     ControllerWorkerRPCOperation.ISSUE_VALIDATION_CHALLENGE: (
         ValidationChallengeRegistrationReceipt
     ),

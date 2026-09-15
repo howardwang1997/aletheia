@@ -1,4 +1,4 @@
-"""Retained contracts for the two bounded observation service operations.
+"""Retained contracts for the bounded local observation service operations.
 
 These describe engineering I/O and persistence. Deployment, custody and signed capability
 audits remain separate requirements; constructing a contract never qualifies a service.
@@ -30,8 +30,13 @@ def local_service_capability_sources(
 
     from aletheia.observations.f9_v2_validation import CommittedF9V2ValidationCampaign
     from aletheia.observations.scientific_bridge import RawRunEnvelope
-    from aletheia.research_controller.external_rpc import RawRunLoadResult, ValidationCampaignResult
+    from aletheia.research_controller.external_rpc import (
+        CuprateDiagnosticResult,
+        RawRunLoadResult,
+        ValidationCampaignResult,
+    )
     from aletheia.research_controller.external_rpc_server import (
+        CuprateDiagnosticRPCPayload,
         RawRunRPCPayload,
         ScientificSlotLookupRPCPayload,
     )
@@ -123,6 +128,69 @@ def local_service_capability_sources(
                     "source": "validation_archive",
                 }
             ],
+        }
+    elif operation == "run_cuprate_diagnostic":
+        implementation = "execution/cuprate/service.py"
+        factory = "research_controller_cuprate_runtime.py"
+        adapter = (
+            "aletheia.execution.cuprate.service:CuprateDiagnosticService.run_cuprate_diagnostic"
+        )
+        factory_ref = (
+            "aletheia.research_controller_cuprate_runtime:build_cuprate_diagnostic_rpc_service"
+        )
+        sources = (
+            *common,
+            implementation,
+            factory,
+            "execution/cuprate/__init__.py",
+            "execution/cuprate/card_rows.py",
+            "execution/cuprate/diagnostics.py",
+            "execution/cuprate/doping.py",
+        )
+        payload_schema = CuprateDiagnosticRPCPayload.model_json_schema()
+        result_schema = CuprateDiagnosticResult.model_json_schema()
+        schemas = {
+            "input": payload_schema,
+            "output": result_schema,
+            "wire_request": payload_schema,
+            "wire_response": result_schema,
+        }
+        inputs = [{"port_id": "input.dataset_rows", "artifact_kind": "json", "schema": "input"}]
+        outputs = [
+            {
+                "port_id": "output.diagnostic_result",
+                "artifact_kind": "json",
+                "schema": "output",
+            }
+        ]
+        behavior = {
+            "side_effect_class": "read_only_external",
+            "role": "analysis",
+            "invocation": {"payload_from": "input.dataset_rows"},
+            "dataset_input": {
+                "contract": "deployment-pinned staged CSV path (LocalCASInputMaterializer custody)",
+                "verification": (
+                    "sha256 of the staged bytes must equal the payload's registered content"
+                    " identity and the deployed dataset pin"
+                ),
+                "restriction": (
+                    "rows whose stripped formula group is outside the bound batch are"
+                    " dropped before any analysis touches them"
+                ),
+            },
+            "return_value": "output.diagnostic_result",
+            "determinism": (
+                "Every stochastic component is seeded at 0; identical rows, library"
+                " versions and hardware yield the same typed result. Cross-machine float"
+                " drift (BLAS GEMM inside kNN) is why determinism is frozen_seeds under"
+                " a pinned environment, never deterministic."
+            ),
+            "persistence": "Read the pinned staged dataset; no domain writes.",
+            "replay": (
+                "Re-reading the same staged bytes and payload reproduces the exact typed"
+                " result under the pinned environment."
+            ),
+            "durable_artifacts": [],
         }
     else:
         raise ValueError("unsupported local capability service operation")

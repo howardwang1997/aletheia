@@ -104,6 +104,7 @@ class ControllerWorkerRPCOperation(str, Enum):
     REGISTER_EXECUTION_CAMPAIGN = "register_execution_campaign"
     LOAD_RAW_RUN = "load_raw_run"
     PREPARE_VALIDATION_CAMPAIGN = "prepare_validation_campaign"
+    RUN_CUPRATE_DIAGNOSTIC = "run_cuprate_diagnostic"
     ISSUE_VALIDATION_CHALLENGE = "issue_validation_challenge"
     ISSUE_VALIDATION_RECEIPT = "issue_validation_receipt"
     COMMIT_VALIDATION = "commit_validation"
@@ -601,6 +602,53 @@ class ValidationCampaignResult(ControllerModel):
     """Closed nullable result returned by the independent validation campaign service."""
 
     validation_campaign_sha256: str | None = Field(default=None, pattern=_SHA256_PATTERN)
+
+
+class CuprateMatchedControlOutcome(ControllerModel):
+    """D1 wire form: the complexity-matched control contrast over the family stratum."""
+
+    schema_name: Literal["aletheia.cuprate_matched_control_outcome"] = (
+        "aletheia.cuprate_matched_control_outcome"
+    )
+    schema_version: Literal[1] = 1
+    mae_cuprate: float
+    mae_matched: float
+    mae_non_all: float
+    excess_over_matched: float
+    ci: tuple[float, float]
+    survives: bool
+    n_cuprate: int = Field(ge=1)
+    outcome_bin: Literal["family_excess_ci_excludes_zero", "family_excess_ci_includes_zero"]
+
+
+class CuprateDopingStratificationOutcome(ControllerModel):
+    """D2 wire form: within-family error stratified by doping deviation from the optimum."""
+
+    schema_name: Literal["aletheia.cuprate_doping_stratification_outcome"] = (
+        "aletheia.cuprate_doping_stratification_outcome"
+    )
+    schema_version: Literal[1] = 1
+    family_holdout_rows: int = Field(ge=1)
+    deviation_threshold: float
+    effect: float
+    ctrl_p95: float
+    concentrates: bool
+    outcome_bin: Literal["error_concentrates_at_extremes", "no_stratification_structure"]
+
+
+class CuprateDiagnosticResult(ControllerModel):
+    """Seed-frozen diagnostic result; the exact-content catalog pins these bytes."""
+
+    schema_name: Literal["aletheia.cuprate_diagnostic_result"] = (
+        "aletheia.cuprate_diagnostic_result"
+    )
+    schema_version: Literal[1] = 1
+    dataset_content_sha256: str = Field(pattern=_SHA256_PATTERN)
+    doping_optimum: float = Field(gt=0)
+    analyzed_rows: int = Field(ge=1)
+    dropped_off_batch_rows: int = Field(ge=0)
+    d1_matched_control: CuprateMatchedControlOutcome
+    d2_doping_stratification: CuprateDopingStratificationOutcome
 
 
 class RPCIndependentObservationValidator:
