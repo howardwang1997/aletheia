@@ -173,6 +173,8 @@ _SIGNED_ROLES = frozenset(
         ControllerStepAuthorityRole.INDEPENDENT_ADMISSION,
         ControllerStepAuthorityRole.DATABASE_ATTESTATION,
         ControllerStepAuthorityRole.KERNEL_COMMAND,
+        ControllerStepAuthorityRole.ACTION_KERNEL_COMMAND,
+        ControllerStepAuthorityRole.TRANSITION_KERNEL_COMMAND,
     }
 )
 

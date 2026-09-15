@@ -483,6 +483,7 @@ class ControllerRecoveryProjection(ControllerModel):
     audited_tail_event_sha256: str = Field(pattern=_SHA256_PATTERN)
     audited_snapshot_sha256: str = Field(pattern=_SHA256_PATTERN)
     action_authorized: bool
+    authorized_action_transition_pending: bool | None = Field(default=None)
     compilation_disposition: CompilationDisposition
     scientific_execution_authorization_registered: bool
     execution_terminal_observed: bool
@@ -510,6 +511,21 @@ class ControllerRecoveryProjection(ControllerModel):
         )
         if self.action_sha256 is None and (self.action_authorized or downstream):
             raise ValueError("controller receipts require an exact action")
+        if self.authorized_action_transition_pending:
+            if not self.action_authorized:
+                raise ValueError("transition-pending wait requires an authorized action")
+            if (
+                self.compilation_disposition is not CompilationDisposition.MISSING
+                or self.scientific_execution_authorization_registered
+                or self.execution_terminal_observed
+                or self.validation_committed
+                or self.admission_committed
+                or self.observation_incorporated
+                or self.continuation_committed
+            ):
+                raise ValueError(
+                    "transition-pending action cannot have execution receipts"
+                )
         if self.scientific_slot_id is not None and self.action_sha256 is None:
             raise ValueError("scientific slot requires an exact action")
         if self.compilation_disposition is CompilationDisposition.BLOCKED and any(
@@ -579,15 +595,24 @@ class ControllerTickPlan(ControllerModel):
         return canonical_sha256(self)
 
 
+TRANSITION_COMMIT_PENDING_BLOCKER = "transition:commit_pending"
+
+
 def plan_recovery_tick(projection: ControllerRecoveryProjection) -> ControllerTickPlan:
     """Choose one replay-safe step without interpreting a scientific result."""
 
+    blocker_codes = projection.blocker_codes
     if projection.blocker_codes:
         step = ControllerStep.BLOCKED
     elif projection.action_sha256 is None:
         step = ControllerStep.PROPOSE_ACTION
     elif not projection.action_authorized:
         step = ControllerStep.AWAIT_ACTION_AUTHORIZATION
+    elif projection.authorized_action_transition_pending:
+        # A transition-kind action never compiles a protocol: park in a typed
+        # external wait until the transition signer commits its *_COMMITTED event.
+        step = ControllerStep.BLOCKED
+        blocker_codes = (TRANSITION_COMMIT_PENDING_BLOCKER,)
     elif projection.compilation_disposition is CompilationDisposition.MISSING:
         step = ControllerStep.COMPILE_PROTOCOL
     elif projection.compilation_disposition is CompilationDisposition.BLOCKED:
@@ -610,7 +635,7 @@ def plan_recovery_tick(projection: ControllerRecoveryProjection) -> ControllerTi
         audited_stream_version=projection.audited_stream_version,
         audited_tail_event_sha256=projection.audited_tail_event_sha256,
         audited_snapshot_sha256=projection.audited_snapshot_sha256,
-        blocker_codes=projection.blocker_codes,
+        blocker_codes=blocker_codes,
     )
 
 
@@ -704,6 +729,7 @@ __all__ = [
     "ResearchControllerManifest",
     "ResearchControllerRegistration",
     "ResearchControllerTaskInput",
+    "TRANSITION_COMMIT_PENDING_BLOCKER",
     "controller_initial_delivery_attempt",
     "controller_task_spec",
     "plan_recovery_tick",
