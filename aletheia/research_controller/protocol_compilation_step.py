@@ -54,6 +54,10 @@ from aletheia.research_controller.step_executor import (
     ControllerStepAuthorityRole,
     ControllerStepExecutionError,
 )
+from aletheia.research_controller.world_model_revision import (
+    assert_revision_belief_basis,
+    verify_authored_revision_v2,
+)
 from aletheia.research_kernel.reducer import ActionLifecycle
 from aletheia.research_kernel.schemas import (
     ActionAuthorizedPayload,
@@ -316,6 +320,13 @@ def verify_prepared_protocol(
             )
         ):
             raise ValueError("prepared protocol escaped its authorized context or policy")
+        if protocol.world_model is not None and protocol.world_model.version > 1:
+            try:
+                assert_revision_belief_basis(protocol.world_model)
+            except Exception as exc:  # noqa: BLE001 - authored revision fails closed
+                raise ProtocolCompilationStepError(
+                    "world-model revision carries an unbound belief basis"
+                ) from exc
         return prepared
     except ProtocolCompilationStepError:
         raise
@@ -579,7 +590,13 @@ class DurableProtocolCompilationService:
 
     @staticmethod
     def _verify_revision_parent(session: Session, write: ProtocolCompilationWrite) -> None:
+        child_request = ProtocolCompilationRequest.model_validate(write.request_json)
+        child_world_model = child_request.protocol.world_model
         if write.protocol_version == 1:
+            if child_world_model is not None and child_world_model.version > 1:
+                raise ProtocolCompilationStepError(
+                    "world-model revision lacks its registered parent snapshot"
+                )
             return
         parent = get_protocol_compilation_by_protocol_version(
             session,
@@ -608,6 +625,21 @@ class DurableProtocolCompilationService:
             ) from exc
         if parent != expected_parent:
             raise ProtocolCompilationStepError("protocol revision parent row was rebound")
+        if child_world_model is not None and child_world_model.version > 1:
+            parent_world_model = parent_request.protocol.world_model
+            if parent_world_model is None:
+                raise ProtocolCompilationStepError(
+                    "world-model revision lacks its registered parent snapshot"
+                )
+            try:
+                verify_authored_revision_v2(
+                    parent=parent_world_model,
+                    child=child_world_model,
+                )
+            except Exception as exc:  # noqa: BLE001 - authored revision fails closed
+                raise ProtocolCompilationStepError(
+                    "world-model revision is illegal against its registered parent"
+                ) from exc
 
 
 class ProtocolCompilationStepAdapter:

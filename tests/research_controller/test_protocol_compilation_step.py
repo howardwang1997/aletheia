@@ -23,6 +23,13 @@ from aletheia.protocols.schemas import (
     ProtocolCompilationResult,
     ProtocolIR,
 )
+from aletheia.protocols.world_models import (
+    BeliefStateVersionV2,
+    BeliefUpdateBasis,
+    HypothesisBeliefV2,
+    HypothesisLifecycle,
+    WorldModelSnapshotV2,
+)
 from aletheia.research_controller.contracts import (
     CompilationDisposition,
     ControllerRecoveryProjection,
@@ -47,7 +54,16 @@ from aletheia.research_controller.step_executor import (
     ControllerStepAuthorityRole,
     ControllerStepExecutionError,
 )
-from aletheia.research_kernel.schemas import ActionKind
+from aletheia.research_controller.world_model_revision import (
+    REVISION_UPDATE_RULE_SHA256,
+    AdmittedObservationBinding,
+    revise_world_model_v2,
+)
+from aletheia.research_kernel.schemas import (
+    ActionAuthorizedPayload,
+    ActionKind,
+    EventType,
+)
 
 _TESTS = Path(__file__).resolve().parents[1]
 for _fixture_dir in (
@@ -61,6 +77,7 @@ for _fixture_dir in (
 from fixtures import fixture_by_name  # noqa: E402
 from persistence_test_support import sqlite_observation_engine  # noqa: E402
 from test_action_proposal_context import _audit, _authorized_case  # noqa: E402
+from test_reducer import _propose  # noqa: E402
 from test_vertical_cut import _f9_enriched_grouped_fixture  # noqa: E402
 
 
@@ -416,6 +433,301 @@ def test_revision_without_exact_contiguous_parent_rolls_back() -> None:
     with Session(engine) as session:
         assert (
             session.scalar(select(func.count()).select_from(ResearchProtocolCompilationRecord)) == 0
+        )
+
+
+_OBSERVATION_RECEIPT = "a" * 64
+_CONTINUATION_RECEIPT = "b" * 64
+
+
+def _prior_world_model(protocol: ProtocolIR) -> WorldModelSnapshotV2:
+    """The F9 fixture registers its world model with no belief state; a
+    revision needs a prior to move, so a version-1 uniform prior is attached
+    (schema-legal: exact coverage, exact scope stamp, sums to one)."""
+    world_model = protocol.world_model
+    assert world_model is not None and world_model.belief_state is None
+    share = 1.0 / len(world_model.hypotheses)
+    belief = BeliefStateVersionV2(
+        belief_id="blf_" + _sha("prior-belief")[:32],
+        version=1,
+        graph_scope_sha256=protocol.graph_scope.graph_scope_sha256,
+        hypothesis_beliefs=tuple(
+            sorted(
+                (
+                    HypothesisBeliefV2(hypothesis_sha256=item.hypothesis_sha256, probability=share)
+                    for item in world_model.hypotheses
+                ),
+                key=lambda item: item.hypothesis_sha256,
+            )
+        ),
+        update_basis=BeliefUpdateBasis.PRIOR,
+        source_observation_receipt_sha256=None,
+        update_rule_sha256=REVISION_UPDATE_RULE_SHA256,
+        authored_by_principal_id=world_model.authored_by_principal_id,
+        authored_at=world_model.authored_at,
+    )
+    return world_model.model_copy(update={"belief_state": belief})
+
+
+def _embedding(
+    request: ProtocolCompilationRequest,
+    *,
+    version: int,
+    revision_parent_sha256: str | None,
+    world_model: WorldModelSnapshotV2,
+    authored_at,
+) -> ProtocolCompilationRequest:
+    protocol = ProtocolIR.model_validate(
+        {
+            **request.protocol.model_dump(mode="python"),
+            "version": version,
+            "revision_parent_sha256": revision_parent_sha256,
+            "authored_at": authored_at,
+            "world_model": world_model.model_dump(mode="python"),
+        }
+    )
+    return ProtocolCompilationRequest(
+        protocol=protocol,
+        capability_catalog=request.capability_catalog,
+        resource_catalog=request.resource_catalog,
+        compiler_implementation_sha256=request.compiler_implementation_sha256,
+    )
+
+
+def _observations(world_model: WorldModelSnapshotV2) -> tuple[AdmittedObservationBinding, ...]:
+    return tuple(
+        AdmittedObservationBinding(
+            hypothesis_sha256=item.hypothesis_sha256,
+            holds=True,
+            observation_receipt_sha256=_OBSERVATION_RECEIPT,
+        )
+        for item in world_model.hypotheses
+        if item.lifecycle is HypothesisLifecycle.ACTIVE
+    )
+
+
+def _second_authorized(case, question):
+    action = _propose(
+        case,
+        question,
+        case.root_branch_id,
+        ActionKind.DISCRIMINATE,
+        "revision-context",
+    )
+    authorized = case.commit(
+        EventType.ACTION_AUTHORIZED,
+        ActionAuthorizedPayload(action_id=action.action_id, branch_id=case.root_branch_id),
+    )
+    return action, authorized
+
+
+def test_v1_protocol_embedding_unbound_v2_world_model_fails_closed() -> None:
+    case, question, action, authorized = _authorized_case()
+    base = _request(case, question, authorized)
+    prior = _prior_world_model(base.protocol)
+    child = revise_world_model_v2(
+        parent=prior,
+        observations=_observations(prior),
+        continuation_receipt_sha256=_CONTINUATION_RECEIPT,
+        authored_at=prior.authored_at + timedelta(seconds=1),
+        principal_id=prior.authored_by_principal_id,
+    )
+    # strip the basis: schema-legal round trip (PRIOR needs no receipt), so
+    # only the compile gate can catch a version-2 snapshot with no bound
+    # observation receipt inside a version-1 protocol
+    stripped = child.model_copy(
+        update={
+            "belief_state": child.belief_state.model_copy(
+                update={
+                    "update_basis": BeliefUpdateBasis.PRIOR,
+                    "source_observation_receipt_sha256": None,
+                }
+            )
+        }
+    )
+    request = _embedding(
+        base,
+        version=1,
+        revision_parent_sha256=None,
+        world_model=stripped,
+        authored_at=base.protocol.authored_at + timedelta(seconds=2),
+    )
+    engine = sqlite_observation_engine()
+    _seed(engine, quest_id=case.quest_id, action_sha256=action.object_sha256)
+    service, _policy_pin = _service(case, action, request, engine)
+    projection = _projection(case, action)
+
+    with pytest.raises(ProtocolCompilationStepError, match="unbound belief basis"):
+        service.compile_and_register(
+            wakeup=_wakeup(case),
+            projection=projection,
+            plan=plan_recovery_tick(projection),
+        )
+    with Session(engine) as session:
+        assert (
+            session.scalar(select(func.count()).select_from(ResearchProtocolCompilationRecord)) == 0
+        )
+
+
+def test_legal_world_model_revision_registers_as_protocol_version_two() -> None:
+    case, question, action, authorized = _authorized_case()
+    base_first = _request(case, question, authorized)
+    prior_world = _prior_world_model(base_first.protocol)
+    first = _embedding(
+        base_first,
+        version=1,
+        revision_parent_sha256=None,
+        world_model=prior_world,
+        authored_at=base_first.protocol.authored_at,
+    )
+    engine = sqlite_observation_engine()
+    _seed(engine, quest_id=case.quest_id, action_sha256=action.object_sha256)
+    service_first, _first_policy = _service(case, action, first, engine)
+    projection_first = _projection(case, action)
+    write1 = service_first.compile_and_register(
+        wakeup=_wakeup(case),
+        projection=projection_first,
+        plan=plan_recovery_tick(projection_first),
+    )
+    assert write1.protocol_version == 1
+
+    second_action, second_authorized = _second_authorized(case, question)
+    base_second = _request(case, question, second_authorized)
+    # every authorized action commits a new graph snapshot, so the revision
+    # must re-bind to the current view rather than carry the parent's stamp
+    assert (
+        base_second.protocol.graph_scope.graph_snapshot_sha256
+        != base_first.protocol.graph_scope.graph_snapshot_sha256
+    )
+    v2_authored = max(
+        first.protocol.authored_at + timedelta(seconds=1),
+        base_second.protocol.authored_at,
+    )
+    child = revise_world_model_v2(
+        parent=prior_world,
+        observations=_observations(prior_world),
+        continuation_receipt_sha256=_CONTINUATION_RECEIPT,
+        graph_scope=base_second.protocol.graph_scope,
+        authored_at=v2_authored,
+        principal_id=base_second.protocol.authored_by_principal_id,
+    )
+    second = _embedding(
+        base_second,
+        version=2,
+        revision_parent_sha256=write1.protocol_sha256,
+        world_model=child,
+        authored_at=v2_authored,
+    )
+    with Session(engine) as session:
+        session.execute(
+            text("INSERT INTO research_kernel_objects VALUES (:action)"),
+            {"action": second_action.object_sha256},
+        )
+        session.commit()
+    service_second, _second_policy = _service(case, second_action, second, engine)
+    projection_second = _projection(case, second_action)
+
+    write2 = service_second.compile_and_register(
+        wakeup=_wakeup(case),
+        projection=projection_second,
+        plan=plan_recovery_tick(projection_second),
+    )
+    assert write2.protocol_version == 2
+    assert write2.revision_parent_sha256 == write1.protocol_sha256
+    with Session(engine) as session:
+        assert (
+            session.scalar(select(func.count()).select_from(ResearchProtocolCompilationRecord)) == 2
+        )
+
+
+@pytest.mark.parametrize("tamper", ("parent", "prediction"))
+def test_illegal_world_model_revision_against_registered_parent_rolls_back(tamper) -> None:
+    case, question, action, authorized = _authorized_case()
+    base_first = _request(case, question, authorized)
+    prior_world = _prior_world_model(base_first.protocol)
+    first = _embedding(
+        base_first,
+        version=1,
+        revision_parent_sha256=None,
+        world_model=prior_world,
+        authored_at=base_first.protocol.authored_at,
+    )
+    engine = sqlite_observation_engine()
+    _seed(engine, quest_id=case.quest_id, action_sha256=action.object_sha256)
+    service_first, _first_policy = _service(case, action, first, engine)
+    projection_first = _projection(case, action)
+    write1 = service_first.compile_and_register(
+        wakeup=_wakeup(case),
+        projection=projection_first,
+        plan=plan_recovery_tick(projection_first),
+    )
+
+    second_action, second_authorized = _second_authorized(case, question)
+    base_second = _request(case, question, second_authorized)
+    v2_authored = max(
+        first.protocol.authored_at + timedelta(seconds=1),
+        base_second.protocol.authored_at,
+    )
+    child = revise_world_model_v2(
+        parent=prior_world,
+        observations=_observations(prior_world),
+        continuation_receipt_sha256=_CONTINUATION_RECEIPT,
+        graph_scope=base_second.protocol.graph_scope,
+        authored_at=v2_authored,
+        principal_id=base_second.protocol.authored_by_principal_id,
+    )
+    if tamper == "parent":
+        child = child.model_copy(update={"revision_parent_sha256": "e" * 64})
+    else:
+        # swap in the other frozen prediction's outcome hash: schema-legal and
+        # compiler-legal, but the sealed member changed against the registry
+        # parent
+        child = child.model_copy(
+            update={
+                "predictions": (
+                    child.predictions[0].model_copy(
+                        update={
+                            "predicted_outcome_sha256": child.predictions[
+                                1
+                            ].predicted_outcome_sha256
+                        }
+                    ),
+                    *child.predictions[1:],
+                )
+            }
+        )
+    second = _embedding(
+        base_second,
+        version=2,
+        revision_parent_sha256=write1.protocol_sha256,
+        world_model=child,
+        authored_at=v2_authored,
+    )
+    with Session(engine) as session:
+        session.execute(
+            text("INSERT INTO research_kernel_objects VALUES (:action)"),
+            {"action": second_action.object_sha256},
+        )
+        session.commit()
+    service_second, _second_policy = _service(case, second_action, second, engine)
+    projection_second = _projection(case, second_action)
+
+    with pytest.raises(ProtocolCompilationStepError, match="illegal against its registered parent"):
+        service_second.compile_and_register(
+            wakeup=_wakeup(case),
+            projection=projection_second,
+            plan=plan_recovery_tick(projection_second),
+        )
+    with Session(engine) as session:
+        rows = session.scalar(select(func.count()).select_from(ResearchProtocolCompilationRecord))
+        assert rows == 1
+        assert (
+            get_protocol_compilation_by_action(
+                session,
+                quest_id=case.quest_id,
+                action_sha256=action.object_sha256,
+            )
+            == write1
         )
 
 
