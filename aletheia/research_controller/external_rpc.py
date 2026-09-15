@@ -651,6 +651,35 @@ class CuprateDiagnosticResult(ControllerModel):
     d2_doping_stratification: CuprateDopingStratificationOutcome
 
 
+class RPCCuprateDiagnosticRunner:
+    """Typed client for the read-only cuprate diagnostic RPC service."""
+
+    def __init__(self, client: ControllerWorkerRPCClient, binding: ControllerStepAuthorityBinding):
+        self._client = client
+        self.authority_binding = _binding(binding, pin=client.pin)
+
+    def run_cuprate_diagnostic(
+        self,
+        *,
+        expected_content_sha256: str,
+        composition_column: str,
+        target_column: str,
+        bound_batch_group_ids: tuple[str, ...],
+        doping_optimum: float,
+    ) -> CuprateDiagnosticResult:
+        return self._client.call(
+            ControllerWorkerRPCOperation.RUN_CUPRATE_DIAGNOSTIC,
+            payload={
+                "expected_content_sha256": expected_content_sha256,
+                "composition_column": composition_column,
+                "target_column": target_column,
+                "bound_batch_group_ids": tuple(bound_batch_group_ids),
+                "doping_optimum": doping_optimum,
+            },
+            result_type=CuprateDiagnosticResult,
+        )
+
+
 class RPCIndependentObservationValidator:
     def __init__(self, client: ControllerWorkerRPCClient, binding: ControllerStepAuthorityBinding):
         self._client = client

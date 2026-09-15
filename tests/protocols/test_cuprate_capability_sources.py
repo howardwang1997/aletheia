@@ -37,7 +37,7 @@ def test_cuprate_contract_pins_the_frozen_seed_analysis_lineage(case):
         "execution/cuprate/card_rows.py",
         "execution/cuprate/diagnostics.py",
         "execution/cuprate/doping.py",
-        "domains/materials/featurizers.py",
+        "execution/cuprate/featurization.py",
         "research_controller_cuprate_runtime.py",
     ):
         assert retained in contract["source_files"]

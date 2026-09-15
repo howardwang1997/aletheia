@@ -76,8 +76,8 @@ def _featurize(formulas: tuple[str, ...], targets: tuple[float, ...]):
 
     import pandas as pd
 
-    from aletheia.domains.materials.featurizers import magpie_features
     from aletheia.execution.cuprate.doping import stoichiometric_holes_per_copper
+    from aletheia.execution.cuprate.featurization import magpie_features
 
     frame = pd.DataFrame({"material": list(formulas), "critical_temp": list(targets)})
     if len(frame) > MAX_ROWS:

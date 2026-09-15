@@ -175,9 +175,9 @@ def test_payload_rejects_non_canonical_batch_group_ids(batch):
 def test_cuprate_factory_is_operation_closed_and_runs_the_pinned_dataset(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from aletheia.domains.materials import featurizers
+    from aletheia.execution.cuprate import featurization
 
-    monkeypatch.setattr(featurizers, "magpie_features", synthetic_featurizer)
+    monkeypatch.setattr(featurization, "magpie_features", synthetic_featurizer)
     deployment, config, config_path, formulas, _staged = _fixture(tmp_path)
     handlers = build_cuprate_diagnostic_rpc_service(
         deployment=deployment,
@@ -213,9 +213,9 @@ def test_cuprate_factory_is_operation_closed_and_runs_the_pinned_dataset(
 def test_cuprate_factory_rejects_config_rebinds_and_custody_drift(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from aletheia.domains.materials import featurizers
+    from aletheia.execution.cuprate import featurization
 
-    monkeypatch.setattr(featurizers, "magpie_features", synthetic_featurizer)
+    monkeypatch.setattr(featurization, "magpie_features", synthetic_featurizer)
     deployment, config, config_path, _formulas, staged = _fixture(tmp_path)
 
     duplicate = config_path.read_bytes().replace(

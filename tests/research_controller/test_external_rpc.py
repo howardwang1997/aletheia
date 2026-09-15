@@ -22,6 +22,7 @@ from aletheia.research_controller.external_rpc import (
     RPCAtomicObservationAdmission,
     RPCCommittedValidationSource,
     RPCContinuationMaterialization,
+    RPCCuprateDiagnosticRunner,
     RPCDatabaseObservationBridge,
     RPCIndependentObservationAdmission,
     RPCIndependentObservationValidator,
@@ -428,6 +429,17 @@ def test_rpc_facades_cover_each_closed_operation_without_a_catch_all() -> None:
             },
         ),
         (
+            RPCCuprateDiagnosticRunner(_RecordingClient(execution), execution),
+            "run_cuprate_diagnostic",
+            {
+                "expected_content_sha256": _sha("cuprate-card"),
+                "composition_column": "material",
+                "target_column": "critical_temp",
+                "bound_batch_group_ids": ("Bi2Sr2CaCu2O8", "HgBa2Ca2Cu3O8.1"),
+                "doping_optimum": 0.16,
+            },
+        ),
+        (
             RPCIndependentObservationValidator(_RecordingClient(validator), validator),
             "prepare_validation_campaign",
             {"raw_run": tick},
@@ -578,9 +590,7 @@ def test_atomic_bridge_translates_only_the_empty_admission_slot_to_none(blocker_
     admission = _authority(ControllerStepAuthorityRole.INDEPENDENT_ADMISSION)
     kernel = _authority(ControllerStepAuthorityRole.KERNEL_COMMAND)
     atomic = RPCAtomicObservationAdmission(
-        _NoCommittedValidationClient(
-            database, admission, kernel, blocker_codes=blocker_codes
-        ),
+        _NoCommittedValidationClient(database, admission, kernel, blocker_codes=blocker_codes),
         database_binding=database,
         admission_binding=admission,
         kernel_binding=kernel,

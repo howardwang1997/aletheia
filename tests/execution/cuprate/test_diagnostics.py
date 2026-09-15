@@ -41,9 +41,9 @@ def synthetic_featurizer(frame, composition_col):
 
 @pytest.fixture
 def offline_magpie(monkeypatch):
-    from aletheia.domains.materials import featurizers
+    from aletheia.execution.cuprate import featurization
 
-    monkeypatch.setattr(featurizers, "magpie_features", synthetic_featurizer)
+    monkeypatch.setattr(featurization, "magpie_features", synthetic_featurizer)
 
 
 def _fixture_batch():
