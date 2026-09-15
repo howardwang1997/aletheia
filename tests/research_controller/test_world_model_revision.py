@@ -402,6 +402,62 @@ def test_revise_fails_closed(label, kwargs) -> None:
 
 def _illegal_children(parent: WorldModelSnapshotV2, child: WorldModelSnapshotV2):
     retired_child = _revise(parent, retire=(_retire_target(parent).hypothesis_id,))
+    # hand-authored exploit: retire the hypothesis the sealed prediction binds
+    # (the author refuses this), re-point the prediction to the retired
+    # entry's new hash, and rebuild the belief over the new hash set — the
+    # reverse-map seal comparison alone would accept it
+    referenced = next(item for item in parent.hypotheses if item.statement == "statement h1")
+    retired_clone = HypothesisVersionV2.model_validate(
+        {
+            **referenced.model_dump(mode="python"),
+            "version": referenced.version + 1,
+            "revision_parent_sha256": referenced.hypothesis_sha256,
+            "lifecycle": HypothesisLifecycle.RETIRED,
+            "semantic_delta": "hand-authored retirement",
+            "authored_at": _T1,
+        }
+    )
+    retired_beliefs = tuple(
+        sorted(
+            (
+                HypothesisBeliefV2(
+                    hypothesis_sha256=(
+                        retired_clone.hypothesis_sha256
+                        if belief.hypothesis_sha256 == referenced.hypothesis_sha256
+                        else belief.hypothesis_sha256
+                    ),
+                    probability=belief.probability,
+                )
+                for belief in child.belief_state.hypothesis_beliefs
+            ),
+            key=lambda item: item.hypothesis_sha256,
+        )
+    )
+    retire_referenced_child = child.model_copy(
+        update={
+            "hypotheses": tuple(
+                sorted(
+                    (
+                        retired_clone if entry.hypothesis_id == referenced.hypothesis_id else entry
+                        for entry in child.hypotheses
+                    ),
+                    key=lambda entry: (
+                        entry.hypothesis_id,
+                        entry.version,
+                        entry.hypothesis_sha256,
+                    ),
+                )
+            ),
+            "predictions": (
+                child.predictions[0].model_copy(
+                    update={"hypothesis_sha256": retired_clone.hypothesis_sha256}
+                ),
+            ),
+            "belief_state": child.belief_state.model_copy(
+                update={"hypothesis_beliefs": retired_beliefs}
+            ),
+        }
+    )
     return {
         "wrong-parent": child.model_copy(update={"revision_parent_sha256": "c" * 64}),
         "wrong-identity": child.model_copy(
@@ -448,6 +504,10 @@ def _illegal_children(parent: WorldModelSnapshotV2, child: WorldModelSnapshotV2)
             }
         ),
         "dropped-lineage": child.model_copy(update={"hypotheses": child.hypotheses[:3]}),
+        "mutated-limitation": child.model_copy(
+            update={"model_limitations": ("tampered limitation",)}
+        ),
+        "retire-referenced": retire_referenced_child,
         "illegal-lifecycle": retired_child.model_copy(
             update={
                 "hypotheses": tuple(
@@ -473,6 +533,8 @@ def _illegal_children(parent: WorldModelSnapshotV2, child: WorldModelSnapshotV2)
         ("mutated-assumption", "mutated a sealed assumption"),
         ("mutated-hypothesis", "mutated a carried hypothesis version"),
         ("dropped-lineage", "changed the hypothesis lineages"),
+        ("mutated-limitation", "mutated a sealed model limitation"),
+        ("retire-referenced", "sealed member references"),
         ("illegal-lifecycle", "transitions a hypothesis illegally"),
     ],
 )

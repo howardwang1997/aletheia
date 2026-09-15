@@ -625,8 +625,18 @@ class DurableProtocolCompilationService:
             ) from exc
         if parent != expected_parent:
             raise ProtocolCompilationStepError("protocol revision parent row was rebound")
-        if child_world_model is not None and child_world_model.version > 1:
-            parent_world_model = parent_request.protocol.world_model
+        parent_world_model = parent_request.protocol.world_model
+        # one world-model identity per protocol lineage: a child claiming the
+        # parent's world_model_id must be that model's next legal revision,
+        # whatever version it declares — a fresh version-1 snapshot with a
+        # known identity is a belief rollback, not a founding
+        if child_world_model is not None and (
+            child_world_model.version > 1
+            or (
+                parent_world_model is not None
+                and child_world_model.world_model_id == parent_world_model.world_model_id
+            )
+        ):
             if parent_world_model is None:
                 raise ProtocolCompilationStepError(
                     "world-model revision lacks its registered parent snapshot"

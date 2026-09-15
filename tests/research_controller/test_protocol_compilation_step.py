@@ -506,13 +506,13 @@ def _observations(world_model: WorldModelSnapshotV2) -> tuple[AdmittedObservatio
     )
 
 
-def _second_authorized(case, question):
+def _next_authorized(case, question, label):
     action = _propose(
         case,
         question,
         case.root_branch_id,
         ActionKind.DISCRIMINATE,
-        "revision-context",
+        label,
     )
     authorized = case.commit(
         EventType.ACTION_AUTHORIZED,
@@ -591,7 +591,7 @@ def test_legal_world_model_revision_registers_as_protocol_version_two() -> None:
     )
     assert write1.protocol_version == 1
 
-    second_action, second_authorized = _second_authorized(case, question)
+    second_action, second_authorized = _next_authorized(case, question, "revision-context")
     base_second = _request(case, question, second_authorized)
     # every authorized action commits a new graph snapshot, so the revision
     # must re-bind to the current view rather than carry the parent's stamp
@@ -624,7 +624,7 @@ def test_legal_world_model_revision_registers_as_protocol_version_two() -> None:
             {"action": second_action.object_sha256},
         )
         session.commit()
-    service_second, _second_policy = _service(case, second_action, second, engine)
+    service_second, second_policy = _service(case, second_action, second, engine)
     projection_second = _projection(case, second_action)
 
     write2 = service_second.compile_and_register(
@@ -638,6 +638,24 @@ def test_legal_world_model_revision_registers_as_protocol_version_two() -> None:
         assert (
             session.scalar(select(func.count()).select_from(ResearchProtocolCompilationRecord)) == 2
         )
+
+    # durable replay of a version-2 row re-runs both gate layers through the
+    # existing-row branch without re-invoking the provider
+    restarted = DurableProtocolCompilationService(
+        kernel_store=_Kernel(case),
+        object_archive=_Archive(case),
+        provider=_FailProvider(),
+        preparation_verifier=_Verifier(second),
+        compilation_policy=second_policy,
+        authority_binding=_binding(second_policy),
+        sessions=_sessions(engine),
+        database_clock=lambda _session: second.protocol.authored_at + timedelta(seconds=10),
+    ).compile_and_register(
+        wakeup=_wakeup(case),
+        projection=projection_second,
+        plan=plan_recovery_tick(projection_second),
+    )
+    assert restarted == write2
 
 
 @pytest.mark.parametrize("tamper", ("parent", "prediction"))
@@ -662,7 +680,7 @@ def test_illegal_world_model_revision_against_registered_parent_rolls_back(tampe
         plan=plan_recovery_tick(projection_first),
     )
 
-    second_action, second_authorized = _second_authorized(case, question)
+    second_action, second_authorized = _next_authorized(case, question, "revision-context")
     base_second = _request(case, question, second_authorized)
     v2_authored = max(
         first.protocol.authored_at + timedelta(seconds=1),
@@ -728,6 +746,102 @@ def test_illegal_world_model_revision_against_registered_parent_rolls_back(tampe
                 action_sha256=action.object_sha256,
             )
             == write1
+        )
+
+
+def test_same_identity_world_model_reset_fails_closed() -> None:
+    case, question, action, authorized = _authorized_case()
+    base_first = _request(case, question, authorized)
+    prior_world = _prior_world_model(base_first.protocol)
+    first = _embedding(
+        base_first,
+        version=1,
+        revision_parent_sha256=None,
+        world_model=prior_world,
+        authored_at=base_first.protocol.authored_at,
+    )
+    engine = sqlite_observation_engine()
+    _seed(engine, quest_id=case.quest_id, action_sha256=action.object_sha256)
+    service_first, _first_policy = _service(case, action, first, engine)
+    projection_first = _projection(case, action)
+    write1 = service_first.compile_and_register(
+        wakeup=_wakeup(case),
+        projection=projection_first,
+        plan=plan_recovery_tick(projection_first),
+    )
+
+    second_action, second_authorized = _next_authorized(case, question, "revision-context")
+    base_second = _request(case, question, second_authorized)
+    v2_authored = max(
+        first.protocol.authored_at + timedelta(seconds=1),
+        base_second.protocol.authored_at,
+    )
+    child = revise_world_model_v2(
+        parent=prior_world,
+        observations=_observations(prior_world),
+        continuation_receipt_sha256=_CONTINUATION_RECEIPT,
+        graph_scope=base_second.protocol.graph_scope,
+        authored_at=v2_authored,
+        principal_id=base_second.protocol.authored_by_principal_id,
+    )
+    second = _embedding(
+        base_second,
+        version=2,
+        revision_parent_sha256=write1.protocol_sha256,
+        world_model=child,
+        authored_at=v2_authored,
+    )
+    with Session(engine) as session:
+        session.execute(
+            text("INSERT INTO research_kernel_objects VALUES (:action)"),
+            {"action": second_action.object_sha256},
+        )
+        session.commit()
+    service_second, _second_policy = _service(case, second_action, second, engine)
+    projection_second = _projection(case, second_action)
+    write2 = service_second.compile_and_register(
+        wakeup=_wakeup(case),
+        projection=projection_second,
+        plan=plan_recovery_tick(projection_second),
+    )
+    assert write2.protocol_version == 2
+
+    # a fresh version-1 prior under the SAME world_model_id is a belief
+    # rollback dressed as a founding: the gate re-derives the lineage and
+    # refuses it even though the snapshot itself is schema-legal
+    third_action, third_authorized = _next_authorized(case, question, "reset-context")
+    base_third = _request(case, question, third_authorized)
+    reset_world = _prior_world_model(base_third.protocol)
+    assert reset_world.world_model_id == child.world_model_id
+    v3_authored = max(
+        second.protocol.authored_at + timedelta(seconds=1),
+        base_third.protocol.authored_at,
+    )
+    third = _embedding(
+        base_third,
+        version=3,
+        revision_parent_sha256=write2.protocol_sha256,
+        world_model=reset_world,
+        authored_at=v3_authored,
+    )
+    with Session(engine) as session:
+        session.execute(
+            text("INSERT INTO research_kernel_objects VALUES (:action)"),
+            {"action": third_action.object_sha256},
+        )
+        session.commit()
+    service_third, _third_policy = _service(case, third_action, third, engine)
+    projection_third = _projection(case, third_action)
+
+    with pytest.raises(ProtocolCompilationStepError, match="illegal against its registered parent"):
+        service_third.compile_and_register(
+            wakeup=_wakeup(case),
+            projection=projection_third,
+            plan=plan_recovery_tick(projection_third),
+        )
+    with Session(engine) as session:
+        assert (
+            session.scalar(select(func.count()).select_from(ResearchProtocolCompilationRecord)) == 2
         )
 
 

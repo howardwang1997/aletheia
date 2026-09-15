@@ -8,7 +8,12 @@ lifecycle with a ``revision_parent_sha256`` chain; predictions, assumptions,
 and limitations are sealed, carried with only their graph-scope stamp
 re-bound to the current graph view.
 ``verify_authored_revision_v2`` re-derives revision legality from the parent
-snapshot alone, so an offline-authored revision is verified, never trusted.
+snapshot alone, so an offline-authored revision is verified, never trusted:
+identity, seals, lifecycle transitions, and the belief basis's shape are all
+checked against the parent.  The receipt's provenance (that the cited
+observation was admitted, and against this parent) and the posterior values
+are enforced where the admission registry is reachable, at the
+campaign-loop wiring seam, not by these pure functions.
 Pure functions, no I/O; every identity is content-derived and every timestamp
 comes from the caller.
 """
@@ -300,13 +305,16 @@ def verify_authored_revision_v2(
 ) -> WorldModelSnapshotV2:
     """Verify revision legality from the parent snapshot alone; return child.
 
-    The three illegal classes fail with distinct messages: a revision bound to
-    the wrong parent snapshot, a belief update without its observation basis
-    and pinned rule, and a mutated sealed prediction or assumption.  Carried
+    The illegal classes fail with distinct messages: a revision bound to the
+    wrong parent snapshot, a belief update without its observation basis and
+    pinned rule, a mutated sealed prediction, assumption, or model limitation,
+    and a retirement that dangles a sealed member's reference.  Carried
     members are sealed modulo their graph-scope stamp (the graph view legally
     moves between rounds); every other field must be unchanged.  Lineage
     drops, additions, and illegal lifecycle bumps fail the same way: the child
-    must be exactly the parent plus one legal revision.
+    must be exactly the parent plus one legal revision.  Structural legality
+    only: the observation receipt's provenance and the posterior values bind
+    at the observation-admission seam, not here.
     """
     if (
         child.world_model_id != parent.world_model_id
@@ -356,6 +364,8 @@ def verify_authored_revision_v2(
         _scope_free(item) for item in parent.assumptions
     ]:
         raise ValueError("world-model revision mutated a sealed assumption")
+    if child.model_limitations != parent.model_limitations:
+        raise ValueError("world-model revision mutated a sealed model limitation")
     parent_belief = parent.belief_state
     child_belief = child.belief_state
     if (
@@ -369,6 +379,23 @@ def verify_authored_revision_v2(
         or child_belief.update_rule_sha256 != REVISION_UPDATE_RULE_SHA256
     ):
         raise ValueError("world-model revision carries an unbound belief basis")
+    # a retirement may not dangle a sealed member's reference: the constraint
+    # the author enforces is re-derived here over the parent's own hashes, so
+    # a hand-authored child cannot retire a referenced hypothesis even when
+    # its sealed members are re-pointed to the retired entry's new hash
+    referenced = {
+        hypothesis_sha256
+        for prediction in parent.predictions
+        for hypothesis_sha256 in (
+            prediction.hypothesis_sha256,
+            *prediction.discriminates_from_hypothesis_sha256s,
+        )
+    }
+    referenced.update(
+        hypothesis_sha256
+        for assumption in parent.assumptions
+        for hypothesis_sha256 in assumption.applies_to_hypothesis_sha256s
+    )
     for hypothesis_id, parent_entry in parent_current.items():
         child_entry = child_current[hypothesis_id]
         if child_entry.version == parent_entry.version:
@@ -382,6 +409,8 @@ def verify_authored_revision_v2(
             or child_entry.lifecycle is not HypothesisLifecycle.RETIRED
         ):
             raise ValueError("world-model revision transitions a hypothesis illegally")
+        if parent_entry.hypothesis_sha256 in referenced:
+            raise ValueError("world-model revision retires a hypothesis a sealed member references")
         parent_payload = _scope_free(parent_entry)
         child_payload = _scope_free(child_entry)
         if any(
