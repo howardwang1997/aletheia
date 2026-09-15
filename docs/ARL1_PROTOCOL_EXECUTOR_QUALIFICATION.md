@@ -119,17 +119,17 @@ The campaign atomic-admission service permits `commit_and_incorporate` and
 Production ARL-1 qualification receipts have been issued under the claim ceiling
 `bounded_protocol_execution_engineering` on 2026-09-09 (keylessly verified the same day), on
 2026-09-12 by generation 20260912t (which first closed the complete given-protocol campaign),
-and on 2026-09-13 by generation 20260913u — the first generation whose keyless verification
-stage passed on the merged freeze, proving the fix that pins committed-receipt historical
-evaluation to each layer's own signed time. The per-source-class tamper-rejection audit of the
-[exit runbook](GENERATION_I_REQUALIFICATION_AND_ARL1_EXIT_RUNBOOK_2026_09_06.md) then ran for
-the first time and passed 29 of 87 cases before the verification deployment window closed
-mid-matrix. Enforcement was correct and no partial matrix was recorded as complete, but the
-composed window was shorter than the measured full-matrix budget, so the audit remains
-incomplete: a fresh generation must recompose with a window sized from that budget (the
-verification deployment contract permits spans up to 24 hours) and run the audit to completion.
-Any new deployment still requires a fresh release and commissioning window. Local
-tests are development verification and cannot satisfy target-host qualification.
+on 2026-09-13 by generation 20260913u (whose keyless verification stage first passed on the
+merged freeze), and on 2026-09-14 by generation 20260914v, whose per-source-class
+tamper-rejection audit of the
+[exit runbook](GENERATION_I_REQUALIFICATION_AND_ARL1_EXIT_RUNBOOK_2026_09_06.md) completed
+all 87 cases — the first full matrix in any generation, each case with an unchanged-copy
+control, a rejected one-byte mutation and a fresh recovery, and the retained sources
+unchanged. The verification window was sized at composition time from the measured matrix
+budget and the authority-pin deadlines; a pre-matrix budget check cleared the run, and the
+matrix closed inside the window with no enforcement trip. Any new deployment still requires a
+fresh release and commissioning window. Local tests are development verification and cannot
+satisfy target-host qualification.
 
 ## Test commands
 

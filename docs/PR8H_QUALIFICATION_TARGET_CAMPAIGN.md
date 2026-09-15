@@ -165,16 +165,26 @@ After target qualification, complete the production given-protocol campaign and 
 reexecutions, then prepare the evidence bundle, issue a qualification receipt and verify it in a
 fresh keyless auditor process. Every retained source class must reject byte tampering.
 
-Current system status: on 2026-09-13, generation 20260913u closed the full given-protocol
-campaign on the merged freeze, issued a fresh ARL-1 qualification receipt, and passed the
-keyless verification stage — the first generation through the fix that pins committed-receipt
-historical evaluation to each layer's own signed time (the 2026-09-12 generation had failed
-closed there on a live-clock seam). The per-source-class tamper-rejection audit then ran for
-the first time: 29 of 87 cases passed, each with an unchanged-copy control, a rejected one-byte
-mutation and a fresh post-namespace recovery, before the verification deployment window closed
-mid-matrix. The window enforced correctly against the database clock and no partial matrix was
-recorded as complete; the composed span was simply shorter than the measured full-matrix
-budget. The exit procedure now sizes that window from the measured budget at composition time,
-and a fresh generation owes the complete audit plus the deployment reboot-recovery drill.
-Follow the [current exit procedure](GENERATION_I_REQUALIFICATION_AND_ARL1_EXIT_RUNBOOK_2026_09_06.md)
+Current system status: on 2026-09-14, generation 20260914v closed every exit stage on the
+merged freeze (release `release-dfd5164-v1`, database `aletheia_qualification_20260914v`):
+the full given-protocol campaign with a byte-identical apply/replay pair, the scientific
+chain with an exact campaign replay, keyless verification, and qualification receipt
+`arl1qd_71294719ed92df8852cfc2bbfe5da561`. Its per-source-class tamper-rejection audit then
+completed all 87 cases, the first full matrix in any generation (the 2026-09-13 generation
+had passed 29 of 87 before its window closed mid-matrix). Each case ran an unchanged-copy
+control, a rejected one-byte mutation and a fresh recovery, and the retained sources stayed
+unchanged. The verification window was sized at composition time from the measured matrix
+budget and the authority-pin deadlines per the runbook rule; a pre-matrix budget check
+cleared the run, and the matrix closed in 9 h 19 min inside the window with no enforcement
+trip. The deployment reboot-recovery drill passed on 2026-09-15 across three reboots: the
+positive path verified a new boot id, the provisioned custody tree, six active units with
+zero restarts, socket custody, and the read-only observer cross-boot with identity
+deliberately not compared; the mandatory negative path, with the tmpfiles configuration
+removed, kept all six units failing closed and the runtime tree absent with no sockets
+served; restoring the configuration byte-identical returned every positive check to green.
+On the negative path the units failed one layer earlier than the designed in-process named
+error: with `ProtectSystem=strict` and absent `ReadWritePaths` targets, systemd refused the
+mount namespace before the service process could start, so fail-closed held twice over and
+the named error stayed unreachable in that path. Follow the
+[current exit procedure](GENERATION_I_REQUALIFICATION_AND_ARL1_EXIT_RUNBOOK_2026_09_06.md)
 and [qualification contract](ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md).
