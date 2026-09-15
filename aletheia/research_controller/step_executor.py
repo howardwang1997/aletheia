@@ -51,6 +51,8 @@ class ControllerStepAuthorityRole(str, Enum):
     DATABASE_ATTESTATION = "database_attestation"
     KERNEL_COMMAND = "kernel_command"
     CONTINUATION_ASSESSMENT = "continuation_assessment"
+    ACTION_KERNEL_COMMAND = "action_kernel_command"
+    TRANSITION_KERNEL_COMMAND = "transition_kernel_command"
 
 
 _SIGNED_EXTERNAL_ROLES = frozenset(
@@ -60,6 +62,19 @@ _SIGNED_EXTERNAL_ROLES = frozenset(
         ControllerStepAuthorityRole.INDEPENDENT_ADMISSION,
         ControllerStepAuthorityRole.DATABASE_ATTESTATION,
         ControllerStepAuthorityRole.KERNEL_COMMAND,
+        ControllerStepAuthorityRole.ACTION_KERNEL_COMMAND,
+        ControllerStepAuthorityRole.TRANSITION_KERNEL_COMMAND,
+    }
+)
+
+# The two ARL-2 command authorities are external signing services, not step
+# adapters: no ControllerStep consumes them, so they enroll beside the adapter
+# closure instead of inside it and are absent from deployments that do not wire
+# the transition flow.
+_EXTERNAL_COMMAND_AUTHORITY_ROLES = frozenset(
+    {
+        ControllerStepAuthorityRole.ACTION_KERNEL_COMMAND,
+        ControllerStepAuthorityRole.TRANSITION_KERNEL_COMMAND,
     }
 )
 
@@ -362,6 +377,7 @@ class DedicatedControllerStepExecutor:
         worker_process_principal_id: str,
         manifest: ControllerStepAdapterSetManifest,
         adapters: tuple[ControllerStepAdapterPort, ...],
+        command_authority_bindings: tuple[ControllerStepAuthorityBinding, ...] = (),
     ) -> None:
         try:
             controller_manifest = ResearchControllerManifest.model_validate(
@@ -425,6 +441,31 @@ class DedicatedControllerStepExecutor:
         )
         if observed_manifests != adapter_set_manifest.adapters:
             raise ValueError("controller step adapters differ from the deployment-pinned set")
+        command_role_bindings: dict[
+            ControllerStepAuthorityRole, ControllerStepAuthorityBinding
+        ] = {}
+        for binding in command_authority_bindings:
+            try:
+                exact = ControllerStepAuthorityBinding.model_validate(
+                    binding.model_dump(mode="python")
+                )
+            except (AttributeError, TypeError, ValueError) as exc:
+                raise TypeError("controller command authority binding is invalid") from exc
+            if exact != binding:
+                raise ValueError(
+                    "controller command authority binding changed during composition"
+                )
+            if binding.role not in _EXTERNAL_COMMAND_AUTHORITY_ROLES:
+                raise ValueError(
+                    "command authority bindings only accept external command roles"
+                )
+            if binding.role in command_role_bindings or binding.role in role_bindings:
+                raise ValueError(
+                    "one controller authority role was rebound across step adapters"
+                )
+            command_role_bindings[binding.role] = binding
+        role_bindings.update(command_role_bindings)
+        self.command_authority_bindings = tuple(command_authority_bindings)
         self._verify_authority_separation(
             role_bindings,
             worker_process_principal_id=worker_process_principal_id,
@@ -440,11 +481,18 @@ class DedicatedControllerStepExecutor:
         worker_process_principal_id: str,
         controller_principal_id: str,
     ) -> None:
+        bound = frozenset(bindings)
         expected_roles = frozenset(role for roles in _ACTIVE_STEP_ROLES.values() for role in roles)
-        if frozenset(bindings) != expected_roles:
+        # Adapter closures stay exhaustive; the two external command authorities
+        # may additionally enroll without any ControllerStep claiming them.
+        if not expected_roles <= bound or not bound <= (
+            expected_roles | _EXTERNAL_COMMAND_AUTHORITY_ROLES
+        ):
             raise ValueError("controller step authority closure is incomplete")
         sensitive = tuple(
-            bindings[role] for role in sorted(_SIGNED_EXTERNAL_ROLES, key=lambda item: item.value)
+            bindings[role]
+            for role in sorted(_SIGNED_EXTERNAL_ROLES, key=lambda item: item.value)
+            if role in bound
         )
         if len({item.principal_id for item in sensitive}) != len(sensitive) or len(
             {item.key_id for item in sensitive}
