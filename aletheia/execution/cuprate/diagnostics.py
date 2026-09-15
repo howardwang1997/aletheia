@@ -128,6 +128,11 @@ def matched_control_contrast(
     from sklearn.neighbors import NearestNeighbors
     from sklearn.preprocessing import StandardScaler
 
+    if len(train_index) < N_DENSITY_NEIGHBORS:
+        raise ValueError(
+            "matched control contrast needs at least "
+            f"{N_DENSITY_NEIGHBORS} train rows for the density neighborhood"
+        )
     scaler = StandardScaler().fit(X[train_index])
     density_nn = NearestNeighbors(n_neighbors=N_DENSITY_NEIGHBORS).fit(
         scaler.transform(X[train_index])
@@ -139,6 +144,10 @@ def matched_control_contrast(
     family_ho = family[holdout_index]
     fam_idx = np.where(family_ho)[0]
     non_idx = np.where(~family_ho)[0]
+    if not len(fam_idx):
+        raise ValueError("matched control contrast needs family rows in the holdout")
+    if not len(non_idx):
+        raise ValueError("matched control contrast needs non-family control rows in the holdout")
 
     rng = np.random.default_rng(SEED)
     match_nn = NearestNeighbors(n_neighbors=min(MAX_MATCH_CANDIDATES, len(non_idx))).fit(
@@ -204,6 +213,13 @@ def doping_deviation_stratification(
     deviation = np.abs(holes_per_copper[holdout_index][family_ho] - doping_optimum)
     threshold = np.quantile(deviation, 0.5)
     high = deviation > threshold
+    if not high.any() or high.all():
+        # An empty half (one family holdout row, or ties putting every row on
+        # one side of the median) has no split to test; NaNs must never reach
+        # the wire result.
+        raise ValueError(
+            "family doping deviations are degenerate: the median split has an empty half"
+        )
 
     effect = float(np.median(fam_err[high]) - np.median(fam_err[~high]))
 
@@ -250,6 +266,9 @@ def run_cuprate_diagnostic(
     n_elements = np.array([len(c.elements) for c in comps])
     train_index, holdout_index, errors = _fit_holdout(X, y)
     return {
+        # Rows that actually reached the pipeline: _featurize caps the frame
+        # at MAX_ROWS via a seeded subsample, so the count is post-cap.
+        "analyzed_rows": min(len(formulas), MAX_ROWS),
         "d1_matched_control": matched_control_contrast(
             X=X,
             n_elements=n_elements,

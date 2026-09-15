@@ -56,7 +56,7 @@ class CuprateDiagnosticService:
         return CuprateDiagnosticResult(
             dataset_content_sha256=payload.expected_content_sha256,
             doping_optimum=payload.doping_optimum,
-            analyzed_rows=len(batch.formulas),
+            analyzed_rows=result["analyzed_rows"],
             dropped_off_batch_rows=batch.dropped_off_batch,
             d1_matched_control=result["d1_matched_control"],
             d2_doping_stratification=result["d2_doping_stratification"],

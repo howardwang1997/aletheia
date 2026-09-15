@@ -27,7 +27,10 @@ def bind(csv_bytes=CSV, batch=("YBa2Cu3O7", "Bi2Sr2CaCu2O8", "La2SrCu2O6")):
 
 
 def test_bound_batch_rows_are_kept_and_off_batch_rows_dropped():
-    rows = bind()
+    # Batch ids deliberately in a different order than the CSV rows: emission
+    # order is the CSV's reader order, and that order feeds the seeded split
+    # positionally, so it must not silently follow the batch-id order.
+    rows = bind(batch=("La2SrCu2O6", "YBa2Cu3O7", "Bi2Sr2CaCu2O8"))
     assert rows.formulas == ("YBa2Cu3O7", "Bi2Sr2CaCu2O8", "La2SrCu2O6")
     assert rows.targets == (93.0, 91.5, 0.0011)
     assert rows.dropped_off_batch == 2

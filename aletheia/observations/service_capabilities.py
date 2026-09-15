@@ -146,6 +146,9 @@ def local_service_capability_sources(
             "execution/cuprate/card_rows.py",
             "execution/cuprate/diagnostics.py",
             "execution/cuprate/doping.py",
+            # diagnostics.py featurizes through this first-party module; the
+            # retained-source closure must carry it.
+            "domains/materials/featurizers.py",
         )
         payload_schema = CuprateDiagnosticRPCPayload.model_json_schema()
         result_schema = CuprateDiagnosticResult.model_json_schema()

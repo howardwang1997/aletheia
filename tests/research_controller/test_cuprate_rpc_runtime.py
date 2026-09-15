@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from pydantic import ValidationError
 
 from aletheia.research_controller.external_rpc import (
     ControllerWorkerRPCOperation,
@@ -149,6 +150,26 @@ def _payload(config, formulas) -> CuprateDiagnosticRPCPayload:
         bound_batch_group_ids=tuple(sorted(set(formulas))),
         doping_optimum=0.16,
     )
+
+
+@pytest.mark.parametrize(
+    "batch",
+    [
+        ("SiO2", "Fe2O3"),  # unsorted
+        ("SiO2", "SiO2"),  # duplicated
+        ("SiO2", ""),  # empty id
+        ("SiO2", "Fe2O3\nNb3Sn"),  # newline in id
+    ],
+)
+def test_payload_rejects_non_canonical_batch_group_ids(batch):
+    with pytest.raises(ValidationError, match="bound batch group ids"):
+        CuprateDiagnosticRPCPayload(
+            expected_content_sha256="0" * 64,
+            composition_column="material",
+            target_column="critical_temp",
+            bound_batch_group_ids=batch,
+            doping_optimum=0.16,
+        )
 
 
 def test_cuprate_factory_is_operation_closed_and_runs_the_pinned_dataset(
