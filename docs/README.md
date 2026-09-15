@@ -3,15 +3,16 @@
 This directory contains the architecture, project review, roadmap, and implementation RFCs for
 Aletheia.
 
-Current status (2026-09-14): generation 20260913u closed the full given-protocol campaign on the
-merged freeze, issued a fresh ARL-1 qualification receipt, and became the first generation whose
-keyless verification stage passed on the fix that pins committed-receipt evaluation to each
-layer's own signed time. Its tamper-rejection audit then ran for the first time and passed 29 of
-87 cases before the verification deployment window closed mid-matrix — enforcement was correct,
-no partial matrix was recorded as complete, and the cause was composition-time window sizing:
-the composed span was shorter than the measured full-matrix budget. The runbook now requires
-sizing the window from that budget at composition time; a fresh generation owes the complete
-audit plus the reboot-recovery drill. Use `LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md` and
+Current status (2026-09-15): generation 20260914v closed every exit stage on the merged
+freeze, issued a fresh ARL-1 qualification receipt, and completed the per-source-class
+tamper-rejection audit with all 87 cases passed, the first full matrix in any generation.
+The runbook rule of sizing the verification window from the measured matrix budget at
+composition time held live: a pre-matrix budget check cleared the run, and the matrix closed
+in 9 h 19 min inside the composed window with no enforcement trip. The deployment
+reboot-recovery drill passed across three reboots, including the mandatory negative path:
+with the tmpfiles configuration removed, all six scientific units failed closed and the
+runtime tree stayed absent; restoring the configuration byte-identical returned every check
+to green. Use `LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md` and
 `GENERATION_I_REQUALIFICATION_AND_ARL1_EXIT_RUNBOOK_2026_09_06.md` for the fresh-generation
 sequence.
 Public outputs follow `PUBLICATION_BOUNDARY.md`; private/internal audit records remain outside

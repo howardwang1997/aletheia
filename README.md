@@ -10,23 +10,21 @@ execution, validation, admission and qualification use separate authorities.
 
 ## Current status
 
-**The deployed system has produced ARL-1 qualification receipts, most recently on 2026-09-13** —
-generation 20260913u closed the full given-protocol campaign on the merged freeze and its
-keyless verification stage passed, the first generation past the live-clock seam that was fixed
-by pinning committed-receipt evaluation to each layer's own signed time. The per-source-class
-tamper-rejection audit then ran for the first time: 29 of 87 cases passed before the
-verification deployment window closed mid-matrix. Window enforcement behaved correctly and no
-partial matrix was recorded as complete, but the audit is unfinished — the composed window was
-shorter than the measured full-matrix budget, so a fresh generation must recompose with a
-window sized from that budget (the deployment contract allows spans up to 24 hours) before the
-audit can complete. ARL-1 qualifies bounded protocol execution; it does not establish
-scientific validity, independent replication or autonomous research design.
+**The deployed system has produced ARL-1 qualification receipts, most recently on 2026-09-14** —
+generation 20260914v closed every exit stage on the merged freeze, and its per-source-class
+tamper-rejection audit completed all 87 cases, the first full matrix in any generation. Each
+case passed with an unchanged-copy control, a rejected one-byte mutation and a fresh recovery,
+and the retained sources stayed unchanged. The verification window was sized at composition
+time from the measured matrix budget and the authority-pin deadlines (the deployment contract
+allows spans up to 24 hours); a pre-matrix budget check cleared the run before it started, and
+the matrix closed in 9 h 19 min inside the composed window with no mid-matrix enforcement
+trip. The deployment reboot-recovery drill passed on 2026-09-15 across three reboots,
+including the mandatory negative path. ARL-1 qualifies bounded protocol execution; it does not
+establish scientific validity, independent replication or autonomous research design.
 
-The immediate sequence is: complete the per-source-class tamper-rejection audit on a fresh
-generation whose verification window is sized from the measured matrix budget, plus the
-deployment reboot-recovery drill; then integrate a bounded ARL-2 campaign. F8 knowledge, F9
-world-model and F10 capability components exist, but their presence does not establish a
-qualified autonomous scientist.
+The immediate sequence is: integrate a bounded ARL-2 campaign. F8 knowledge, F9 world-model
+and F10 capability components exist, but their presence does not establish a qualified
+autonomous scientist.
 
 - [Current roadmap](docs/LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md)
 - [ARL-1 qualification contract](docs/ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md)
