@@ -58,7 +58,7 @@ from aletheia.knowledge.schemas import (
     TextScope,
 )
 
-NORMALIZER_ID = "aletheia.research_controller.file_backed_corpus.v1"
+NORMALIZER_ID = "aletheia.knowledge.file_backed_corpus.v1"
 NORMALIZER_SHA256 = hashlib.sha256(NORMALIZER_ID.encode("utf-8")).hexdigest()
 
 _HTTPS = re.compile(r"^https://")

@@ -13,7 +13,7 @@ from aletheia.knowledge.ingestion import (
     CorpusIngestionBundle,
     ProviderRetrievalMode,
 )
-from aletheia.research_controller.knowledge_input import (
+from aletheia.knowledge.file_backed_corpus import (
     CorpusDirectoryError,
     build_file_backed_bundle,
     register_campaign_corpus,
