@@ -22,6 +22,11 @@ from aletheia.observations.scientific_bridge import (
 )
 from aletheia.protocols.world_models import HypothesisLifecycle, WorldModelSnapshotV2
 from aletheia.research_controller.contracts import ControllerModel
+from aletheia.research_controller.continuation_stop import (
+    StopGrounds,
+    StopPolicyPin,
+    evaluate_stop_policy,
+)
 from aletheia.research_kernel.schemas import (
     ActionKind,
     ObservationIncorporatedPayload,
@@ -61,6 +66,7 @@ class ContinuationDisposition(str, Enum):
     READY = "ready"
     REDESIGN_OBSERVABLE = "redesign_observable"
     HYPOTHESIS_SET_FORK_REQUIRED = "hypothesis_set_fork_required"
+    STOP_REQUIRED = "stop_required"
 
 
 class ScientificObservationProjection(ControllerModel):
@@ -150,6 +156,7 @@ class ContinuationReceipt(ControllerModel):
     reason_codes: tuple[str, ...] = Field(min_length=1, max_length=64)
     proposed_action_kind: ActionKind
     assessment_provenance: ContinuationAssessmentProvenance | None = None
+    stop_grounds: StopGrounds | None = None
     legacy_run_synthesized: Literal[False] = False
     legacy_optimize_used: Literal[False] = False
 
@@ -165,6 +172,14 @@ class ContinuationReceipt(ControllerModel):
             raise ValueError("continuation reason codes must be unique and canonical")
         if self.proposed_action_kind is not continuation_to_action_kind(self.disposition):
             raise ValueError("continuation action kind differs from its typed disposition")
+        if (self.disposition is ContinuationDisposition.STOP_REQUIRED) != (
+            self.stop_grounds is not None
+        ):
+            raise ValueError("stop grounds accompany exactly the stop-required disposition")
+        if self.stop_grounds is not None and self.reason_codes[0] != (
+            f"stop_policy_{self.stop_grounds.trigger.value}"
+        ):
+            raise ValueError("stop reason codes must lead with the fired trigger")
         return self
 
     @property
@@ -179,6 +194,7 @@ def continuation_to_action_kind(disposition: ContinuationDisposition) -> ActionK
         ContinuationDisposition.READY: ActionKind.CONTINUE,
         ContinuationDisposition.REDESIGN_OBSERVABLE: ActionKind.REFINE,
         ContinuationDisposition.HYPOTHESIS_SET_FORK_REQUIRED: ActionKind.FORK,
+        ContinuationDisposition.STOP_REQUIRED: ActionKind.STOP,
     }[disposition]
 
 
@@ -256,8 +272,17 @@ def derive_continuation_v2(
     observation: ScientificObservationProjection,
     assessments: tuple[HypothesisPredictionAssessment, ...],
     assessment_provenance: ContinuationAssessmentProvenance | None = None,
+    stop_policy: StopPolicyPin | None = None,
+    allowed_stop_policy_sha256s: tuple[str, ...] | None = None,
+    rounds_observed: int = 0,
+    max_available_eig: float | None = None,
 ) -> ContinuationReceipt:
-    """Derive one deterministic continuation from an admitted observation and frozen F9-v2 model."""
+    """Derive one deterministic continuation from an admitted observation and frozen F9-v2 model.
+
+    Without ``stop_policy`` the derivation is bit-identical to its pre-stop form.  With
+    it, the frozen policy's preregistered triggers are evaluated on hash-closed inputs
+    and a firing trigger overrides the scientific disposition with STOP_REQUIRED.
+    """
 
     if observation.source_world_model_sha256 != world_model.world_model_sha256:
         raise ValueError("continuation world model differs from the admitted observation source")
@@ -325,6 +350,27 @@ def derive_continuation_v2(
         disposition = ContinuationDisposition.READY
         reason_codes = ("active_hypothesis_retains_support",)
 
+    stop_grounds: StopGrounds | None = None
+    if stop_policy is not None:
+        if (
+            not allowed_stop_policy_sha256s
+            or stop_policy.policy_sha256 not in allowed_stop_policy_sha256s
+        ):
+            raise ValueError("stop policy is not authorized by the frozen assessment policy")
+        stop_grounds = evaluate_stop_policy(
+            stop_policy=stop_policy,
+            rounds_observed=rounds_observed,
+            hypothesis_beliefs=(
+                world_model.belief_state.hypothesis_beliefs
+                if world_model.belief_state is not None
+                else None
+            ),
+            max_available_eig=max_available_eig,
+        )
+    if stop_grounds is not None:
+        disposition = ContinuationDisposition.STOP_REQUIRED
+        reason_codes = (f"stop_policy_{stop_grounds.trigger.value}",)
+
     return ContinuationReceipt(
         world_model_snapshot_sha256=world_model.world_model_sha256,
         observation_projection_sha256=observation.projection_sha256,
@@ -334,6 +380,7 @@ def derive_continuation_v2(
         reason_codes=reason_codes,
         proposed_action_kind=continuation_to_action_kind(disposition),
         assessment_provenance=assessment_provenance,
+        stop_grounds=stop_grounds,
     )
 
 

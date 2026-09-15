@@ -112,6 +112,7 @@ class ContinuationAssessmentPolicyPin(ControllerModel):
     observed_outcome_identity_policy_sha256: str = Field(pattern=_SHA256_PATTERN)
     allowed_assessor_principal_ids: tuple[str, ...] = Field(min_length=1, max_length=64)
     allowed_fit_rule_sha256s: tuple[str, ...] = Field(min_length=1, max_length=64)
+    allowed_stop_policy_sha256s: tuple[str, ...] | None = Field(default=None, min_length=1, max_length=64)
     missing_active_hypothesis_disposition: Literal["redesign_observable"] = "redesign_observable"
     legacy_continuation_allowed: Literal[False] = False
 
@@ -133,6 +134,14 @@ class ContinuationAssessmentPolicyPin(ControllerModel):
             for fit_rule in self.allowed_fit_rule_sha256s
         ):
             raise ValueError("continuation fit rules must be unique and canonical")
+        if self.allowed_stop_policy_sha256s is not None and (
+            self.allowed_stop_policy_sha256s != tuple(sorted(set(self.allowed_stop_policy_sha256s)))
+            or any(
+                re.fullmatch(_SHA256_PATTERN, stop_policy) is None
+                for stop_policy in self.allowed_stop_policy_sha256s
+            )
+        ):
+            raise ValueError("continuation stop policies must be unique and canonical")
         return self
 
     @property

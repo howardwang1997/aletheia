@@ -1133,7 +1133,8 @@ class ResearchContinuationReceiptRecord(Base):
         CheckConstraint(_QUEST_SQL, name="ck_rcr_quest"),
         CheckConstraint(_SLOT_SQL, name="ck_rcr_slot"),
         CheckConstraint(
-            "disposition IN ('ready','redesign_observable','hypothesis_set_fork_required')",
+            "disposition IN "
+            "('ready','redesign_observable','hypothesis_set_fork_required','stop_required')",
             name="ck_rcr_disposition",
         ),
         _postgresql_json_check(

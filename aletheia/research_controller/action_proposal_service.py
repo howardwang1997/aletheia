@@ -423,6 +423,7 @@ class PostgreSQLActionProposalContextSource(ActionProposalContextSourcePort):
                 ContinuationDisposition.READY: EvidenceKind.POLICY,
                 ContinuationDisposition.REDESIGN_OBSERVABLE: EvidenceKind.OBJECTION,
                 ContinuationDisposition.HYPOTHESIS_SET_FORK_REQUIRED: EvidenceKind.CONTRADICTION,
+                ContinuationDisposition.STOP_REQUIRED: EvidenceKind.POLICY,
             }[receipt.disposition]
             required_kind = receipt.proposed_action_kind
             source_action_sha256 = projection.action_sha256

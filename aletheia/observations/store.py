@@ -770,7 +770,9 @@ class ContinuationReceiptWrite(_WriteModel):
     observation_projection_sha256: str = Field(pattern=_SHA256_PATTERN)
     scientific_observation_sha256: str = Field(pattern=_SHA256_PATTERN)
     committed_admission_sha256: str = Field(pattern=_SHA256_PATTERN)
-    disposition: Literal["ready", "redesign_observable", "hypothesis_set_fork_required"]
+    disposition: Literal[
+        "ready", "redesign_observable", "hypothesis_set_fork_required", "stop_required"
+    ]
     receipt_json: dict[str, Any]
     recorded_at: AwareDatetime
 
