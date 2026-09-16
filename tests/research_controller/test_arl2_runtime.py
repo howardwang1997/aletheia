@@ -932,8 +932,10 @@ def test_register_commits_the_three_pre_signed_commands_in_order(tmp_path: Path)
     Path(fx.question_path).write_bytes(canonical_json_bytes(question_command))
     config = _config_variant(
         fx.config,
-        problem_command_file_sha256=hashlib.sha256(fx.problem_path.read_bytes()).hexdigest(),
-        question_command_file_sha256=hashlib.sha256(fx.question_path.read_bytes()).hexdigest(),
+        problem_command_file_sha256=hashlib.sha256(Path(fx.problem_path).read_bytes()).hexdigest(),
+        question_command_file_sha256=hashlib.sha256(
+            Path(fx.question_path).read_bytes()
+        ).hexdigest(),
     )
     driver = _driver(
         fx,
