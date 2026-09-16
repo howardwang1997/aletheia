@@ -297,6 +297,34 @@ def sealed_groups_for_round(
     return round_one if round_index == 1 else round_two
 
 
+def verify_pre_registered_round_splits(
+    *,
+    card: RegisteredDatasetV1,
+    csv_bytes: bytes,
+    round_split_bindings: tuple[RoundSplitBindingPolicyV1, ...],
+) -> None:
+    """D8's pre-registration check: re-derive each sealed round from card bytes alone.
+
+    The bundle verifier re-runs the same equality inside verify_campaign_bundle
+    once events and a manifest exist; this entry point is the driver's register-time
+    guarantee that the pinned split bindings already bind the pinned dataset, before
+    the campaign commits anything.
+    """
+
+    if tuple(binding.round_index for binding in round_split_bindings) != (1, 2):
+        raise ValueError("pre-registered round splits cover rounds 1 and 2 only")
+    round_one, round_two = _round_partitions(card, csv_bytes)
+    sealed_by_round = {1: round_one, 2: round_two}
+    for binding in round_split_bindings:
+        sealed = sealed_by_round[binding.round_index]
+        if binding.dataset_content_sha256 != card.content_sha256:
+            raise ValueError("round-split policy binds a different dataset identity")
+        if binding.split_policy_sha256 != card.split_policy.policy_sha256:
+            raise ValueError("round-split policy binds a different split policy")
+        if binding.sealed_group_ids_sha256 != _set_sha(sealed):
+            raise ValueError("round-split policy sealed set differs from the card partition")
+
+
 def _card_row_pairs(card: RegisteredDatasetV1, csv_bytes: bytes) -> Counter[tuple[str, float]]:
     """Multiset of (composition, target) pairs of the registered content.
 

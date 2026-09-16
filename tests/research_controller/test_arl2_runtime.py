@@ -47,14 +47,13 @@ from aletheia.research_kernel.commands import (
 )
 from aletheia.research_kernel.policy import ResearchAuthorizationRole
 from aletheia.research_kernel.schemas import (
-    ActionAuthorizedPayload,
     ActionKind,
     EventType,
     EvidenceKind,
     EvidenceRef,
+    ObservationIncorporatedPayload,
     QuestionAdmittedPayload,
     QuestionKind,
-    RefineCommittedPayload,
     ResearchEvent,
     ResearchQuestionVersion,
     StopReason,
@@ -220,7 +219,10 @@ def _driver_fixture(tmp_path: Path) -> SimpleNamespace:
     service_uid = process_uid + 1
 
     def _driver_facing_pin(pin):
+        # SO_PEERCRED names the SERVICE as the peer, so a driver-facing pin
+        # carries the service uid as both peer and socket owner.
         payload = pin.model_dump(mode="python", exclude={"service_id"})
+        payload["peer_uid"] = service_uid
         payload["socket_owner_uid"] = service_uid
         return type(pin).model_validate(payload)
 
@@ -378,6 +380,7 @@ def _driver_fixture(tmp_path: Path) -> SimpleNamespace:
     return SimpleNamespace(
         repository_root=repository_root,
         process_uid=process_uid,
+        process_gid=process_gid,
         replay=replay,
         archive=archive,
         scope=scope,
@@ -458,10 +461,20 @@ def test_kernel_command_services_bind_exactly_one_operation_each(tmp_path: Path)
         ARL2QuestionCampaignRuntimeConfigV1.model_validate(rebound)
 
 
-def test_config_refuses_sockets_the_driver_uid_owns(tmp_path: Path) -> None:
+def test_config_refuses_service_pins_facing_the_driver_uid(tmp_path: Path) -> None:
     fx = _driver_fixture(tmp_path)
     services = _services_payload(fx.config.kernel_command_services)
+    # A pin whose SO_PEERCRED peer is this driver itself is refused, whichever
+    # clause trips first: the peer uid must name the service, not the driver.
+    services["transition_kernel_command"]["peer_uid"] = fx.process_uid
+    with pytest.raises(ValueError, match="UID-separated, GID-shared socket"):
+        _config_variant(fx.config, kernel_command_services=services)
+    services = _services_payload(fx.config.kernel_command_services)
     services["transition_kernel_command"]["socket_owner_uid"] = fx.process_uid
+    with pytest.raises(ValueError, match="UID-separated, GID-shared socket"):
+        _config_variant(fx.config, kernel_command_services=services)
+    services = _services_payload(fx.config.kernel_command_services)
+    services["transition_kernel_command"]["socket_group_gid"] = fx.process_gid + 1
     with pytest.raises(ValueError, match="UID-separated, GID-shared socket"):
         _config_variant(fx.config, kernel_command_services=services)
 
@@ -616,10 +629,13 @@ def _stop_receipt() -> ContinuationReceipt:
     )
 
 
-def _refine_receipt() -> ContinuationReceipt:
+def _refine_receipt(
+    snapshot_sha: str = _sha("world-model"),
+    projection_sha: str = _sha("observation-projection"),
+) -> ContinuationReceipt:
     return ContinuationReceipt(
-        world_model_snapshot_sha256=_sha("world-model"),
-        observation_projection_sha256=_sha("observation-projection"),
+        world_model_snapshot_sha256=snapshot_sha,
+        observation_projection_sha256=projection_sha,
         scientific_slot_id=SLOT_ID,
         assessments=(),
         disposition=ContinuationDisposition.REDESIGN_OBSERVABLE,
@@ -636,8 +652,18 @@ def test_transitions_carry_only_the_two_receipt_forced_kinds() -> None:
     event = _incorporated_event(action_id=submission.action.object_ref.object_id)
 
     stop_receipt = _stop_receipt()
-    stop_proposal = _campaign_transition_proposal(submission, stop_receipt, event)
+    stop_proposal = _campaign_transition_proposal(
+        submission,
+        stop_receipt,
+        event,
+        expected_stream_version=8,
+        expected_tail_event_sha256=_sha("live-head"),
+    )
     assert stop_proposal.event_type is EventType.STOP_COMMITTED
+    # The transition pins name the caller's live kernel head, never the stale
+    # pins the original action submission carried (submission pins: 7 / "tail").
+    assert stop_proposal.expected_stream_version == 8
+    assert stop_proposal.expected_tail_event_sha256 == _sha("live-head")
     decision = stop_proposal.payload.decision
     assert decision.directive.stop_reason is StopReason.BUDGET_EXHAUSTED
     assert decision.directive.branch_id == submission.target_branch_id
@@ -647,7 +673,13 @@ def test_transitions_carry_only_the_two_receipt_forced_kinds() -> None:
     )
 
     refine_receipt = _refine_receipt()
-    refine_proposal = _campaign_transition_proposal(submission, refine_receipt, event)
+    refine_proposal = _campaign_transition_proposal(
+        submission,
+        refine_receipt,
+        event,
+        expected_stream_version=8,
+        expected_tail_event_sha256=_sha("live-head"),
+    )
     assert refine_proposal.event_type is EventType.REFINE_COMMITTED
     assert refine_proposal.payload.decision.directive.source_branch_id == (
         submission.target_branch_id
@@ -660,7 +692,13 @@ def test_transitions_carry_only_the_two_receipt_forced_kinds() -> None:
     )
 
     with pytest.raises(ARL2RuntimeError, match="no other transition disposition"):
-        _campaign_transition_proposal(submission, _fork_receipt(), event)
+        _campaign_transition_proposal(
+            submission,
+            _fork_receipt(),
+            event,
+            expected_stream_version=8,
+            expected_tail_event_sha256=_sha("live-head"),
+        )
     ready = ContinuationReceipt(
         world_model_snapshot_sha256=_sha("world-model"),
         observation_projection_sha256=_sha("observation-projection"),
@@ -671,38 +709,117 @@ def test_transitions_carry_only_the_two_receipt_forced_kinds() -> None:
         proposed_action_kind=ActionKind.CONTINUE,
     )
     with pytest.raises(ARL2RuntimeError, match="no other transition disposition"):
-        _campaign_transition_proposal(submission, ready, event)
+        _campaign_transition_proposal(
+            submission,
+            ready,
+            event,
+            expected_stream_version=8,
+            expected_tail_event_sha256=_sha("live-head"),
+        )
+
+
+def _decoy_observation_event(index: int) -> ResearchEvent:
+    """A decoy incorporated observation the receipt lookup must not match."""
+
+    return ResearchEvent(
+        quest_id=QUEST_ID,
+        sequence=3 + index,
+        parent_event_sha256=_sha(f"cas-decoy-parent-{index}"),
+        event_type=EventType.OBSERVATION_INCORPORATED,
+        payload=ObservationIncorporatedPayload(
+            branch_id="rbr_" + f"{index + 1:032x}",
+            action_id=f"cas-decoy-action-{index}",
+            scientific_slot_id=SLOT_ID if index == 0 else "sos_" + f"{index + 1:032x}",
+            committed_admission_sha256=_sha(f"cas-decoy-admission-{index}"),
+            scientific_observation_sha256=_sha(f"cas-decoy-observation-{index}"),
+            outcome="inconclusive",
+            source_world_model_sha256=_sha(f"cas-decoy-world-{index}"),
+        ),
+        command_sha256=_sha(f"cas-decoy-command-{index}"),
+        principal_id="agent:operator",
+        authorization_receipt_sha256=_sha(f"cas-decoy-receipt-{index}"),
+        committed_at=NOW,
+    )
+
+
+class _CASKernelStore:
+    """Kernel-store double enforcing the real CAS head rule on every commit.
+
+    The real store refuses a command unless its pins name the current head
+    (research_store store.commit); this double asserts the same equality, so a
+    driver proposing a transition on stale pins fails here rather than only in
+    production.  The initial head comes from the submission's request pins (the
+    canon projection pins 7 / "tail"), standing in for the seven audited events
+    a real quest stream would already carry.
+    """
+
+    def __init__(self, submission, incorporated: ResearchEvent) -> None:
+        self.events = [incorporated, *(_decoy_observation_event(i) for i in range(6))]
+        self.head = (
+            submission.request.expected_stream_version,
+            submission.request.expected_tail_event_sha256,
+        )
+        self.commits: list[object] = []
+
+    def audit(self, quest_id: str) -> SimpleNamespace:
+        return SimpleNamespace(events=tuple(self.events))
+
+    def commit(self, command) -> None:
+        expected = (command.expected_stream_version, command.expected_tail_event_sha256)
+        assert expected == self.head, f"stale kernel head pin: {expected} != {self.head}"
+        self.commits.append(command)
+        self.events.append(
+            ResearchEvent(
+                quest_id=command.quest_id,
+                sequence=len(self.events) + 1,
+                parent_event_sha256=self.head[1],
+                event_type=command.event_type,
+                payload=command.payload,
+                command_sha256=_sha(f"cas-command-{len(self.commits)}"),
+                principal_id=command.principal_id,
+                authorization_receipt_sha256=command.authorization_receipt_sha256,
+                committed_at=NOW,
+            )
+        )
+        self.head = (len(self.events), self.events[-1].event_sha256)
 
 
 def test_carry_signing_work_round_trips_through_both_services(tmp_path: Path) -> None:
     fx = _driver_fixture(tmp_path)
     refine_receipt = _refine_receipt()
+    second_refine_receipt = _refine_receipt(projection_sha=_sha("projection-two"))
     submission = _submission(ControllerStep.PROPOSE_REDESIGN)
     action_sha = submission.action.object_ref.object_sha256
     (fx.spool_root / "pending").mkdir()
     (fx.spool_root / "pending" / f"{action_sha}.json").write_bytes(canonical_json_bytes(submission))
     incorporated = _incorporated_event(action_id=submission.action.object_ref.object_id)
-    commits: list[object] = []
+    store = _CASKernelStore(submission, incorporated)
+    carried = {"receipt": refine_receipt}
     driver = _driver(
         fx,
         transport=fx.transport,
-        kernel_store=SimpleNamespace(commit=commits.append),
+        kernel_store=store,
         clock=lambda: NOW,
         receipt_lookup=lambda _quest, _sha256: (
-            refine_receipt,
+            carried["receipt"],
             _sha("admission"),
             _sha("observation"),
         ),
     )
 
-    driver._carry_signing_work((incorporated,))
-
+    # Round 1: the action commits on the submission pins, then the transition
+    # commits on the live head the action commit just moved (8 / action event).
+    driver._carry_signing_work(store.audit(QUEST_ID).events)
     assert fx.transport.exchanges == 2
-    assert len(commits) == 2
-    action_command, transition_command = commits
+    assert len(store.commits) == 2
+    action_command, transition_command = store.commits
     assert action_command.idempotency_key == f"action:{action_sha}"
     assert action_command.principal_id == fx.action_fx.kernel_key.principal_id
+    assert action_command.expected_stream_version == 7
+    assert action_command.expected_tail_event_sha256 == _sha("tail")
     assert transition_command.idempotency_key.startswith("transition:")
+    assert transition_command.expected_stream_version == 8
+    assert transition_command.expected_tail_event_sha256 == store.events[7].event_sha256
     refine_decision = transition_command.payload.decision
     assert refine_decision.transition_id == (
         "transition:"
@@ -710,34 +827,55 @@ def test_carry_signing_work_round_trips_through_both_services(tmp_path: Path) ->
     )
     assert refine_decision.directive.source_branch_id == submission.target_branch_id
 
-    authorized = ResearchEvent(
-        quest_id=QUEST_ID,
-        sequence=3,
-        parent_event_sha256=_sha("parent-authorized"),
-        event_type=EventType.ACTION_AUTHORIZED,
-        payload=ActionAuthorizedPayload(
-            action_id=submission.action.object_ref.object_id,
-            branch_id=submission.target_branch_id,
-        ),
-        command_sha256=_sha("authorized-command"),
-        principal_id="agent:operator",
-        authorization_receipt_sha256=_sha("authorized-receipt"),
-        committed_at=NOW,
-    )
-    refined = ResearchEvent(
-        quest_id=QUEST_ID,
-        sequence=4,
-        parent_event_sha256=_sha("parent-refined"),
-        event_type=EventType.REFINE_COMMITTED,
-        payload=RefineCommittedPayload(decision=refine_decision),
-        command_sha256=_sha("refine-command"),
-        principal_id="agent:operator",
-        authorization_receipt_sha256=_sha("refine-receipt"),
-        committed_at=NOW,
-    )
-    driver._carry_signing_work((incorporated, authorized, refined))
+    # Round 2: both artifacts are already on the stream; nothing new is signed.
+    driver._carry_signing_work(store.audit(QUEST_ID).events)
     assert fx.transport.exchanges == 2
-    assert len(commits) == 2
+    assert len(store.commits) == 2
+
+    # Round 3: a second, distinct redesign receipt (same world model, so the
+    # authority still binds it to the same incorporated event) derives a new
+    # transition id and commits exactly one more transition.
+    carried["receipt"] = second_refine_receipt
+    driver._carry_signing_work(store.audit(QUEST_ID).events)
+    assert fx.transport.exchanges == 3
+    assert len(store.commits) == 3
+    second_decision = store.commits[2].payload.decision
+    assert second_decision.transition_id != refine_decision.transition_id
+    assert second_decision.transition_id == (
+        "transition:"
+        + hashlib.sha256(
+            f"arl2-refine:{second_refine_receipt.receipt_sha256}".encode()
+        ).hexdigest()[:32]
+    )
+
+
+def test_carry_skips_transitions_whose_admission_binds_no_event(tmp_path: Path) -> None:
+    fx = _driver_fixture(tmp_path)
+    submission = _submission(ControllerStep.PROPOSE_REDESIGN)
+    action_sha = submission.action.object_ref.object_sha256
+    (fx.spool_root / "pending").mkdir()
+    (fx.spool_root / "pending" / f"{action_sha}.json").write_bytes(canonical_json_bytes(submission))
+    incorporated = _incorporated_event(action_id=submission.action.object_ref.object_id)
+    store = _CASKernelStore(submission, incorporated)
+    driver = _driver(
+        fx,
+        transport=fx.transport,
+        kernel_store=store,
+        clock=lambda: NOW,
+        receipt_lookup=lambda _quest, _sha256: (
+            _refine_receipt(),
+            _sha("admission-no-event-names"),
+            _sha("observation"),
+        ),
+    )
+
+    driver._carry_signing_work(store.audit(QUEST_ID).events)
+
+    # The action still commits; the receipt's admission sha binds no
+    # incorporated event on the stream, so no transition is signed.
+    assert fx.transport.exchanges == 1
+    assert len(store.commits) == 1
+    assert store.commits[0].idempotency_key == f"action:{action_sha}"
 
 
 def test_run_receipt_kind_carries_exactly_its_evidence() -> None:
@@ -790,8 +928,8 @@ def test_register_commits_the_three_pre_signed_commands_in_order(tmp_path: Path)
         label="arl2-question",
         authorized_at=T0 + timedelta(seconds=2),
     )
-    fx.problem_path.write_bytes(canonical_json_bytes(problem_command))
-    fx.question_path.write_bytes(canonical_json_bytes(question_command))
+    Path(fx.problem_path).write_bytes(canonical_json_bytes(problem_command))
+    Path(fx.question_path).write_bytes(canonical_json_bytes(question_command))
     config = _config_variant(
         fx.config,
         problem_command_file_sha256=hashlib.sha256(fx.problem_path.read_bytes()).hexdigest(),
@@ -823,6 +961,38 @@ def test_register_commits_the_three_pre_signed_commands_in_order(tmp_path: Path)
 
     driver.register()
     assert len(store.audit(QUEST_ID).events) == 3
+
+
+def test_register_refuses_drifted_or_tampered_request_content(tmp_path: Path) -> None:
+    fx = _driver_fixture(tmp_path)
+    commits: list[object] = []
+    drifted = _driver(
+        fx,
+        request=_request_variant(fx.request, dataset_content_file_sha256=_sha("drifted-content")),
+        kernel_store=SimpleNamespace(commit=commits.append),
+    )
+    with pytest.raises(ARL2RuntimeError, match="byte pin"):
+        drifted.register()
+
+    # D8 pre-registration: a tampered sealed set passes request validation (the
+    # request never sees the csv bytes) and must die at register, pre-commit.
+    tampered = _request_variant(
+        fx.request,
+        round_split_bindings=(
+            fx.request.round_split_bindings[0].model_copy(
+                update={"sealed_group_ids_sha256": _sha("tampered-sealed-set")}
+            ),
+            fx.request.round_split_bindings[1],
+        ),
+    )
+    committed = _driver(
+        fx,
+        request=tampered,
+        kernel_store=SimpleNamespace(commit=commits.append),
+    )
+    with pytest.raises(ValueError, match="sealed set differs from the card partition"):
+        committed.register()
+    assert commits == []
 
 
 def test_request_content_passes_the_dataset_card_verifier(tmp_path: Path) -> None:

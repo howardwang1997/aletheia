@@ -256,10 +256,13 @@ class ARL2QuestionCampaignRuntimeConfigV1(KernelModel):
         if len(set(command_paths)) != len(command_paths):
             raise ValueError("ARL-2 activation command paths must be distinct")
         for name, pin in self.kernel_command_services.named_pins:
+            # SO_PEERCRED on the connected socket names the service, not this
+            # driver, so peer_uid must differ from ours while the socket itself
+            # is service-owned on our shared group (ARL-1 wiring, arl1_runtime).
             if (
-                pin.peer_uid != self.process_uid
+                pin.peer_uid == self.process_uid
                 or pin.peer_gid != self.process_gid
-                or pin.socket_owner_uid == self.process_uid
+                or pin.socket_owner_uid != pin.peer_uid
                 or pin.socket_group_gid != self.process_gid
                 or pin.socket_mode != 0o660
             ):
@@ -606,8 +609,16 @@ def _campaign_transition_proposal(
     submission: SubmittedActionProposal,
     receipt: ContinuationReceipt,
     incorporated_event: ResearchEvent,
+    *,
+    expected_stream_version: int,
+    expected_tail_event_sha256: str,
 ) -> ResearchCommandProposal:
-    """Derive the transition proposal this campaign's two receipts can force."""
+    """Derive the transition proposal this campaign's two receipts can force.
+
+    The stream pins name the CURRENT kernel head after the paired action commit,
+    never the (stale) pins carried by the original action submission; the store's
+    CAS would refuse those on the second command of every exchange.
+    """
 
     action_ref = submission.action.object_ref
     if receipt.disposition is ContinuationDisposition.REDESIGN_OBSERVABLE:
@@ -665,8 +676,8 @@ def _campaign_transition_proposal(
     return ResearchCommandProposal(
         quest_id=submission.request.quest_id,
         scope_binding=submission.request.scope_binding,
-        expected_stream_version=submission.request.expected_stream_version,
-        expected_tail_event_sha256=submission.request.expected_tail_event_sha256,
+        expected_stream_version=expected_stream_version,
+        expected_tail_event_sha256=expected_tail_event_sha256,
         event_type=event_type,
         payload=payload,
         proposed_by_principal_id=submission.proposed_by_principal_id,
@@ -895,8 +906,17 @@ class ARL2QuestionCampaignDriver:
         submission: SubmittedActionProposal,
         receipt: ContinuationReceipt,
         incorporated_event: ResearchEvent,
+        *,
+        expected_stream_version: int,
+        expected_tail_event_sha256: str,
     ) -> AuthorizedResearchCommand:
-        proposal = _campaign_transition_proposal(submission, receipt, incorporated_event)
+        proposal = _campaign_transition_proposal(
+            submission,
+            receipt,
+            incorporated_event,
+            expected_stream_version=expected_stream_version,
+            expected_tail_event_sha256=expected_tail_event_sha256,
+        )
         return self._transition_client.call(
             ControllerWorkerRPCOperation.SIGN_TRANSITION_COMMAND,
             payload={
@@ -909,13 +929,20 @@ class ARL2QuestionCampaignDriver:
         )
 
     def _wake_roles(self) -> None:
-        observed_at = self._utc_now()
-        remaining = max(1.0, (self.config.campaign_deadline - observed_at).total_seconds())
+        _fresh_pinned_bytes(
+            self.config.runtime_entrypoint_path,
+            self.config.runtime_entrypoint_file_sha256,
+            label="ARL-2 runtime entrypoint",
+        )
         for invocation in self.config.role_invocations:
             _fresh_pinned_bytes(
                 invocation.deployment_manifest_path,
                 invocation.deployment_manifest_file_sha256,
                 label=f"ARL-2 {invocation.role} deployment manifest",
+            )
+            remaining = max(
+                1.0,
+                (self.config.campaign_deadline - self._utc_now()).total_seconds(),
             )
             command = [
                 sys.executable,
@@ -1097,6 +1124,15 @@ class ARL2QuestionCampaignDriver:
         )
         card = _load_canonical_model(card_bytes, RegisteredDatasetV1, label="ARL-2 dataset card")
         verify_dataset_card(card, csv_bytes)
+        from aletheia.research_controller.campaign_replay import (
+            verify_pre_registered_round_splits,
+        )
+
+        verify_pre_registered_round_splits(
+            card=card,
+            csv_bytes=csv_bytes,
+            round_split_bindings=self.request.round_split_bindings,
+        )
         if self._archive is None:
             raise ARL2RuntimeError("ARL-2 register requires the writer archive")
         archived = self._archive.archive_object(self.request.question_version)
@@ -1181,6 +1217,16 @@ class ARL2QuestionCampaignDriver:
             action_id = submission.action.object_ref.object_id
             if action_id not in authorized_action_ids:
                 self._kernel_store.commit(self._sign_action(submission))
+                # The action commit moved the kernel head: re-audit so the
+                # paired transition pins the live head.  The submission's own
+                # pins are now stale and the store CAS would refuse them.
+                events = self._kernel_store.audit(self.request.quest_id).events
+                authorized_action_ids = {
+                    event.payload.action_id
+                    for event in events
+                    if event.event_type is EventType.ACTION_AUTHORIZED
+                }
+                by_event_sha = {event.event_sha256: event for event in events}
             source_receipt = submission.request.source_receipt_sha256
             if source_receipt is None:
                 continue
@@ -1203,16 +1249,37 @@ class ARL2QuestionCampaignDriver:
             if len(incorporated) != 1:
                 continue
             incorporated_event = incorporated[0]
-            proposal = _campaign_transition_proposal(submission, receipt, incorporated_event)
+            expected_stream_version = len(events)
+            expected_tail_event_sha256 = events[-1].event_sha256
+            proposal = _campaign_transition_proposal(
+                submission,
+                receipt,
+                incorporated_event,
+                expected_stream_version=expected_stream_version,
+                expected_tail_event_sha256=expected_tail_event_sha256,
+            )
             if proposal.payload.decision.transition_id in committed_transition_ids:
                 continue
             self._kernel_store.commit(
-                self._sign_transition(submission, receipt, incorporated_event)
+                self._sign_transition(
+                    submission,
+                    receipt,
+                    incorporated_event,
+                    expected_stream_version=expected_stream_version,
+                    expected_tail_event_sha256=expected_tail_event_sha256,
+                )
             )
+            events = self._kernel_store.audit(self.request.quest_id).events
+            committed_transition_ids = {
+                event.payload.decision.transition_id
+                for event in events
+                if event.event_type in (EventType.REFINE_COMMITTED, EventType.STOP_COMMITTED)
+            }
+            by_event_sha = {event.event_sha256: event for event in events}
 
 
 def _launch_queue():
-    from aletheia.durable_tasks.queue import DurableTaskQueue
+    from aletheia.jobs.queue import DurableTaskQueue
 
     return DurableTaskQueue(principal="research-controller:launcher")
 
