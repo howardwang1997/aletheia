@@ -985,8 +985,25 @@ def test_register_commits_the_three_pre_signed_commands_in_order(tmp_path: Path)
     )
     store.commit(problem_command)
     problem_tail = store.audit(QUEST_ID).events[-1].event_sha256
+    # The re-derived problem is a new object (the factory rolls a fresh id),
+    # so the question and the request pin must move with it: activation
+    # refuses a question whose problem_ref names an unpinned problem.
+    question = fx.question.model_copy(update={"problem_ref": problem.object_ref})
+    fx.archive.archive_object(question)
     question_command = _authorize(
-        fx.question_proposal.model_copy(update={"expected_tail_event_sha256": problem_tail}),
+        ResearchCommandProposal(
+            quest_id=QUEST_ID,
+            scope_binding=fx.scope,
+            expected_stream_version=2,
+            expected_tail_event_sha256=problem_tail,
+            event_type=EventType.QUESTION_ADMITTED,
+            payload=QuestionAdmittedPayload(
+                question_ref=question.object_ref,
+                branch_id=fx.root_branch_id,
+            ),
+            proposed_by_principal_id="model:planner",
+            proposed_at=T0 + timedelta(seconds=2),
+        ),
         trust_root=fx.trust_root,
         policy=fx.policy,
         role=ResearchAuthorizationRole.ORDINARY,
@@ -1005,6 +1022,7 @@ def test_register_commits_the_three_pre_signed_commands_in_order(tmp_path: Path)
     driver = _driver(
         fx,
         config=config,
+        request=_request_variant(fx.request, question_version=question),
         kernel_store=store,
         kernel_archive=fx.archive,
         clock=lambda: NOW,
@@ -1018,12 +1036,12 @@ def test_register_commits_the_three_pre_signed_commands_in_order(tmp_path: Path)
         EventType.PROBLEM_ADMITTED,
         EventType.QUESTION_ADMITTED,
     ]
-    assert events[-1].payload.question_ref.object_sha256 == fx.question.object_sha256
+    assert events[-1].payload.question_ref.object_sha256 == question.object_sha256
     assert receipt.kind == "register_only"
     assert receipt.charter_command_sha256 == fx.charter_command.command_sha256
     assert receipt.problem_command_sha256 == problem_command.command_sha256
     assert receipt.question_command_sha256 == question_command.command_sha256
-    assert receipt.registered_object_sha256s == (fx.question.object_sha256,)
+    assert receipt.registered_object_sha256s == (question.object_sha256,)
     assert receipt.replay_report_sha256 is None
 
     driver.register()
