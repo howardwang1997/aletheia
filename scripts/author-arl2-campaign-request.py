@@ -124,7 +124,7 @@ def _write_canonical(path: Path, payload) -> tuple[str, str]:
     return _write_bytes(path, data)
 
 
-def _write_bytes(path: Path, data: bytes) -> tuple[str, str]:
+def _write_bytes(path: Path, data: bytes, *, mode: int | None = None) -> tuple[str, str]:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with tempfile.NamedTemporaryFile(
         dir=path.parent, prefix=f".{path.name}.", delete=False
@@ -132,6 +132,10 @@ def _write_bytes(path: Path, data: bytes) -> tuple[str, str]:
         handle.write(data)
         staged = Path(handle.name)
     os.replace(staged, path)
+    if mode is not None:
+        # mkstemp files land 0600 owner-writable; callers that stage shared,
+        # read-only inputs pin the final mode explicitly after the replace
+        os.chmod(path, mode)
     return str(path), hashlib.sha256(data).hexdigest()
 
 
@@ -277,8 +281,12 @@ def main() -> int:
     card_file, card_sha = _write_canonical(staging / "arl2-dataset-card.json", card)
     if card_sha != card.dataset_card_sha256:
         _fail("canonical card staging does not reproduce the card's dataset_card_sha256")
+    # The cuprate diagnostic service reads the CSV as a distinct uid and its
+    # staged_dataset_custody gate rejects ANY write bit on the file, so the
+    # staged copy is world-readable and read-only (public UCI content; the
+    # register-side re-read still pins the content sha).
     content_file, content_sha = _write_bytes(
-        staging / "arl2-dataset-content.csv", csv_bytes
+        staging / "arl2-dataset-content.csv", csv_bytes, mode=0o444
     )
     if content_sha != card.content_sha256:
         _fail("canonical content staging changed the dataset bytes")
@@ -363,7 +371,19 @@ def main() -> int:
     # 5. live launch pins from the store audit (never hand-typed).
     trust_root = ResearchAuthorizationTrustRootV1.model_validate(authority["trust_root"])
     policy = ResearchAuthorizationPolicyV1.model_validate(authority["policy"])
-    archive = FilesystemResearchArchive(Path(authority["cas_root"]), read_only=True)
+    # This script runs as the driver uid, the identity that OWNS the writer
+    # CAS root, so a read_only compose is impossible here: cas.py gives the
+    # owner the owner permission class, which on a 0700 writer root always
+    # carries the write bit. Open the writer-handle archive exactly as the
+    # runtime driver does (arl2_runtime._compose_archive) and audit through
+    # it read-only-in-intent; nothing in this script writes through it.
+    archive = FilesystemResearchArchive(
+        Path(authority["cas_root"]),
+        max_object_bytes=64 * 1024 * 1024,
+        read_only=False,
+        directory_mode=0o700,
+        object_mode=0o400,
+    )
     store = ResearchKernelStore(trust_root=trust_root, archive=archive, genesis_policy=policy)
     audit = store.audit(quest_id)
     if len(audit.events) != 3 or audit.events[-1].event_type is not EventType.QUESTION_ADMITTED:

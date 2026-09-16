@@ -59,11 +59,15 @@ checks. All derived instants are asserted, not trusted.
 
 Known failure mode: registry appends burn uniqueness keys (one quote digest
 per infrastructure attempt, one projection per source/budget/resource
-budget). If the script dies between append and template write, re-run with a
-fresh --source-budget-id and an adjusted protocol deadline; never write a
-second projection for the same resource budget. A crash mid-append can also
-leave a half-written <digest>.json/.sig pair in non-pinned custody; remove it
-as root before the fresh-id re-run can proceed.
+budget). Every operator-fixable rejection — grant/SEA window derivation,
+outcome bins, admission policy, artifact binding, campaign digest patterns,
+release root, output path — therefore runs before the first append; only
+grant issuance, template assembly, and the registry self-checks follow the
+appends. If the script still dies between append and template write, re-run
+with a fresh --source-budget-id and an adjusted protocol deadline; never
+write a second projection for the same resource budget. A crash mid-append
+can also leave a half-written <digest>.json/.sig pair in non-pinned custody;
+remove it as root before the fresh-id re-run can proceed.
 
 The ACTION_PROPOSED/ACTION_AUTHORIZED committer is an open design question
 (nothing in the examined topology commits them); if the events are absent the
@@ -286,7 +290,6 @@ def _rebase_protocol(staged, graph_scope) -> tuple:
     (not freshly built) world model.
     """
 
-    from aletheia.protocols.claim_contracts import ControlSpec  # noqa: F401 (re-export clarity)
     from aletheia.protocols.schemas import AnalysisPlan, ProtocolIR
 
     old_scope_sha = staged.graph_scope.graph_scope_sha256
@@ -672,28 +675,44 @@ def _run_provider(args, state: dict, state_path: Path) -> int:
     source_sha = source.source_budget_authorization_sha256
 
     rebased, contract_hashes = _rebase_protocol(staged, graph_scope)
-    if policy.round_split_binding is not None:
-        rows = [
-            row
-            for row in policy.round_split_binding.template_bindings
-            if row.action_sha256 == action_sha
-        ]
-        if len(rows) != 1:
-            _fail("round-split policy has no unique row for the authorized action")
-        values = {
-            "dataset_content_sha256": policy.round_split_binding.dataset_content_sha256,
-            "round_bound_batch_group_ids": rows[0].bound_batch_group_ids_sha256,
-            "round_sealed_group_ids": policy.round_split_binding.sealed_group_ids_sha256,
-            "round_spent_group_ids": rows[0].spent_group_ids_sha256,
-            "round_unspent_group_ids": rows[0].unspent_group_ids_sha256,
-        }
-        if set(values) != set(ROUND_SPLIT_PARAMETER_IDS):
-            _fail(
-                "round-split value keys drift from ROUND_SPLIT_PARAMETER_IDS; the "
-                "compiler pins the parameter ids in protocol_compilation_step.py"
-            )
-        value_schema = staged.data_ports[0].schema_ref
-        rebased, contract_hashes = _inject_round_split(rebased, values, value_schema, contract_hashes)
+    if policy.round_split_binding is None:
+        # Fail closed rather than authoring a round protocol whose card-derived
+        # partition parameters nothing would check. The commissioned pin cannot
+        # carry the binding (action shas are placeholders at W2), and a per-round
+        # re-freeze cannot add it locally: the binding sha and policy sha are
+        # service-PIN fields (authority_binding_sha256s, service_policy_sha256
+        # in research_controller_protocol_compilation_runtime.py), so moving the
+        # policy moves the pin and with it the byte-preserved worker
+        # composition. PI decision surface, same doctrine as the kernel-reader
+        # refusals: pick the wiring (deployment re-authoring with binding rows
+        # at the pause, or a library change letting the driver merge the
+        # request's round_split_bindings into the compile context) and re-run.
+        _fail(
+            "the commissioned compilation policy carries no round_split_binding; "
+            "refusing to author a round protocol without its card-derived "
+            "partition parameters (see the runbook's round-split wiring note)"
+        )
+    rows = [
+        row
+        for row in policy.round_split_binding.template_bindings
+        if row.action_sha256 == action_sha
+    ]
+    if len(rows) != 1:
+        _fail("round-split policy has no unique row for the authorized action")
+    values = {
+        "dataset_content_sha256": policy.round_split_binding.dataset_content_sha256,
+        "round_bound_batch_group_ids": rows[0].bound_batch_group_ids_sha256,
+        "round_sealed_group_ids": policy.round_split_binding.sealed_group_ids_sha256,
+        "round_spent_group_ids": rows[0].spent_group_ids_sha256,
+        "round_unspent_group_ids": rows[0].unspent_group_ids_sha256,
+    }
+    if set(values) != set(ROUND_SPLIT_PARAMETER_IDS):
+        _fail(
+            "round-split value keys drift from ROUND_SPLIT_PARAMETER_IDS; the "
+            "compiler pins the parameter ids in protocol_compilation_step.py"
+        )
+    value_schema = staged.data_ports[0].schema_ref
+    rebased, contract_hashes = _inject_round_split(rebased, values, value_schema, contract_hashes)
 
     authored_by = args.author_principal_id or policy.allowed_protocol_author_principal_ids[0]
     if authored_by not in policy.allowed_protocol_author_principal_ids:
@@ -734,6 +753,34 @@ def _run_provider(args, state: dict, state_path: Path) -> int:
         blockers = "; ".join(item.blocker_code.value for item in result.report.blockers)
         _fail(f"protocol does not compile cleanly (blockers: {blockers or 'unknown'})")
     _assert_executor_rigidity(result)
+
+    # mirror the deployed compile tick's revision gates: the belief-basis
+    # assert is identical offline, while the registered-parent checks need
+    # the registry rows and can only run at the tick itself — a revision-
+    # shaped staged body gets an explicit note instead of a silent pass
+    if protocol.world_model is not None and protocol.world_model.version > 1:
+        from aletheia.research_controller.world_model_revision import (
+            assert_revision_belief_basis,
+        )
+
+        try:
+            assert_revision_belief_basis(protocol.world_model)
+        except Exception as exc:
+            _fail(f"staged world-model revision fails the belief-basis assert: {exc}")
+        print(
+            f"NOTE staged world model is a revision (version "
+            f"{protocol.world_model.version}); registration additionally requires "
+            "the exact registered parent snapshot, which only the deployed "
+            "compile tick can verify",
+            file=sys.stderr,
+        )
+    if protocol.version > 1:
+        print(
+            f"NOTE staged protocol is a revision (version {protocol.version}); "
+            "registration additionally requires the contiguous registered parent "
+            "row and verify_authored_revision_v2 at the deployed compile tick",
+            file=sys.stderr,
+        )
 
     template = FrozenProtocolCompilationTemplate(
         action_sha256=action_sha,
@@ -843,9 +890,23 @@ def _kernel_audit_child(worker, database_url: str, quest_id: str, action_sha: st
             "identity the writer pin names"
         )
     try:
-        # gid before uid: once euid leaves root the gid drop needs privilege
-        os.setegid(kernel_reader.cas_group_gid)
-        os.seteuid(kernel_reader.cas_owner_uid)
+        # full drop, matching the sudo-launched driver this audit mirrors:
+        # real/effective/saved all pin to the driver identity and the
+        # supplementary group list empties, so the child cannot re-raise
+        # root while executing the imported archive/DB surface.  Groups and
+        # gid go first: each drop needs the privilege the previous line
+        # still holds.
+        os.setgroups([])
+        os.setresgid(
+            kernel_reader.cas_group_gid,
+            kernel_reader.cas_group_gid,
+            kernel_reader.cas_group_gid,
+        )
+        os.setresuid(
+            kernel_reader.cas_owner_uid,
+            kernel_reader.cas_owner_uid,
+            kernel_reader.cas_owner_uid,
+        )
     except OSError as exc:
         _fail(
             f"cannot drop to the driver identity "
@@ -979,6 +1040,13 @@ def _run_kernel_audit(worker, database_url: str, quest_id: str, action_sha: str)
             finally:
                 os._exit(status)
         _, wait_status = os.waitpid(pid, 0)
+        if os.WIFSIGNALED(wait_status):
+            # a signal death bypasses every Python-level handler, so no
+            # diagnostic exists; name the signal instead of pointing at one
+            _fail(
+                f"kernel audit child died by signal {os.WTERMSIG(wait_status)}; "
+                "a signal death prints no diagnostic"
+            )
         if not os.WIFEXITED(wait_status) or os.WEXITSTATUS(wait_status) != 0:
             _fail("kernel audit child failed; see the diagnostic above")
         return _load_json(temp_path)
@@ -999,6 +1067,15 @@ def _scan_registry_keys(root: Path, namespace: str) -> list[dict]:
         for document in sorted(prefix.glob("*.json")):
             entries.append(_load_json(document))
     return entries
+
+
+def _scan_registry_digests(root: Path, namespace: str) -> set[str]:
+    """Content-addressed entry digests of one namespace (the stored file names)."""
+
+    namespace_root = root / namespace / "sha256"
+    if not namespace_root.is_dir():
+        return set()
+    return {document.stem for document in namespace_root.glob("*/*.json")}
 
 
 def _append_registry_entry(
@@ -1402,12 +1479,22 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
     for existing in source_entries:
         if existing.get("source_budget_id") == source.source_budget_id:
             _fail("registry already holds this source budget id; pass a fresh --source-budget-id")
+    # a serialized source_budgets document carries no self-hash field (the
+    # model self-hash is a computed property), so the live form of the
+    # source-authorization scan compares the content-addressed file names,
+    # which equal each stored entry's payload digest
+    if source.source_budget_authorization_sha256 in _scan_registry_digests(
+        registry_root, "source_budgets"
+    ):
+        _fail(
+            "registry already holds this source authorization under another "
+            "source_budget_id; adjust the protocol deadline and pass a fresh "
+            "--source-budget-id"
+        )
     projection_entries = _scan_registry_keys(registry_root, "source_budget_projections")
     if (
         budget_authorization.authorization_sha256
         in {item.get("budget_authorization_sha256") for item in projection_entries}
-        or source.source_budget_authorization_sha256
-        in {item.get("source_budget_authorization_sha256") for item in source_entries}
         or source.source_budget_authorization_sha256
         in {item.get("source_budget_authorization_sha256") for item in projection_entries}
         or budget_authorization.resource_budget_sha256
@@ -1462,61 +1549,12 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
         if digest != model_hash:
             _fail("canonical payload does not equal the model self-hash; refusing to append")
 
-    _append_registry_entry(
-        registry_root,
-        "source_budgets",
-        source_payload,
-        _sign_raw(source_key, source_budget_signature_message(source)),
-        source.source_budget_authorization_sha256,
-        filesystem_pin,
-    )
-    _append_registry_entry(
-        registry_root,
-        "source_budget_projections",
-        projection_payload,
-        _sign_raw(source_key, source_budget_projection_signature_message(projection)),
-        projection.projection_sha256,
-        filesystem_pin,
-    )
-    _append_registry_entry(
-        registry_root,
-        "execution_cost_quotes",
-        quote_payload,
-        _sign_raw(pricing_key, execution_cost_quote_signature_message(quote)),
-        quote.quote_sha256,
-        filesystem_pin,
-    )
+    # ---- hoisted pre-append validation -------------------------------------
+    # Every operator-fixable rejection below needs nothing the appends
+    # produce, so it runs before they burn the quote/projection/source
+    # uniqueness keys; only grant issuance, template assembly, and the
+    # registry self-checks must follow the appends.
 
-    # re-instantiation is the append self-check: construction re-validates
-    # every entry's custody and authority, including the three just written
-    quote_registry = ExactExecutionCostQuoteRegistry(
-        registry_root, filesystem_pin=filesystem_pin, pricing_authority_pin=pricing_pin
-    )
-    budget_registry = SourceBudgetProjectionRegistry(
-        registry_root,
-        filesystem_pin=filesystem_pin,
-        source_budget_authority_pin=source_pin,
-    )
-    resolver = CompositeExecutionAuthorityResolver(
-        quote_registry=quote_registry,
-        budget_registry=budget_registry,
-        execution_receipt_resolver=_FailClosedReceiptResolver(),
-    )
-    if resolver.resolve_execution_cost_quote(
-        cost_quote_sha256=quote.quote_sha256, observed_at=now
-    ) != quote:
-        _fail("re-instantiated registry does not resolve the appended quote")
-    budget_resolution = resolver.resolve_budget_authorization(
-        source_budget_authorization_sha256=source.source_budget_authorization_sha256,
-        observed_at=now,
-    )
-    if (
-        budget_resolution is None
-        or budget_resolution.budget_authorization != budget_authorization
-    ):
-        _fail("re-instantiated registry does not resolve the appended projection")
-
-    # ---- grant ------------------------------------------------------------
     grant_authorized_at = now
     grant_expires_at = min(
         intent_deadline,
@@ -1529,27 +1567,6 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
     if grant_authorized_at + timedelta(seconds=lease_seconds) > grant_expires_at:
         _fail("quoted lease does not fit inside the derived grant window")
 
-    grant = issue_engineering_qualification_grant(
-        bundle,
-        pin=qualification_pin,
-        artifact_resolver=_FailClosedArtifactResolver(),
-        authority_resolver=resolver,
-        private_key=_read_bytes(qualifier_key),
-        authorized_at=grant_authorized_at,
-        expires_at=grant_expires_at,
-    )
-    verifier = QualificationAuthorityVerifier(qualification_pin)
-    verifier.verify_signature(grant, observed_at=now)
-    verify_engineering_qualification(
-        bundle=bundle,
-        grant=grant,
-        authority=verifier,
-        artifact_resolver=_FailClosedArtifactResolver(),
-        authority_resolver=resolver,
-        observed_at=now,
-    )
-
-    # ---- binding, artifact binding, admission policy, template ------------
     binding = ScientificActionProtocolBinding(
         action=action,
         action_proposed_event=proposed_event,
@@ -1634,6 +1651,95 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
     if sea_expires_at <= sea_authorized_at:
         _fail("derived SEA window is empty; a bridge pin expires too early")
 
+    # the catalog dry-run reads the deployed issuer source and the three
+    # bridge pins; both are deployment state, independent of the registry
+    release = Path(args.release_root).resolve(strict=True)
+    issuer_source = release / "aletheia" / "research_controller" / "execution_authorization_service.py"
+    issuer_sha = _sha256_bytes(_read_bytes(issuer_source))
+    execution_bridge_pin = ScientificBridgeAuthorityPin.model_validate(state["bridge"]["execution"])
+    validator_bridge_pin = ScientificBridgeAuthorityPin.model_validate(state["bridge"]["validator"])
+    admission_bridge_pin = ScientificBridgeAuthorityPin.model_validate(state["bridge"]["admission"])
+
+    output = Path(args.output)
+    if output.exists():
+        _fail(f"output {output} already exists; the template write is write-once")
+
+    _append_registry_entry(
+        registry_root,
+        "source_budgets",
+        source_payload,
+        _sign_raw(source_key, source_budget_signature_message(source)),
+        source.source_budget_authorization_sha256,
+        filesystem_pin,
+    )
+    _append_registry_entry(
+        registry_root,
+        "source_budget_projections",
+        projection_payload,
+        _sign_raw(source_key, source_budget_projection_signature_message(projection)),
+        projection.projection_sha256,
+        filesystem_pin,
+    )
+    _append_registry_entry(
+        registry_root,
+        "execution_cost_quotes",
+        quote_payload,
+        _sign_raw(pricing_key, execution_cost_quote_signature_message(quote)),
+        quote.quote_sha256,
+        filesystem_pin,
+    )
+
+    # re-instantiation is the append self-check: construction re-validates
+    # every entry's custody and authority, including the three just written
+    quote_registry = ExactExecutionCostQuoteRegistry(
+        registry_root, filesystem_pin=filesystem_pin, pricing_authority_pin=pricing_pin
+    )
+    budget_registry = SourceBudgetProjectionRegistry(
+        registry_root,
+        filesystem_pin=filesystem_pin,
+        source_budget_authority_pin=source_pin,
+    )
+    resolver = CompositeExecutionAuthorityResolver(
+        quote_registry=quote_registry,
+        budget_registry=budget_registry,
+        execution_receipt_resolver=_FailClosedReceiptResolver(),
+    )
+    if resolver.resolve_execution_cost_quote(
+        cost_quote_sha256=quote.quote_sha256, observed_at=now
+    ) != quote:
+        _fail("re-instantiated registry does not resolve the appended quote")
+    budget_resolution = resolver.resolve_budget_authorization(
+        source_budget_authorization_sha256=source.source_budget_authorization_sha256,
+        observed_at=now,
+    )
+    if (
+        budget_resolution is None
+        or budget_resolution.budget_authorization != budget_authorization
+    ):
+        _fail("re-instantiated registry does not resolve the appended projection")
+
+    # ---- grant ------------------------------------------------------------
+    grant = issue_engineering_qualification_grant(
+        bundle,
+        pin=qualification_pin,
+        artifact_resolver=_FailClosedArtifactResolver(),
+        authority_resolver=resolver,
+        private_key=_read_bytes(qualifier_key),
+        authorized_at=grant_authorized_at,
+        expires_at=grant_expires_at,
+    )
+    verifier = QualificationAuthorityVerifier(qualification_pin)
+    verifier.verify_signature(grant, observed_at=now)
+    verify_engineering_qualification(
+        bundle=bundle,
+        grant=grant,
+        authority=verifier,
+        artifact_resolver=_FailClosedArtifactResolver(),
+        authority_resolver=resolver,
+        observed_at=now,
+    )
+
+    # ---- template, catalog dry-run, output ---------------------------------
     template = FrozenScientificExecutionAuthorizationTemplate(
         action_sha256=action_sha,
         compilation_sha256=compilation_sha256,
@@ -1651,27 +1757,15 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
 
     # catalog dry-run: construction re-derives the full SEA message per
     # template and runs the closure against the deployment pins
-    from aletheia.observations.scientific_bridge import ScientificBridgeAuthorityPin
-
-    release = Path(args.release_root).resolve(strict=True)
-    issuer_source = release / "aletheia" / "research_controller" / "execution_authorization_service.py"
-    issuer_sha = _sha256_bytes(_read_bytes(issuer_source))
     catalog = FrozenScientificExecutionAuthorizationCatalog(
         issuer_implementation_sha256=issuer_sha,
         qualification_authority_pin=qualification_pin,
-        execution_authority_pin=ScientificBridgeAuthorityPin.model_validate(
-            state["bridge"]["execution"]
-        ),
-        validator_authority_pin=ScientificBridgeAuthorityPin.model_validate(
-            state["bridge"]["validator"]
-        ),
-        admission_authority_pin=ScientificBridgeAuthorityPin.model_validate(
-            state["bridge"]["admission"]
-        ),
+        execution_authority_pin=execution_bridge_pin,
+        validator_authority_pin=validator_bridge_pin,
+        admission_authority_pin=admission_bridge_pin,
         templates=(template,),
     )
 
-    output = Path(args.output)
     from aletheia.research_kernel.schemas import canonical_json_bytes
 
     _write_new_file(output, canonical_json_bytes(template), mode=0o644)

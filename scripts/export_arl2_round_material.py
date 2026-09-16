@@ -12,7 +12,7 @@ the bytes the service will see:
     sudo -u arl2drv env PYTHONDONTWRITEBYTECODE=1 \
         /opt/aletheia/python/bin/python scripts/export_arl2_round_material.py \
         --database-url 'postgresql+psycopg://arl2drv@/<db>?host=/run/postgresql' \
-        --service-config /opt/aletheia/arl2-dryrun/configs/raw-run-source.config.json \
+        --service-config /opt/aletheia/arl2-dryrun/configs/services/raw-run-source.json \
         --quest-id <qst_> --action-sha256 <sha> --scientific-slot-id <sos_> \
         --output-dir /opt/aletheia/arl2-dryrun/staging/round-1-material
 

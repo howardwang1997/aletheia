@@ -3,7 +3,7 @@
 
 One-shot, read-only: prints one canonical-JSON facts sheet to stdout and
 exits 0.  Every field is sampled from the live host (never hand-typed):
-uname, free uid/gid slots below the ARL-1 range, /run layout, conda env
+uname, free uid/gid slots above the ARL-1 range, /run layout, conda env
 identity for arl2-cuprate, the PostgreSQL cluster identity behind
 /run/postgresql, and disk headroom at /opt/aletheia.
 

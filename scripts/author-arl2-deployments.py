@@ -768,6 +768,23 @@ def _load_request_inputs(state_path: str) -> dict:
     if request.request_id != f"arl2q_{request.request_sha256[:32]}":
         _fail("request id does not derive from the request sha")
 
+    dataset_path = Path(state["dataset_content"]["path"])
+    try:
+        dataset_info = dataset_path.lstat()
+    except OSError as exc:
+        _fail(f"cannot stat the staged dataset CSV {dataset_path}: {exc}")
+    if (
+        dataset_path.is_symlink()
+        or not stat.S_ISREG(dataset_info.st_mode)
+        or stat.S_IMODE(dataset_info.st_mode) & 0o222
+        or stat.S_IMODE(dataset_info.st_mode) & 0o044 == 0
+    ):
+        _fail(
+            f"staged dataset CSV {dataset_path} has unsafe custody for the cuprate "
+            "service (regular file, no write bits, readable beyond the owner uid; "
+            "stage it 0444)"
+        )
+
     return {
         "quest_id": state["quest_id"],
         "request_path": str(request_path),
@@ -2386,6 +2403,10 @@ def _build_service_deployments(
         "schema_name": "aletheia.cuprate_diagnostic_rpc_service_config",
         "schema_version": 1,
         **header(CUPRATE_SERVICE, with_database=False),
+        # fail here rather than at cuprate service start: the service runs as
+        # a distinct uid and its staged_dataset_custody gate rejects any
+        # write bit on the dataset file (a 0600 mkstemp staging would EACCES
+        # first anyway)
         "dataset_csv_path": request["dataset_csv_path"],
         "dataset_content_sha256": request["dataset_content_sha256"],
         "source_implementation_source_path": cuprate_source_path,
