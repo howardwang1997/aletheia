@@ -57,9 +57,7 @@ class DatasetLicenseStatus(str, Enum):
 class DatasetSourceLineageV1(ProtocolModel):
     """Where the registered bytes came from, exactly as retrieved."""
 
-    schema_name: Literal["aletheia.dataset_source_lineage"] = (
-        "aletheia.dataset_source_lineage"
-    )
+    schema_name: Literal["aletheia.dataset_source_lineage"] = "aletheia.dataset_source_lineage"
     schema_version: Literal[1] = PROTOCOL_SCHEMA_VERSION
     name: str = Field(min_length=1, max_length=255)
     url: str = Field(min_length=1, max_length=2_000)
@@ -86,9 +84,7 @@ class DatasetSourceLineageV1(ProtocolModel):
 class DatasetColumnManifestV1(ProtocolModel):
     """Exact column partition of the registered table."""
 
-    schema_name: Literal["aletheia.dataset_column_manifest"] = (
-        "aletheia.dataset_column_manifest"
-    )
+    schema_name: Literal["aletheia.dataset_column_manifest"] = "aletheia.dataset_column_manifest"
     schema_version: Literal[1] = PROTOCOL_SCHEMA_VERSION
     columns: tuple[str, ...] = Field(min_length=2)
     composition_column: str = Field(min_length=1, max_length=255)
@@ -99,9 +95,7 @@ class DatasetColumnManifestV1(ProtocolModel):
     def _columns_partition_exactly(self) -> "DatasetColumnManifestV1":
         canonical_strings(self.columns, "dataset columns")
         canonical_strings(self.feature_columns, "dataset feature columns")
-        remainder = tuple(
-            sorted(set(self.columns) - {self.composition_column, self.target_column})
-        )
+        remainder = tuple(sorted(set(self.columns) - {self.composition_column, self.target_column}))
         if remainder != self.feature_columns:
             raise ValueError("feature columns must be exactly columns minus composition and target")
         if self.composition_column == self.target_column:
@@ -121,9 +115,7 @@ class DatasetStratumRuleV1(ProtocolModel):
     multi-choice clause (pure required-element stratum).
     """
 
-    schema_name: Literal["aletheia.dataset_stratum_rule"] = (
-        "aletheia.dataset_stratum_rule"
-    )
+    schema_name: Literal["aletheia.dataset_stratum_rule"] = "aletheia.dataset_stratum_rule"
     schema_version: Literal[1] = PROTOCOL_SCHEMA_VERSION
     stratum_id: str = Field(pattern=LOCAL_ID_PATTERN)
     required_elements: tuple[str, ...] = Field(min_length=1)
@@ -160,9 +152,7 @@ class DatasetStratumRuleV1(ProtocolModel):
 class DatasetAuditVerdictV1(ProtocolModel):
     """One mechanically recomputable audit check, as recorded on the card."""
 
-    schema_name: Literal["aletheia.dataset_audit_verdict"] = (
-        "aletheia.dataset_audit_verdict"
-    )
+    schema_name: Literal["aletheia.dataset_audit_verdict"] = "aletheia.dataset_audit_verdict"
     schema_version: Literal[1] = PROTOCOL_SCHEMA_VERSION
     check_id: str = Field(pattern=LOCAL_ID_PATTERN)
     statement: str = Field(min_length=1, max_length=2_000)
@@ -324,6 +314,43 @@ def verify_group_partition(
     overlap = set(declared_round_one) & set(declared_round_two)
     if overlap:
         raise ValueError(f"round group sets overlap on {sorted(overlap)}")
+
+
+def enumerate_formula_groups(
+    csv_text: str, column_manifest: DatasetColumnManifestV1
+) -> tuple[str, ...]:
+    """Enumerate the canonical formula-group ids of registered content.
+
+    The group set is exactly the audit's ``formula_target`` key set: a row contributes
+    its stripped composition string only when its target parses to a finite float, and
+    the result is unique and sorted.  Round partitions and spent-group ledgers derive
+    from this enumeration plus the card's split formula, so the campaign driver and the
+    replay verifier share one group-set definition with :func:`recompute_dataset_audit`.
+    """
+
+    reader = csv.DictReader(io.StringIO(csv_text))
+    header = reader.fieldnames
+    if (
+        header is None
+        or len(header) != len(set(header))
+        or set(header) != set(column_manifest.columns)
+    ):
+        raise ValueError("csv header differs from the registered column manifest")
+    composition = column_manifest.composition_column
+    target = column_manifest.target_column
+    groups: set[str] = set()
+    for record in reader:
+        raw_target = (record.get(target) or "").strip()
+        try:
+            value = float(raw_target)
+        except ValueError:
+            continue
+        if not math.isfinite(value):
+            continue
+        groups.add((record.get(composition) or "").strip())
+    if not groups:
+        raise ValueError("registered content contains no parsable target rows")
+    return tuple(sorted(groups))
 
 
 def _detail_digest(detail: dict[str, object]) -> str:
