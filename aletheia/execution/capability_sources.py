@@ -268,7 +268,8 @@ def _verify_local_service_sources(root, manifest, runtime, step):
     _require(
         step.role.value == behavior["role"]
         and manifest.side_effect_class.value == behavior["side_effect_class"]
-        and manifest.runtime.determinism.value == "declared_stochastic"
+        and manifest.runtime.determinism.value
+        == ("frozen_seeds" if operation == "run_cuprate_diagnostic" else "declared_stochastic")
         and manifest.license_egress.network_egress.value == "none"
         and manifest.applicability.minimum_batch_size == 1
         and manifest.applicability.maximum_batch_size == 1
@@ -297,6 +298,21 @@ def _verify_local_service_sources(root, manifest, runtime, step):
             and provider_artifacts[0].schema_sha256
             == contract["schema_sources"]["committed_campaign"],
             "local service does not retain the committed campaign receipt",
+        )
+    elif operation == "run_cuprate_diagnostic":
+        _require(not provider_artifacts, "read-only local service declares a write receipt")
+        _require(
+            manifest.runtime.frozen_seeds == (0,),
+            "cuprate diagnostic seeds are not frozen at zero",
+        )
+        _require(
+            not manifest.runtime.checkpoint_supported
+            and not manifest.runtime.reconciliation_supported,
+            "cuprate diagnostic cannot declare checkpoint or reconciliation support",
+        )
+        _require(
+            getattr(step, "archived_observation_input", None) is None,
+            "cuprate diagnostic step declares an observation archive input",
         )
     else:
         _require(not provider_artifacts, "read-only local service declares a write receipt")
