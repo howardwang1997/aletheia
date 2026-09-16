@@ -463,20 +463,20 @@ def test_kernel_command_services_bind_exactly_one_operation_each(tmp_path: Path)
 
 def test_config_refuses_service_pins_facing_the_driver_uid(tmp_path: Path) -> None:
     fx = _driver_fixture(tmp_path)
-    services = _services_payload(fx.config.kernel_command_services)
-    # A pin whose SO_PEERCRED peer is this driver itself is refused, whichever
-    # clause trips first: the peer uid must name the service, not the driver.
-    services["transition_kernel_command"]["peer_uid"] = fx.process_uid
-    with pytest.raises(ValueError, match="UID-separated, GID-shared socket"):
-        _config_variant(fx.config, kernel_command_services=services)
-    services = _services_payload(fx.config.kernel_command_services)
-    services["transition_kernel_command"]["socket_owner_uid"] = fx.process_uid
-    with pytest.raises(ValueError, match="UID-separated, GID-shared socket"):
-        _config_variant(fx.config, kernel_command_services=services)
-    services = _services_payload(fx.config.kernel_command_services)
-    services["transition_kernel_command"]["socket_group_gid"] = fx.process_gid + 1
-    with pytest.raises(ValueError, match="UID-separated, GID-shared socket"):
-        _config_variant(fx.config, kernel_command_services=services)
+    # A pin whose SO_PEERCRED peer is this driver itself is refused, and so is
+    # any loosening of the UID-separated, GID-shared socket: all five clauses.
+    mutations = {
+        "peer uid names the driver": {"peer_uid": fx.process_uid},
+        "socket owner is not the peer": {"socket_owner_uid": fx.process_uid},
+        "socket group leaves the driver group": {"socket_group_gid": fx.process_gid + 1},
+        "peer group leaves the driver group": {"peer_gid": fx.process_gid + 1},
+        "socket mode loosens": {"socket_mode": 0o600},
+    }
+    for mutation in mutations.values():
+        services = _services_payload(fx.config.kernel_command_services)
+        services["transition_kernel_command"].update(mutation)
+        with pytest.raises(ValueError, match="UID-separated, GID-shared socket"):
+            _config_variant(fx.config, kernel_command_services=services)
 
 
 def test_config_refuses_overlapping_custody_roots(tmp_path: Path) -> None:
@@ -583,6 +583,71 @@ def test_execute_refuses_foreign_platforms_and_identities(
     )
     with pytest.raises(ARL2RuntimeError, match="process identity differs"):
         execute_arl2_question_campaign_deployment(deployment)
+
+
+def _role_manifest_config(fx: SimpleNamespace, tmp_path: Path):
+    """Re-pin the four role manifests as real files the wake loop can verify."""
+
+    updated = []
+    for invocation in fx.config.role_invocations:
+        path = tmp_path / f"role-manifest-{invocation.role}.json"
+        _write_pinned(path, b"{}")
+        updated.append(
+            arl2_runtime_module.ARL2RoleInvocationV1(
+                role=invocation.role,
+                deployment_manifest_path=str(path),
+                deployment_manifest_file_sha256=hashlib.sha256(b"{}").hexdigest(),
+            )
+        )
+    return _config_variant(fx.config, role_invocations=tuple(updated))
+
+
+def test_wake_roles_verifies_the_entrypoint_bytes_first(tmp_path: Path) -> None:
+    fx = _driver_fixture(tmp_path)
+    invoked: list[list[str]] = []
+    driver = _driver(
+        fx,
+        config=_config_variant(
+            fx.config, runtime_entrypoint_file_sha256=_sha("drifted-entrypoint")
+        ),
+        runner=invoked.append,
+    )
+    with pytest.raises(ARL2RuntimeError, match="runtime entrypoint changed or differs"):
+        driver._wake_roles()
+    assert invoked == []
+
+
+def test_wake_roles_runs_each_pinned_role_manifest_once(tmp_path: Path) -> None:
+    fx = _driver_fixture(tmp_path)
+    invoked: list[list[str]] = []
+    config = _role_manifest_config(fx, tmp_path)
+    driver = _driver(fx, config=config, runner=invoked.append)
+    driver._wake_roles()
+    assert len(invoked) == 4
+    for command, invocation in zip(invoked, config.role_invocations, strict=True):
+        assert command[1] == config.runtime_entrypoint_path
+        assert command[3] == invocation.deployment_manifest_path
+
+
+def test_wake_roles_deadline_moves_with_each_invocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fx = _driver_fixture(tmp_path)
+    timeouts: list[float] = []
+    now = {"value": NOW}
+
+    def fake_run(_command, *, capture_output, check, timeout):  # noqa: ANN001
+        timeouts.append(timeout)
+        now["value"] = now["value"] + timedelta(minutes=10)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(arl2_runtime_module.subprocess, "run", fake_run)
+    driver = _driver(fx, config=_role_manifest_config(fx, tmp_path), clock=lambda: now["value"])
+    driver._wake_roles()
+    # Each invocation gets its own remainder of the 30-minute deadline; a
+    # shared remainder (the bug this closes) would log 1800 four times, and
+    # the fourth reaches the deadline and clamps to the 1-second floor.
+    assert timeouts == [1800.0, 1200.0, 600.0, 1.0]
 
 
 def test_entrypoint_refuses_without_explicit_apply(tmp_path: Path) -> None:
