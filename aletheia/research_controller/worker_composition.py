@@ -145,11 +145,15 @@ class ControllerWorkerRPCServiceSet(ControllerModel):
         if len(observed_operations) != len(set(observed_operations)) or frozenset(
             observed_operations
         ) != frozenset(ControllerWorkerRPCOperation) - {
-            # The ARL-1 campaign has a separate recovery surface, and the
-            # cuprate diagnostic is a separately commissioned capability
-            # service; the worker's operation pins acquire neither.
+            # The ARL-1 campaign has a separate recovery surface, the cuprate
+            # diagnostic is a separately commissioned capability service, and
+            # the two ARL-2 kernel-command signing services face the driver
+            # rather than the worker; the worker's operation pins acquire none
+            # of them.
             ControllerWorkerRPCOperation.LOAD_COMMITTED_ADMISSION,
             ControllerWorkerRPCOperation.RUN_CUPRATE_DIAGNOSTIC,
+            ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND,
+            ControllerWorkerRPCOperation.SIGN_TRANSITION_COMMAND,
         }:
             raise ValueError("controller worker RPC operations are not an exhaustive partition")
         for label, values in (
