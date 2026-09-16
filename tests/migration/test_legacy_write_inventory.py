@@ -24,6 +24,7 @@ LEGACY_SOURCE_AST_EXCLUDED_ROOTS = {
     "aletheia/arl1_qualification_runtime.py": "new_qualification_authority",
     "aletheia/arl1_runtime.py": "new_qualification_authority",
     "aletheia/arl1_verifier.py": "new_qualification_authority",
+    "aletheia/arl2_runtime.py": "new_qualification_authority",
     "aletheia/api/research_kernel.py": "new_authority_adapter",
     "aletheia/durable_tasks": "authority_neutral_contracts",
     "aletheia/execution": "new_authority",
@@ -39,6 +40,7 @@ LEGACY_SOURCE_AST_EXCLUDED_ROOTS = {
     "scripts/commission-pre-runtime-cleanup.py": "new_qualification_entrypoint",
     "scripts/run-arl1-protocol-campaign.py": "new_qualification_entrypoint",
     "scripts/run-arl1-qualification.py": "new_qualification_entrypoint",
+    "scripts/run-arl2-question-campaign.py": "new_qualification_entrypoint",
     "scripts/run-pre-runtime-cleanup.py": "new_qualification_entrypoint",
 }
 MIGRATION_SOURCE_AST_ROOTS = ("aletheia/migration", "migrations")

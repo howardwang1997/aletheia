@@ -17,6 +17,7 @@
       "aletheia/arl1_qualification_runtime.py": "new_qualification_authority",
       "aletheia/arl1_runtime.py": "new_qualification_authority",
       "aletheia/arl1_verifier.py": "new_qualification_authority",
+      "aletheia/arl2_runtime.py": "new_qualification_authority",
       "aletheia/api/research_kernel.py": "new_authority_adapter",
       "aletheia/durable_tasks": "authority_neutral_contracts",
       "aletheia/execution": "new_authority",
@@ -32,6 +33,7 @@
       "scripts/commission-pre-runtime-cleanup.py": "new_qualification_entrypoint",
       "scripts/run-arl1-protocol-campaign.py": "new_qualification_entrypoint",
       "scripts/run-arl1-qualification.py": "new_qualification_entrypoint",
+      "scripts/run-arl2-question-campaign.py": "new_qualification_entrypoint",
       "scripts/run-pre-runtime-cleanup.py": "new_qualification_entrypoint"
     },
     "legacy_source_ast_file_count": 328,
@@ -87,8 +89,8 @@
     "service_mutator_call_graph_sha256": "13e491fdfcf7637e3ee2652a465eb9e119126e1360f379985cf628bf38138f5f",
     "service_boundary_limit": "This mechanically freezes statically declared aletheia.memory.service imports and imported-name uses across aletheia and operational scripts in module and nested lexical scopes. It does not claim to discover arbitrary dynamic imports or direct ORM, SQL, filesystem or external-system mutations; those are handled by separate reviewed surface baselines.",
     "writer_surface_usage_scheme": "ast_all_scope_import_alias_instance_scope_v2",
-    "writer_surface_usage_count": 378,
-    "writer_surface_call_graph_sha256": "fd0db8bb48bacf58eaefb6e0e315356d65410db4531c51796a3542c1ea1ec7e2",
+    "writer_surface_usage_count": 387,
+    "writer_surface_call_graph_sha256": "615c9dba8b583c51fa9d5740092f4f7f0670042a7cdfff710ebeca72503639be",
     "allowed_legacy_caller_scope": "Every current aletheia-package caller must be covered by allowed_legacy_callers. Operational scripts are fully frozen in call_sites and may be omitted from the post-cutover application allowlist.",
     "shared_generic_writer_implementations": {
       "aletheia.observations.store._append_exact": {
@@ -123,9 +125,9 @@
       "research_store.transactional_outbox": "The authority-minimal PostgreSQLResearchKernelOutbox caller-owned publication surface is composed by the controller dispatcher; the full-store transaction-owning mark_outbox_published wrapper remains an explicit uncalled compatibility surface."
     },
     "direct_file_sink_scheme": "ast_reviewed_direct_file_sink_v1",
-    "direct_file_sink_scope_count": 197,
-    "direct_file_sink_call_count": 219,
-    "direct_file_sink_graph_sha256": "9ff9b71d1d02fce8fe85a48d2634ae819ed7452e47c5c13fb3b181d1370f36c6",
+    "direct_file_sink_scope_count": 198,
+    "direct_file_sink_call_count": 221,
+    "direct_file_sink_graph_sha256": "a9cd61ea7c052dbe5d2706c77faf60992b754bce36c9c85b0c1f07230cda2f06",
     "direct_file_sink_review_limit": "The baseline covers direct Path/open/os.write, archive-open modes, atomic replace, serializer, dataframe and plotting file sinks across the declared aletheia, deployed docker-worker and recursive operational-script roots. Indirect library-internal writes, arbitrary dynamic dispatch and external systems remain separate reviewed boundaries.",
     "direct_file_sink_profiles": {
       "scientific_artifact": {
@@ -335,12 +337,21 @@
         "migration_mode": "retain_content_addressed_qualification_evidence",
         "cutover_pr": "PR-ARL1",
         "dual_write_policy": "none"
+      },
+      "arl2_campaign_bundle_custody": {
+        "authority_class": "operational_state",
+        "current_owner_rule": "sink_module",
+        "target_owner": "aletheia.arl2_runtime.ARL2QuestionCampaignDriver",
+        "migration_mode": "retain_write_once_campaign_bundle_custody",
+        "cutover_pr": "PR-ARL2",
+        "dual_write_policy": "none"
       }
     },
     "direct_file_sink_profile_by_prefix": {
       "aletheia.api.datasets": "scientific_artifact",
       "aletheia.arl1_qualification_runtime": "arl1_qualification_evidence",
       "aletheia.arl1_verifier": "arl1_qualification_evidence",
+      "aletheia.arl2_runtime": "arl2_campaign_bundle_custody",
       "aletheia.capabilities.": "scientific_observation",
       "aletheia.coder.": "operational_workspace",
       "aletheia.compute.": "operational_workspace",
@@ -393,9 +404,9 @@
       "scripts.typed_": "scientific_artifact"
     },
     "direct_external_sink_scheme": "ast_reviewed_event_provider_process_sink_v1",
-    "direct_external_sink_scope_count": 130,
-    "direct_external_sink_call_count": 215,
-    "direct_external_sink_graph_sha256": "186b552b076fbd88337a23694d73f32b26590e09f2fd0f78a6a4be4a6df43b38",
+    "direct_external_sink_scope_count": 131,
+    "direct_external_sink_call_count": 216,
+    "direct_external_sink_graph_sha256": "9a393dab6b1a49d28d195b7ff100b3c93eae8b5c0bb406d9ba41edb7b6d48776",
     "direct_external_sink_review_limit": "The baseline covers AST-visible EventBus-style publish calls, outbound HTTP mutation calls, known model-provider and GitHub mutation methods, and subprocess launch calls across the declared aletheia, deployed docker-worker and recursive operational-script roots. It does not claim to discover dynamically dispatched SDK methods, hidden library network I/O, non-Python launchers, or runtime monkeypatching.",
     "direct_external_sink_profiles": {
       "event.": {
@@ -2737,6 +2748,18 @@
       ],
       "call_sites": [
         {
+          "module": "aletheia.arl2_runtime",
+          "symbol": "ARL2QuestionCampaignDriver._carry_signing_work"
+        },
+        {
+          "module": "aletheia.arl2_runtime",
+          "symbol": "ARL2QuestionCampaignDriver.execute"
+        },
+        {
+          "module": "aletheia.arl2_runtime",
+          "symbol": "ARL2QuestionCampaignDriver.register"
+        },
+        {
           "module": "aletheia.api.programs",
           "symbol": "create_quest"
         },
@@ -2771,6 +2794,18 @@
       "target_command_or_object": "ImmutableQuestAuthorityClaim",
       "migration_mode": "shared_identity_guard_then_kernel_default",
       "allowed_legacy_callers": [
+        {
+          "module": "aletheia.arl2_runtime",
+          "symbol": "ARL2QuestionCampaignDriver._carry_signing_work"
+        },
+        {
+          "module": "aletheia.arl2_runtime",
+          "symbol": "ARL2QuestionCampaignDriver.execute"
+        },
+        {
+          "module": "aletheia.arl2_runtime",
+          "symbol": "ARL2QuestionCampaignDriver.register"
+        },
         {
           "module": "aletheia.api.programs",
           "symbol": "create_quest"
@@ -2826,6 +2861,18 @@
       ],
       "call_sites": [
         {
+          "module": "aletheia.arl2_runtime",
+          "symbol": "ARL2QuestionCampaignDriver._carry_signing_work"
+        },
+        {
+          "module": "aletheia.arl2_runtime",
+          "symbol": "ARL2QuestionCampaignDriver.execute"
+        },
+        {
+          "module": "aletheia.arl2_runtime",
+          "symbol": "ARL2QuestionCampaignDriver.register"
+        },
+        {
           "module": "aletheia.api.research_kernel",
           "symbol": "commit_authorized_command"
         },
@@ -2863,6 +2910,18 @@
       "target_command_or_object": "AuthorizedResearchCommandEventBundle",
       "migration_mode": "authoritative_kernel_event_store",
       "allowed_legacy_callers": [
+        {
+          "module": "aletheia.arl2_runtime",
+          "symbol": "ARL2QuestionCampaignDriver._carry_signing_work"
+        },
+        {
+          "module": "aletheia.arl2_runtime",
+          "symbol": "ARL2QuestionCampaignDriver.execute"
+        },
+        {
+          "module": "aletheia.arl2_runtime",
+          "symbol": "ARL2QuestionCampaignDriver.register"
+        },
         {
           "module": "aletheia.api.research_kernel",
           "symbol": "commit_authorized_command"
@@ -2926,6 +2985,18 @@
       ],
       "call_sites": [
         {
+          "module": "aletheia.arl2_runtime",
+          "symbol": "ARL2QuestionCampaignDriver._carry_signing_work"
+        },
+        {
+          "module": "aletheia.arl2_runtime",
+          "symbol": "ARL2QuestionCampaignDriver.execute"
+        },
+        {
+          "module": "aletheia.arl2_runtime",
+          "symbol": "ARL2QuestionCampaignDriver.register"
+        },
+        {
           "module": "aletheia.api.research_kernel",
           "symbol": "commit_authorized_command"
         },
@@ -2968,6 +3039,18 @@
       "target_command_or_object": "TransactionalResearchEventOutboxIntent",
       "migration_mode": "retain_transactional_operational_projection",
       "allowed_legacy_callers": [
+        {
+          "module": "aletheia.arl2_runtime",
+          "symbol": "ARL2QuestionCampaignDriver._carry_signing_work"
+        },
+        {
+          "module": "aletheia.arl2_runtime",
+          "symbol": "ARL2QuestionCampaignDriver.execute"
+        },
+        {
+          "module": "aletheia.arl2_runtime",
+          "symbol": "ARL2QuestionCampaignDriver.register"
+        },
         {
           "module": "aletheia.api.research_kernel",
           "symbol": "commit_authorized_command"
