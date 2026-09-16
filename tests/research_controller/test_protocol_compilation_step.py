@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
@@ -18,10 +19,14 @@ from aletheia.observations.store import (
 )
 from aletheia.protocols.base import ProtocolScope
 from aletheia.protocols.compiler import ProtocolCompilationRequest
+from aletheia.protocols.data_registration import DatasetRoundSplitPolicyV1
 from aletheia.protocols.schemas import (
+    CallerParameterBinding,
+    DesignSpaceVersion,
     ProtocolActionCategory,
     ProtocolCompilationResult,
     ProtocolIR,
+    caller_parameter_manifest_sha256,
 )
 from aletheia.protocols.world_models import (
     BeliefStateVersionV2,
@@ -46,6 +51,8 @@ from aletheia.research_controller.protocol_compilation_step import (
     ProtocolCompilationStepAdapter,
     ProtocolCompilationStepError,
     ProtocolCompilationUnavailable,
+    RoundSplitBindingPolicyV1,
+    RoundSplitTemplateBindingV1,
 )
 from aletheia.research_controller.service import ControllerStepDisposition
 from aletheia.research_controller.step_executor import (
@@ -923,4 +930,191 @@ def test_adapter_wraps_untyped_service_corruption() -> None:
             wakeup=_wakeup(case),
             projection=projection,
             plan=plan_recovery_tick(projection),
+        )
+
+
+def _round_split_binding(action_sha256: str) -> RoundSplitBindingPolicyV1:
+    split_policy = DatasetRoundSplitPolicyV1(
+        holdout_percent=20, salt="arl2-cuprate-diagnostic-2026-09"
+    )
+    return RoundSplitBindingPolicyV1(
+        dataset_content_sha256=_sha("registered-content"),
+        split_policy_sha256=split_policy.policy_sha256,
+        round_index=1,
+        sealed_group_ids_sha256=_sha("round-one-groups"),
+        template_bindings=(
+            RoundSplitTemplateBindingV1(
+                action_sha256=action_sha256,
+                bound_batch_group_ids_sha256=_sha("round-one-batch"),
+                spent_group_ids_sha256=_sha("round-one-spent"),
+                unspent_group_ids_sha256=_sha("round-one-unspent"),
+            ),
+        ),
+    )
+
+
+def _round_split_parameter_values(binding: RoundSplitBindingPolicyV1) -> dict[str, str]:
+    row = binding.template_bindings[0]
+    return {
+        "dataset_content_sha256": binding.dataset_content_sha256,
+        "round_bound_batch_group_ids": row.bound_batch_group_ids_sha256,
+        "round_sealed_group_ids": binding.sealed_group_ids_sha256,
+        "round_spent_group_ids": row.spent_group_ids_sha256,
+        "round_unspent_group_ids": row.unspent_group_ids_sha256,
+    }
+
+
+def _with_round_split_parameters(
+    request: ProtocolCompilationRequest, values: dict[str, str]
+) -> ProtocolCompilationRequest:
+    protocol = request.protocol
+    merged = tuple(
+        sorted(
+            tuple(protocol.caller_parameter_bindings)
+            + tuple(
+                CallerParameterBinding(parameter_id=parameter_id, value_sha256=value)
+                for parameter_id, value in values.items()
+            ),
+            key=lambda item: item.parameter_id,
+        )
+    )
+    dump = protocol.model_dump(mode="python")
+    # The compiler pins caller parameters to exactly the caller-mutable design
+    # factors, bound on the scientific executor step alone (typecheck.py:645-662),
+    # so the round-split ids enter the protocol as authored covariate factors.
+    factors = list(dump["design_space"]["factors"])
+    factors.extend(
+        {
+            "factor_id": parameter_id,
+            "factor_kind": "covariate",
+            "value_schema": factors[0]["value_schema"],
+            "assignment_rule_sha256": _sha(f"assignment:{parameter_id}"),
+            "caller_mutable": True,
+        }
+        for parameter_id in values
+    )
+    design_space = DesignSpaceVersion.model_validate(
+        {**dump["design_space"], "factors": sorted(factors, key=lambda item: item["factor_id"])}
+    )
+    steps = []
+    for step in dump["steps"]:
+        contracts = [
+            {**binding, "contract_sha256": design_space.design_space_sha256}
+            if binding["contract_kind"] == "design_space"
+            else binding
+            for binding in step["contract_bindings"]
+        ]
+        parameter_ids = list(step["caller_parameter_ids"])
+        if step["role"] == "scientific_executor":
+            parameter_ids = sorted(set(parameter_ids) | set(values))
+        steps.append(
+            {**step, "contract_bindings": contracts, "caller_parameter_ids": parameter_ids}
+        )
+    protocol = ProtocolIR.model_validate(
+        {
+            **dump,
+            "design_space": design_space.model_dump(mode="python"),
+            "steps": steps,
+            "caller_parameter_bindings": [item.model_dump(mode="python") for item in merged],
+            "caller_parameter_manifest_sha256": caller_parameter_manifest_sha256(merged),
+        }
+    )
+    return ProtocolCompilationRequest(
+        protocol=protocol,
+        capability_catalog=request.capability_catalog,
+        resource_catalog=request.resource_catalog,
+        compiler_implementation_sha256=request.compiler_implementation_sha256,
+    )
+
+
+def test_round_split_bound_protocol_registers() -> None:
+    case, question, action, authorized = _authorized_case()
+    binding = _round_split_binding(action.object_sha256)
+    request = _with_round_split_parameters(
+        _request(case, question, authorized), _round_split_parameter_values(binding)
+    )
+    engine = sqlite_observation_engine()
+    _seed(engine, quest_id=case.quest_id, action_sha256=action.object_sha256)
+    policy = _policy(request).model_copy(update={"round_split_binding": binding})
+    assert policy.round_split_binding is not None
+    service = DurableProtocolCompilationService(
+        kernel_store=_Kernel(case),
+        object_archive=_Archive(case),
+        provider=_Provider(request),
+        preparation_verifier=_Verifier(request),
+        compilation_policy=policy,
+        authority_binding=_binding(policy),
+        sessions=_sessions(engine),
+        database_clock=lambda _session: request.protocol.authored_at + timedelta(seconds=3),
+    )
+    projection = _projection(case, action)
+    write = service.compile_and_register(
+        wakeup=_wakeup(case), projection=projection, plan=plan_recovery_tick(projection)
+    )
+    assert ProtocolCompilationResult.model_validate(write.result_json).report.accepted
+
+
+@pytest.mark.parametrize(
+    ("tamper", "cause"),
+    [
+        ("drop_parameter", "round split requires exactly one round_bound_batch_group_ids"),
+        ("wrong_batch", "disagrees at round_bound_batch_group_ids"),
+        ("wrong_dataset", "disagrees at dataset_content_sha256"),
+        ("foreign_action", "round split policy has no row for the authorized action"),
+    ],
+)
+def test_round_split_rebinding_fails_closed(tamper: str, cause: str) -> None:
+    case, question, action, authorized = _authorized_case()
+    row_action = action.object_sha256
+    if tamper == "foreign_action":
+        row_action = _sha("some-other-action")
+    binding = _round_split_binding(row_action)
+    values = _round_split_parameter_values(binding)
+    if tamper == "drop_parameter":
+        values = {
+            key: value for key, value in values.items() if key != "round_bound_batch_group_ids"
+        }
+    elif tamper == "wrong_batch":
+        values = {**values, "round_bound_batch_group_ids": _sha("tampered-batch")}
+    elif tamper == "wrong_dataset":
+        values = {**values, "dataset_content_sha256": _sha("tampered-dataset")}
+    request = _with_round_split_parameters(_request(case, question, authorized), values)
+    engine = sqlite_observation_engine()
+    _seed(engine, quest_id=case.quest_id, action_sha256=action.object_sha256)
+    policy = _policy(request).model_copy(update={"round_split_binding": binding})
+    service = DurableProtocolCompilationService(
+        kernel_store=_Kernel(case),
+        object_archive=_Archive(case),
+        provider=_Provider(request),
+        preparation_verifier=_Verifier(request),
+        compilation_policy=policy,
+        authority_binding=_binding(policy),
+        sessions=_sessions(engine),
+        database_clock=lambda _session: request.protocol.authored_at + timedelta(seconds=3),
+    )
+    projection = _projection(case, action)
+    with pytest.raises(
+        ProtocolCompilationStepError,
+        match="round split is not bound to its card-derived partition",
+    ) as record:
+        service.compile_and_register(
+            wakeup=_wakeup(case), projection=projection, plan=plan_recovery_tick(projection)
+        )
+    assert cause in str(record.value.__cause__)
+
+
+def test_round_split_policy_rows_must_be_canonical() -> None:
+    row = RoundSplitTemplateBindingV1(
+        action_sha256=_sha("duplicate-row"),
+        bound_batch_group_ids_sha256=_sha("batch"),
+        spent_group_ids_sha256=_sha("spent"),
+        unspent_group_ids_sha256=_sha("unspent"),
+    )
+    with pytest.raises(ValidationError, match="unique and canonical"):
+        RoundSplitBindingPolicyV1(
+            dataset_content_sha256=_sha("registered-content"),
+            split_policy_sha256=_sha("split-policy"),
+            round_index=1,
+            sealed_group_ids_sha256=_sha("round-one-groups"),
+            template_bindings=(row, row),
         )

@@ -34,6 +34,7 @@ from aletheia.protocols.compiler import (
 from aletheia.protocols.schemas import (
     ProtocolActionCategory,
     ProtocolCompilationResult,
+    ProtocolIR,
 )
 from aletheia.research_controller.contracts import (
     CompilationDisposition,
@@ -110,6 +111,48 @@ class ActionProtocolCategoryPolicy(ControllerModel):
         return self
 
 
+class RoundSplitTemplateBindingV1(ControllerModel):
+    """Card-derived round-split parameter facts one action's protocol must carry."""
+
+    schema_name: Literal["aletheia.round_split_template_binding"] = (
+        "aletheia.round_split_template_binding"
+    )
+    schema_version: Literal[1] = 1
+    action_sha256: str = Field(pattern=_SHA256_PATTERN)
+    bound_batch_group_ids_sha256: str = Field(pattern=_SHA256_PATTERN)
+    spent_group_ids_sha256: str = Field(pattern=_SHA256_PATTERN)
+    unspent_group_ids_sha256: str = Field(pattern=_SHA256_PATTERN)
+
+
+class RoundSplitBindingPolicyV1(ControllerModel):
+    """Card-derived split facts pinned at commissioning for ARL-2 round protocols.
+
+    Every identity here is a hash fact derived at commissioning from the registered
+    card bytes, the card's split policy, and the campaign's admitted observations.
+    The compile-time check enforces consistency between a prepared protocol's caller
+    parameters and these pinned values; tuple-level derivation stays with the campaign
+    driver and the replay verifier, which re-derive the sets from card bytes and the
+    event stream and compare these same hashes.
+    """
+
+    schema_name: Literal["aletheia.round_split_binding_policy"] = (
+        "aletheia.round_split_binding_policy"
+    )
+    schema_version: Literal[1] = 1
+    dataset_content_sha256: str = Field(pattern=_SHA256_PATTERN)
+    split_policy_sha256: str = Field(pattern=_SHA256_PATTERN)
+    round_index: int = Field(ge=1, le=2)
+    sealed_group_ids_sha256: str = Field(pattern=_SHA256_PATTERN)
+    template_bindings: tuple[RoundSplitTemplateBindingV1, ...] = Field(min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def _bindings_are_canonical(self) -> "RoundSplitBindingPolicyV1":
+        rows = tuple(item.action_sha256 for item in self.template_bindings)
+        if rows != tuple(sorted(set(rows))):
+            raise ValueError("round-split template bindings must be unique and canonical")
+        return self
+
+
 class ProtocolCompilationPolicyPin(ControllerModel):
     """Closed deployment policy over author, catalogs, compiler, and action compatibility."""
 
@@ -125,6 +168,7 @@ class ProtocolCompilationPolicyPin(ControllerModel):
         min_length=1, max_length=32
     )
     world_model_required_action_kinds: tuple[ActionKind, ...] = Field(max_length=32)
+    round_split_binding: RoundSplitBindingPolicyV1 | None = None
 
     @model_validator(mode="after")
     def _policy_is_canonical(self) -> "ProtocolCompilationPolicyPin":
@@ -290,6 +334,56 @@ def _require_compile_tick(
         raise ProtocolCompilationStepError("protocol compilation received a stale controller tick")
 
 
+_ROUND_DATASET_PARAMETER_ID = "dataset_content_sha256"
+_ROUND_SEALED_PARAMETER_ID = "round_sealed_group_ids"
+_ROUND_BOUND_PARAMETER_ID = "round_bound_batch_group_ids"
+_ROUND_SPENT_PARAMETER_ID = "round_spent_group_ids"
+_ROUND_UNSPENT_PARAMETER_ID = "round_unspent_group_ids"
+
+
+def _single_bound_parameter_value(protocol: ProtocolIR, parameter_id: str) -> str:
+    values = [
+        binding.value_sha256
+        for binding in protocol.caller_parameter_bindings
+        if binding.parameter_id == parameter_id
+    ]
+    if len(values) != 1:
+        raise ValueError(f"round split requires exactly one {parameter_id} caller parameter")
+    return values[0]
+
+
+def _verify_round_split_binding(
+    *,
+    protocol: ProtocolIR,
+    action_sha256: str,
+    binding: RoundSplitBindingPolicyV1,
+) -> None:
+    """Require the prepared protocol's caller parameters to equal the pinned card facts.
+
+    The check is hash-consistency only: the policy rows carry set hashes derived at
+    commissioning from the registered card, and the tuple-level partition and ledger
+    proofs are re-derived by the campaign driver and the replay verifier, which compare
+    the same hashes after enumerating the card bytes.
+    """
+
+    row = next(
+        (item for item in binding.template_bindings if item.action_sha256 == action_sha256),
+        None,
+    )
+    if row is None:
+        raise ValueError("round split policy has no row for the authorized action")
+    expected = {
+        _ROUND_DATASET_PARAMETER_ID: binding.dataset_content_sha256,
+        _ROUND_SEALED_PARAMETER_ID: binding.sealed_group_ids_sha256,
+        _ROUND_BOUND_PARAMETER_ID: row.bound_batch_group_ids_sha256,
+        _ROUND_SPENT_PARAMETER_ID: row.spent_group_ids_sha256,
+        _ROUND_UNSPENT_PARAMETER_ID: row.unspent_group_ids_sha256,
+    }
+    for parameter_id, value in expected.items():
+        if _single_bound_parameter_value(protocol, parameter_id) != value:
+            raise ValueError(f"prepared protocol round split disagrees at {parameter_id}")
+
+
 def verify_prepared_protocol(
     *,
     context: AuthorizedProtocolCompilationContext,
@@ -326,6 +420,17 @@ def verify_prepared_protocol(
             except Exception as exc:  # noqa: BLE001 - authored revision fails closed
                 raise ProtocolCompilationStepError(
                     "world-model revision carries an unbound belief basis"
+                ) from exc
+        if policy.round_split_binding is not None:
+            try:
+                _verify_round_split_binding(
+                    protocol=protocol,
+                    action_sha256=context.action.object_ref.object_sha256,
+                    binding=policy.round_split_binding,
+                )
+            except Exception as exc:  # noqa: BLE001 - card-derived split facts fail closed
+                raise ProtocolCompilationStepError(
+                    "prepared protocol round split is not bound to its card-derived partition"
                 ) from exc
         return prepared
     except ProtocolCompilationStepError:

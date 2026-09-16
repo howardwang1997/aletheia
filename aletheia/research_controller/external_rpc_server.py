@@ -41,6 +41,7 @@ from aletheia.observations.service import (
 )
 from aletheia.observations.store import ContinuationReceiptWrite, ProtocolCompilationWrite
 from aletheia.research_controller.action_proposals import SubmittedActionProposal
+from aletheia.research_controller.continuation import ContinuationReceipt
 from aletheia.research_controller.contracts import (
     ControllerModel,
     ControllerRecoveryProjection,
@@ -56,7 +57,8 @@ from aletheia.research_controller.external_rpc import (
     RawRunLoadResult,
     ValidationCampaignResult,
 )
-from aletheia.research_kernel.schemas import canonical_json_bytes, canonical_sha256
+from aletheia.research_kernel.commands import AuthorizedResearchCommand, ResearchCommandProposal
+from aletheia.research_kernel.schemas import ResearchEvent, canonical_json_bytes, canonical_sha256
 
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
 _BLOCKER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$"
@@ -165,6 +167,34 @@ class AdmissionCommitRPCPayload(ControllerModel):
     decision: ObservationAdmissionDecision
 
 
+class ActionKernelCommandRPCPayload(ControllerModel):
+    """One exact action-authorization signing request for the ARL-2 driver.
+
+    The idempotency and source-event keys never ride the wire: the service
+    derives both from the submitted action sha through the exact-proposal
+    convention (``action:{sha}`` / ``action-proposal:{sha}``), so a request
+    cannot express a rebound key.
+    """
+
+    proposal: ResearchCommandProposal
+    submitted: SubmittedActionProposal
+
+
+class TransitionKernelCommandRPCPayload(ControllerModel):
+    """One exact transition signing request forced by a recorded continuation.
+
+    The service derives ``transition:{decision_sha}`` and
+    ``continuation:{receipt_sha}`` itself; the authority's exact-proposal gate
+    then binds proposal, submission, receipt, and incorporated observation
+    together before anything is signed.
+    """
+
+    proposal: ResearchCommandProposal
+    submitted: SubmittedActionProposal
+    receipt: ContinuationReceipt
+    incorporated_event: ResearchEvent
+
+
 _PayloadModel = type[ControllerModel]
 _ResultModel = type[BaseModel]
 
@@ -190,6 +220,8 @@ _OPERATION_PAYLOAD_MODELS: dict[ControllerWorkerRPCOperation, _PayloadModel] = {
     ControllerWorkerRPCOperation.COMMIT_AND_INCORPORATE: AdmissionCommitRPCPayload,
     ControllerWorkerRPCOperation.LOAD_COMMITTED_ADMISSION: ScientificSlotLookupRPCPayload,
     ControllerWorkerRPCOperation.DERIVE_CONTINUATION: ControllerTickRPCPayload,
+    ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND: ActionKernelCommandRPCPayload,
+    ControllerWorkerRPCOperation.SIGN_TRANSITION_COMMAND: TransitionKernelCommandRPCPayload,
 }
 
 _OPERATION_RESULT_MODELS: dict[ControllerWorkerRPCOperation, _ResultModel] = {
@@ -214,6 +246,8 @@ _OPERATION_RESULT_MODELS: dict[ControllerWorkerRPCOperation, _ResultModel] = {
     ControllerWorkerRPCOperation.COMMIT_AND_INCORPORATE: AtomicObservationAdmissionReceipt,
     ControllerWorkerRPCOperation.LOAD_COMMITTED_ADMISSION: AtomicObservationAdmissionReceipt,
     ControllerWorkerRPCOperation.DERIVE_CONTINUATION: ContinuationReceiptWrite,
+    ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND: AuthorizedResearchCommand,
+    ControllerWorkerRPCOperation.SIGN_TRANSITION_COMMAND: AuthorizedResearchCommand,
 }
 
 _SIGNED_BLOCKER_OPERATIONS = frozenset(
@@ -223,6 +257,11 @@ _SIGNED_BLOCKER_OPERATIONS = frozenset(
         ControllerWorkerRPCOperation.DERIVE_CONTINUATION,
         ControllerWorkerRPCOperation.LOAD_COMMITTED_VALIDATION,
         ControllerWorkerRPCOperation.LOAD_COMMITTED_ADMISSION,
+        # A kernel-command refusal is a deterministic domain decision, not a
+        # transport failure: the driver must see the signed blocker instead of
+        # an unsigned error indistinguishable from a crashed service.
+        ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND,
+        ControllerWorkerRPCOperation.SIGN_TRANSITION_COMMAND,
     }
 )
 
@@ -432,6 +471,7 @@ class ControllerWorkerRPCService:
 
 
 __all__ = [
+    "ActionKernelCommandRPCPayload",
     "AdmissionChallengeIssuanceRPCPayload",
     "AdmissionCommitRPCPayload",
     "AdmissionDecisionIssuanceRPCPayload",
@@ -447,6 +487,7 @@ __all__ = [
     "ScientificExecutionRegistrationRPCPayload",
     "ScientificExecutionCampaignRegistrationRPCPayload",
     "ScientificSlotLookupRPCPayload",
+    "TransitionKernelCommandRPCPayload",
     "ValidationChallengeIssuanceRPCPayload",
     "ValidationCommitRPCPayload",
     "ValidationReceiptIssuanceRPCPayload",

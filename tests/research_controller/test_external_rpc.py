@@ -521,8 +521,14 @@ def test_rpc_facades_cover_each_closed_operation_without_a_catch_all() -> None:
             getattr(facade, method_name)(**kwargs)
         observed.extend(facade._client.operations)
 
-    assert len(observed) == len(ControllerWorkerRPCOperation)
-    assert frozenset(observed) == frozenset(ControllerWorkerRPCOperation)
+    # The two kernel-command signing operations face the ARL-2 driver; the
+    # worker's facade set must still cover every remaining operation exactly.
+    driver_facing = {
+        ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND,
+        ControllerWorkerRPCOperation.SIGN_TRANSITION_COMMAND,
+    }
+    assert len(observed) == len(ControllerWorkerRPCOperation) - len(driver_facing)
+    assert frozenset(observed) == frozenset(ControllerWorkerRPCOperation) - driver_facing
 
 
 def test_database_bridge_load_committed_validation_uses_the_slot_lookup_operation() -> None:

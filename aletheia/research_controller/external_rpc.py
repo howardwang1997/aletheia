@@ -114,6 +114,8 @@ class ControllerWorkerRPCOperation(str, Enum):
     COMMIT_AND_INCORPORATE = "commit_and_incorporate"
     LOAD_COMMITTED_ADMISSION = "load_committed_admission"
     DERIVE_CONTINUATION = "derive_continuation"
+    SIGN_ACTION_COMMAND = "sign_action_command"
+    SIGN_TRANSITION_COMMAND = "sign_transition_command"
 
 
 def _canonical_absolute_socket_path(value: str) -> Path:

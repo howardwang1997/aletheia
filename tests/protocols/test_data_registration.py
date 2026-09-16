@@ -17,6 +17,7 @@ from aletheia.protocols.data_registration import (
     DatasetStratumRuleV1,
     RegisteredDatasetV1,
     dataset_group_round,
+    enumerate_formula_groups,
     partition_group_rounds,
     recompute_dataset_audit,
     verify_dataset_card,
@@ -117,11 +118,11 @@ def test_stratum_audit_tracks_formula_family_membership() -> None:
         stratum_rules=(CUPRATE_RULE,),
         csv_text=CSV_TEXT.replace("Sr2Ca1Cu2O6,85.0,2\n", ""),
     )
+
     def detail(verdicts: tuple, check_id: str) -> str:
         return next(item.detail_sha256 for item in verdicts if item.check_id == check_id)
-    assert detail(full, "stratum:multi_ae_cuprate") != detail(
-        trimmed, "stratum:multi_ae_cuprate"
-    )
+
+    assert detail(full, "stratum:multi_ae_cuprate") != detail(trimmed, "stratum:multi_ae_cuprate")
     assert detail(full, "target_range") != detail(trimmed, "target_range")
     assert detail(full, "duplication_policy") != detail(trimmed, "duplication_policy")
     # Sr2Ca1Cu2O6 is a single-row formula: its removal cannot move the within-formula spread.
@@ -199,9 +200,7 @@ def test_version_chain_requires_parent_above_one() -> None:
     card = _card()
     with pytest.raises(ValidationError, match="revision parent"):
         _revalidate(card, version=2)
-    child = _revalidate(
-        card, version=2, revision_parent_sha256=card.dataset_card_sha256
-    )
+    child = _revalidate(card, version=2, revision_parent_sha256=card.dataset_card_sha256)
     assert child.revision_parent_sha256 == card.dataset_card_sha256
 
 
@@ -215,9 +214,7 @@ def test_lineage_requires_license_evidence() -> None:
     csv_bytes = CSV_TEXT.encode("utf-8")
     lineage = _lineage(csv_bytes)
     with pytest.raises(ValidationError, match="license"):
-        DatasetSourceLineageV1.model_validate(
-            {**lineage.model_dump(), "license_terms": "  "}
-        )
+        DatasetSourceLineageV1.model_validate({**lineage.model_dump(), "license_terms": "  "})
 
 
 def test_column_manifest_partitions_exactly() -> None:
@@ -238,3 +235,35 @@ def test_stratum_rule_clauses_must_not_overlap() -> None:
             multi_choice_elements=("Ba", "Sr"),
             multi_choice_minimum=1,
         )
+
+
+def test_enumerate_formula_groups_returns_the_audit_grouping() -> None:
+    groups = enumerate_formula_groups(CSV_TEXT, _manifest())
+    assert groups == ("Ba2Sr1Cu2O6", "Fe2O3", "LaCuO3", "SiO2", "Sr2Ca1Cu2O6")
+
+
+def test_enumerate_formula_groups_skips_unparsable_target_rows() -> None:
+    csv_text = CSV_TEXT + "HgBa2Ca2Cu3O8.1,not-a-number,9\n"
+    groups = enumerate_formula_groups(csv_text, _manifest())
+    assert "HgBa2Ca2Cu3O8.1" not in groups
+    assert groups == ("Ba2Sr1Cu2O6", "Fe2O3", "LaCuO3", "SiO2", "Sr2Ca1Cu2O6")
+
+
+def test_enumerate_formula_groups_requires_the_registered_header() -> None:
+    with pytest.raises(ValueError, match="csv header differs"):
+        enumerate_formula_groups("wrong,header,x\n1,2,3\n", _manifest())
+
+
+def test_enumerate_formula_groups_fails_closed_without_parsable_rows() -> None:
+    csv_text = "material,critical_temp,feature_a\nBa2Sr1Cu2O6,NaN,1\n"
+    with pytest.raises(ValueError, match="no parsable target rows"):
+        enumerate_formula_groups(csv_text, _manifest())
+
+
+def test_enumeration_partitions_fully_into_card_rounds() -> None:
+    card = _card()
+    groups = enumerate_formula_groups(CSV_TEXT, card.column_manifest)
+    round_one, round_two = partition_group_rounds(card.content_sha256, card.split_policy, groups)
+    assert sorted(round_one + round_two) == list(groups)
+    assert not (set(round_one) & set(round_two))
+    verify_group_partition(card.content_sha256, card.split_policy, groups, round_one, round_two)
