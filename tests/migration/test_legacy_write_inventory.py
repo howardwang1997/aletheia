@@ -42,6 +42,15 @@ LEGACY_SOURCE_AST_EXCLUDED_ROOTS = {
     "scripts/run-arl1-qualification.py": "new_qualification_entrypoint",
     "scripts/run-arl2-question-campaign.py": "new_qualification_entrypoint",
     "scripts/run-pre-runtime-cleanup.py": "new_qualification_entrypoint",
+    "scripts/stage0-host-facts.py": "new_qualification_entrypoint",
+    "scripts/author-arl2-authorities.py": "new_qualification_entrypoint",
+    "scripts/author-arl2-deployments.py": "new_qualification_entrypoint",
+    "scripts/author-arl2-campaign-request.py": "new_qualification_entrypoint",
+    "scripts/author-arl2-capability-catalog.py": "new_qualification_entrypoint",
+    "scripts/export_arl2_round_material.py": "new_qualification_entrypoint",
+    "scripts/recommission_arl2_catalog_service.py": "new_qualification_entrypoint",
+    "scripts/author_arl2_sea_and_provider_templates.py": "new_qualification_entrypoint",
+    "scripts/arl2-driver-control.py": "new_qualification_entrypoint",
 }
 MIGRATION_SOURCE_AST_ROOTS = ("aletheia/migration", "migrations")
 FRONTEND_HTTP_MUTATION_METHODS = ("DELETE", "PATCH", "POST", "PUT")
