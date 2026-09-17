@@ -430,9 +430,17 @@ def main() -> int:
             bound_group_ids=tuple(batch_groups[index]),
         )
 
-    request_file, request_sha = _write_canonical(
+    request_file, _request_file_sha = _write_canonical(
         staging / "arl2-campaign-request.json", request
     )
+    # The state pins the request's own canonical sha (model dump excluding
+    # the derived request_id), never the staged file's bytes sha: the
+    # deployments script's state check and the runtime launch gate both
+    # compare against that property (author-arl2-deployments.py
+    # _load_request_inputs, aletheia/arl2_runtime.py
+    # load_arl2_question_campaign_runtime_inputs); the file bytes sha is
+    # recomputed from the file by the deployments script itself.
+    request_sha = request.request_sha256
     _write_canonical(
         state_path,
         {
