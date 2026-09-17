@@ -322,7 +322,7 @@ def main() -> int:
             if item.role is ResearchAuthorizationRole(name)
         )
 
-    def _commit_and_tail(command, event_type: EventType) -> str:
+    def _commit_and_tail(command, event_type: EventType):
         store.commit(command)
         events = store.audit(quest_id).events
         if events[-1].event_type is not event_type:
@@ -330,7 +330,7 @@ def main() -> int:
                 f"expected {event_type.value} at the stream tail after commit, "
                 f"found {events[-1].event_type.value}"
             )
-        return events[-1].event_sha256
+        return events[-1]
 
     # 3. charter v1.
     documents = {}
@@ -379,6 +379,11 @@ def main() -> int:
         source_event_key=f"arl2dry:{quest_id}:charter-activation",
     )
     charter_tail = _commit_and_tail(charter_command, EventType.CHARTER_ACTIVATED)
+    # Every later command is timestamped from the previous event's
+    # DB committed_at: the stream's own clock, so each commit verifies
+    # authorized_at <= committed_at by construction instead of racing a
+    # wall-clock offset against the local socket's commit latency.
+    problem_at = charter_tail.committed_at
 
     # 4. problem v1, signed against the real charter tail.
     problem_spec = spec["problem"]
@@ -394,21 +399,21 @@ def main() -> int:
         unknowns=tuple(problem_spec.get("unknowns") or ()),
         semantic_delta=problem_spec.get("semantic_delta") or "initial problem version",
         authored_by_principal_id=principal_for["commissioning"],
-        authored_at=now + timedelta(seconds=1),
+        authored_at=problem_at,
     )
     archive.archive_object(problem)
     problem_proposal = ResearchCommandProposal(
         quest_id=quest_id,
         scope_binding=ResearchScopeBinding(quest_id=quest_id),
         expected_stream_version=1,
-        expected_tail_event_sha256=charter_tail,
+        expected_tail_event_sha256=charter_tail.event_sha256,
         event_type=EventType.PROBLEM_ADMITTED,
         payload=ProblemAdmittedPayload(
             problem_ref=problem.object_ref,
             branch_id=root_branch_id,
         ),
         proposed_by_principal_id=principal_for["commissioning"],
-        proposed_at=now + timedelta(seconds=1),
+        proposed_at=problem_at,
     )
     problem_command = authorize_research_proposal(
         problem_proposal,
@@ -417,10 +422,11 @@ def main() -> int:
         trust_root=trust_root,
         authorization_key_id=_role("ordinary").key_id,
         private_key=private_keys[ResearchAuthorizationRole.ORDINARY],
-        authorized_at=now + timedelta(seconds=1),
+        authorized_at=problem_at,
         source_event_key=f"arl2dry:{quest_id}:problem-admission",
     )
     problem_tail = _commit_and_tail(problem_command, EventType.PROBLEM_ADMITTED)
+    question_at = problem_tail.committed_at
 
     # 5. question v1: exactly three grounding refs, signed against the
     #    problem tail.
@@ -452,21 +458,21 @@ def main() -> int:
         semantic_delta=question_spec.get("semantic_delta")
         or "initial question version for the bounded campaign",
         authored_by_principal_id=principal_for["commissioning"],
-        authored_at=now + timedelta(seconds=2),
+        authored_at=question_at,
     )
     archive.archive_object(question)
     question_proposal = ResearchCommandProposal(
         quest_id=quest_id,
         scope_binding=ResearchScopeBinding(quest_id=quest_id),
         expected_stream_version=2,
-        expected_tail_event_sha256=problem_tail,
+        expected_tail_event_sha256=problem_tail.event_sha256,
         event_type=EventType.QUESTION_ADMITTED,
         payload=QuestionAdmittedPayload(
             question_ref=question.object_ref,
             branch_id=root_branch_id,
         ),
         proposed_by_principal_id=principal_for["commissioning"],
-        proposed_at=now + timedelta(seconds=2),
+        proposed_at=question_at,
     )
     question_command = authorize_research_proposal(
         question_proposal,
@@ -475,7 +481,7 @@ def main() -> int:
         trust_root=trust_root,
         authorization_key_id=_role("ordinary").key_id,
         private_key=private_keys[ResearchAuthorizationRole.ORDINARY],
-        authorized_at=now + timedelta(seconds=2),
+        authorized_at=question_at,
         source_event_key=f"arl2dry:{quest_id}:question-admission",
     )
     question_tail = _commit_and_tail(question_command, EventType.QUESTION_ADMITTED)
@@ -502,9 +508,9 @@ def main() -> int:
             "charter_object_sha256": charter.object_sha256,
             "problem_object_sha256": problem.object_sha256,
             "question_object_sha256": question.object_sha256,
-            "charter_event_sha256": charter_tail,
-            "problem_event_sha256": problem_tail,
-            "question_event_sha256": question_tail,
+            "charter_event_sha256": charter_tail.event_sha256,
+            "problem_event_sha256": problem_tail.event_sha256,
+            "question_event_sha256": question_tail.event_sha256,
             "stream_version_after_activation": 3,
             "grounding_object_sha256s": grounding_shas,
             "grounding_object_paths": [str(path) for path in grounding_paths],
@@ -515,9 +521,9 @@ def main() -> int:
     )
     sys.stdout.write(
         f"quest {quest_id} activated\n"
-        f"  charter tail  {charter_tail}\n"
-        f"  problem tail  {problem_tail}\n"
-        f"  question tail {question_tail}\n"
+        f"  charter tail  {charter_tail.event_sha256}\n"
+        f"  problem tail  {problem_tail.event_sha256}\n"
+        f"  question tail {question_tail.event_sha256}\n"
         f"  state {state_path}\n"
     )
     return 0
