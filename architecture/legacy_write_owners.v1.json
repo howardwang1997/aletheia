@@ -34,7 +34,16 @@
       "scripts/run-arl1-protocol-campaign.py": "new_qualification_entrypoint",
       "scripts/run-arl1-qualification.py": "new_qualification_entrypoint",
       "scripts/run-arl2-question-campaign.py": "new_qualification_entrypoint",
-      "scripts/run-pre-runtime-cleanup.py": "new_qualification_entrypoint"
+      "scripts/run-pre-runtime-cleanup.py": "new_qualification_entrypoint",
+      "scripts/stage0-host-facts.py": "new_qualification_entrypoint",
+      "scripts/author-arl2-authorities.py": "new_qualification_entrypoint",
+      "scripts/author-arl2-deployments.py": "new_qualification_entrypoint",
+      "scripts/author-arl2-campaign-request.py": "new_qualification_entrypoint",
+      "scripts/author-arl2-capability-catalog.py": "new_qualification_entrypoint",
+      "scripts/export_arl2_round_material.py": "new_qualification_entrypoint",
+      "scripts/recommission_arl2_catalog_service.py": "new_qualification_entrypoint",
+      "scripts/author_arl2_sea_and_provider_templates.py": "new_qualification_entrypoint",
+      "scripts/arl2-driver-control.py": "new_qualification_entrypoint"
     },
     "legacy_source_ast_file_count": 328,
     "legacy_source_ast_graph_sha256": "267f6921205ef1fc43ec5ab9e52fb87441100cad5fa5c55a9cbe25224057093c",
@@ -89,8 +98,8 @@
     "service_mutator_call_graph_sha256": "13e491fdfcf7637e3ee2652a465eb9e119126e1360f379985cf628bf38138f5f",
     "service_boundary_limit": "This mechanically freezes statically declared aletheia.memory.service imports and imported-name uses across aletheia and operational scripts in module and nested lexical scopes. It does not claim to discover arbitrary dynamic imports or direct ORM, SQL, filesystem or external-system mutations; those are handled by separate reviewed surface baselines.",
     "writer_surface_usage_scheme": "ast_all_scope_import_alias_instance_scope_v2",
-    "writer_surface_usage_count": 387,
-    "writer_surface_call_graph_sha256": "615c9dba8b583c51fa9d5740092f4f7f0670042a7cdfff710ebeca72503639be",
+    "writer_surface_usage_count": 390,
+    "writer_surface_call_graph_sha256": "e6d8c0bebf678d712c9b67f4405331e196a9d31120387fd5db17c6b0a5d8c531",
     "allowed_legacy_caller_scope": "Every current aletheia-package caller must be covered by allowed_legacy_callers. Operational scripts are fully frozen in call_sites and may be omitted from the post-cutover application allowlist.",
     "shared_generic_writer_implementations": {
       "aletheia.observations.store._append_exact": {
@@ -125,9 +134,9 @@
       "research_store.transactional_outbox": "The authority-minimal PostgreSQLResearchKernelOutbox caller-owned publication surface is composed by the controller dispatcher; the full-store transaction-owning mark_outbox_published wrapper remains an explicit uncalled compatibility surface."
     },
     "direct_file_sink_scheme": "ast_reviewed_direct_file_sink_v1",
-    "direct_file_sink_scope_count": 198,
-    "direct_file_sink_call_count": 221,
-    "direct_file_sink_graph_sha256": "a9cd61ea7c052dbe5d2706c77faf60992b754bce36c9c85b0c1f07230cda2f06",
+    "direct_file_sink_scope_count": 214,
+    "direct_file_sink_call_count": 239,
+    "direct_file_sink_graph_sha256": "356abd2546cb5f0af08b7f1eff10b95403adfa7806ce8fd571ec0d1c2a95a52d",
     "direct_file_sink_review_limit": "The baseline covers direct Path/open/os.write, archive-open modes, atomic replace, serializer, dataframe and plotting file sinks across the declared aletheia, deployed docker-worker and recursive operational-script roots. Indirect library-internal writes, arbitrary dynamic dispatch and external systems remain separate reviewed boundaries.",
     "direct_file_sink_profiles": {
       "scientific_artifact": {
@@ -404,9 +413,9 @@
       "scripts.typed_": "scientific_artifact"
     },
     "direct_external_sink_scheme": "ast_reviewed_event_provider_process_sink_v1",
-    "direct_external_sink_scope_count": 131,
-    "direct_external_sink_call_count": 216,
-    "direct_external_sink_graph_sha256": "9a393dab6b1a49d28d195b7ff100b3c93eae8b5c0bb406d9ba41edb7b6d48776",
+    "direct_external_sink_scope_count": 133,
+    "direct_external_sink_call_count": 219,
+    "direct_external_sink_graph_sha256": "90e838e8e1705cfbed8b2d3ec205f03b527ea8a7d425019d6ae3a502759c7132",
     "direct_external_sink_review_limit": "The baseline covers AST-visible EventBus-style publish calls, outbound HTTP mutation calls, known model-provider and GitHub mutation methods, and subprocess launch calls across the declared aletheia, deployed docker-worker and recursive operational-script roots. It does not claim to discover dynamically dispatched SDK methods, hidden library network I/O, non-Python launchers, or runtime monkeypatching.",
     "direct_external_sink_profiles": {
       "event.": {
@@ -2782,6 +2791,10 @@
         {
           "module": "aletheia.research_store.store",
           "symbol": "ResearchKernelStore.commit_in_session"
+        },
+        {
+          "module": "scripts.author-arl2-authorities",
+          "symbol": "main._commit_and_tail"
         }
       ],
       "storage_target": "postgres.research_store_persistence.research_quest_authorities",
@@ -2829,6 +2842,10 @@
         {
           "module": "aletheia.research_store.store",
           "symbol": "ResearchKernelStore.commit_in_session"
+        },
+        {
+          "module": "scripts.author-arl2-authorities",
+          "symbol": "main._commit_and_tail"
         }
       ],
       "dual_write_policy": "none",
@@ -2891,6 +2908,10 @@
         {
           "module": "aletheia.research_store.store",
           "symbol": "ResearchKernelStore._commit"
+        },
+        {
+          "module": "scripts.author-arl2-authorities",
+          "symbol": "main._commit_and_tail"
         }
       ],
       "storage_target": "postgres.research_store_persistence.research_quest_streams",
@@ -2941,6 +2962,10 @@
         {
           "module": "aletheia.research_store.store",
           "symbol": "ResearchKernelStore._commit"
+        },
+        {
+          "module": "scripts.author-arl2-authorities",
+          "symbol": "main._commit_and_tail"
         }
       ],
       "dual_write_policy": "none",
@@ -3027,6 +3052,10 @@
         {
           "module": "aletheia.research_store.store",
           "symbol": "PostgreSQLResearchKernelOutbox.mark_outbox_published_in_session"
+        },
+        {
+          "module": "scripts.author-arl2-authorities",
+          "symbol": "main._commit_and_tail"
         }
       ],
       "storage_target": "postgres.research_store_persistence.research_kernel_outbox",
@@ -3082,6 +3111,10 @@
         {
           "module": "aletheia.research_store.store",
           "symbol": "PostgreSQLResearchKernelOutbox.mark_outbox_published_in_session"
+        },
+        {
+          "module": "scripts.author-arl2-authorities",
+          "symbol": "main._commit_and_tail"
         }
       ],
       "dual_write_policy": "none",
