@@ -64,6 +64,8 @@ for _path in (_TEST_ROOT, _OBSERVATION_TESTS):
         sys.path.insert(0, str(_path))
 
 from test_database_observation_rpc_runtime import _fixture as _database_fixture  # noqa: E402
+from test_f9_v2_validation import _Clock  # noqa: E402
+from test_f9_v2_validation import _context as _f9_context  # noqa: E402
 from test_f9_v2_validation import _f9_case  # noqa: E402
 from test_scientific_bridge import (  # noqa: E402
     VALIDATOR_PRIVATE_KEY,
@@ -512,3 +514,132 @@ def test_f9_v2_validation_runtime_rejects_factory_source_drift(
     )
     with pytest.raises(ControllerWorkerRPCProcessError, match="byte pin"):
         build_controller_worker_rpc_server_runtime(drifted)
+
+
+def test_f9_v2_catalog_refreeze_extends_catalog_and_preserves_round_one_archive(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    deployment, config, config_path, case, raw_run = _fixture(monkeypatch, tmp_path)
+
+    # Round 1 under the first freeze: the real assessor resolves the frozen
+    # template and the real service publishes one campaign to the archive the
+    # deployed config pins.
+    catalog_one = FrozenF9V2ExactContentAssessmentCatalog.model_validate(
+        config["assessment_catalog"]
+    )
+    assessor = ExactContentF9V2ObservationAssessor(
+        catalog=catalog_one,
+        implementation_sha256=catalog_one.assessor_implementation_sha256,
+    )
+    archive = WriteOnceF9V2ValidationCampaignArchive(
+        Path(config["validation_archive"]["root"]),
+        validator_manifest_sha256=config["validation_archive"]["validator_manifest_sha256"],
+        validator_authority_pin=case.validator_pin,
+    )
+    start = raw_run.assembled_at + timedelta(minutes=1)
+    service = validation_module.F9V2IndependentValidationService(
+        archive=archive,
+        assessor=assessor,
+        verification=_f9_context(case),
+        validator_private_key=VALIDATOR_PRIVATE_KEY,
+        clock=_Clock([start, start + timedelta(seconds=1), start + timedelta(seconds=2)]),
+    )
+    campaign_sha256 = service.prepare_validation_campaign(raw_run=raw_run)
+    assert campaign_sha256 is not None
+    committed_one = archive.load_committed_campaign(
+        raw_run=raw_run, observed_at=start + timedelta(seconds=3)
+    )
+    assert committed_one is not None
+    assert committed_one.campaign_sha256 == campaign_sha256
+    assert committed_one.raw_run_sha256 == raw_run.raw_run_sha256
+
+    # The re-freeze: one added template keyed by a second action, a fresh
+    # prepared_at (top level AND reader, in lockstep with the deployment),
+    # new canonical config bytes. Every identity value is byte-preserved.
+    first_template = catalog_one.templates[0]
+    second_payload = first_template.model_dump(mode="json")
+    second_payload["action_sha256"] = _sha("f9-v2-refreeze-second-action")
+    second_template = FrozenF9V2ExactContentAssessmentTemplate.model_validate(
+        second_payload
+    )
+    assert second_template.lookup_sha256 != first_template.lookup_sha256
+    assert second_template.validator_manifest_sha256 == (
+        first_template.validator_manifest_sha256
+    )
+    catalog_two = FrozenF9V2ExactContentAssessmentCatalog(
+        catalog_id="catalog:f9-v2:runtime-test:refrozen",
+        assessor_implementation_sha256=catalog_one.assessor_implementation_sha256,
+        templates=tuple(
+            sorted(
+                (first_template, second_template),
+                key=lambda item: item.template_sha256,
+            )
+        ),
+    )
+    prepared_later = deployment.prepared_at + timedelta(minutes=1)
+    refrozen = dict(config)
+    refrozen["assessment_catalog"] = catalog_two.model_dump(mode="json")
+    refrozen["prepared_at"] = prepared_later.isoformat().replace("+00:00", "Z")
+    refrozen["qualification_reader"] = {
+        **config["qualification_reader"],
+        "prepared_at": refrozen["prepared_at"],
+    }
+    refrozen_path = (config_path.parent / "f9-v2-validation-refrozen.json").resolve()
+    refrozen_path.write_bytes(canonical_json_bytes(refrozen))
+    refrozen_deployment = ControllerWorkerRPCServerDeployment.model_validate(
+        {
+            **deployment.model_dump(mode="python", exclude={"runtime_id"}),
+            "composition_config_path": str(refrozen_path),
+            "composition_config_file_sha256": hashlib.sha256(
+                refrozen_path.read_bytes()
+            ).hexdigest(),
+            "prepared_at": prepared_later,
+        }
+    )
+
+    # Worker-side identity survives the swap; only the deployment manifest id
+    # moves, so a re-frozen service keeps passing per-call pin verification.
+    assert (
+        refrozen_deployment.service_pin.pin_sha256 == deployment.service_pin.pin_sha256
+    )
+    assert refrozen_deployment.service_pin.service_id == deployment.service_pin.service_id
+    assert refrozen_deployment.deployment_sha256 != deployment.deployment_sha256
+    assert refrozen_deployment.runtime_id != deployment.runtime_id
+
+    # Every factory gate re-passes against the POPULATED archive (same device
+    # and inode) and the preserved identity pins; the composed service now
+    # carries the two-template catalog.
+    handlers = build_f9_v2_validation_rpc_service(
+        deployment=refrozen_deployment,
+        configuration_bytes=refrozen_path.read_bytes(),
+    )
+    assert handlers.operations == tuple(
+        sorted(
+            (
+                ControllerWorkerRPCOperation.PREPARE_VALIDATION_CAMPAIGN,
+                ControllerWorkerRPCOperation.ISSUE_VALIDATION_RECEIPT,
+            ),
+            key=lambda item: item.value,
+        )
+    )
+
+    # Round 1's committed campaign survives the swap byte-exactly through a
+    # fresh archive binding against the same root. The observation time must
+    # stay inside the raw run's admission window (a fixture constant), which
+    # is unrelated to the deployment's prepared_at.
+    reread = WriteOnceF9V2ValidationCampaignArchive(
+        Path(refrozen["validation_archive"]["root"]),
+        validator_manifest_sha256=refrozen["validation_archive"]["validator_manifest_sha256"],
+        validator_authority_pin=case.validator_pin,
+    ).load_committed_campaign(
+        raw_run=raw_run, observed_at=start + timedelta(minutes=2)
+    )
+    assert reread == committed_one
+
+    # The extended catalog keeps round 1's exact lookup and adds exactly one
+    # new entry for the second action.
+    lookups = [item.lookup_sha256 for item in catalog_two.templates]
+    assert lookups.count(first_template.lookup_sha256) == 1
+    assert lookups.count(second_template.lookup_sha256) == 1
+    assert len(catalog_two.templates) == 2
