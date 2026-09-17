@@ -268,6 +268,7 @@ def main() -> int:
     )
     from aletheia.protocols.typecheck import expected_capability_audit_policy_sha256
     from aletheia.execution.schemas import StaticResourceCatalog
+    from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
     try:
@@ -311,7 +312,9 @@ def main() -> int:
             "signer": Ed25519PrivateKey.from_private_bytes(path.read_bytes()),
         }
     for name, item in keys.items():
-        public = item["signer"].public_key().public_raw_bytes()
+        public = item["signer"].public_key().public_bytes(
+            encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw
+        )
         item["key_id"] = _sha256_bytes(public)
         item["public_key_ed25519_hex"] = public.hex()
     if keys["auditor"]["key_id"] == keys["qualifier"]["key_id"]:
