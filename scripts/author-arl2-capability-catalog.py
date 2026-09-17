@@ -43,7 +43,9 @@ configs/arl2-capability-{catalog,trust,runtime-sources,state}.json,
 configs/arl2-resource-catalog.json, and configs/arl2-cuprate-service-contract.json
 (the live-path copy the verifier re-reads).
 Everything is write-once: an existing state file aborts the run (abort
-doctrine).
+doctrine). A crash mid-run leaves keys/ and configs/ behind without a
+state file; recovery means moving keys/capability/ and configs/ aside
+(the source root is content-addressed and re-runs cleanly).
 """
 
 from __future__ import annotations
@@ -227,8 +229,11 @@ def _resource_class_from_facts(facts: dict, cores: int, memory_bytes: int, scrat
 
 def main() -> int:
     args = _parser().parse_args()
-    if args.valid_hours <= 1:
-        _fail("--valid-hours must exceed one hour (receipts expire inside the pins)")
+    if args.valid_hours <= 2:
+        _fail(
+            "--valid-hours must be at least three hours (receipt expiry must strictly "
+            "outlive the protocol authored_at stub at now+1h)"
+        )
     if min(args.cpu_cores, args.memory_bytes, args.scratch_bytes) < 1:
         _fail("--cpu-cores/--memory-bytes/--scratch-bytes must each be positive")
 
@@ -265,7 +270,17 @@ def main() -> int:
     from aletheia.execution.schemas import StaticResourceCatalog
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-    service = local_service_capability_sources(_OPERATION)
+    try:
+        # custody pre-flight of every operator-supplied path the verifier
+        # fresh()-reads, BEFORE any write-once output exists: a mode/nlink
+        # violation here must abort cheaply, not wedge the window
+        service = local_service_capability_sources(_OPERATION, read_bytes=engineering.fresh)
+        engineering.fresh(environment_path)
+    except Exception as error:
+        raise SystemExit(
+            "author-arl2-capability-catalog: custody pre-flight failed for the release "
+            f"source files or the environment manifest ({environment_path}): {error}"
+        ) from error
     if release_root not in service.implementation_path.parents:
         _fail(
             "the service contract resolved outside the release tree; run with the "
@@ -324,6 +339,7 @@ def main() -> int:
         if path.exists():
             if path.read_bytes() != payload:
                 _fail(f"sha collision inside the capability source root at {digest}")
+            path.chmod(0o400)  # heal the mode if a crash left the object at 0600
             return digest
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with tempfile.NamedTemporaryFile(
@@ -331,8 +347,8 @@ def main() -> int:
         ) as handle:
             handle.write(payload)
             staged = Path(handle.name)
+        staged.chmod(0o400)  # the object never appears on disk at 0600
         os.replace(staged, path)
-        path.chmod(0o400)
         return digest
 
     contract_bytes = _canonical_bytes(contract)
@@ -583,7 +599,10 @@ def main() -> int:
         return put(_canonical_bytes(record))
 
     audit_kinds = tuple(
-        kind for kind in CapabilityAuditKind if kind is not CapabilityAuditKind.CALIBRATION
+        sorted(
+            (kind for kind in CapabilityAuditKind if kind is not CapabilityAuditKind.CALIBRATION),
+            key=lambda kind: kind.value,
+        )
     )
     audits = {}
     policy_pins = {}
@@ -735,6 +754,8 @@ def main() -> int:
     stub_requirement = CapabilityRequirement(
         requirement_id="req.arl2dry.cuprate_diagnostic",
         operation_id=f"operation.{_OPERATION}",
+        capability_id=_CAPABILITY_ID,
+        semantic_version=_SEMANTIC_VERSION,
         manifest_sha256=manifest.manifest_sha256,
         audit_bindings=[CapabilityAuditBinding.model_validate(item) for item in bindings],
     )

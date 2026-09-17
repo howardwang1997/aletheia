@@ -212,7 +212,6 @@ QUALIFICATION_PRINCIPALS = {
 }
 
 NODE_ID = "node.arlcup-1"
-RESOURCE_CLASS = "cuprate-diagnostic-v1"
 CURRENCY_CODE = "USD"
 ARTIFACT_OBJECT_STORE_ID = "store:arl2-qualification"
 MAX_OBJECT_BYTES = 64 * 1024 * 1024
@@ -425,6 +424,7 @@ def main() -> int:
         driver_uid=args.driver_uid,
         driver_gid=args.driver_gid,
         release=release,
+        resource_catalog=Path(args.resource_catalog).resolve(strict=True),
     )
 
     closure = _build_service_pins(
@@ -946,6 +946,7 @@ def _build_qualification(
     driver_uid,
     driver_gid,
     release,
+    resource_catalog,
 ) -> dict:
     """Build R, C, the node authority, the frozen registry, and the artifact store."""
 
@@ -969,7 +970,7 @@ def _build_qualification(
         issue_worker_node_enrollment,
     )
     from aletheia.execution.runtime_v2_contracts import RuntimeControlAuthorityPin
-    from aletheia.execution.schemas import NetworkPolicy
+    from aletheia.execution.schemas import NetworkPolicy, StaticResourceCatalog
     from aletheia.execution.terminal_runtime import (
         QualificationTerminalReaderConfig,
         TerminalNodeAuthorityConfig,
@@ -982,6 +983,21 @@ def _build_qualification(
 
     window_id = Path(working).name
     policies: dict[str, str] = {}
+
+    # The executor-side resource namespace is the catalog's DERIVED class id
+    # (rsc_<sha-prefix>): ExecutionResourceRequest accepts only those
+    # (execution/schemas.py _RESOURCE_CLASS_ID_PATTERN), and the SEA rate-card
+    # match requires exact tuple equality with the work-order node's request,
+    # so a symbolic class key here would wedge the window at the first pause.
+    catalog_classes = StaticResourceCatalog.model_validate(
+        json.loads(_read_bytes(resource_catalog))
+    ).resource_classes
+    if len(catalog_classes) != 1:
+        _fail(
+            "the pinned resource catalog must carry exactly one class for this "
+            f"window; found {len(catalog_classes)}"
+        )
+    resource_class_id = catalog_classes[0].resource_class_id
 
     def write_policy(name: str, policy: str) -> str:
         path = layout["qualification_policies"] / f"{name}.json"
@@ -1086,7 +1102,7 @@ def _build_qualification(
         oci_platform="linux/amd64",
         container_runtime="host",
         sandbox_policy_sha256=policies["node-sandbox"],
-        resource_class_ids=(RESOURCE_CLASS,),
+        resource_class_ids=(resource_class_id,),
         allowed_data_classifications=("public",),
         network_policies=(NetworkPolicy.ALLOWLIST,),
         egress_policy_sha256=policies["node-egress"],
@@ -1131,7 +1147,7 @@ def _build_qualification(
         revoked_at=None,
         lines=(
             ExecutionRateCardLine(
-                accepted_resource_class_ids=(RESOURCE_CLASS,),
+                accepted_resource_class_ids=(resource_class_id,),
                 currency_code=CURRENCY_CODE,
                 fixed_charge_microunits=0,
                 charge_per_second_microunits=0,
