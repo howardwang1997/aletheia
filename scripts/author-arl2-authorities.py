@@ -278,7 +278,7 @@ def main() -> int:
         trust_root=trust_root,
         root_key_id=trust_root.commissioning_keys[0].key_id,
         private_key=root_private,
-        certified_at=valid_from - timedelta(hours=2),
+        certified_at=now,
     )
 
     # 2. writer CAS root: created exactly once, owned by this uid.
