@@ -102,6 +102,7 @@ def _write_spec(working_root: Path, *, label: str) -> Path:
             "statement": "test problem statement",
             "scope": "test scope",
             "importance_rationale": "test rationale",
+            "unknowns": ["test unknown"],
         },
         "question": {
             "kind": "comparative",
