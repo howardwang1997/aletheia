@@ -128,6 +128,17 @@ def _identity(prefix: str, label: str, seed: str) -> str:
     return f"{prefix}_{digest[:32]}"
 
 
+def derived_program_id(quest_id: str) -> str:
+    """Program scope frozen into the quest stream at activation.
+
+    The campaign-request authoring reads this value from the activation
+    state instead of re-deriving it, so the stream's frozen scope binding
+    and the controller launch request cannot disagree (verify_launch_audit
+    refuses a program mismatch).
+    """
+    return "prg_" + hashlib.sha256(f"{quest_id}:arl2-dryrun-program".encode()).hexdigest()[:32]
+
+
 def _load_spec(path: Path) -> dict:
     import json
 
@@ -266,6 +277,7 @@ def main() -> int:
         )
     )
     quest_id = _identity("qst", f"{label}:quest", seed)
+    program_id = derived_program_id(quest_id)
     policy_proposal = ResearchAuthorizationPolicyProposalV1(
         policy_id=_identity("rap", f"{label}:policy", seed),
         quest_id=quest_id,
@@ -357,7 +369,7 @@ def main() -> int:
     archive.archive_object(charter)
     charter_proposal = ResearchCommandProposal(
         quest_id=quest_id,
-        scope_binding=ResearchScopeBinding(quest_id=quest_id),
+        scope_binding=ResearchScopeBinding(quest_id=quest_id, program_id=program_id),
         expected_stream_version=0,
         expected_tail_event_sha256=None,
         event_type=EventType.CHARTER_ACTIVATED,
@@ -404,7 +416,7 @@ def main() -> int:
     archive.archive_object(problem)
     problem_proposal = ResearchCommandProposal(
         quest_id=quest_id,
-        scope_binding=ResearchScopeBinding(quest_id=quest_id),
+        scope_binding=ResearchScopeBinding(quest_id=quest_id, program_id=program_id),
         expected_stream_version=1,
         expected_tail_event_sha256=charter_tail.event_sha256,
         event_type=EventType.PROBLEM_ADMITTED,
@@ -463,7 +475,7 @@ def main() -> int:
     archive.archive_object(question)
     question_proposal = ResearchCommandProposal(
         quest_id=quest_id,
-        scope_binding=ResearchScopeBinding(quest_id=quest_id),
+        scope_binding=ResearchScopeBinding(quest_id=quest_id, program_id=program_id),
         expected_stream_version=2,
         expected_tail_event_sha256=problem_tail.event_sha256,
         event_type=EventType.QUESTION_ADMITTED,
@@ -501,6 +513,7 @@ def main() -> int:
             "schema_name": "aletheia.arl2_activation_state",
             "schema_version": 1,
             "quest_id": quest_id,
+            "program_id": program_id,
             "root_branch_id": root_branch_id,
             "authority_manifest_path": authority_path,
             "trust_root_sha256": trust_root.trust_root_sha256,
@@ -521,6 +534,7 @@ def main() -> int:
     )
     sys.stdout.write(
         f"quest {quest_id} activated\n"
+        f"  program {program_id}\n"
         f"  charter tail  {charter_tail.event_sha256}\n"
         f"  problem tail  {problem_tail.event_sha256}\n"
         f"  question tail {question_tail.event_sha256}\n"
