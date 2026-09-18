@@ -456,18 +456,24 @@ def main() -> int:
             ))),
         )
         # merged round-split channel (Q13(b)): when the deployment state pins
-        # the campaign request bytes, the compile config carries the pin so
-        # the deployed service loads the commissioning-time bindings and runs
-        # the merged gate. Absent pin (older states, or a policy that carries
-        # its own round_split_binding) leaves the fields out; the config
-        # validator rejects a request pin combined with a bound policy.
+        # the campaign request bytes, the compile config carries the pin (path,
+        # file sha, quest id) so the deployed service loads the
+        # commissioning-time bindings and runs the merged gate. Absent pin
+        # (older states, or a policy that carries its own round_split_binding)
+        # leaves the fields out; the config validator rejects a partial or
+        # request-pinned-plus-bound-policy combination.
         request_entry = state.get("request") or {}
         campaign_request_fields = (
             {
                 "campaign_request_path": request_entry["request_path"],
                 "campaign_request_file_sha256": request_entry["request_file_sha256"],
+                "campaign_request_quest_id": request_entry["quest_id"],
             }
-            if request_entry.get("request_path") and request_entry.get("request_file_sha256")
+            if (
+                request_entry.get("request_path")
+                and request_entry.get("request_file_sha256")
+                and request_entry.get("quest_id")
+            )
             else {}
         )
         config = {

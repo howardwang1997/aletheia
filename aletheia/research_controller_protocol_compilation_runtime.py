@@ -66,10 +66,16 @@ def build_protocol_compilation_rpc_service(*, deployment, configuration_bytes):
         provider_implementation_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
         # ARL-2 merged round-split channel: the byte-pinned campaign request
         # whose commissioning-time round_split_bindings the compile gate
-        # enforces when the frozen policy pin carries none. Both fields move
-        # together and are mutually exclusive with a policy round_split_binding.
+        # enforces when the frozen policy pin carries none. The pin is a
+        # three-part all-or-nothing tuple (path, file sha, quest id) and is
+        # mutually exclusive with a policy round_split_binding; the quest id
+        # ties the pinned file to THIS campaign so a consistently-pinned
+        # foreign request cannot reach the compile gate.
         campaign_request_path: str | None = None
         campaign_request_file_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+        campaign_request_quest_id: str | None = Field(
+            default=None, pattern=r"^qst_[0-9a-f]{32}$"
+        )
         prepared_at: AwareDatetime
         direct_scientific_authority: Literal[False] = False
         kernel_signing_key_loaded: Literal[False] = False
@@ -98,8 +104,16 @@ def build_protocol_compilation_rpc_service(*, deployment, configuration_bytes):
             ):
                 raise ValueError("protocol compilation RPC authority or policies are not closed")
             request_path = self.campaign_request_path
-            if (request_path is None) != (self.campaign_request_file_sha256 is None):
-                raise ValueError("campaign request pin must carry a path and a file sha together")
+            if len(
+                {
+                    request_path is None,
+                    self.campaign_request_file_sha256 is None,
+                    self.campaign_request_quest_id is None,
+                }
+            ) != 1:
+                raise ValueError(
+                    "campaign request pin must carry a path, a file sha, and a quest id together"
+                )
             if (
                 request_path is not None
                 and self.compilation_policy.round_split_binding is not None
@@ -141,7 +155,7 @@ def build_protocol_compilation_rpc_service(*, deployment, configuration_bytes):
                 while remaining:
                     chunk = os.read(descriptor, min(65_536, remaining))
                     if not chunk:
-                        raise ValueError("protocol provider source ended unexpectedly")
+                        raise ValueError(f"protocol {label} ended unexpectedly")
                     chunks.append(chunk)
                     remaining -= len(chunk)
                 after = os.fstat(descriptor)
@@ -261,6 +275,8 @@ def build_protocol_compilation_rpc_service(*, deployment, configuration_bytes):
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("campaign request round split bindings are invalid") from exc
+        if request_document.get("quest_id") != config.campaign_request_quest_id:
+            raise ValueError("campaign request pin belongs to another quest")
         if tuple(item.round_index for item in campaign_bindings) != (1, 2):
             raise ValueError("campaign request round split bindings must cover rounds 1 and 2")
     service = DurableProtocolCompilationService(
@@ -272,6 +288,10 @@ def build_protocol_compilation_rpc_service(*, deployment, configuration_bytes):
         campaign_round_split_bindings=campaign_bindings,
         authority_binding=binding,
     )
+    if service._campaign_round_split_bindings != campaign_bindings:
+        # guards the one wiring line above: silently dropping the loaded
+        # bindings would disable the merged gate in every deployed compile
+        raise ValueError("protocol compilation service dropped its campaign round split bindings")
 
     def compile_protocol(payload):
         if type(payload) is not ControllerTickRPCPayload:

@@ -1184,7 +1184,13 @@ def test_merged_round_split_protocol_registers(which: str) -> None:
 
 @pytest.mark.parametrize(
     "parameter_id",
-    ["dataset_content_sha256", "round_spent_group_ids"],
+    [
+        "dataset_content_sha256",
+        "round_bound_batch_group_ids",
+        "round_sealed_group_ids",
+        "round_spent_group_ids",
+        "round_unspent_group_ids",
+    ],
 )
 def test_merged_round_split_tampering_fails_closed(parameter_id: str) -> None:
     case, question, action, authorized = _authorized_case()

@@ -297,6 +297,7 @@ def _merged_campaign_request_document(tmp_path: Path):
 
     return {
         "schema_name": "aletheia.arl2_question_campaign_request",
+        "quest_id": "qst_" + _sha("merged-campaign-quest")[:32],
         "round_split_bindings": [
             item.model_dump(mode="json") for item in (binding(1, "round-one"), binding(2, "round-two"))
         ],
@@ -320,6 +321,7 @@ def test_campaign_request_pin_builds_the_merged_channel_or_fails_closed(
                 "campaign_request_path": str(request_file),
                 "campaign_request_file_sha256": file_sha
                 or hashlib.sha256(payload).hexdigest(),
+                "campaign_request_quest_id": document.get("quest_id"),
                 **config_overrides,
             }
         )
@@ -345,6 +347,10 @@ def test_campaign_request_pin_builds_the_merged_channel_or_fails_closed(
     # the file must be a campaign request
     with pytest.raises(ValueError, match="round split bindings are invalid"):
         build_with({**document, "schema_name": "aletheia.something.else"})
+    # the pinned request must belong to the pinned quest (the config pins a
+    # different quest than the byte-pinned document carries)
+    with pytest.raises(ValueError, match="belongs to another quest"):
+        build_with(document, campaign_request_quest_id="qst_" + _sha("another-quest")[:32])
     # validator rejections surface as the wrapped config error
     with pytest.raises(ValueError, match="config is invalid"):
         build_with(document, campaign_request_file_sha256=None)
