@@ -23,10 +23,13 @@ def _emit(value: object) -> None:
 
 def _archive_object(args: argparse.Namespace) -> int:
     payload = _OBJECT_ADAPTER.validate_json(args.input.read_bytes())
-    archive = FilesystemResearchArchive(
-        args.cas_root,
-        max_object_bytes=args.max_object_bytes,
-    )
+    if args.cas_root.exists() or args.cas_root.is_symlink():
+        archive = _existing_root_archive(args)
+    else:
+        archive = FilesystemResearchArchive(
+            args.cas_root,
+            max_object_bytes=args.max_object_bytes,
+        )
     metadata = archive.archive_object(payload)
     archive.load_object(metadata.object_ref)
     _emit(metadata)
@@ -40,14 +43,16 @@ def _trust_root(path: Path) -> ResearchAuthorizationTrustRootV1:
 _CUSTODY_SHAPES = {0o700: (0o700, 0o400), 0o750: (0o750, 0o440)}
 
 
-def _audit_archive(args: argparse.Namespace) -> FilesystemResearchArchive:
-    """Read-side archive composed from the live root's custody shape.
+def _existing_root_archive(args: argparse.Namespace) -> FilesystemResearchArchive:
+    """Archive composed from a live root's custody shape.
 
-    The operator runs audit/replay as the archive's owning identity, so the
-    constructor pins that custody exactly instead of assuming the private
-    0700 shape and rejecting a group-read 0750 root.
+    The operator runs these commands as the archive's owning identity, so
+    the constructor pins that custody exactly instead of assuming the
+    private 0700 shape and rejecting a group-read 0750 root.
     """
 
+    if args.cas_root.is_symlink():
+        raise SystemExit(f"research-store: CAS root {args.cas_root} cannot be a symlink")
     if not args.cas_root.is_dir():
         raise SystemExit(f"research-store: CAS root {args.cas_root} is not a directory")
     root_mode = stat.S_IMODE(args.cas_root.stat().st_mode)
@@ -66,7 +71,7 @@ def _audit_archive(args: argparse.Namespace) -> FilesystemResearchArchive:
 
 
 def _audit(args: argparse.Namespace) -> int:
-    archive = _audit_archive(args)
+    archive = _existing_root_archive(args)
     result = ResearchKernelStore(
         trust_root=_trust_root(args.trust_root),
         archive=archive,
@@ -76,7 +81,7 @@ def _audit(args: argparse.Namespace) -> int:
 
 
 def _replay(args: argparse.Namespace) -> int:
-    archive = _audit_archive(args)
+    archive = _existing_root_archive(args)
     state = ResearchKernelStore(
         trust_root=_trust_root(args.trust_root),
         archive=archive,

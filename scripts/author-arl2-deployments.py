@@ -419,7 +419,7 @@ def main() -> int:
         # role can only ride the driver identity there (legacy shape)
         _fail("the 0700 CAS topology cannot host a distinct worker-role uid; use 0750")
     # The F9-v2 validation archive is written by the independent-validation
-    # service and read by the four sibling services plus atomic-admission
+    # service and read by the sibling reader services and atomic-admission
     # through the group class. A validation uid shared with any other
     # deployment uid puts a reader on the owner class and the read-only
     # compose refuses the root as writable.
@@ -703,9 +703,9 @@ def _build_layout(
     layout["authority_registry_root"] = qualification / "authority-registry"
 
     # The F9-v2 validation archive: written by the F9 service at its own
-    # uid, read by the four sibling services and atomic-admission through
-    # the shared gid's group class (the write config pins owner ==
-    # process, the read configs pin the same device+inode).
+    # uid, read by the sibling reader services and atomic-admission
+    # through the shared gid's group class (the write config pins owner
+    # == process, the read configs pin the same device+inode).
     layout["validation_archive_root"] = working / "f9-v2-validation-archive"
     _mkdir_pinned(
         layout["validation_archive_root"],
@@ -1230,6 +1230,8 @@ def _build_qualification(
     )
 
     registry_root = layout["authority_registry_root"]
+    if registry_root.is_symlink():
+        _fail(f"authority registry root {registry_root} is a symlink")
     if registry_root.exists() and any(registry_root.iterdir()):
         # The registry is append-only and every card is validated against
         # the single pinned pricing key this run just generated, so cards
