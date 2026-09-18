@@ -86,7 +86,14 @@ def _write_spec(working_root: Path, *, label: str) -> Path:
         "schema_version": 1,
         "quest_label": label,
         "mission": "pin the activation program-scope contract",
-        "principals": {},
+        # the certified policy refuses a principal spanning two roles, so
+        # each role gets its own fixture principal
+        "principals": {
+            "commissioning": "human:test-commissioning",
+            "ordinary": "human:test-ordinary",
+            "amendment": "human:test-amendment",
+            "emergency": "human:test-emergency",
+        },
         "policy_documents": {
             name: str(documents / f"{name}.md") for name in _POLICY_DOCUMENTS
         },
