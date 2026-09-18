@@ -714,6 +714,14 @@ def _run_provider(args, state: dict, state_path: Path) -> int:
             document = json.loads(request_bytes)
         except ValueError as exc:
             _fail(f"campaign request is not readable JSON: {exc}")
+        # same quest tie the deployed compile service enforces on its config
+        # pin: the byte-pinned document must belong to THIS deployment's
+        # quest, not merely to any quest with matching file bytes
+        if document.get("quest_id") != state.get("quest_id"):
+            _fail(
+                "campaign request belongs to another quest "
+                f"({document.get('quest_id')} vs {state.get('quest_id')})"
+            )
         values = _merged_round_split_values(document, round_index=args.round_index)
     if set(values) != set(ROUND_SPLIT_PARAMETER_IDS):
         _fail(

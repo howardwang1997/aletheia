@@ -98,21 +98,26 @@ def test_merged_round_split_values_derive_each_round_from_its_own_binding() -> N
     )
 
 
-def test_merged_round_split_values_require_the_named_round() -> None:
+def test_merged_round_split_values_require_the_named_round(capsys) -> None:
     module = _script_module()
     document = _document(_binding(1, tag="round-one"))
     with pytest.raises(SystemExit):
         module._merged_round_split_values(document, round_index=2)
+    # _fail prints to stderr (SystemExit carries no message), so the
+    # guard's own text is the discriminator between failure modes
+    assert "no unique round 2 binding" in capsys.readouterr().err
 
 
-def test_merged_round_split_values_require_exactly_one_template_row() -> None:
+def test_merged_round_split_values_require_exactly_one_template_row(capsys) -> None:
     module = _script_module()
     document = _document(_binding(1, tag="round-one", rows=2))
     with pytest.raises(SystemExit):
         module._merged_round_split_values(document, round_index=1)
+    assert "exactly one template row" in capsys.readouterr().err
 
 
-def test_merged_round_split_values_require_readable_bindings() -> None:
+def test_merged_round_split_values_require_readable_bindings(capsys) -> None:
     module = _script_module()
     with pytest.raises(SystemExit):
         module._merged_round_split_values({}, round_index=1)
+    assert "readable round_split_bindings" in capsys.readouterr().err

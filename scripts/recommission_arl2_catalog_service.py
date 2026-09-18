@@ -460,22 +460,32 @@ def main() -> int:
         # file sha, quest id) so the deployed service loads the
         # commissioning-time bindings and runs the merged gate. Absent pin
         # (older states, or a policy that carries its own round_split_binding)
-        # leaves the fields out; the config validator rejects a partial or
-        # request-pinned-plus-bound-policy combination.
+        # leaves the fields out; a partial pin fails loudly below, and the
+        # config validator still rejects a request-pinned-plus-bound-policy
+        # combination.
         request_entry = state.get("request") or {}
-        campaign_request_fields = (
-            {
+        # all three keys travel together or the pin is absent; a PARTIAL
+        # pin (path or file sha without the quest id) is a loud refusal,
+        # not a silent downgrade to the binding-less gate
+        request_pin_keys = ("request_path", "request_file_sha256", "quest_id")
+        present_pin_keys = tuple(
+            key for key in request_pin_keys if request_entry.get(key)
+        )
+        if len(present_pin_keys) == len(request_pin_keys):
+            campaign_request_fields = {
                 "campaign_request_path": request_entry["request_path"],
                 "campaign_request_file_sha256": request_entry["request_file_sha256"],
                 "campaign_request_quest_id": request_entry["quest_id"],
             }
-            if (
-                request_entry.get("request_path")
-                and request_entry.get("request_file_sha256")
-                and request_entry.get("quest_id")
+        elif present_pin_keys:
+            _fail(
+                "deployment state request pin is incomplete ("
+                f"{', '.join(present_pin_keys)} present; path, file sha, and "
+                "quest id must travel together) - re-run "
+                "author-arl2-deployments.py to re-author the state"
             )
-            else {}
-        )
+        else:
+            campaign_request_fields = {}
         config = {
             "schema_name": "aletheia.protocol_compilation_rpc_service_config",
             "schema_version": 1,

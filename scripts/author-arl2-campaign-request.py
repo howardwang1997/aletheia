@@ -380,7 +380,12 @@ def main() -> int:
     # mode with its paired object mode, so re-authoring after the 0750
     # shared-custody widen composes the same way the deployed driver does.
     cas_root = Path(authority["cas_root"])
-    root_mode = stat.S_IMODE(os.lstat(cas_root).st_mode)
+    if cas_root.is_symlink():
+        _fail(f"CAS root {cas_root} is a symlink; the writer pin requires the real directory")
+    try:
+        root_mode = stat.S_IMODE(os.lstat(cas_root).st_mode)
+    except FileNotFoundError:
+        _fail(f"CAS root {cas_root} does not exist at authoring time")
     if root_mode not in (0o700, 0o750):
         _fail(f"CAS root mode is {root_mode:#o}; the writer pin requires 0700 or 0750")
     archive = FilesystemResearchArchive(
