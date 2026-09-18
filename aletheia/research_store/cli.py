@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import stat
 import sys
 from pathlib import Path
 
@@ -36,11 +37,36 @@ def _trust_root(path: Path) -> ResearchAuthorizationTrustRootV1:
     return ResearchAuthorizationTrustRootV1.model_validate_json(path.read_bytes())
 
 
-def _audit(args: argparse.Namespace) -> int:
-    archive = FilesystemResearchArchive(
+_CUSTODY_SHAPES = {0o700: (0o700, 0o400), 0o750: (0o750, 0o440)}
+
+
+def _audit_archive(args: argparse.Namespace) -> FilesystemResearchArchive:
+    """Read-side archive composed from the live root's custody shape.
+
+    The operator runs audit/replay as the archive's owning identity, so the
+    constructor pins that custody exactly instead of assuming the private
+    0700 shape and rejecting a group-read 0750 root.
+    """
+
+    if not args.cas_root.is_dir():
+        raise SystemExit(f"research-store: CAS root {args.cas_root} is not a directory")
+    root_mode = stat.S_IMODE(args.cas_root.stat().st_mode)
+    if root_mode not in _CUSTODY_SHAPES:
+        raise SystemExit(
+            f"research-store: CAS root {args.cas_root} mode {root_mode:#o} "
+            "is outside the pinned custody shapes"
+        )
+    directory_mode, object_mode = _CUSTODY_SHAPES[root_mode]
+    return FilesystemResearchArchive(
         args.cas_root,
         max_object_bytes=args.max_object_bytes,
+        directory_mode=directory_mode,
+        object_mode=object_mode,
     )
+
+
+def _audit(args: argparse.Namespace) -> int:
+    archive = _audit_archive(args)
     result = ResearchKernelStore(
         trust_root=_trust_root(args.trust_root),
         archive=archive,
@@ -50,10 +76,7 @@ def _audit(args: argparse.Namespace) -> int:
 
 
 def _replay(args: argparse.Namespace) -> int:
-    archive = FilesystemResearchArchive(
-        args.cas_root,
-        max_object_bytes=args.max_object_bytes,
-    )
+    archive = _audit_archive(args)
     state = ResearchKernelStore(
         trust_root=_trust_root(args.trust_root),
         archive=archive,
