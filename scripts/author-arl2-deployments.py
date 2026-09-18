@@ -286,18 +286,26 @@ def _stat_directory(path: Path) -> dict[str, int]:
 def _generate_ed25519(engine):
     """One raw Ed25519 keypair: (private_32b, public_hex)."""
 
-    private = engine.generate_private_key(engine.Ed25519())
+    private = engine.generate_private_key(engine.Ed25519)
     return (
-        private.private_bytes(engine.Encoding.Raw, engine.PrivateFormat.Raw, engine.PublicFormat.Raw),
-        private.public_key().public_bytes(engine.Encoding.Raw, engine.PublicFormat.Raw).hex(),
+        private.private_bytes(
+            engine.Encoding.Raw, engine.PrivateFormat.Raw, engine.NoEncryption()
+        ),
+        private.public_key()
+        .public_bytes(engine.Encoding.Raw, engine.PublicFormat.Raw)
+        .hex(),
     )
 
 
 def _generate_x25519(engine):
-    private = engine.generate_private_key(engine.X25519())
+    private = engine.generate_private_key(engine.X25519)
     return (
-        private.private_bytes(engine.Encoding.Raw, engine.PrivateFormat.Raw, engine.PublicFormat.Raw),
-        private.public_key(engine.Encoding.Raw, engine.PublicFormat.Raw).hex(),
+        private.private_bytes(
+            engine.Encoding.Raw, engine.PrivateFormat.Raw, engine.NoEncryption()
+        ),
+        private.public_key()
+        .public_bytes(engine.Encoding.Raw, engine.PublicFormat.Raw)
+        .hex(),
     )
 
 
@@ -344,6 +352,7 @@ def main() -> int:
         Encoding = _serialization.Encoding
         PrivateFormat = _serialization.PrivateFormat
         PublicFormat = _serialization.PublicFormat
+        NoEncryption = _serialization.NoEncryption
 
         @staticmethod
         def generate_private_key(curve):
