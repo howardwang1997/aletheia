@@ -45,6 +45,7 @@ from aletheia.research_controller.contracts import (
 )
 from aletheia.research_controller.protocol_compilation_step import (
     ActionProtocolCategoryPolicy,
+    AuthorizedProtocolCompilationContext,
     DurableProtocolCompilationService,
     PreparedProtocolCompilation,
     ProtocolCompilationPolicyPin,
@@ -70,6 +71,7 @@ from aletheia.research_kernel.schemas import (
     ActionAuthorizedPayload,
     ActionKind,
     EventType,
+    canonical_json_bytes,
 )
 
 _TESTS = Path(__file__).resolve().parents[1]
@@ -1118,3 +1120,223 @@ def test_round_split_policy_rows_must_be_canonical() -> None:
             sealed_group_ids_sha256=_sha("round-one-groups"),
             template_bindings=(row, row),
         )
+
+
+# ---------------------------------------------------------------------------
+# merged round-split channel (Q13(b)): the campaign request's bindings ride
+# the compile context beside a binding-less policy pin
+# ---------------------------------------------------------------------------
+
+
+def _round_split_binding_round_two(
+    action_sha256: str, round_one: RoundSplitBindingPolicyV1
+) -> RoundSplitBindingPolicyV1:
+    """Round 2 mirrors the commissioned request: it spends round 1's bound
+    batch and its sealed set is the round-2 bound batch."""
+    round_one_bound = round_one.template_bindings[0].bound_batch_group_ids_sha256
+    sealed = _sha("round-two-groups")
+    return RoundSplitBindingPolicyV1(
+        dataset_content_sha256=round_one.dataset_content_sha256,
+        split_policy_sha256=round_one.split_policy_sha256,
+        round_index=2,
+        sealed_group_ids_sha256=sealed,
+        template_bindings=(
+            RoundSplitTemplateBindingV1(
+                action_sha256=action_sha256,
+                bound_batch_group_ids_sha256=sealed,
+                spent_group_ids_sha256=round_one_bound,
+                unspent_group_ids_sha256=sealed,
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize("which", ["first", "second"])
+def test_merged_round_split_protocol_registers(which: str) -> None:
+    case, question, action, authorized = _authorized_case()
+    first = _round_split_binding(action.object_sha256)
+    second = _round_split_binding_round_two(action.object_sha256, first)
+    chosen = first if which == "first" else second
+    request = _with_round_split_parameters(
+        _request(case, question, authorized), _round_split_parameter_values(chosen)
+    )
+    engine = sqlite_observation_engine()
+    _seed(engine, quest_id=case.quest_id, action_sha256=action.object_sha256)
+    policy = _policy(request)
+    assert policy.round_split_binding is None
+    service = DurableProtocolCompilationService(
+        kernel_store=_Kernel(case),
+        object_archive=_Archive(case),
+        provider=_Provider(request),
+        preparation_verifier=_Verifier(request),
+        compilation_policy=policy,
+        authority_binding=_binding(policy),
+        campaign_round_split_bindings=(first, second),
+        sessions=_sessions(engine),
+        database_clock=lambda _session: request.protocol.authored_at + timedelta(seconds=3),
+    )
+    projection = _projection(case, action)
+    write = service.compile_and_register(
+        wakeup=_wakeup(case), projection=projection, plan=plan_recovery_tick(projection)
+    )
+    assert ProtocolCompilationResult.model_validate(write.result_json).report.accepted
+
+
+@pytest.mark.parametrize(
+    "parameter_id",
+    ["dataset_content_sha256", "round_spent_group_ids"],
+)
+def test_merged_round_split_tampering_fails_closed(parameter_id: str) -> None:
+    case, question, action, authorized = _authorized_case()
+    first = _round_split_binding(action.object_sha256)
+    second = _round_split_binding_round_two(action.object_sha256, first)
+    values = {
+        **_round_split_parameter_values(first),
+        parameter_id: _sha("tampered-merged-value"),
+    }
+    request = _with_round_split_parameters(_request(case, question, authorized), values)
+    engine = sqlite_observation_engine()
+    _seed(engine, quest_id=case.quest_id, action_sha256=action.object_sha256)
+    policy = _policy(request)
+    service = DurableProtocolCompilationService(
+        kernel_store=_Kernel(case),
+        object_archive=_Archive(case),
+        provider=_Provider(request),
+        preparation_verifier=_Verifier(request),
+        compilation_policy=policy,
+        authority_binding=_binding(policy),
+        campaign_round_split_bindings=(first, second),
+        sessions=_sessions(engine),
+        database_clock=lambda _session: request.protocol.authored_at + timedelta(seconds=3),
+    )
+    projection = _projection(case, action)
+    with pytest.raises(
+        ProtocolCompilationStepError,
+        match="round split is not bound to its card-derived partition",
+    ) as record:
+        service.compile_and_register(
+            wakeup=_wakeup(case), projection=projection, plan=plan_recovery_tick(projection)
+        )
+    assert "no unique row" in str(record.value.__cause__)
+
+
+def test_merged_round_split_ambiguous_match_fails_closed() -> None:
+    case, question, action, authorized = _authorized_case()
+    first = _round_split_binding(action.object_sha256)
+    # same five-tuple under both rounds: the gate must count two matches and
+    # refuse rather than pick one silently
+    second = RoundSplitBindingPolicyV1.model_validate(
+        {**first.model_dump(mode="python"), "round_index": 2}
+    )
+    request = _with_round_split_parameters(
+        _request(case, question, authorized), _round_split_parameter_values(first)
+    )
+    engine = sqlite_observation_engine()
+    _seed(engine, quest_id=case.quest_id, action_sha256=action.object_sha256)
+    service = DurableProtocolCompilationService(
+        kernel_store=_Kernel(case),
+        object_archive=_Archive(case),
+        provider=_Provider(request),
+        preparation_verifier=_Verifier(request),
+        compilation_policy=_policy(request),
+        authority_binding=_binding(_policy(request)),
+        campaign_round_split_bindings=(first, second),
+        sessions=_sessions(engine),
+        database_clock=lambda _session: request.protocol.authored_at + timedelta(seconds=3),
+    )
+    projection = _projection(case, action)
+    with pytest.raises(
+        ProtocolCompilationStepError,
+        match="round split is not bound to its card-derived partition",
+    ):
+        service.compile_and_register(
+            wakeup=_wakeup(case), projection=projection, plan=plan_recovery_tick(projection)
+        )
+
+
+def test_merged_channel_service_rejects_bound_policies_and_foreign_round_sets() -> None:
+    case, question, action, authorized = _authorized_case()
+    first = _round_split_binding(action.object_sha256)
+    second = _round_split_binding_round_two(action.object_sha256, first)
+    request = _request(case, question, authorized)
+    engine = sqlite_observation_engine()
+    _seed(engine, quest_id=case.quest_id, action_sha256=action.object_sha256)
+    bound_policy = _policy(request).model_copy(update={"round_split_binding": first})
+    with pytest.raises(ValueError, match="binding-less policy"):
+        DurableProtocolCompilationService(
+            kernel_store=_Kernel(case),
+            object_archive=_Archive(case),
+            provider=_Provider(request),
+            preparation_verifier=_Verifier(request),
+            compilation_policy=bound_policy,
+            authority_binding=_binding(bound_policy),
+            campaign_round_split_bindings=(first, second),
+            sessions=_sessions(engine),
+        )
+    with pytest.raises(ValueError, match="rounds 1 and 2"):
+        DurableProtocolCompilationService(
+            kernel_store=_Kernel(case),
+            object_archive=_Archive(case),
+            provider=_Provider(request),
+            preparation_verifier=_Verifier(request),
+            compilation_policy=_policy(request),
+            authority_binding=_binding(_policy(request)),
+            campaign_round_split_bindings=(first,),
+            sessions=_sessions(engine),
+        )
+
+
+def _merged_context(bindings, *, bound_policy=None) -> AuthorizedProtocolCompilationContext:
+    case, question, action, authorized = _authorized_case()
+    request = _request(case, question, authorized)
+    policy = _policy(request)
+    if bound_policy is not None:
+        policy = policy.model_copy(update={"round_split_binding": bound_policy})
+    projection = _projection(case, action)
+    wakeup = _wakeup(case)
+    plan = plan_recovery_tick(projection)
+    proposed = tuple(
+        event for event in case.events if event.event_type is EventType.ACTION_PROPOSED
+    )
+    assert len(proposed) == 1
+    return AuthorizedProtocolCompilationContext(
+        wakeup_sha256=wakeup.wakeup_sha256,
+        recovery_projection_sha256=projection.projection_sha256,
+        plan_sha256=plan.plan_sha256,
+        quest_id=case.quest_id,
+        expected_stream_version=projection.audited_stream_version,
+        expected_tail_event_sha256=projection.audited_tail_event_sha256,
+        expected_snapshot_sha256=projection.audited_snapshot_sha256,
+        action=action,
+        action_proposed_event=proposed[0],
+        action_authorized_event=authorized,
+        graph_scope=request.protocol.graph_scope,
+        compilation_policy=policy,
+        latest_event_committed_at=authorized.committed_at,
+        campaign_round_split_bindings=bindings,
+    )
+
+
+def test_merged_channel_context_rejects_bound_policy_and_foreign_round_sets() -> None:
+    case, question, action, authorized = _authorized_case()
+    first = _round_split_binding(action.object_sha256)
+    second = _round_split_binding_round_two(action.object_sha256, first)
+    assert _merged_context((first, second)).campaign_round_split_bindings is not None
+    with pytest.raises(ValidationError, match="binding-less policy"):
+        _merged_context((first, second), bound_policy=first)
+    with pytest.raises(ValidationError, match="rounds 1 and 2"):
+        _merged_context((first,))
+    # the same round twice is a foreign round set even though each binding is
+    # individually valid; a five-tuple duplicated across BOTH rounds stays
+    # legal here and the compile gate refuses it instead
+    with pytest.raises(ValidationError, match="rounds 1 and 2"):
+        _merged_context((first, first))
+
+
+def test_merged_channel_field_keeps_old_context_canonical_bytes() -> None:
+    context = _merged_context(None)
+    # canonical dumps exclude None optionals, so a context authored before the
+    # merged channel carries byte-identical canonical bytes afterwards
+    assert b"campaign_round_split_bindings" not in canonical_json_bytes(context)
+    explicit = context.model_copy(update={"campaign_round_split_bindings": None})
+    assert canonical_json_bytes(explicit) == canonical_json_bytes(context)

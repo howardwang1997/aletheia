@@ -265,3 +265,96 @@ def test_runtime_config_source_drift_is_rejected_before_service_start(tmp_path: 
     )
     with pytest.raises(ControllerWorkerRPCProcessError, match="byte pin"):
         build_controller_worker_rpc_server_runtime(drifted)
+
+
+# ---------------------------------------------------------------------------
+# Q13(b): the campaign request pin on the compile RPC config
+# ---------------------------------------------------------------------------
+
+
+def _merged_campaign_request_document(tmp_path: Path):
+    """A minimal campaign request carrying two valid round-split bindings."""
+    from aletheia.research_controller.protocol_compilation_step import (
+        RoundSplitBindingPolicyV1,
+        RoundSplitTemplateBindingV1,
+    )
+
+    def binding(round_index: int, tag: str) -> RoundSplitBindingPolicyV1:
+        return RoundSplitBindingPolicyV1(
+            dataset_content_sha256=_sha("registered-content"),
+            split_policy_sha256=_sha("split-policy"),
+            round_index=round_index,
+            sealed_group_ids_sha256=_sha(f"{tag}-groups"),
+            template_bindings=(
+                RoundSplitTemplateBindingV1(
+                    action_sha256=_sha(f"{tag}-action"),
+                    bound_batch_group_ids_sha256=_sha(f"{tag}-batch"),
+                    spent_group_ids_sha256=_sha(f"{tag}-spent"),
+                    unspent_group_ids_sha256=_sha(f"{tag}-unspent"),
+                ),
+            ),
+        )
+
+    return {
+        "schema_name": "aletheia.arl2_question_campaign_request",
+        "round_split_bindings": [
+            item.model_dump(mode="json") for item in (binding(1, "round-one"), binding(2, "round-two"))
+        ],
+    }
+
+
+def test_campaign_request_pin_builds_the_merged_channel_or_fails_closed(
+    tmp_path: Path,
+) -> None:
+    deployment, config, _config_path, _context = _fixture(tmp_path)
+    assert config["compilation_policy"].get("round_split_binding") is None
+    request_file = (tmp_path / "staging" / "arl2-campaign-request.json").resolve()
+    request_file.parent.mkdir(parents=True, exist_ok=True)
+
+    def build_with(document, *, file_sha=None, **config_overrides):
+        payload = canonical_json_bytes(document)
+        request_file.write_bytes(payload)
+        pinned = canonical_json_bytes(
+            {
+                **config,
+                "campaign_request_path": str(request_file),
+                "campaign_request_file_sha256": file_sha
+                or hashlib.sha256(payload).hexdigest(),
+                **config_overrides,
+            }
+        )
+        return build_protocol_compilation_rpc_service(
+            deployment=deployment, configuration_bytes=pinned
+        )
+
+    handlers = build_with(_merged_campaign_request_document(tmp_path))
+    assert handlers.operations == (ControllerWorkerRPCOperation.COMPILE_PROTOCOL,)
+
+    # file bytes drift from the pin
+    document = _merged_campaign_request_document(tmp_path)
+    with pytest.raises(ValueError, match="campaign request differs from its byte pin"):
+        build_with(document, file_sha=_sha("drifted-request"))
+    # both rounds must be present
+    with pytest.raises(ValueError, match="must cover rounds 1 and 2"):
+        build_with(
+            {
+                **document,
+                "round_split_bindings": document["round_split_bindings"][:1],
+            }
+        )
+    # the file must be a campaign request
+    with pytest.raises(ValueError, match="round split bindings are invalid"):
+        build_with({**document, "schema_name": "aletheia.something.else"})
+    # validator rejections surface as the wrapped config error
+    with pytest.raises(ValueError, match="config is invalid"):
+        build_with(document, campaign_request_file_sha256=None)
+    with pytest.raises(ValueError, match="config is invalid"):
+        build_with(document, campaign_request_path="staging/arl2-campaign-request.json")
+    with pytest.raises(ValueError, match="config is invalid"):
+        build_with(
+            document,
+            compilation_policy={
+                **config["compilation_policy"],
+                "round_split_binding": document["round_split_bindings"][0],
+            },
+        )
