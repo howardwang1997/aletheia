@@ -373,6 +373,14 @@ def test_campaign_request_and_deployments_name_the_frozen_program_scope(
         str(working_root / "configs" / "arl2-request-state.json")
     )
     assert request_facts["program_id"] == program_id
+    # the assignments frozen into the deployed signing authorities bind the
+    # same program scope (they compare proposals with exact equality)
+    controller_assignment, observation_assignment = (
+        deployments._kernel_policy_assignments(activation_facts)
+    )
+    for assignment in (controller_assignment, observation_assignment):
+        assert assignment.quest_id == state["quest_id"]
+        assert assignment.scope_binding.program_id == program_id
 
 
 def test_programless_or_disagreeing_activations_are_refused(

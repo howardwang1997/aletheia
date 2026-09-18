@@ -878,6 +878,36 @@ def _load_request_inputs(state_path: str) -> dict:
     }
 
 
+def _kernel_policy_assignments(activation: dict) -> tuple:
+    """Controller/observation assignments bound to the stream's frozen scope.
+
+    The deployed signing authorities compare proposals against these bindings
+    with exact equality while every runtime proposal derives its scope from
+    the audited stream head, so the binding must carry the activation's
+    program scope; a program-less binding would refuse every proposal once
+    the stream head carries prg_... .
+    """
+
+    from aletheia.observations.kernel_authority import ObservationKernelPolicyAssignment
+    from aletheia.research_controller.kernel_authority import ControllerKernelPolicyAssignment
+    from aletheia.research_kernel.commands import ResearchScopeBinding
+
+    scope_binding = ResearchScopeBinding(
+        quest_id=activation["quest_id"], program_id=activation["program_id"]
+    )
+    controller_assignment = ControllerKernelPolicyAssignment(
+        quest_id=activation["quest_id"],
+        scope_binding=scope_binding,
+        authorization_policy=activation["policy"],
+    )
+    observation_assignment = ObservationKernelPolicyAssignment(
+        quest_id=activation["quest_id"],
+        scope_binding=scope_binding,
+        authorization_policy=activation["policy"],
+    )
+    return controller_assignment, observation_assignment
+
+
 # --------------------------------------------------------------------------
 # Keys
 # --------------------------------------------------------------------------
@@ -2162,9 +2192,6 @@ def _build_service_deployments(
     """Author the eleven live configs/deployments (three deferred services skipped)."""
 
     from aletheia.execution.registration_custody import QualificationExecutionRegistrationConfig
-    from aletheia.observations.kernel_authority import ObservationKernelPolicyAssignment
-    from aletheia.research_kernel.commands import ResearchScopeBinding
-    from aletheia.research_controller.kernel_authority import ControllerKernelPolicyAssignment
     from aletheia.research_controller_rpc_runtime import ControllerWorkerRPCServerDeployment
     from aletheia.research_kernel.schemas import canonical_json_bytes
 
@@ -2214,19 +2241,7 @@ def _build_service_deployments(
     # carries the stream's frozen program scope so the exact-match signing
     # authorities accept the runtime proposals (which derive their scope from
     # the audited stream head, not from this file)
-    scope_binding = ResearchScopeBinding(
-        quest_id=activation["quest_id"], program_id=activation["program_id"]
-    )
-    controller_assignment = ControllerKernelPolicyAssignment(
-        quest_id=activation["quest_id"],
-        scope_binding=scope_binding,
-        authorization_policy=activation["policy"],
-    )
-    observation_assignment = ObservationKernelPolicyAssignment(
-        quest_id=activation["quest_id"],
-        scope_binding=scope_binding,
-        authorization_policy=activation["policy"],
-    )
+    controller_assignment, observation_assignment = _kernel_policy_assignments(activation)
 
     def header(service: str, *, with_database: bool = True) -> dict:
         pin = _pin_for(closure, service)
