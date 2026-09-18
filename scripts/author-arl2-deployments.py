@@ -42,16 +42,21 @@ Inputs, all from earlier kit scripts - nothing is hand-typed:
 Identity plan (runbook "Box layout"): one gid shared by the driver and
 every service; uids - the driver and its four role subprocesses, one uid
 for the eleven worker-facing services, one per kernel-command signer, one
-for the executor.  The CAS root stays owned by the driver identity (the
-authorities script created it that way), so --driver-uid/--driver-gid MUST
-equal the CAS root's owner, and the gid must be the driver identity's
-primary group: the writable-root custody check pins st_uid==euid AND
-st_gid==egid (research_store/cas.py:94-101).
+for the executor, plus a dedicated uid for the worker role and the driver
+uid for atomic-admission (a CAS writer).  The CAS root stays owned by the
+driver identity (the authorities script created it that way), so
+--driver-uid/--driver-gid MUST equal the CAS root's owner, and the gid
+must be the driver identity's primary group: the writable-root custody
+check pins st_uid==euid AND st_gid==egid (research_store/cas.py:94-101).
 
-The script is neutral to the Q10/Q11/Q12 uid-topology contradictions: it
-authors what the schemas accept, pinning the true intended ownership, and
-the failures surface at service start or at the first driver carry pass -
-exactly the surfaces the PI's resolution decisions address.
+Custody topology (PI decision Q10(b), 2026-09-18): with the CAS root at
+0750 the reader services (--service-uid) and the worker role
+(--worker-uid) compose read-only archives through the group class at
+uids DISTINCT from the owner; atomic-admission and the driver share the
+owner uid as the only writers; the spool root follows the same mode
+(0750, group-read for the driver, publication locks owner-only).  A 0700
+root keeps the legacy shape where the worker role must ride the driver
+uid and no distinct-uid reader can compose - the runbook's Q12 refusals.
 
 Timestamps: one prepared_at T0 for the reader, every service pin, the
 worker composition, every role deployment, and the driver config; pin
@@ -231,7 +236,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--resource-catalog", required=True, help="frozen resource catalog document (W1 step 4)")
     parser.add_argument("--driver-uid", type=int, required=True, help="driver identity uid (must own the CAS root)")
     parser.add_argument("--driver-gid", type=int, required=True, help="shared gid; the driver identity's primary group")
-    parser.add_argument("--service-uid", type=int, required=True, help="uid for the eleven worker-facing services")
+    parser.add_argument("--service-uid", type=int, required=True, help="uid for the worker-facing services (readers stay DISTINCT from the CAS owner uid)")
+    parser.add_argument("--worker-uid", type=int, required=True, help="uid for the worker role subprocess (distinct from driver/services; primary gid = --driver-gid)")
+    parser.add_argument("--admission-uid", type=int, required=True, help="uid for atomic-admission (a CAS writer: equals --driver-uid under the 0750 topology)")
     parser.add_argument("--action-signer-uid", type=int, required=True, help="uid for the action kernel-command signer")
     parser.add_argument("--transition-signer-uid", type=int, required=True, help="uid for the transition kernel-command signer")
     parser.add_argument("--cuprate-uid", type=int, required=True, help="uid for the cuprate diagnostic service / executor")
@@ -394,11 +401,26 @@ def main() -> int:
             f"{args.driver_uid}:{args.driver_gid}; create the driver identity with the "
             "CAS root's gid as its primary group and re-run"
         )
-    if cas_metadata["mode"] != 0o700:
-        _fail(f"CAS root mode is {cas_metadata['mode']:#o}; the writer pin requires 0o700")
+    if cas_metadata["mode"] not in (0o700, 0o750):
+        _fail(f"CAS root mode is {cas_metadata['mode']:#o}; the writer pin requires 0700 or 0750")
+    # atomic-admission is a CAS writer: its runtime pins cas_owner_uid ==
+    # process_uid, so it always rides the driver identity
+    if args.admission_uid != args.driver_uid:
+        _fail("atomic-admission must run at the driver uid (writable CAS custody)")
+    if cas_metadata["mode"] == 0o750:
+        # the read-only compose passes only through the group class at a
+        # uid distinct from the owner: the worker role and the reader
+        # services must both stay off the driver uid
+        if args.worker_uid in (args.driver_uid, args.service_uid):
+            _fail("the 0750 CAS topology requires a worker-role uid distinct from driver/services")
+    elif args.worker_uid != args.driver_uid:
+        # the 0700 root admits no read-only compose at any uid; the worker
+        # role can only ride the driver identity there (legacy shape)
+        _fail("the 0700 CAS topology cannot host a distinct worker-role uid; use 0750")
 
     service_uid = {
         **{name: args.service_uid for name in WORKER_SERVICES},
+        "atomic_admission": args.admission_uid,
         "action_kernel_command": args.action_signer_uid,
         "transition_kernel_command": args.transition_signer_uid,
         CUPRATE_SERVICE: args.cuprate_uid,
@@ -409,6 +431,7 @@ def main() -> int:
         driver_uid=args.driver_uid,
         driver_gid=args.driver_gid,
         service_uid=service_uid,
+        cas_directory_mode=cas_metadata["mode"],
     )
 
     keys = _generate_keys(
@@ -511,6 +534,7 @@ def main() -> int:
         schema_revision=schema_revision,
         service_uid=service_uid,
         driver_uid=args.driver_uid,
+        worker_uid=args.worker_uid,
         driver_gid=args.driver_gid,
     )
 
@@ -530,6 +554,7 @@ def main() -> int:
         schema_revision=schema_revision,
         driver_user=args.driver_user,
         driver_uid=args.driver_uid,
+        worker_uid=args.worker_uid,
         driver_gid=args.driver_gid,
     )
 
@@ -593,7 +618,14 @@ _KEY_OWNERSHIP: dict[str, tuple[str, ...]] = {
 }
 
 
-def _build_layout(working: Path, *, driver_uid: int, driver_gid: int, service_uid: dict[str, int]) -> dict:
+def _build_layout(
+    working: Path,
+    *,
+    driver_uid: int,
+    driver_gid: int,
+    service_uid: dict[str, int],
+    cas_directory_mode: int,
+) -> dict:
     """Create every custody directory once, with its final ownership."""
 
     layout: dict[str, object] = {"working": working}
@@ -672,13 +704,15 @@ def _build_layout(working: Path, *, driver_uid: int, driver_gid: int, service_ui
         gid=driver_gid,
     )
 
-    # The action proposal spool: 0700 at the proposal service's uid (the
-    # pin fixes the mode and the deployment pins the owner; Q11 records
-    # the standing driver-read contradiction).
+    # The action proposal spool: the mode follows the CAS topology. At 0750
+    # the driver identity reads the published payloads through the group
+    # class (Q11: the pin widens to 0750, group write stays denied, the
+    # publication locks stay owner-only 0600); at 0700 the legacy
+    # owner-private shape holds and the driver read stays contradictory.
     layout["action_proposal_spool_root"] = working / "spool" / "action-proposals"
     _mkdir_pinned(
         layout["action_proposal_spool_root"],
-        mode=0o700,
+        mode=0o750 if cas_directory_mode == 0o750 else 0o700,
         uid=service_uid["action_proposal"],
         gid=driver_gid,
     )
@@ -2043,6 +2077,7 @@ def _build_service_deployments(
     schema_revision,
     service_uid,
     driver_uid,
+    worker_uid,
     driver_gid,
 ) -> dict:
     """Author the eleven live configs/deployments (three deferred services skipped)."""
@@ -2159,7 +2194,7 @@ def _build_service_deployments(
             "owner_gid": spool_metadata["gid"],
             "device_id": spool_metadata["device_id"],
             "inode": spool_metadata["inode"],
-            "directory_mode": 0o700,
+            "directory_mode": spool_metadata["mode"],
         },
         "prepared_at": _iso(prepared_at),
         "direct_scientific_authority": False,
@@ -2325,7 +2360,7 @@ def _build_service_deployments(
             "cas_group_gid": cas_metadata["gid"],
             "cas_device_id": cas_metadata["device_id"],
             "cas_inode": cas_metadata["inode"],
-            "cas_directory_mode": 0o700,
+            "cas_directory_mode": cas_metadata["mode"],
             "max_object_bytes": MAX_OBJECT_BYTES,
             "read_only": False,
             "snapshot_archive_write_allowed": True,
@@ -2468,12 +2503,27 @@ def _build_service_deployments(
         module_name, attribute = _SERVICE_FACTORIES[service]
         factory_path = release / "aletheia" / f"{module_name.rsplit('.', 1)[-1]}.py"
         socket_metadata = _stat_directory(layout["sockets"][service])
+        if service in COMMAND_SERVICES:
+            # the two kernel-command signers face the DRIVER, not the
+            # worker: worker_composition excludes their operations from the
+            # worker's set, and every signing connection arrives from the
+            # driver's own _carry_signing_work pass
+            peer_uid = driver_uid
+        elif service == CUPRATE_SERVICE:
+            # no in-window RPC client holds this surface: the worker never
+            # gains RUN_CUPRATE_DIAGNOSTIC (worker_composition excludes it)
+            # and the out-of-band executor invokes the capability in
+            # process; pinned to the commissioning identity so the
+            # distinct-peer rule (peer != process uid) stays satisfiable
+            peer_uid = driver_uid
+        else:
+            peer_uid = worker_uid
         deployment = ControllerWorkerRPCServerDeployment(
             service_pin=pin,
             controller_id=controller_paths["controller_id"],
             controller_manifest_sha256=controller_paths["manifest_sha256"],
             worker_process_principal_id=WORKER_PRINCIPAL,
-            worker_peer_uid=driver_uid,
+            worker_peer_uid=peer_uid,
             worker_peer_gid=driver_gid,
             process_uid=service_uid[service],
             process_gid=driver_gid,
@@ -2547,6 +2597,7 @@ def _build_driver(
     schema_revision,
     driver_user,
     driver_uid,
+    worker_uid,
     driver_gid,
 ) -> tuple:
     from aletheia.arl2_runtime import (
@@ -2566,6 +2617,10 @@ def _build_driver(
         cas_group_gid=cas_metadata["gid"],
         cas_device_id=cas_metadata["device_id"],
         cas_inode=cas_metadata["inode"],
+        # the writer pin must carry the LIVE root mode, not the model
+        # default: a 0750 shared-custody root composed at the 0700 default
+        # refuses every driver start (arl2_runtime._compose_archive)
+        cas_directory_mode=cas_metadata["mode"],
         max_object_bytes=MAX_OBJECT_BYTES,
     )
     kernel_command_services = ARL2KernelCommandServiceSetV1(
@@ -2612,6 +2667,11 @@ def _build_driver(
                 role=role,
                 deployment_manifest_path=roles[role]["path"],
                 deployment_manifest_file_sha256=roles[role]["file_sha256"],
+                **(
+                    {"process_uid": worker_uid}
+                    if role == "worker" and worker_uid != driver_uid
+                    else {}
+                ),
             )
             for role in ROLE_ORDER
         ),
@@ -2791,6 +2851,7 @@ def _write_state_file(
             "user": args.driver_user,
             "uid": args.driver_uid,
             "gid": args.driver_gid,
+            "worker_role_uid": args.worker_uid,
             "configuration_id": driver_config.configuration_id,
             "configuration_path": driver_files["configuration_path"],
             "configuration_file_sha256": driver_files["configuration_file_sha256"],
@@ -2866,6 +2927,12 @@ def _write_state_file(
             "request_id": request["request_id"],
             "request_path": request["request_path"],
             "request_sha256": request["request_sha256"],
+            # byte pin of the request file itself: the merged round-split
+            # channel (Q13(b)) re-reads these bytes at PAUSE-1 authoring and
+            # inside the deployed compile service, which also ties the
+            # document to this quest id (three-part all-or-nothing pin)
+            "request_file_sha256": request["request_file_sha256"],
+            "quest_id": request["quest_id"],
         },
         "catalogs": closure["catalogs"],
         "offline_verification": state_extra,

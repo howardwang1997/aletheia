@@ -502,17 +502,22 @@ class WriteOnceActionProposalSpool(ActionProposalSubmissionStorePort):
             value is None for value in custody_values
         ):
             raise ValueError("action proposal spool custody pin must be complete")
-        if directory_mode not in (None, 0o700):
-            raise ValueError("action proposal spool custody requires mode 0700")
+        if directory_mode not in (None, 0o700, 0o750):
+            raise ValueError("action proposal spool custody requires mode 0700 or 0750")
+        # a 0750 root carries group-read for the driver identity at a distinct
+        # uid; publication locks stay owner-only 0600 (the driver reads the
+        # published payload bytes, never the lock)
+        self._directory_mode = directory_mode if directory_mode is not None else 0o700
+        self._payload_mode = 0o640 if self._directory_mode == 0o750 else 0o400
         candidate = Path(root)
         if candidate.is_symlink():
             raise ActionProposalError("action proposal spool root cannot be a symlink")
-        candidate.mkdir(parents=True, exist_ok=True, mode=0o700)
+        candidate.mkdir(parents=True, exist_ok=True, mode=self._directory_mode)
         metadata = candidate.lstat()
         if (
             candidate.is_symlink()
             or not stat.S_ISDIR(metadata.st_mode)
-            or stat.S_IMODE(metadata.st_mode) != 0o700
+            or stat.S_IMODE(metadata.st_mode) != self._directory_mode
         ):
             raise ActionProposalError("action proposal spool root must be a private directory")
         self.root = candidate.resolve(strict=True)
@@ -532,7 +537,7 @@ class WriteOnceActionProposalSpool(ActionProposalSubmissionStorePort):
             resolved != self.root
             or self.root.is_symlink()
             or not stat.S_ISDIR(metadata.st_mode)
-            or stat.S_IMODE(metadata.st_mode) != 0o700
+            or stat.S_IMODE(metadata.st_mode) != self._directory_mode
         ):
             raise ActionProposalError("action proposal spool root changed custody")
         if (
@@ -632,9 +637,16 @@ class WriteOnceActionProposalSpool(ActionProposalSubmissionStorePort):
             current /= component
             if create:
                 try:
-                    current.mkdir(mode=0o700)
+                    current.mkdir(mode=self._directory_mode)
                 except FileExistsError:
                     pass
+                else:
+                    # a group-stripping umask (e.g. 077) would create the
+                    # parent below the pinned 0750 mode; re-pin the mode
+                    # explicitly on directories this process created, the
+                    # same fixup the CAS parent chain applies (cas.py
+                    # _open_parent)
+                    current.chmod(self._directory_mode)
             try:
                 metadata = current.lstat()
             except FileNotFoundError as exc:
@@ -644,7 +656,7 @@ class WriteOnceActionProposalSpool(ActionProposalSubmissionStorePort):
             if (
                 current.is_symlink()
                 or not stat.S_ISDIR(metadata.st_mode)
-                or stat.S_IMODE(metadata.st_mode) != 0o700
+                or stat.S_IMODE(metadata.st_mode) != self._directory_mode
                 or (
                     self._custody_pin is not None
                     and (metadata.st_uid, metadata.st_gid, metadata.st_dev) != self._custody_pin[:3]
@@ -728,7 +740,7 @@ class WriteOnceActionProposalSpool(ActionProposalSubmissionStorePort):
         pending = target.with_name(f".{target.name}.pending")
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
         try:
-            descriptor = os.open(pending, flags, 0o400)
+            descriptor = os.open(pending, flags, self._payload_mode)
         except OSError as exc:
             raise ActionProposalError("action proposal spool refused pending publication") from exc
         complete = False
@@ -741,7 +753,7 @@ class WriteOnceActionProposalSpool(ActionProposalSubmissionStorePort):
                     raise ActionProposalError("action proposal spool write made no progress")
                 offset += written
             os.fsync(descriptor)
-            os.fchmod(descriptor, 0o400)
+            os.fchmod(descriptor, self._payload_mode)
             complete = True
         finally:
             os.close(descriptor)
@@ -782,7 +794,7 @@ class WriteOnceActionProposalSpool(ActionProposalSubmissionStorePort):
             if (
                 not stat.S_ISREG(before.st_mode)
                 or before.st_nlink != 1
-                or stat.S_IMODE(before.st_mode) != 0o400
+                or stat.S_IMODE(before.st_mode) != self._payload_mode
                 or (
                     self._custody_pin is not None
                     and (before.st_uid, before.st_gid, before.st_dev) != self._custody_pin[:3]

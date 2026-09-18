@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import stat
 import threading
 from datetime import datetime, timedelta, timezone
 
@@ -234,11 +235,29 @@ class _DraftVerifier:
         return frozen
 
 
-def _service(tmp_path, step: ControllerStep, provider=None):
+def _service(tmp_path, step: ControllerStep, provider=None, spool_directory_mode=None):
     request = _request(step)
     context = _Context(request)
     provider = provider or _Provider()
-    spool = WriteOnceActionProposalSpool(tmp_path / "proposal-spool", authority_binding=_binding())
+    if spool_directory_mode is None:
+        spool = WriteOnceActionProposalSpool(
+            tmp_path / "proposal-spool", authority_binding=_binding()
+        )
+    else:
+        # directory_mode is one member of the five-part custody pin, so the
+        # widened spool always carries the complete pin
+        root = tmp_path / "proposal-spool"
+        root.mkdir(mode=spool_directory_mode)
+        metadata = root.stat()
+        spool = WriteOnceActionProposalSpool(
+            root,
+            authority_binding=_binding(),
+            owner_uid=metadata.st_uid,
+            owner_gid=metadata.st_gid,
+            device_id=metadata.st_dev,
+            inode=metadata.st_ino,
+            directory_mode=spool_directory_mode,
+        )
     service = ActionProposalMaterializationService(
         context_source=context,
         provider=provider,
@@ -464,3 +483,46 @@ def test_submission_bytes_are_canonical_and_contain_no_signature_or_private_key(
     assert b"private_key" not in payload
     assert b"signature" not in payload
     assert b'"kernel_command_signed":false' in payload
+
+
+# ---------------------------------------------------------------------------
+# Q10(b): the spool under the shared-custody topology (root 0750, payload 0640)
+# ---------------------------------------------------------------------------
+
+
+def test_spool_supports_group_reader_custody(tmp_path) -> None:
+    service, _, _, spool = _service(
+        tmp_path, ControllerStep.PROPOSE_ACTION, spool_directory_mode=0o750
+    )
+    assert stat.S_IMODE(spool.root.stat().st_mode) == 0o750
+    projection = _projection(ControllerStep.PROPOSE_ACTION)
+    submission = service.materialize_and_submit(
+        wakeup=_wakeup(), projection=projection, plan=plan_recovery_tick(projection)
+    )
+    target = (
+        spool.root
+        / "requests"
+        / submission.request.request_sha256[:2]
+        / f"{submission.request.request_sha256}.json"
+    )
+    assert stat.S_IMODE(target.parent.stat().st_mode) == 0o750
+    assert stat.S_IMODE(target.stat().st_mode) == 0o640
+    lock = target.with_name(f".{target.name}.lock")
+    assert stat.S_IMODE(lock.stat().st_mode) == 0o600
+    assert spool.load(request_sha256=submission.request.request_sha256) == submission
+
+
+def test_spool_group_reader_pin_rejects_owner_only_custody(tmp_path) -> None:
+    root = tmp_path / "narrow-spool"
+    root.mkdir(mode=0o700)
+    metadata = root.stat()
+    with pytest.raises(ActionProposalError, match="private directory"):
+        WriteOnceActionProposalSpool(
+            root,
+            authority_binding=_binding(),
+            owner_uid=metadata.st_uid,
+            owner_gid=metadata.st_gid,
+            device_id=metadata.st_dev,
+            inode=metadata.st_ino,
+            directory_mode=0o750,
+        )

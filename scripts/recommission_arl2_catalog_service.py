@@ -455,10 +455,42 @@ def main() -> int:
                 item.request_sha256,
             ))),
         )
+        # merged round-split channel (Q13(b)): when the deployment state pins
+        # the campaign request bytes, the compile config carries the pin (path,
+        # file sha, quest id) so the deployed service loads the
+        # commissioning-time bindings and runs the merged gate. Absent pin
+        # (older states, or a policy that carries its own round_split_binding)
+        # leaves the fields out; a partial pin fails loudly below, and the
+        # config validator still rejects a request-pinned-plus-bound-policy
+        # combination.
+        request_entry = state.get("request") or {}
+        # all three keys travel together or the pin is absent; a PARTIAL
+        # pin (path or file sha without the quest id) is a loud refusal,
+        # not a silent downgrade to the binding-less gate
+        request_pin_keys = ("request_path", "request_file_sha256", "quest_id")
+        present_pin_keys = tuple(
+            key for key in request_pin_keys if request_entry.get(key)
+        )
+        if len(present_pin_keys) == len(request_pin_keys):
+            campaign_request_fields = {
+                "campaign_request_path": request_entry["request_path"],
+                "campaign_request_file_sha256": request_entry["request_file_sha256"],
+                "campaign_request_quest_id": request_entry["quest_id"],
+            }
+        elif present_pin_keys:
+            _fail(
+                "deployment state request pin is incomplete ("
+                f"{', '.join(present_pin_keys)} present; path, file sha, and "
+                "quest id must travel together) - re-run "
+                "author-arl2-deployments.py to re-author the state"
+            )
+        else:
+            campaign_request_fields = {}
         config = {
             "schema_name": "aletheia.protocol_compilation_rpc_service_config",
             "schema_version": 1,
             **header,
+            **campaign_request_fields,
             "compilation_policy": policy.model_dump(mode="json"),
             "provider_policy": provider_policy.model_dump(mode="json"),
             "provider_implementation_source_path": str(provider_source),
@@ -686,7 +718,7 @@ def main() -> int:
             controller_id=header["controller_id"],
             controller_manifest_sha256=header["controller_manifest_sha256"],
             worker_process_principal_id=header["worker_process_principal_id"],
-            worker_peer_uid=state["driver"]["uid"],
+            worker_peer_uid=state["driver"].get("worker_role_uid", state["driver"]["uid"]),
             worker_peer_gid=state["driver"]["gid"],
             process_uid=pin.peer_uid,
             process_gid=pin.peer_gid,

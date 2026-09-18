@@ -227,6 +227,13 @@ class AuthorizedProtocolCompilationContext(ControllerModel):
     action_authorized_event: ResearchEvent
     graph_scope: ProtocolScope
     compilation_policy: ProtocolCompilationPolicyPin
+    # ARL-2 merged channel: the campaign request's commissioning-time
+    # round-split bindings, loaded service-side from the byte-pinned request
+    # file when the frozen policy pin carries no round_split_binding. The
+    # request's template rows key on placeholder action identities, so the
+    # compile gate matches the five pinned values against every (binding,
+    # row) pair instead of selecting a row by action sha.
+    campaign_round_split_bindings: tuple[RoundSplitBindingPolicyV1, ...] | None = None
     latest_event_committed_at: AwareDatetime
     direct_kernel_mutation_allowed: Literal[False] = False
     execution_authorization_allowed: Literal[False] = False
@@ -260,6 +267,17 @@ class AuthorizedProtocolCompilationContext(ControllerModel):
             or not self.action.proposed_at <= proposed.committed_at <= authorized.committed_at
         ):
             raise ValueError("protocol compilation context escaped its authorized Kernel action")
+        if (
+            self.campaign_round_split_bindings is not None
+            and (
+                self.compilation_policy.round_split_binding is not None
+                or tuple(item.round_index for item in self.campaign_round_split_bindings)
+                != (1, 2)
+            )
+        ):
+            raise ValueError(
+                "merged round split bindings require a binding-less policy and rounds 1 and 2"
+            )
         return self
 
     @property
@@ -384,6 +402,45 @@ def _verify_round_split_binding(
             raise ValueError(f"prepared protocol round split disagrees at {parameter_id}")
 
 
+def _verify_merged_round_split_binding(
+    *,
+    protocol: ProtocolIR,
+    bindings: tuple[RoundSplitBindingPolicyV1, ...],
+) -> None:
+    """Require the five caller parameters to match exactly one pre-registered row.
+
+    The merged channel carries the campaign request's commissioning-time
+    bindings, whose template rows key on placeholder action identities, so
+    row selection by action sha is impossible here. The check instead
+    matches the five pinned values against every (binding, row) pair and
+    fails closed on zero or multiple matches: the pre-registered rounds
+    carry disjoint partitions, so a compliant protocol matches exactly one
+    pair. Naming the CURRENT round needs the campaign-level round index,
+    which nothing in the compile context carries; per-round re-derivation
+    from the card stays with the campaign driver and the replay verifier.
+    """
+
+    matches = 0
+    for binding in bindings:
+        for row in binding.template_bindings:
+            expected = {
+                _ROUND_DATASET_PARAMETER_ID: binding.dataset_content_sha256,
+                _ROUND_SEALED_PARAMETER_ID: binding.sealed_group_ids_sha256,
+                _ROUND_BOUND_PARAMETER_ID: row.bound_batch_group_ids_sha256,
+                _ROUND_SPENT_PARAMETER_ID: row.spent_group_ids_sha256,
+                _ROUND_UNSPENT_PARAMETER_ID: row.unspent_group_ids_sha256,
+            }
+            if all(
+                _single_bound_parameter_value(protocol, parameter_id) == value
+                for parameter_id, value in expected.items()
+            ):
+                matches += 1
+    if matches != 1:
+        raise ValueError(
+            "merged round split bindings have no unique row for the prepared protocol"
+        )
+
+
 def verify_prepared_protocol(
     *,
     context: AuthorizedProtocolCompilationContext,
@@ -432,6 +489,16 @@ def verify_prepared_protocol(
                 raise ProtocolCompilationStepError(
                     "prepared protocol round split is not bound to its card-derived partition"
                 ) from exc
+        elif context.campaign_round_split_bindings is not None:
+            try:
+                _verify_merged_round_split_binding(
+                    protocol=protocol,
+                    bindings=context.campaign_round_split_bindings,
+                )
+            except Exception as exc:  # noqa: BLE001 - card-derived split facts fail closed
+                raise ProtocolCompilationStepError(
+                    "prepared protocol round split is not bound to its card-derived partition"
+                ) from exc
         return prepared
     except ProtocolCompilationStepError:
         raise
@@ -462,6 +529,7 @@ class DurableProtocolCompilationService:
         preparation_verifier: ProtocolCompilationPreparationVerificationPort,
         compilation_policy: ProtocolCompilationPolicyPin,
         authority_binding: ControllerStepAuthorityBinding,
+        campaign_round_split_bindings: tuple[RoundSplitBindingPolicyV1, ...] | None = None,
         sessions: SessionScopeFactory = session_scope,
         database_clock: DatabaseClock = _database_time,
     ) -> None:
@@ -486,11 +554,28 @@ class DurableProtocolCompilationService:
             or binding.policy_sha256 != policy.policy_sha256
         ):
             raise ValueError("protocol compiler differs from its pinned policy authority")
+        if campaign_round_split_bindings is not None:
+            merged = tuple(
+                RoundSplitBindingPolicyV1.model_validate(item.model_dump(mode="python"))
+                if isinstance(item, RoundSplitBindingPolicyV1)
+                else RoundSplitBindingPolicyV1.model_validate(item)
+                for item in campaign_round_split_bindings
+            )
+            if (
+                policy.round_split_binding is not None
+                or tuple(item.round_index for item in merged) != (1, 2)
+            ):
+                raise ValueError(
+                    "merged round split bindings require a binding-less policy and rounds 1 and 2"
+                )
+        else:
+            merged = None
         self._kernel_store = kernel_store
         self._object_archive = object_archive
         self._provider = provider
         self._preparation_verifier = preparation_verifier
         self._policy = policy
+        self._campaign_round_split_bindings = merged
         self._sessions = sessions
         self._database_clock = database_clock
         self.authority_binding = binding
@@ -648,6 +733,7 @@ class DurableProtocolCompilationService:
             action_authorized_event=authorized[0],
             graph_scope=graph_scope,
             compilation_policy=self._policy,
+            campaign_round_split_bindings=self._campaign_round_split_bindings,
             latest_event_committed_at=audit.events[-1].committed_at,
         )
 

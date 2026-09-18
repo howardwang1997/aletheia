@@ -586,7 +586,9 @@ def _run_provider(args, state: dict, state_path: Path) -> int:
     )
     from aletheia.protocols.schemas import ProtocolIR, ProtocolScope
     from aletheia.research_controller.action_proposals import SubmittedActionProposal
-    from aletheia.research_controller.protocol_compilation_step import ProtocolCompilationPolicyPin
+    from aletheia.research_controller.protocol_compilation_step import (
+        ProtocolCompilationPolicyPin,
+    )
     from aletheia.research_controller.protocol_template_provider import (
         FrozenProtocolCompilationTemplate,
     )
@@ -675,37 +677,52 @@ def _run_provider(args, state: dict, state_path: Path) -> int:
     source_sha = source.source_budget_authorization_sha256
 
     rebased, contract_hashes = _rebase_protocol(staged, graph_scope)
-    if policy.round_split_binding is None:
-        # Fail closed rather than authoring a round protocol whose card-derived
-        # partition parameters nothing would check. The commissioned pin cannot
-        # carry the binding (action shas are placeholders at W2), and a per-round
-        # re-freeze cannot add it locally: the binding sha and policy sha are
-        # service-PIN fields (authority_binding_sha256s, service_policy_sha256
-        # in research_controller_protocol_compilation_runtime.py), so moving the
-        # policy moves the pin and with it the byte-preserved worker
-        # composition. PI decision surface, same doctrine as the kernel-reader
-        # refusals: pick the wiring (deployment re-authoring with binding rows
-        # at the pause, or a library change letting the driver merge the
-        # request's round_split_bindings into the compile context) and re-run.
-        _fail(
-            "the commissioned compilation policy carries no round_split_binding; "
-            "refusing to author a round protocol without its card-derived "
-            "partition parameters (see the runbook's round-split wiring note)"
-        )
-    rows = [
-        row
-        for row in policy.round_split_binding.template_bindings
-        if row.action_sha256 == action_sha
-    ]
-    if len(rows) != 1:
-        _fail("round-split policy has no unique row for the authorized action")
-    values = {
-        "dataset_content_sha256": policy.round_split_binding.dataset_content_sha256,
-        "round_bound_batch_group_ids": rows[0].bound_batch_group_ids_sha256,
-        "round_sealed_group_ids": policy.round_split_binding.sealed_group_ids_sha256,
-        "round_spent_group_ids": rows[0].spent_group_ids_sha256,
-        "round_unspent_group_ids": rows[0].unspent_group_ids_sha256,
-    }
+    if policy.round_split_binding is not None:
+        rows = [
+            row
+            for row in policy.round_split_binding.template_bindings
+            if row.action_sha256 == action_sha
+        ]
+        if len(rows) != 1:
+            _fail("round-split policy has no unique row for the authorized action")
+        values = {
+            "dataset_content_sha256": policy.round_split_binding.dataset_content_sha256,
+            "round_bound_batch_group_ids": rows[0].bound_batch_group_ids_sha256,
+            "round_sealed_group_ids": policy.round_split_binding.sealed_group_ids_sha256,
+            "round_spent_group_ids": rows[0].spent_group_ids_sha256,
+            "round_unspent_group_ids": rows[0].unspent_group_ids_sha256,
+        }
+    else:
+        # Merged channel (PI decision Q13(b), 2026-09-18): the commissioned
+        # policy pin stays binding-less and the compile service enforces the
+        # campaign request's commissioning-time bindings, loaded from the
+        # byte-pinned request file; the five values come from the round's
+        # binding (_merged_round_split_values).
+        request_entry = state.get("request") or {}
+        request_path = request_entry.get("request_path")
+        request_file_sha = request_entry.get("request_file_sha256")
+        if not request_path or not request_file_sha:
+            _fail(
+                "deployment state carries no campaign request pin; the merged "
+                "round-split channel needs request_path and request_file_sha256 "
+                "(re-run author-arl2-deployments.py)"
+            )
+        request_bytes = _read_bytes(Path(request_path))
+        if _sha256_bytes(request_bytes) != request_file_sha:
+            _fail("campaign request file differs from its state pin")
+        try:
+            document = json.loads(request_bytes)
+        except ValueError as exc:
+            _fail(f"campaign request is not readable JSON: {exc}")
+        # same quest tie the deployed compile service enforces on its config
+        # pin: the byte-pinned document must belong to THIS deployment's
+        # quest, not merely to any quest with matching file bytes
+        if document.get("quest_id") != state.get("quest_id"):
+            _fail(
+                "campaign request belongs to another quest "
+                f"({document.get('quest_id')} vs {state.get('quest_id')})"
+            )
+        values = _merged_round_split_values(document, round_index=args.round_index)
     if set(values) != set(ROUND_SPLIT_PARAMETER_IDS):
         _fail(
             "round-split value keys drift from ROUND_SPLIT_PARAMETER_IDS; the "
@@ -858,23 +875,61 @@ def _load_worker_config(state: dict):
         _fail(f"worker composition no longer parses: {exc}")
 
 
+def _merged_round_split_values(document, *, round_index: int) -> dict:
+    """Derive one round's five round-split values from a parsed campaign request.
+
+    Merged channel (PI decision Q13(b), 2026-09-18): the request's template
+    rows key on placeholder action identities (unknowable at authoring time),
+    so this selects the round's binding by round_index and requires exactly
+    one template row; the deployed compile gate then matches the five values
+    uniquely across every row.
+    """
+    from aletheia.research_controller.protocol_compilation_step import (
+        RoundSplitBindingPolicyV1,
+    )
+
+    try:
+        raw_bindings = document["round_split_bindings"]
+    except (KeyError, TypeError) as exc:
+        _fail(f"campaign request carries no readable round_split_bindings: {exc}")
+    bindings = [RoundSplitBindingPolicyV1.model_validate(item) for item in raw_bindings]
+    selected = [item for item in bindings if item.round_index == round_index]
+    if len(selected) != 1:
+        _fail(f"campaign request has no unique round {round_index} binding")
+    binding = selected[0]
+    if len(binding.template_bindings) != 1:
+        _fail(
+            "merged round-split authoring requires exactly one template row "
+            "per round binding (the deployed gate matches values uniquely)"
+        )
+    row = binding.template_bindings[0]
+    return {
+        "dataset_content_sha256": binding.dataset_content_sha256,
+        "round_bound_batch_group_ids": row.bound_batch_group_ids_sha256,
+        "round_sealed_group_ids": binding.sealed_group_ids_sha256,
+        "round_spent_group_ids": row.spent_group_ids_sha256,
+        "round_unspent_group_ids": row.unspent_group_ids_sha256,
+    }
+
+
 def _kernel_audit_child(worker, database_url: str, quest_id: str, action_sha: str, out_path: Path) -> None:
     """Run inside the forked child at the driver identity (the CAS owner).
 
-    The deployed topology pins the kernel CAS owner-only (arl2_runtime pins
-    the writer to 0700 custody), so the standalone read-only composition is
-    structurally unavailable: cas.py's read-only branch gives the owner the
-    owner permission class, which on a writer root always carries the write
-    bit, and the six kernel_reader-bearing services refuse at startup over
-    the same root (runbook Q12, a PI decision surface). The one audit path
-    that exists in this deployment is the driver's own: open the writer
-    archive as the root's owner identity and audit through the kernel
-    store, exactly what arl2_runtime does for its role cycles. This child
-    mirrors that: CAS custody stat (lstat + no symlink), writer archive at
-    the pinned (0700, 0400) custody, kernel store, then the kernel-stream
-    audit and the compilation-row read. It performs no writes through the
-    handle. Emits the distilled audit facts plus the registered row as one
-    JSON document.
+    The deployed topology pins the kernel CAS to the writer's custody mode
+    (arl2_runtime composes the writer at the configured root mode, 0700 or
+    the 0750 shared-custody widen), so the standalone read-only
+    composition is structurally unavailable for this child: cas.py's
+    read-only branch gives the owner the owner permission class, which on
+    a writer root always carries the write bit. The one audit path that
+    exists in this deployment is the driver's own: open the writer archive
+    as the root's owner identity and audit through the kernel store,
+    exactly what arl2_runtime does for its role cycles. This child mirrors
+    that: CAS custody stat (lstat + no symlink), writer archive at the
+    kernel_reader-pinned root mode with its paired object mode (0750/0440
+    or 0700/0400), kernel store, then the kernel-stream audit and the
+    compilation-row read. It performs no writes through the handle. Emits
+    the distilled audit facts plus the registered row as one JSON
+    document.
     """
 
     from sqlalchemy import create_engine
@@ -932,13 +987,14 @@ def _kernel_audit_child(worker, database_url: str, quest_id: str, action_sha: st
 
     try:
         # the writer-handle construction the runtime itself performs
-        # (arl2_runtime._compose_archive); the child only reads through it
+        # (arl2_runtime._compose_archive): root mode from the commissioned
+        # pin with its paired object mode; the child only reads through it
         archive = FilesystemResearchArchive(
             cas,
             max_object_bytes=kernel_reader.max_object_bytes,
             read_only=False,
-            directory_mode=0o700,
-            object_mode=0o400,
+            directory_mode=kernel_reader.cas_directory_mode,
+            object_mode=0o440 if kernel_reader.cas_directory_mode == 0o750 else 0o400,
         )
     except ResearchArchiveError as exc:
         _fail(f"kernel archive refuses the mirrored writer composition: {exc}")

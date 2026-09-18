@@ -53,6 +53,7 @@ import io
 import json
 import math
 import os
+import stat
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -119,9 +120,9 @@ def _canonical_bytes(payload) -> bytes:
     return canonical_json_bytes(payload)
 
 
-def _write_canonical(path: Path, payload) -> tuple[str, str]:
+def _write_canonical(path: Path, payload, *, mode: int | None = None) -> tuple[str, str]:
     data = _canonical_bytes(payload)
-    return _write_bytes(path, data)
+    return _write_bytes(path, data, mode=mode)
 
 
 def _write_bytes(path: Path, data: bytes, *, mode: int | None = None) -> tuple[str, str]:
@@ -373,16 +374,26 @@ def main() -> int:
     policy = ResearchAuthorizationPolicyV1.model_validate(authority["policy"])
     # This script runs as the driver uid, the identity that OWNS the writer
     # CAS root, so a read_only compose is impossible here: cas.py gives the
-    # owner the owner permission class, which on a 0700 writer root always
+    # owner the owner permission class, which on a writer root always
     # carries the write bit. Open the writer-handle archive exactly as the
-    # runtime driver does (arl2_runtime._compose_archive) and audit through
-    # it read-only-in-intent; nothing in this script writes through it.
+    # runtime driver does (arl2_runtime._compose_archive): at the LIVE root
+    # mode with its paired object mode, so re-authoring after the 0750
+    # shared-custody widen composes the same way the deployed driver does.
+    cas_root = Path(authority["cas_root"])
+    if cas_root.is_symlink():
+        _fail(f"CAS root {cas_root} is a symlink; the writer pin requires the real directory")
+    try:
+        root_mode = stat.S_IMODE(os.lstat(cas_root).st_mode)
+    except FileNotFoundError:
+        _fail(f"CAS root {cas_root} does not exist at authoring time")
+    if root_mode not in (0o700, 0o750):
+        _fail(f"CAS root mode is {root_mode:#o}; the writer pin requires 0700 or 0750")
     archive = FilesystemResearchArchive(
-        Path(authority["cas_root"]),
+        cas_root,
         max_object_bytes=64 * 1024 * 1024,
         read_only=False,
-        directory_mode=0o700,
-        object_mode=0o400,
+        directory_mode=root_mode,
+        object_mode=0o440 if root_mode == 0o750 else 0o400,
     )
     store = ResearchKernelStore(trust_root=trust_root, archive=archive, genesis_policy=policy)
     audit = store.audit(quest_id)
@@ -430,8 +441,11 @@ def main() -> int:
             bound_group_ids=tuple(batch_groups[index]),
         )
 
+    # 0640: the merged round-split channel (Q13(b)) has the deployed compile
+    # service (uid 2361, gid 2301) re-read these bytes at compile time, so
+    # the file needs group-read under the arl2drv:arl2grp writer default
     request_file, _request_file_sha = _write_canonical(
-        staging / "arl2-campaign-request.json", request
+        staging / "arl2-campaign-request.json", request, mode=0o640
     )
     # The state pins the request's own canonical sha (model dump excluding
     # the derived request_id), never the staged file's bytes sha: the

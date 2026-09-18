@@ -54,7 +54,7 @@ def build_action_proposal_rpc_service(*, deployment, configuration_bytes):
         owner_gid: int = Field(ge=1, le=2**31 - 1)
         device_id: int = Field(ge=0)
         inode: int = Field(ge=1)
-        directory_mode: Literal[0o700] = 0o700
+        directory_mode: Literal[0o700, 0o750] = 0o700
 
         @model_validator(mode="after")
         def _path_is_canonical(self):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import subprocess
 import sys
 from datetime import timedelta
@@ -12,6 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 import aletheia.arl2_runtime as arl2_runtime_module
 from aletheia.arl2_runtime import (
@@ -1087,3 +1089,99 @@ def test_request_content_passes_the_dataset_card_verifier(tmp_path: Path) -> Non
     card = RegisteredDatasetV1.model_validate_json(Path(fx.request.dataset_card_path).read_bytes())
     verify_dataset_card(card, Path(fx.request.dataset_content_path).read_bytes())
     assert canonical_sha256(card) == canonical_sha256(fx.replay.card)
+
+
+# ---------------------------------------------------------------------------
+# Q10(b): the shared-custody writer root (0750) and the worker role uid
+# ---------------------------------------------------------------------------
+
+
+def test_role_invocation_pins_the_worker_process_uid() -> None:
+    payload = dict(
+        role="worker",
+        deployment_manifest_path="/opt/aletheia/worker-deployment.json",
+        deployment_manifest_file_sha256=_sha("worker-deployment"),
+    )
+    arl2_runtime_module.ARL2RoleInvocationV1(**payload, process_uid=2365)
+    for refused in (0, 2**31, -1):
+        with pytest.raises(ValidationError):
+            arl2_runtime_module.ARL2RoleInvocationV1(**payload, process_uid=refused)
+
+
+def test_wake_roles_prepends_sudo_only_for_the_pinned_worker_uid(tmp_path: Path) -> None:
+    fx = _driver_fixture(tmp_path)
+    invoked: list[list[str]] = []
+    config = _role_manifest_config(fx, tmp_path)
+    pinned_uid = fx.config.process_uid + 5
+    updated = []
+    for invocation in config.role_invocations:
+        if invocation.role == "worker":
+            invocation = invocation.model_copy(update={"process_uid": pinned_uid})
+        updated.append(invocation)
+    config = _config_variant(fx.config, role_invocations=tuple(updated))
+    driver = _driver(fx, config=config, runner=invoked.append)
+    driver._wake_roles()
+    assert len(invoked) == 4
+    for command, invocation in zip(invoked, config.role_invocations, strict=True):
+        wrapped = [
+            sys.executable,
+            config.runtime_entrypoint_path,
+            "--deployment-manifest",
+            invocation.deployment_manifest_path,
+            "--deployment-manifest-sha256",
+            invocation.deployment_manifest_file_sha256,
+            "--once",
+        ]
+        if invocation.process_uid is None:
+            assert command == wrapped
+        else:
+            assert command == [
+                "/usr/bin/sudo",
+                "-n",
+                "-u",
+                f"#{invocation.process_uid}",
+                "--preserve-env=ALETHEIA_DATABASE_URL,PYTHONPATH,"
+                "PYTHONDONTWRITEBYTECODE",
+                *wrapped,
+            ]
+    assert invoked[2][:4] == ["/usr/bin/sudo", "-n", "-u", f"#{pinned_uid}"]
+
+
+def test_kernel_writer_composes_the_shared_custody_root(tmp_path: Path) -> None:
+    fx = _driver_fixture(tmp_path)
+    root = Path(fx.config.kernel_writer.cas_root)
+    # the flip mirrors the box procedure: cas.py checks EVERY parent at
+    # directory_mode and every read at object_mode, so an owner-only tree
+    # moves to shared custody recursively or not at all
+    for path in sorted(root.rglob("*"), reverse=True):
+        path.chmod(0o750 if path.is_dir() else 0o440)
+    root.chmod(0o750)
+    shared = _config_variant(
+        fx.config,
+        kernel_writer=fx.config.kernel_writer.model_copy(
+            update={"cas_directory_mode": 0o750}
+        ),
+    )
+    archive = _driver(fx, config=shared)._compose_archive()
+    assert archive.object_mode == 0o440
+    digest = archive._write_once(b"arl2-shared-custody-object")
+    stored = next(root.rglob(digest))
+    assert stat.S_IMODE(stored.stat().st_mode) == 0o440
+    assert stat.S_IMODE(stored.parent.stat().st_mode) == 0o750
+    # the owner-only pin must refuse the widened root instead of reading it
+    with pytest.raises(ARL2RuntimeError, match="custody differs"):
+        _driver(fx, config=fx.config)._compose_archive()
+
+
+def test_kernel_writer_config_rejects_modes_outside_the_two_custody_shapes(
+    tmp_path: Path,
+) -> None:
+    fx = _driver_fixture(tmp_path)
+    for refused in (0o751, 0o755, 0o770):
+        with pytest.raises(ValidationError):
+            fx.config.kernel_writer.model_validate(
+                {
+                    **fx.config.kernel_writer.model_dump(mode="python"),
+                    "cas_directory_mode": refused,
+                }
+            )

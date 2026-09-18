@@ -64,6 +64,18 @@ def build_protocol_compilation_rpc_service(*, deployment, configuration_bytes):
         provider_policy: FrozenProtocolTemplateProviderPolicyPin
         provider_implementation_source_path: str
         provider_implementation_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+        # ARL-2 merged round-split channel: the byte-pinned campaign request
+        # whose commissioning-time round_split_bindings the compile gate
+        # enforces when the frozen policy pin carries none. The pin is a
+        # three-part all-or-nothing tuple (path, file sha, quest id) and is
+        # mutually exclusive with a policy round_split_binding; the quest id
+        # ties the pinned file to THIS campaign so a consistently-pinned
+        # foreign request cannot reach the compile gate.
+        campaign_request_path: str | None = None
+        campaign_request_file_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+        campaign_request_quest_id: str | None = Field(
+            default=None, pattern=r"^qst_[0-9a-f]{32}$"
+        )
         prepared_at: AwareDatetime
         direct_scientific_authority: Literal[False] = False
         kernel_signing_key_loaded: Literal[False] = False
@@ -91,6 +103,27 @@ def build_protocol_compilation_rpc_service(*, deployment, configuration_bytes):
                 or self.provider_implementation_source_path != os.path.normpath(source)
             ):
                 raise ValueError("protocol compilation RPC authority or policies are not closed")
+            request_path = self.campaign_request_path
+            if len(
+                {
+                    request_path is None,
+                    self.campaign_request_file_sha256 is None,
+                    self.campaign_request_quest_id is None,
+                }
+            ) != 1:
+                raise ValueError(
+                    "campaign request pin must carry a path, a file sha, and a quest id together"
+                )
+            if (
+                request_path is not None
+                and self.compilation_policy.round_split_binding is not None
+            ):
+                raise ValueError("campaign request pin conflicts with a policy round split binding")
+            if request_path is not None and (
+                not request_path.startswith("/")
+                or request_path != os.path.normpath(request_path)
+            ):
+                raise ValueError("campaign request path must be canonical and absolute")
             return self
 
     def unique_object(pairs):
@@ -101,10 +134,10 @@ def build_protocol_compilation_rpc_service(*, deployment, configuration_bytes):
             raise ValueError(f"duplicate protocol compilation RPC config keys: {duplicates}")
         return dict(pairs)
 
-    def fresh_source_bytes(path: Path, expected_sha256: str) -> bytes:
+    def fresh_source_bytes(path: Path, expected_sha256: str, *, label: str = "provider source") -> bytes:
         try:
             if path.resolve(strict=True) != path or path.is_symlink():
-                raise ValueError("protocol provider source traverses a symlink")
+                raise ValueError(f"protocol {label} traverses a symlink")
             descriptor = os.open(
                 path,
                 os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
@@ -116,13 +149,13 @@ def build_protocol_compilation_rpc_service(*, deployment, configuration_bytes):
                     or before.st_nlink != 1
                     or not 0 < before.st_size <= 4 * 1024 * 1024
                 ):
-                    raise ValueError("protocol provider source is not bounded regular data")
+                    raise ValueError(f"protocol {label} is not bounded regular data")
                 chunks = []
                 remaining = before.st_size
                 while remaining:
                     chunk = os.read(descriptor, min(65_536, remaining))
                     if not chunk:
-                        raise ValueError("protocol provider source ended unexpectedly")
+                        raise ValueError(f"protocol {label} ended unexpectedly")
                     chunks.append(chunk)
                     remaining -= len(chunk)
                 after = os.fstat(descriptor)
@@ -139,14 +172,14 @@ def build_protocol_compilation_rpc_service(*, deployment, configuration_bytes):
                     after.st_mtime_ns,
                     after.st_ctime_ns,
                 ):
-                    raise ValueError("protocol provider source changed while read")
+                    raise ValueError(f"protocol {label} changed while read")
             finally:
                 os.close(descriptor)
         except OSError as exc:
-            raise ValueError("protocol provider source is unavailable") from exc
+            raise ValueError(f"protocol {label} is unavailable") from exc
         payload = b"".join(chunks)
         if hashlib.sha256(payload).hexdigest() != expected_sha256:
-            raise ValueError("protocol provider source differs from its byte pin")
+            raise ValueError(f"protocol {label} differs from its byte pin")
         return payload
 
     try:
@@ -221,14 +254,44 @@ def build_protocol_compilation_rpc_service(*, deployment, configuration_bytes):
         compilation_policy=config.compilation_policy,
         implementation_sha256=config.provider_implementation_source_sha256,
     )
+    campaign_bindings = None
+    if config.campaign_request_path is not None:
+        from aletheia.research_controller.protocol_compilation_step import (
+            RoundSplitBindingPolicyV1,
+        )
+
+        request_payload = fresh_source_bytes(
+            Path(config.campaign_request_path),
+            config.campaign_request_file_sha256,
+            label="campaign request",
+        )
+        try:
+            request_document = json.loads(request_payload, object_pairs_hook=unique_object)
+            raw_bindings = request_document["round_split_bindings"]
+            if request_document.get("schema_name") != "aletheia.arl2_question_campaign_request":
+                raise ValueError("campaign request pin does not name a campaign request")
+            campaign_bindings = tuple(
+                RoundSplitBindingPolicyV1.model_validate(item) for item in raw_bindings
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("campaign request round split bindings are invalid") from exc
+        if request_document.get("quest_id") != config.campaign_request_quest_id:
+            raise ValueError("campaign request pin belongs to another quest")
+        if tuple(item.round_index for item in campaign_bindings) != (1, 2):
+            raise ValueError("campaign request round split bindings must cover rounds 1 and 2")
     service = DurableProtocolCompilationService(
         kernel_store=kernel_store,
         object_archive=archive,
         provider=provider,
         preparation_verifier=provider,
         compilation_policy=config.compilation_policy,
+        campaign_round_split_bindings=campaign_bindings,
         authority_binding=binding,
     )
+    if service._campaign_round_split_bindings != campaign_bindings:
+        # guards the one wiring line above: silently dropping the loaded
+        # bindings would disable the merged gate in every deployed compile
+        raise ValueError("protocol compilation service dropped its campaign round split bindings")
 
     def compile_protocol(payload):
         if type(payload) is not ControllerTickRPCPayload:
