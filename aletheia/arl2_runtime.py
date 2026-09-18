@@ -161,7 +161,7 @@ class ARL2KernelWriterConfigV1(KernelModel):
     cas_group_gid: int = Field(ge=0)
     cas_device_id: int = Field(ge=0)
     cas_inode: int = Field(gt=0)
-    cas_directory_mode: Literal[0o700] = 0o700
+    cas_directory_mode: Literal[0o700, 0o750] = 0o700
     max_object_bytes: int = Field(ge=1, le=1024**3)
     read_only: Literal[False] = False
 
@@ -179,6 +179,7 @@ class ARL2RoleInvocationV1(KernelModel):
     role: Literal["kernel_dispatcher", "terminal_dispatcher", "worker", "delivery_reconciler"]
     deployment_manifest_path: str
     deployment_manifest_file_sha256: str = Field(pattern=_SHA256_PATTERN)
+    process_uid: int | None = Field(default=None, ge=1, le=2**31 - 1)
 
     @model_validator(mode="after")
     def _manifest_path_is_canonical(self) -> "ARL2RoleInvocationV1":
@@ -761,8 +762,11 @@ class ARL2QuestionCampaignDriver:
             path,
             max_object_bytes=writer.max_object_bytes,
             read_only=False,
-            directory_mode=0o700,
-            object_mode=0o400,
+            directory_mode=writer.cas_directory_mode,
+            # the 0750 writer root pairs with group-readable objects so the
+            # kernel_reader services and the worker role compose read-only
+            # archives through the group class at distinct uids
+            object_mode=0o440 if writer.cas_directory_mode == 0o750 else 0o400,
         )
 
     def _load_implementation_sources(self) -> dict[str, tuple[Path, bytes]]:
@@ -953,6 +957,20 @@ class ARL2QuestionCampaignDriver:
                 invocation.deployment_manifest_file_sha256,
                 "--once",
             ]
+            if invocation.process_uid is not None:
+                # the worker role runs at a uid distinct from this driver so
+                # its read-only CAS compose passes through the group class;
+                # the numeric sudo form keeps the pin uid-only (no name
+                # coupling) and the sudoers rule pins the interpreter
+                command = [
+                    "/usr/bin/sudo",
+                    "-n",
+                    "-u",
+                    f"#{invocation.process_uid}",
+                    "--preserve-env=ALETHEIA_DATABASE_URL,PYTHONPATH,"
+                    "PYTHONDONTWRITEBYTECODE",
+                    *command,
+                ]
             if self._runner is None:
                 try:
                     completed = subprocess.run(

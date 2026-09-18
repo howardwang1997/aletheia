@@ -686,7 +686,7 @@ def main() -> int:
             controller_id=header["controller_id"],
             controller_manifest_sha256=header["controller_manifest_sha256"],
             worker_process_principal_id=header["worker_process_principal_id"],
-            worker_peer_uid=state["driver"]["uid"],
+            worker_peer_uid=state["driver"].get("worker_role_uid", state["driver"]["uid"]),
             worker_peer_gid=state["driver"]["gid"],
             process_uid=pin.peer_uid,
             process_gid=pin.peer_gid,
