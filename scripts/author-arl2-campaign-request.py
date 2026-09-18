@@ -119,9 +119,9 @@ def _canonical_bytes(payload) -> bytes:
     return canonical_json_bytes(payload)
 
 
-def _write_canonical(path: Path, payload) -> tuple[str, str]:
+def _write_canonical(path: Path, payload, *, mode: int | None = None) -> tuple[str, str]:
     data = _canonical_bytes(payload)
-    return _write_bytes(path, data)
+    return _write_bytes(path, data, mode=mode)
 
 
 def _write_bytes(path: Path, data: bytes, *, mode: int | None = None) -> tuple[str, str]:
@@ -430,8 +430,11 @@ def main() -> int:
             bound_group_ids=tuple(batch_groups[index]),
         )
 
+    # 0640: the merged round-split channel (Q13(b)) has the deployed compile
+    # service (uid 2361, gid 2301) re-read these bytes at compile time, so
+    # the file needs group-read under the arl2drv:arl2grp writer default
     request_file, _request_file_sha = _write_canonical(
-        staging / "arl2-campaign-request.json", request
+        staging / "arl2-campaign-request.json", request, mode=0o640
     )
     # The state pins the request's own canonical sha (model dump excluding
     # the derived request_id), never the staged file's bytes sha: the

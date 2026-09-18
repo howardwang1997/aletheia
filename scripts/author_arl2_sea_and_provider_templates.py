@@ -586,7 +586,10 @@ def _run_provider(args, state: dict, state_path: Path) -> int:
     )
     from aletheia.protocols.schemas import ProtocolIR, ProtocolScope
     from aletheia.research_controller.action_proposals import SubmittedActionProposal
-    from aletheia.research_controller.protocol_compilation_step import ProtocolCompilationPolicyPin
+    from aletheia.research_controller.protocol_compilation_step import (
+        ProtocolCompilationPolicyPin,
+        RoundSplitBindingPolicyV1,
+    )
     from aletheia.research_controller.protocol_template_provider import (
         FrozenProtocolCompilationTemplate,
     )
@@ -675,37 +678,66 @@ def _run_provider(args, state: dict, state_path: Path) -> int:
     source_sha = source.source_budget_authorization_sha256
 
     rebased, contract_hashes = _rebase_protocol(staged, graph_scope)
-    if policy.round_split_binding is None:
-        # Fail closed rather than authoring a round protocol whose card-derived
-        # partition parameters nothing would check. The commissioned pin cannot
-        # carry the binding (action shas are placeholders at W2), and a per-round
-        # re-freeze cannot add it locally: the binding sha and policy sha are
-        # service-PIN fields (authority_binding_sha256s, service_policy_sha256
-        # in research_controller_protocol_compilation_runtime.py), so moving the
-        # policy moves the pin and with it the byte-preserved worker
-        # composition. PI decision surface, same doctrine as the kernel-reader
-        # refusals: pick the wiring (deployment re-authoring with binding rows
-        # at the pause, or a library change letting the driver merge the
-        # request's round_split_bindings into the compile context) and re-run.
-        _fail(
-            "the commissioned compilation policy carries no round_split_binding; "
-            "refusing to author a round protocol without its card-derived "
-            "partition parameters (see the runbook's round-split wiring note)"
-        )
-    rows = [
-        row
-        for row in policy.round_split_binding.template_bindings
-        if row.action_sha256 == action_sha
-    ]
-    if len(rows) != 1:
-        _fail("round-split policy has no unique row for the authorized action")
-    values = {
-        "dataset_content_sha256": policy.round_split_binding.dataset_content_sha256,
-        "round_bound_batch_group_ids": rows[0].bound_batch_group_ids_sha256,
-        "round_sealed_group_ids": policy.round_split_binding.sealed_group_ids_sha256,
-        "round_spent_group_ids": rows[0].spent_group_ids_sha256,
-        "round_unspent_group_ids": rows[0].unspent_group_ids_sha256,
-    }
+    if policy.round_split_binding is not None:
+        rows = [
+            row
+            for row in policy.round_split_binding.template_bindings
+            if row.action_sha256 == action_sha
+        ]
+        if len(rows) != 1:
+            _fail("round-split policy has no unique row for the authorized action")
+        values = {
+            "dataset_content_sha256": policy.round_split_binding.dataset_content_sha256,
+            "round_bound_batch_group_ids": rows[0].bound_batch_group_ids_sha256,
+            "round_sealed_group_ids": policy.round_split_binding.sealed_group_ids_sha256,
+            "round_spent_group_ids": rows[0].spent_group_ids_sha256,
+            "round_unspent_group_ids": rows[0].unspent_group_ids_sha256,
+        }
+    else:
+        # Merged channel (PI decision Q13(b), 2026-09-18): the commissioned
+        # policy pin stays binding-less and the compile service enforces the
+        # campaign request's commissioning-time bindings, loaded from the
+        # byte-pinned request file. The request's template rows key on
+        # placeholder action identities, so this authoring step selects the
+        # round binding by --round-index and requires exactly one row; the
+        # deployed gate matches the five values uniquely across every row.
+        request_entry = state.get("request") or {}
+        request_path = request_entry.get("request_path")
+        request_file_sha = request_entry.get("request_file_sha256")
+        if not request_path or not request_file_sha:
+            _fail(
+                "deployment state carries no campaign request pin; the merged "
+                "round-split channel needs request_path and request_file_sha256 "
+                "(re-run author-arl2-deployments.py)"
+            )
+        request_bytes = _read_bytes(Path(request_path))
+        if _sha256_bytes(request_bytes) != request_file_sha:
+            _fail("campaign request file differs from its state pin")
+        try:
+            document = json.loads(request_bytes)
+            raw_bindings = document["round_split_bindings"]
+        except (KeyError, TypeError, ValueError) as exc:
+            _fail(f"campaign request carries no readable round_split_bindings: {exc}")
+        bindings = [
+            RoundSplitBindingPolicyV1.model_validate(item) for item in raw_bindings
+        ]
+        selected = [item for item in bindings if item.round_index == args.round_index]
+        if len(selected) != 1:
+            _fail(f"campaign request has no unique round {args.round_index} binding")
+        binding = selected[0]
+        if len(binding.template_bindings) != 1:
+            _fail(
+                "merged round-split authoring requires exactly one template row "
+                "per round binding (the deployed gate matches values uniquely)"
+            )
+        row = binding.template_bindings[0]
+        values = {
+            "dataset_content_sha256": binding.dataset_content_sha256,
+            "round_bound_batch_group_ids": row.bound_batch_group_ids_sha256,
+            "round_sealed_group_ids": binding.sealed_group_ids_sha256,
+            "round_spent_group_ids": row.spent_group_ids_sha256,
+            "round_unspent_group_ids": row.unspent_group_ids_sha256,
+        }
     if set(values) != set(ROUND_SPLIT_PARAMETER_IDS):
         _fail(
             "round-split value keys drift from ROUND_SPLIT_PARAMETER_IDS; the "

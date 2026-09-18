@@ -455,10 +455,26 @@ def main() -> int:
                 item.request_sha256,
             ))),
         )
+        # merged round-split channel (Q13(b)): when the deployment state pins
+        # the campaign request bytes, the compile config carries the pin so
+        # the deployed service loads the commissioning-time bindings and runs
+        # the merged gate. Absent pin (older states, or a policy that carries
+        # its own round_split_binding) leaves the fields out; the config
+        # validator rejects a request pin combined with a bound policy.
+        request_entry = state.get("request") or {}
+        campaign_request_fields = (
+            {
+                "campaign_request_path": request_entry["request_path"],
+                "campaign_request_file_sha256": request_entry["request_file_sha256"],
+            }
+            if request_entry.get("request_path") and request_entry.get("request_file_sha256")
+            else {}
+        )
         config = {
             "schema_name": "aletheia.protocol_compilation_rpc_service_config",
             "schema_version": 1,
             **header,
+            **campaign_request_fields,
             "compilation_policy": policy.model_dump(mode="json"),
             "provider_policy": provider_policy.model_dump(mode="json"),
             "provider_implementation_source_path": str(provider_source),

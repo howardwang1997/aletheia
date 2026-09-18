@@ -2908,6 +2908,10 @@ def _write_state_file(
             "request_id": request["request_id"],
             "request_path": request["request_path"],
             "request_sha256": request["request_sha256"],
+            # byte pin of the request file itself: the merged round-split
+            # channel (Q13(b)) re-reads these bytes at PAUSE-1 authoring and
+            # inside the deployed compile service
+            "request_file_sha256": request["request_file_sha256"],
         },
         "catalogs": closure["catalogs"],
         "offline_verification": state_extra,
