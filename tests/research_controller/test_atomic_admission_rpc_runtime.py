@@ -503,10 +503,33 @@ def test_atomic_admission_factory_rejects_kernel_command_anchor_on_own_manifest(
     rebound["authority_bindings"][kernel_index]["service_manifest_sha256"] = (
         deployment.service_pin.service_manifest_sha256
     )
+    # Re-sign the pin and the config against the rebound bindings so every
+    # other clause of the deployment check stays consistent and the refusal
+    # can only come from the self-anchored kernel-command binding itself.
+    rebound_bindings = sorted(
+        (
+            ControllerStepAuthorityBinding.model_validate(item)
+            for item in rebound["authority_bindings"]
+        ),
+        key=lambda item: item.binding_sha256,
+    )
+    reanchored_pin = ControllerWorkerRPCServicePin.model_validate(
+        {
+            **deployment.service_pin.model_dump(mode="json", exclude={"service_id"}),
+            "authority_binding_sha256s": tuple(
+                item.binding_sha256 for item in rebound_bindings
+            ),
+        }
+    )
+    rebound["authority_bindings"] = [
+        item.model_dump(mode="json") for item in rebound_bindings
+    ]
+    rebound["service_id"] = reanchored_pin.service_id
+    rebound["service_pin_sha256"] = reanchored_pin.pin_sha256
 
     with pytest.raises(ValueError, match="differs from deployment or authority"):
         build_atomic_admission_rpc_service(
-            deployment=deployment,
+            deployment=deployment.model_copy(update={"service_pin": reanchored_pin}),
             configuration_bytes=canonical_json_bytes(rebound),
         )
 

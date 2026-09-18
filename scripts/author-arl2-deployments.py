@@ -1657,8 +1657,11 @@ def _build_service_pins(
         "policy_sha256": activation["policy_sha256"],
         "prepared_at": _iso(prepared_at),
     }
+    kernel_command_authority_manifest_path = (
+        layout["identity_manifests"] / "kernel-command-authority.json"
+    )
     kernel_command_authority_sha = _write_canonical(
-        layout["identity_manifests"] / "kernel-command-authority.json",
+        kernel_command_authority_manifest_path,
         canonical_json_bytes(kernel_command_authority_entry),
         mode=0o644,
         uid=driver_uid,
@@ -1790,6 +1793,10 @@ def _build_service_pins(
             "manifest_paths": manifest_paths,
             "worker_manifest_sha256": worker_manifest_sha,
             "worker_manifest_path": str(worker_manifest_path),
+            "kernel_command_authority_manifest_sha256": kernel_command_authority_sha,
+            "kernel_command_authority_manifest_path": str(
+                kernel_command_authority_manifest_path
+            ),
         },
         "catalogs": {
             "capability": _sha256_bytes(_read_bytes(capability_catalog)),
