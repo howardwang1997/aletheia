@@ -242,6 +242,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--action-signer-uid", type=int, required=True, help="uid for the action kernel-command signer")
     parser.add_argument("--transition-signer-uid", type=int, required=True, help="uid for the transition kernel-command signer")
     parser.add_argument("--cuprate-uid", type=int, required=True, help="uid for the cuprate diagnostic service / executor")
+    parser.add_argument("--validation-uid", type=int, required=True, help="uid for independent-validation (F9-v2 archive writer; readers reach the 0750 root through the group class)")
     parser.add_argument("--driver-user", default="arl2drv", help="unix user the driver-control helper starts (default arl2drv)")
     parser.add_argument("--valid-hours", type=float, default=96.0, help="pin validity window in hours (default 96)")
     parser.add_argument("--deadline-hours", type=float, default=24.0, help="campaign deadline hours after prepared_at (default 24)")
@@ -417,6 +418,24 @@ def main() -> int:
         # the 0700 root admits no read-only compose at any uid; the worker
         # role can only ride the driver identity there (legacy shape)
         _fail("the 0700 CAS topology cannot host a distinct worker-role uid; use 0750")
+    # The F9-v2 validation archive is written by the independent-validation
+    # service and read by the sibling reader services and atomic-admission
+    # through the group class. A validation uid shared with any other
+    # deployment uid puts a reader on the owner class and the read-only
+    # compose refuses the root as writable.
+    if args.validation_uid in {
+        args.driver_uid,
+        args.service_uid,
+        args.worker_uid,
+        args.admission_uid,
+        args.action_signer_uid,
+        args.transition_signer_uid,
+        args.cuprate_uid,
+    }:
+        _fail(
+            "independent-validation needs its own uid; the F9-v2 archive "
+            "readers reach the 0750 root through the group class"
+        )
 
     service_uid = {
         **{name: args.service_uid for name in WORKER_SERVICES},
@@ -424,6 +443,7 @@ def main() -> int:
         "action_kernel_command": args.action_signer_uid,
         "transition_kernel_command": args.transition_signer_uid,
         CUPRATE_SERVICE: args.cuprate_uid,
+        "independent_validation": args.validation_uid,
     }
 
     layout = _build_layout(
@@ -682,14 +702,14 @@ def _build_layout(
     layout["artifact_store_root"] = qualification / "artifact-store"
     layout["authority_registry_root"] = qualification / "authority-registry"
 
-    # The F9-v2 validation archive: written by the F9 service, read by the
-    # four sibling services at the same uid (0700 keeps it inside that
-    # uid; the write config pins owner == process, the read configs pin
-    # the same device+inode).
+    # The F9-v2 validation archive: written by the F9 service at its own
+    # uid, read by the sibling reader services and atomic-admission
+    # through the shared gid's group class (the write config pins owner
+    # == process, the read configs pin the same device+inode).
     layout["validation_archive_root"] = working / "f9-v2-validation-archive"
     _mkdir_pinned(
         layout["validation_archive_root"],
-        mode=0o700,
+        mode=0o750,
         uid=service_uid["independent_validation"],
         gid=driver_gid,
     )
@@ -1210,6 +1230,17 @@ def _build_qualification(
     )
 
     registry_root = layout["authority_registry_root"]
+    if registry_root.is_symlink():
+        _fail(f"authority registry root {registry_root} is a symlink")
+    if registry_root.exists() and any(registry_root.iterdir()):
+        # The registry is append-only and every card is validated against
+        # the single pinned pricing key this run just generated, so cards
+        # left by an earlier authoring run fail signature validation at
+        # compose time. Supersede the stale registry wholesale first.
+        _fail(
+            f"authority registry root {registry_root} is not empty; "
+            "supersede the earlier authoring run's registry before re-authoring"
+        )
     for namespace in (
         "rate_cards",
         "execution_cost_quotes",
@@ -2113,7 +2144,7 @@ def _build_service_deployments(
         "group_gid": archive_metadata["gid"],
         "device_id": archive_metadata["device_id"],
         "inode": archive_metadata["inode"],
-        "directory_mode": 0o700,
+        "directory_mode": archive_metadata["mode"],
         "validator_manifest_sha256": closure["identity"]["manifests"]["independent_validation"],
         "read_only": True,
         "campaign_publication_allowed": False,
