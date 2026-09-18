@@ -1643,6 +1643,28 @@ def _build_service_pins(
     # ---- authority bindings (the eight step roles + two command roles) ------
     ordinary = activation["ordinary"]
 
+    # The kernel-command authority belongs to the ordinary principal, not to
+    # any deployed service. Anchoring its binding on a service manifest trips
+    # atomic-admission's factory on whichever service it names (the runtime
+    # refuses a config whose authority anchor is the service's own manifest),
+    # so the binding carries a dedicated custody manifest beside the others.
+    kernel_command_authority_entry = {
+        "schema_name": "aletheia.arl2_service_identity_manifest",
+        "schema_version": 1,
+        "window_id": window_id,
+        "service": "kernel_command_authority",
+        "principal_id": ordinary["principal_id"],
+        "policy_sha256": activation["policy_sha256"],
+        "prepared_at": _iso(prepared_at),
+    }
+    kernel_command_authority_sha = _write_canonical(
+        layout["identity_manifests"] / "kernel-command-authority.json",
+        canonical_json_bytes(kernel_command_authority_entry),
+        mode=0o644,
+        uid=driver_uid,
+        gid=driver_gid,
+    )
+
     def make_binding(role, *, principal_id, policy_sha256, manifest_sha, key_id=None):
         return ControllerStepAuthorityBinding(
             role=role,
@@ -1698,7 +1720,7 @@ def _build_service_pins(
             ControllerStepAuthorityRole.KERNEL_COMMAND,
             principal_id=ordinary["principal_id"],
             policy_sha256=activation["policy_sha256"],
-            manifest_sha=manifest_shas["atomic_admission"],
+            manifest_sha=kernel_command_authority_sha,
             key_id=ordinary["key_id"],
         ),
         "continuation_assessment": make_binding(

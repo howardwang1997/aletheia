@@ -486,6 +486,31 @@ def test_atomic_admission_factory_rejects_duplicate_config_and_key_rebind(
         )
 
 
+def test_atomic_admission_factory_rejects_kernel_command_anchor_on_own_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    deployment, config, _config_path, _case, _bindings = _fixture(monkeypatch, tmp_path)
+    rebound = {
+        **config,
+        "authority_bindings": [dict(item) for item in config["authority_bindings"]],
+    }
+    kernel_index = next(
+        index
+        for index, item in enumerate(rebound["authority_bindings"])
+        if item["role"] == ControllerStepAuthorityRole.KERNEL_COMMAND.value
+    )
+    rebound["authority_bindings"][kernel_index]["service_manifest_sha256"] = (
+        deployment.service_pin.service_manifest_sha256
+    )
+
+    with pytest.raises(ValueError, match="differs from deployment or authority"):
+        build_atomic_admission_rpc_service(
+            deployment=deployment,
+            configuration_bytes=canonical_json_bytes(rebound),
+        )
+
+
 def test_atomic_admission_factory_rejects_writable_cas_identity_drift(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
