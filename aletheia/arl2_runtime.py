@@ -983,6 +983,13 @@ class ARL2QuestionCampaignDriver:
                     raise ARL2RuntimeError(
                         f"ARL-2 {invocation.role} cycle reached the campaign deadline"
                     ) from exc
+                except OSError as exc:
+                    # a missing or unexecutable sudo (the sudo-prefixed worker
+                    # spawn) must fail closed through the same error contract
+                    # as every other role-cycle failure, not a raw traceback
+                    raise ARL2RuntimeError(
+                        f"ARL-2 {invocation.role} cycle could not launch: {exc}"
+                    ) from exc
                 if completed.returncode != 0:
                     raise ARL2RuntimeError(f"ARL-2 {invocation.role} cycle failed closed")
                 continue

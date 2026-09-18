@@ -964,13 +964,14 @@ def _kernel_audit_child(worker, database_url: str, quest_id: str, action_sha: st
 
     try:
         # the writer-handle construction the runtime itself performs
-        # (arl2_runtime._compose_archive); the child only reads through it
+        # (arl2_runtime._compose_archive): root mode from the commissioned
+        # pin with its paired object mode; the child only reads through it
         archive = FilesystemResearchArchive(
             cas,
             max_object_bytes=kernel_reader.max_object_bytes,
             read_only=False,
-            directory_mode=0o700,
-            object_mode=0o400,
+            directory_mode=kernel_reader.cas_directory_mode,
+            object_mode=0o440 if kernel_reader.cas_directory_mode == 0o750 else 0o400,
         )
     except ResearchArchiveError as exc:
         _fail(f"kernel archive refuses the mirrored writer composition: {exc}")

@@ -640,6 +640,13 @@ class WriteOnceActionProposalSpool(ActionProposalSubmissionStorePort):
                     current.mkdir(mode=self._directory_mode)
                 except FileExistsError:
                     pass
+                else:
+                    # a group-stripping umask (e.g. 077) would create the
+                    # parent below the pinned 0750 mode; re-pin the mode
+                    # explicitly on directories this process created, the
+                    # same fixup the CAS parent chain applies (cas.py
+                    # _open_parent)
+                    current.chmod(self._directory_mode)
             try:
                 metadata = current.lstat()
             except FileNotFoundError as exc:

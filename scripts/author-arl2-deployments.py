@@ -2503,12 +2503,27 @@ def _build_service_deployments(
         module_name, attribute = _SERVICE_FACTORIES[service]
         factory_path = release / "aletheia" / f"{module_name.rsplit('.', 1)[-1]}.py"
         socket_metadata = _stat_directory(layout["sockets"][service])
+        if service in COMMAND_SERVICES:
+            # the two kernel-command signers face the DRIVER, not the
+            # worker: worker_composition excludes their operations from the
+            # worker's set, and every signing connection arrives from the
+            # driver's own _carry_signing_work pass
+            peer_uid = driver_uid
+        elif service == CUPRATE_SERVICE:
+            # no in-window RPC client holds this surface: the worker never
+            # gains RUN_CUPRATE_DIAGNOSTIC (worker_composition excludes it)
+            # and the out-of-band executor invokes the capability in
+            # process; pinned to the commissioning identity so the
+            # distinct-peer rule (peer != process uid) stays satisfiable
+            peer_uid = driver_uid
+        else:
+            peer_uid = worker_uid
         deployment = ControllerWorkerRPCServerDeployment(
             service_pin=pin,
             controller_id=controller_paths["controller_id"],
             controller_manifest_sha256=controller_paths["manifest_sha256"],
             worker_process_principal_id=WORKER_PRINCIPAL,
-            worker_peer_uid=worker_uid,
+            worker_peer_uid=peer_uid,
             worker_peer_gid=driver_gid,
             process_uid=service_uid[service],
             process_gid=driver_gid,
@@ -2602,6 +2617,10 @@ def _build_driver(
         cas_group_gid=cas_metadata["gid"],
         cas_device_id=cas_metadata["device_id"],
         cas_inode=cas_metadata["inode"],
+        # the writer pin must carry the LIVE root mode, not the model
+        # default: a 0750 shared-custody root composed at the 0700 default
+        # refuses every driver start (arl2_runtime._compose_archive)
+        cas_directory_mode=cas_metadata["mode"],
         max_object_bytes=MAX_OBJECT_BYTES,
     )
     kernel_command_services = ARL2KernelCommandServiceSetV1(
