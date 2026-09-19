@@ -232,7 +232,11 @@ def _build(fx: SimpleNamespace, *, domain: str):
 def _action_payload() -> ActionKernelCommandRPCPayload:
     submission = _submission(ControllerStep.PROPOSE_ACTION)
     return ActionKernelCommandRPCPayload(
-        proposal=_authorization_proposal(submission),
+        proposal=_authorization_proposal(
+                submission,
+                expected_stream_version=submission.request.expected_stream_version + 1,
+                expected_tail_event_sha256="b" * 64,
+            ),
         submitted=submission,
     )
 
@@ -324,6 +328,30 @@ def test_action_service_round_trips_through_the_operation_closed_wire(
             result_type=AuthorizedResearchCommand,
         )
     assert raised.value.blocker_codes == ("kernel_command_authority_refusal",)
+
+
+def test_action_service_signs_the_submission_carried_admission_command(
+    tmp_path: Path,
+) -> None:
+    fx = _fixture(tmp_path, domain="action")
+    handlers = _build(fx, domain="action")
+    submission = _submission(ControllerStep.PROPOSE_ACTION)
+    action_sha = submission.action.object_ref.object_sha256
+
+    command = handlers.handler_for(ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND)(
+        ActionKernelCommandRPCPayload(
+            proposal=submission.command_proposal,
+            submitted=submission,
+        )
+    )
+
+    # the admission command the submission carries is signed under its own
+    # idempotency AND source identity; the store admits the action through
+    # this event before any authorization resolves
+    assert command.proposal_sha256 == submission.command_proposal.proposal_sha256
+    assert command.idempotency_key == f"action-proposed:{action_sha}"
+    assert command.source_event_key == f"action-proposed:{action_sha}"
+    assert command.principal_id == fx.kernel_key.principal_id
 
 
 def test_a_refused_action_proposal_is_one_signed_blocker(tmp_path: Path) -> None:

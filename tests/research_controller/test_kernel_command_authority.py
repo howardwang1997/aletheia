@@ -128,13 +128,18 @@ def _submission(step: ControllerStep):
     )
 
 
-def _authorization_proposal(submission) -> ResearchCommandProposal:
+def _authorization_proposal(
+    submission,
+    *,
+    expected_stream_version: int,
+    expected_tail_event_sha256: str,
+) -> ResearchCommandProposal:
     action_ref = submission.action.object_ref
     return ResearchCommandProposal(
         quest_id=QUEST_ID,
         scope_binding=ResearchScopeBinding(quest_id=QUEST_ID),
-        expected_stream_version=submission.request.expected_stream_version,
-        expected_tail_event_sha256=submission.request.expected_tail_event_sha256,
+        expected_stream_version=expected_stream_version,
+        expected_tail_event_sha256=expected_tail_event_sha256,
         event_type=EventType.ACTION_AUTHORIZED,
         payload=ActionAuthorizedPayload(
             action_id=action_ref.object_id,
@@ -215,10 +220,24 @@ def _transition_proposal(submission, decision) -> ResearchCommandProposal:
     )
 
 
+def _live_pins(submission) -> tuple[int, str]:
+    """Head pins the authorization names after the admission commit lands."""
+
+    return (
+        submission.request.expected_stream_version + 1,
+        "b" * 64,
+    )
+
+
 def test_action_authority_signs_only_the_exact_submitted_action() -> None:
     authority = _action_authority()
     submission = _submission(ControllerStep.PROPOSE_ACTION)
-    proposal = _authorization_proposal(submission)
+    version, tail = _live_pins(submission)
+    proposal = _authorization_proposal(
+        submission,
+        expected_stream_version=version,
+        expected_tail_event_sha256=tail,
+    )
     idempotency = f"action:{submission.action.object_sha256}"
     source = f"action-proposal:{submission.action.object_sha256}"
 
@@ -238,7 +257,11 @@ def test_action_authority_signs_only_the_exact_submitted_action() -> None:
 def test_action_authority_rejects_rebound_proposals() -> None:
     authority = _action_authority()
     submission = _submission(ControllerStep.PROPOSE_ACTION)
-    proposal = _authorization_proposal(submission)
+    proposal = _authorization_proposal(
+        submission,
+        expected_stream_version=submission.request.expected_stream_version + 1,
+        expected_tail_event_sha256="b" * 64,
+    )
     idempotency = f"action:{submission.action.object_sha256}"
     source = f"action-proposal:{submission.action.object_sha256}"
 
@@ -284,6 +307,70 @@ def test_action_authority_rejects_rebound_proposals() -> None:
             submitted=submission,
             idempotency_key=idempotency,
             source_event_key=source,
+        )
+
+
+def test_action_authority_signs_the_submission_carried_admission_command() -> None:
+    authority = _action_authority()
+    submission = _submission(ControllerStep.PROPOSE_ACTION)
+    proposal = submission.command_proposal
+    idempotency = f"action-proposed:{submission.action.object_sha256}"
+    source = f"action-proposed:{submission.action.object_sha256}"
+
+    command = authority.authorize_action(
+        proposal=proposal,
+        submitted=submission,
+        idempotency_key=idempotency,
+        source_event_key=source,
+    )
+
+    assert command.proposal_sha256 == proposal.proposal_sha256
+    assert command.idempotency_key == idempotency
+    assert command.principal_id == authority.principal_id
+
+
+def test_action_authority_rejects_a_rebound_admission_command() -> None:
+    authority = _action_authority()
+    submission = _submission(ControllerStep.PROPOSE_ACTION)
+    idempotency = f"action-proposed:{submission.action.object_sha256}"
+    source = f"action-proposed:{submission.action.object_sha256}"
+
+    # any drift from the byte-exact command the submission carries — here a
+    # re-pinned stream head — must be refused: the real store admits the
+    # action through this exact event, so a rebound admission would admit an
+    # action the Quest never saw authored
+    rebound = submission.command_proposal.model_copy(
+        update={
+            "expected_stream_version": (
+                submission.command_proposal.expected_stream_version + 1
+            )
+        }
+    )
+    with pytest.raises(KernelCommandAuthorityError, match="rebound"):
+        authority.authorize_action(
+            proposal=rebound,
+            submitted=submission,
+            idempotency_key=idempotency,
+            source_event_key=source,
+        )
+    # the admission command under the authorization's idempotency identity is
+    # the exact wiring mistake the RPC dispatch could make
+    with pytest.raises(KernelCommandAuthorityError, match="rebound"):
+        authority.authorize_action(
+            proposal=submission.command_proposal,
+            submitted=submission,
+            idempotency_key=f"action:{submission.action.object_sha256}",
+            source_event_key=source,
+        )
+    # and so is the admission under the authorization's source identity: the
+    # store's receipt lookup matches persisted rows by either key, so a shared
+    # source_event_key would collide the two commands of one exchange
+    with pytest.raises(KernelCommandAuthorityError, match="rebound"):
+        authority.authorize_action(
+            proposal=submission.command_proposal,
+            submitted=submission,
+            idempotency_key=idempotency,
+            source_event_key=f"action-proposal:{submission.action.object_sha256}",
         )
 
 

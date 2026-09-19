@@ -67,7 +67,7 @@ def _compose(*, deployment, configuration_bytes, domain: str):
         KernelCommandAuthorityError,
     )
     from aletheia.research_kernel.policy import ResearchAuthorizationTrustRootV1
-    from aletheia.research_kernel.schemas import canonical_json_bytes
+    from aletheia.research_kernel.schemas import EventType, canonical_json_bytes
 
     _SHA256_PATTERN = r"^[0-9a-f]{64}$"
     if domain == "action":
@@ -279,12 +279,28 @@ def _compose(*, deployment, configuration_bytes, domain: str):
             if type(payload) is not payload_type:
                 raise TypeError("kernel command RPC handler received another payload type")
             action_sha256 = payload.submitted.action.object_ref.object_sha256
+            is_admission = (
+                payload.proposal.event_type is EventType.ACTION_PROPOSED
+            )
             try:
                 return authority.authorize_action(
                     proposal=payload.proposal,
                     submitted=payload.submitted,
-                    idempotency_key=f"action:{action_sha256}",
-                    source_event_key=f"action-proposal:{action_sha256}",
+                    # the admission command the submission carries gets its own
+                    # idempotency AND source identity: the store's receipt
+                    # lookup matches rows by either key, so a second command
+                    # sharing the authorization's source_event_key would
+                    # collide with the admission's persisted receipt
+                    idempotency_key=(
+                        f"action-proposed:{action_sha256}"
+                        if is_admission
+                        else f"action:{action_sha256}"
+                    ),
+                    source_event_key=(
+                        f"action-proposed:{action_sha256}"
+                        if is_admission
+                        else f"action-proposal:{action_sha256}"
+                    ),
                 )
             except KernelCommandAuthorityError as exc:
                 raise ControllerWorkerRPCServiceBlocked(

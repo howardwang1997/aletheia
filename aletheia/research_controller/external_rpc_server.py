@@ -172,8 +172,11 @@ class ActionKernelCommandRPCPayload(ControllerModel):
 
     The idempotency and source-event keys never ride the wire: the service
     derives both from the submitted action sha through the exact-proposal
-    convention (``action:{sha}`` / ``action-proposal:{sha}``), so a request
-    cannot express a rebound key.
+    convention.  An ACTION_AUTHORIZED proposal derives
+    ``action:{sha}`` / ``action-proposal:{sha}``; an ACTION_PROPOSED
+    admission (the byte-exact command the submission itself carries) derives
+    ``action-proposed:{sha}`` for both, so its receipt never collides with
+    the authorization's.  A request cannot express a rebound key.
     """
 
     proposal: ResearchCommandProposal

@@ -27,6 +27,7 @@ from aletheia.research_kernel.policy import (
 from aletheia.research_kernel.schemas import (
     ActionAuthorizedPayload,
     ActionKind,
+    ActionProposedPayload,
     ContinueCommittedPayload,
     EvidenceKind,
     EvidenceRef,
@@ -253,6 +254,25 @@ def _require_exact_action_proposal(
     action_ref = submitted.action.object_ref
     expected_idempotency = f"action:{action_ref.object_sha256}"
     expected_source = f"action-proposal:{action_ref.object_sha256}"
+    if proposal.event_type is EventType.ACTION_PROPOSED:
+        # The admission command the spool submission itself carries: only the
+        # byte-exact command_proposal is signed, because the real store admits
+        # an action into state.actions through this event and refuses every
+        # later ACTION_AUTHORIZED commit without it.  Its idempotency AND
+        # source identities are distinct from the authorization's: the store's
+        # receipt lookup matches persisted rows by either key, so the two
+        # commands of one exchange must never share one.
+        if (
+            not isinstance(payload, ActionProposedPayload)
+            or proposal.proposal_sha256 != submitted.command_proposal.proposal_sha256
+            or not submitted.awaiting_independent_kernel_authority
+            or idempotency_key != f"action-proposed:{action_ref.object_sha256}"
+            or source_event_key != f"action-proposed:{action_ref.object_sha256}"
+        ):
+            raise KernelCommandAuthorityError(
+                "action Kernel proposal rebound its submitted action proposal"
+            )
+        return
     if (
         proposal.event_type is not EventType.ACTION_AUTHORIZED
         or not isinstance(payload, ActionAuthorizedPayload)

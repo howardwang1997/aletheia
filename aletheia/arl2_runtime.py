@@ -587,15 +587,25 @@ def load_arl2_question_campaign_runtime_inputs(
 
 def action_authorization_proposal(
     submission: SubmittedActionProposal,
+    *,
+    expected_stream_version: int,
+    expected_tail_event_sha256: str,
 ) -> ResearchCommandProposal:
-    """Derive the exact ACTION_AUTHORIZED proposal one submission waits on."""
+    """Derive the exact ACTION_AUTHORIZED proposal one submission waits on.
+
+    The stream pins name the CURRENT kernel head after the paired
+    ACTION_PROPOSED commit, never the (stale) pins carried by the original
+    action submission; the store's CAS would refuse those, and the scientific
+    bridge binds the authorized event to the proposed one
+    (sequence + 1, parent = proposed event sha).
+    """
 
     action_ref = submission.action.object_ref
     return ResearchCommandProposal(
         quest_id=submission.request.quest_id,
         scope_binding=submission.request.scope_binding,
-        expected_stream_version=submission.request.expected_stream_version,
-        expected_tail_event_sha256=submission.request.expected_tail_event_sha256,
+        expected_stream_version=expected_stream_version,
+        expected_tail_event_sha256=expected_tail_event_sha256,
         event_type=EventType.ACTION_AUTHORIZED,
         payload=ActionAuthorizedPayload(
             action_id=action_ref.object_id,
@@ -894,12 +904,36 @@ class ARL2QuestionCampaignDriver:
                 submissions.append(submission)
         return tuple(submissions)
 
-    def _sign_action(self, submission: SubmittedActionProposal) -> AuthorizedResearchCommand:
-        proposal = action_authorization_proposal(submission)
+    def _sign_action(
+        self,
+        submission: SubmittedActionProposal,
+        *,
+        expected_stream_version: int,
+        expected_tail_event_sha256: str,
+    ) -> AuthorizedResearchCommand:
+        proposal = action_authorization_proposal(
+            submission,
+            expected_stream_version=expected_stream_version,
+            expected_tail_event_sha256=expected_tail_event_sha256,
+        )
         return self._action_client.call(
             ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND,
             payload={
                 "proposal": proposal.model_dump(mode="json"),
+                "submitted": submission.model_dump(mode="json"),
+            },
+            result_type=AuthorizedResearchCommand,
+        )
+
+    def _sign_action_proposed(
+        self, submission: SubmittedActionProposal
+    ) -> AuthorizedResearchCommand:
+        """Sign the admission command the submission itself carries verbatim."""
+
+        return self._action_client.call(
+            ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND,
+            payload={
+                "proposal": submission.command_proposal.model_dump(mode="json"),
                 "submitted": submission.model_dump(mode="json"),
             },
             result_type=AuthorizedResearchCommand,
@@ -1232,6 +1266,11 @@ class ARL2QuestionCampaignDriver:
             for event in events
             if event.event_type is EventType.ACTION_AUTHORIZED
         }
+        proposed_action_ids = {
+            event.payload.action_ref.object_id
+            for event in events
+            if event.event_type is EventType.ACTION_PROPOSED
+        }
         committed_transition_ids = {
             event.payload.decision.transition_id
             for event in events
@@ -1241,7 +1280,36 @@ class ARL2QuestionCampaignDriver:
         for submission in self._pending_submissions():
             action_id = submission.action.object_ref.object_id
             if action_id not in authorized_action_ids:
-                self._kernel_store.commit(self._sign_action(submission))
+                if action_id not in proposed_action_ids:
+                    # The real store resolves an ACTION_AUTHORIZED payload
+                    # only against an action its ACTION_PROPOSED event already
+                    # admitted (state.actions), so the unsigned admission
+                    # command the submission carries is signed and committed
+                    # FIRST, with the action object staged into the CAS
+                    # archive the same way the register path stages its
+                    # question version.
+                    if self._archive is None:
+                        raise ARL2RuntimeError(
+                            "ARL-2 action admission requires the writer archive"
+                        )
+                    self._archive.archive_object(submission.action)
+                    self._kernel_store.commit(self._sign_action_proposed(submission))
+                    events = self._kernel_store.audit(self.request.quest_id).events
+                    proposed_action_ids = {
+                        event.payload.action_ref.object_id
+                        for event in events
+                        if event.event_type is EventType.ACTION_PROPOSED
+                    }
+                # The authorization pins the head the admission commit just
+                # moved; the submission's own pins are pre-proposal and the
+                # store CAS would refuse them.
+                self._kernel_store.commit(
+                    self._sign_action(
+                        submission,
+                        expected_stream_version=len(events),
+                        expected_tail_event_sha256=events[-1].event_sha256,
+                    )
+                )
                 # The action commit moved the kernel head: re-audit so the
                 # paired transition pins the live head.  The submission's own
                 # pins are now stale and the store CAS would refuse them.
