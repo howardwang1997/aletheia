@@ -1,4 +1,4 @@
-"""Contract tests for the two ARL-2 kernel-command signing services (PR B8)."""
+"""Contract tests for the three ARL-2 kernel-command signing services (PR B8)."""
 
 from __future__ import annotations
 
@@ -34,6 +34,7 @@ from aletheia.research_controller.step_executor import (
 )
 from aletheia.research_controller_kernel_command_runtime import (
     build_action_kernel_command_rpc_service,
+    build_admission_kernel_command_rpc_service,
     build_transition_kernel_command_rpc_service,
 )
 from aletheia.research_controller_rpc_runtime import (
@@ -60,6 +61,9 @@ from test_commands import (  # noqa: E402
     _role_key as command_role_key,
 )
 from test_kernel_command_authority import (  # noqa: E402
+    _ADMISSION_PRIVATE,
+    _ADMISSION_PRINCIPAL,
+    _admission_extra_key,
     _authorization_proposal,
     _fork_decision,
     _incorporated_event,
@@ -95,8 +99,21 @@ def _fixture(tmp_path: Path, *, domain: str) -> SimpleNamespace:
         path.mkdir(mode=mode)
         path.chmod(mode)
 
-    trust_root, policy = command_authority(quest_id=QUEST_ID)
-    kernel_key = command_role_key(policy, ResearchAuthorizationRole.ORDINARY)
+    # the admission domain signs under the SECOND ORDINARY key whose
+    # principal is the ACTION_PROPOSAL binding principal (contradiction #10
+    # remedy a); the other two stay on the activation ordinary key
+    if domain == "admission":
+        trust_root, policy = command_authority(
+            quest_id=QUEST_ID, extra_keys=(_admission_extra_key(),)
+        )
+        kernel_key = next(
+            item for item in policy.keys if item.principal_id == _ADMISSION_PRINCIPAL
+        )
+        kernel_private_key = _ADMISSION_PRIVATE
+    else:
+        trust_root, policy = command_authority(quest_id=QUEST_ID)
+        kernel_key = command_role_key(policy, ResearchAuthorizationRole.ORDINARY)
+        kernel_private_key = COMMAND_PRIVATE_KEYS[ResearchAuthorizationRole.ORDINARY]
     assignment = ControllerKernelPolicyAssignment(
         quest_id=QUEST_ID,
         scope_binding=ResearchScopeBinding(quest_id=QUEST_ID),
@@ -109,16 +126,15 @@ def _fixture(tmp_path: Path, *, domain: str) -> SimpleNamespace:
     process_uid = os.geteuid()
     process_gid = os.getegid()
     prepared_at = NOW
-    is_transition = domain == "transition"
-    operation = (
-        ControllerWorkerRPCOperation.SIGN_TRANSITION_COMMAND
-        if is_transition
-        else ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND
-    )
+    operation = {
+        "admission": ControllerWorkerRPCOperation.SIGN_ADMISSION_COMMAND,
+        "action": ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND,
+        "transition": ControllerWorkerRPCOperation.SIGN_TRANSITION_COMMAND,
+    }[domain]
     binding = ControllerStepAuthorityBinding(
         role=(
             ControllerStepAuthorityRole.TRANSITION_KERNEL_COMMAND
-            if is_transition
+            if domain == "transition"
             else ControllerStepAuthorityRole.ACTION_KERNEL_COMMAND
         ),
         principal_id=kernel_key.principal_id,
@@ -132,7 +148,11 @@ def _fixture(tmp_path: Path, *, domain: str) -> SimpleNamespace:
         service_manifest_sha256=_sha(f"{domain}-command-service-manifest"),
         service_policy_sha256=_sha(f"{domain}-command-service-policy"),
         operations=(operation,),
-        authority_binding_sha256s=(binding.binding_sha256,),
+        # the admission service is purely driver-facing: no worker step
+        # consumes it, so its pin enrolls no step-authority binding
+        authority_binding_sha256s=(
+            () if domain == "admission" else (binding.binding_sha256,)
+        ),
         socket_path=str(roots["socket"] / f"{domain}-command.sock"),
         socket_owner_uid=process_uid,
         socket_group_gid=process_gid,
@@ -147,7 +167,6 @@ def _fixture(tmp_path: Path, *, domain: str) -> SimpleNamespace:
         max_request_bytes=4 * 1024**2,
         max_response_bytes=4 * 1024**2,
     )
-    kernel_private_key = COMMAND_PRIVATE_KEYS[ResearchAuthorizationRole.ORDINARY]
     key_path = (roots["command"] / "kernel-command.key").resolve()
     key_path.write_bytes(kernel_private_key)
     key_path.chmod(0o400)
@@ -197,11 +216,11 @@ def _fixture(tmp_path: Path, *, domain: str) -> SimpleNamespace:
         receipt_private_key_sha256=hashlib.sha256(receipt_key_path.read_bytes()).hexdigest(),
         reviewed_code_root=str(repository_root),
         composition_factory_module="aletheia.research_controller_kernel_command_runtime",
-        composition_factory_attribute=(
-            "build_transition_kernel_command_rpc_service"
-            if is_transition
-            else "build_action_kernel_command_rpc_service"
-        ),
+        composition_factory_attribute={
+            "admission": "build_admission_kernel_command_rpc_service",
+            "action": "build_action_kernel_command_rpc_service",
+            "transition": "build_transition_kernel_command_rpc_service",
+        }[domain],
         composition_factory_source_path=str(factory),
         composition_factory_source_sha256=hashlib.sha256(factory.read_bytes()).hexdigest(),
         composition_config_path=str(config_path),
@@ -221,11 +240,11 @@ def _fixture(tmp_path: Path, *, domain: str) -> SimpleNamespace:
 
 
 def _build(fx: SimpleNamespace, *, domain: str):
-    builder = (
-        build_transition_kernel_command_rpc_service
-        if domain == "transition"
-        else build_action_kernel_command_rpc_service
-    )
+    builder = {
+        "admission": build_admission_kernel_command_rpc_service,
+        "action": build_action_kernel_command_rpc_service,
+        "transition": build_transition_kernel_command_rpc_service,
+    }[domain]
     return builder(deployment=fx.deployment, configuration_bytes=fx.config_path.read_bytes())
 
 
@@ -330,28 +349,80 @@ def test_action_service_round_trips_through_the_operation_closed_wire(
     assert raised.value.blocker_codes == ("kernel_command_authority_refusal",)
 
 
-def test_action_service_signs_the_submission_carried_admission_command(
+def test_admission_service_signs_the_submission_carried_admission_command(
+    tmp_path: Path,
+) -> None:
+    fx = _fixture(tmp_path, domain="admission")
+    handlers = _build(fx, domain="admission")
+    submission = _submission(ControllerStep.PROPOSE_ACTION)
+    action_sha = submission.action.object_ref.object_sha256
+
+    command = handlers.handler_for(
+        ControllerWorkerRPCOperation.SIGN_ADMISSION_COMMAND
+    )(ActionKernelCommandRPCPayload(
+        proposal=submission.command_proposal,
+        submitted=submission,
+    ))
+
+    # the admission command the submission carries is signed under its own
+    # idempotency AND source identity; the store admits the action through
+    # this event before any authorization resolves, and the signing principal
+    # IS the proposer (the bridge's :454 clause)
+    assert command.proposal_sha256 == submission.command_proposal.proposal_sha256
+    assert command.idempotency_key == f"action-proposed:{action_sha}"
+    assert command.source_event_key == f"action-proposed:{action_sha}"
+    assert command.principal_id == _ADMISSION_PRINCIPAL
+    assert command.principal_id == submission.proposed_by_principal_id
+    # the wire never carries the keys; the handler derives both
+    assert command.idempotency_key == command.source_event_key
+
+
+def test_admission_service_blocks_a_foreign_proposer_as_one_signed_blocker(
+    tmp_path: Path,
+) -> None:
+    from aletheia.research_controller.action_proposals import materialize_action_proposal
+    from test_action_proposals import _binding as _proposal_binding
+    from test_action_proposals import _draft, _request
+
+    fx = _fixture(tmp_path, domain="admission")
+    handlers = _build(fx, domain="admission")
+    request = _request(ControllerStep.PROPOSE_ACTION)
+    submission = materialize_action_proposal(
+        request=request,
+        draft=_draft(request),
+        authority_binding=_proposal_binding().model_copy(
+            update={"principal_id": "service:another-proposer"}
+        ),
+        submitted_at=NOW + timedelta(seconds=2),
+    )
+
+    with pytest.raises(ControllerWorkerRPCServiceBlocked) as raised:
+        handlers.handler_for(ControllerWorkerRPCOperation.SIGN_ADMISSION_COMMAND)(
+            ActionKernelCommandRPCPayload(
+                proposal=submission.command_proposal,
+                submitted=submission,
+            )
+        )
+    assert raised.value.blocker_codes == ("kernel_command_authority_refusal",)
+
+
+def test_action_service_refuses_the_submission_carried_admission_command(
     tmp_path: Path,
 ) -> None:
     fx = _fixture(tmp_path, domain="action")
     handlers = _build(fx, domain="action")
     submission = _submission(ControllerStep.PROPOSE_ACTION)
-    action_sha = submission.action.object_ref.object_sha256
 
-    command = handlers.handler_for(ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND)(
-        ActionKernelCommandRPCPayload(
-            proposal=submission.command_proposal,
-            submitted=submission,
+    # the admission belongs to the admission service's own operation; the
+    # action service refusing it keeps the two events' principals separable
+    with pytest.raises(ControllerWorkerRPCServiceBlocked) as raised:
+        handlers.handler_for(ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND)(
+            ActionKernelCommandRPCPayload(
+                proposal=submission.command_proposal,
+                submitted=submission,
+            )
         )
-    )
-
-    # the admission command the submission carries is signed under its own
-    # idempotency AND source identity; the store admits the action through
-    # this event before any authorization resolves
-    assert command.proposal_sha256 == submission.command_proposal.proposal_sha256
-    assert command.idempotency_key == f"action-proposed:{action_sha}"
-    assert command.source_event_key == f"action-proposed:{action_sha}"
-    assert command.principal_id == fx.kernel_key.principal_id
+    assert raised.value.blocker_codes == ("kernel_command_authority_refusal",)
 
 
 def test_a_refused_action_proposal_is_one_signed_blocker(tmp_path: Path) -> None:
@@ -448,6 +519,29 @@ def test_transport_receipt_key_reuse_fails_closed(tmp_path: Path) -> None:
         )
 
 
+def test_admission_config_keyed_to_the_activation_ordinary_key_fails_closed(
+    tmp_path: Path,
+) -> None:
+    # the kit's config loop special-cases the admission service's
+    # authorization_key_id to the SECOND ordinary key; a reversion that keys
+    # the config to the activation ordinary key (the action service's key)
+    # must die at composition, not wedge the first signing pass on the box
+    fx = _fixture(tmp_path, domain="admission")
+    ordinary_key_id = next(
+        item["key_id"]
+        for item in fx.config["policy_assignments"][0]["authorization_policy"]["keys"]
+        if item["role"] == "ordinary" and item["key_id"] != fx.config["authorization_key_id"]
+    )
+    rebound = {**fx.config, "authorization_key_id": ordinary_key_id}
+    config_path = fx.config_path.with_name("ordinary-keyed.json")
+    config_path.write_bytes(canonical_json_bytes(rebound))
+    with pytest.raises(ValueError, match="differs from deployment or authority"):
+        build_admission_kernel_command_rpc_service(
+            deployment=fx.deployment,
+            configuration_bytes=config_path.read_bytes(),
+        )
+
+
 def test_signing_key_custody_drift_fails_closed(tmp_path: Path) -> None:
     fx = _fixture(tmp_path, domain="action")
     fx.key_path.chmod(0o600)
@@ -487,7 +581,7 @@ def test_config_identity_drift_fails_closed(tmp_path: Path) -> None:
         )
 
 
-@pytest.mark.parametrize("domain", ("action", "transition"))
+@pytest.mark.parametrize("domain", ("admission", "action", "transition"))
 def test_guarded_runtime_loads_each_factory(tmp_path: Path, domain: str) -> None:
     fx = _fixture(tmp_path, domain=domain)
     runtime = build_controller_worker_rpc_server_runtime(
@@ -497,7 +591,7 @@ def test_guarded_runtime_loads_each_factory(tmp_path: Path, domain: str) -> None
     assert not Path(fx.deployment.service_pin.socket_path).exists()
 
 
-@pytest.mark.parametrize("domain", ("action", "transition"))
+@pytest.mark.parametrize("domain", ("admission", "action", "transition"))
 def test_guarded_runtime_rejects_factory_source_drift(tmp_path: Path, domain: str) -> None:
     fx = _fixture(tmp_path, domain=domain)
     drifted = ControllerWorkerRPCServerDeployment.model_validate(

@@ -147,11 +147,12 @@ class ControllerWorkerRPCServiceSet(ControllerModel):
         ) != frozenset(ControllerWorkerRPCOperation) - {
             # The ARL-1 campaign has a separate recovery surface, the cuprate
             # diagnostic is a separately commissioned capability service, and
-            # the two ARL-2 kernel-command signing services face the driver
+            # the three ARL-2 kernel-command signing services face the driver
             # rather than the worker; the worker's operation pins acquire none
             # of them.
             ControllerWorkerRPCOperation.LOAD_COMMITTED_ADMISSION,
             ControllerWorkerRPCOperation.RUN_CUPRATE_DIAGNOSTIC,
+            ControllerWorkerRPCOperation.SIGN_ADMISSION_COMMAND,
             ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND,
             ControllerWorkerRPCOperation.SIGN_TRANSITION_COMMAND,
         }:

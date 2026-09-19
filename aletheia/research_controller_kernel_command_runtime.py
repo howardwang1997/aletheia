@@ -1,11 +1,12 @@
-"""Guarded composition of the two ARL-2 kernel-command signing services.
+"""Guarded composition of the three ARL-2 kernel-command signing services.
 
-B4 landed ``ExactActionKernelAuthority`` and ``ExactTransitionKernelAuthority``
-unhosted.  This module is their production host: two guarded builders, one
-service per authority and one pinned ordinary key per service, each served
-through the existing ``scripts/run_research_controller_rpc_service.py``
-entrypoint as a single-operation RPC service.  The services face the ARL-2
-driver; the worker's operation pins acquire neither.
+B4 landed the exact Kernel command authorities unhosted.  This module is
+their production host: three guarded builders — admission, action,
+transition — one service per authority and one pinned ordinary key per
+service, each served through the existing
+``scripts/run_research_controller_rpc_service.py`` entrypoint as a
+single-operation RPC service.  The services face the ARL-2 driver; the
+worker's operation pins acquire neither.
 
 Everything a builder trusts arrives as pinned bytes: the composition config
 (sha-pinned by the deployment manifest), the authority implementation source
@@ -18,6 +19,16 @@ code; every other failure fails closed without a signature.
 """
 
 from __future__ import annotations
+
+
+def build_admission_kernel_command_rpc_service(*, deployment, configuration_bytes):
+    """Compose the admission kernel-command signing service (one operation, one key)."""
+
+    return _compose(
+        deployment=deployment,
+        configuration_bytes=configuration_bytes,
+        domain="admission",
+    )
 
 
 def build_action_kernel_command_rpc_service(*, deployment, configuration_bytes):
@@ -63,14 +74,19 @@ def _compose(*, deployment, configuration_bytes, domain: str):
     from aletheia.research_controller.kernel_authority import (
         ControllerKernelPolicyAssignment,
         ExactActionKernelAuthority,
+        ExactAdmissionKernelAuthority,
         ExactTransitionKernelAuthority,
         KernelCommandAuthorityError,
     )
     from aletheia.research_kernel.policy import ResearchAuthorizationTrustRootV1
-    from aletheia.research_kernel.schemas import EventType, canonical_json_bytes
+    from aletheia.research_kernel.schemas import canonical_json_bytes
 
     _SHA256_PATTERN = r"^[0-9a-f]{64}$"
-    if domain == "action":
+    if domain == "admission":
+        operation = ControllerWorkerRPCOperation.SIGN_ADMISSION_COMMAND
+        payload_type = ActionKernelCommandRPCPayload
+        authority_type = ExactAdmissionKernelAuthority
+    elif domain == "action":
         operation = ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND
         payload_type = ActionKernelCommandRPCPayload
         authority_type = ExactActionKernelAuthority
@@ -78,7 +94,7 @@ def _compose(*, deployment, configuration_bytes, domain: str):
         operation = ControllerWorkerRPCOperation.SIGN_TRANSITION_COMMAND
         payload_type = TransitionKernelCommandRPCPayload
         authority_type = ExactTransitionKernelAuthority
-    else:  # pragma: no cover - the two public builders are the only callers
+    else:  # pragma: no cover - the three public builders are the only callers
         raise ValueError("kernel command domain is unknown")
 
     class DomainSigningKeyPin(BaseModel):
@@ -273,17 +289,14 @@ def _compose(*, deployment, configuration_bytes, domain: str):
     ):
         raise ValueError("kernel command signing identity is not isolated from transport")
 
-    if domain == "action":
+    if domain == "admission":
 
         def sign_command(payload):
             if type(payload) is not payload_type:
                 raise TypeError("kernel command RPC handler received another payload type")
             action_sha256 = payload.submitted.action.object_ref.object_sha256
-            is_admission = (
-                payload.proposal.event_type is EventType.ACTION_PROPOSED
-            )
             try:
-                return authority.authorize_action(
+                return authority.authorize_admission(
                     proposal=payload.proposal,
                     submitted=payload.submitted,
                     # the admission command the submission carries gets its own
@@ -291,16 +304,26 @@ def _compose(*, deployment, configuration_bytes, domain: str):
                     # lookup matches rows by either key, so a second command
                     # sharing the authorization's source_event_key would
                     # collide with the admission's persisted receipt
-                    idempotency_key=(
-                        f"action-proposed:{action_sha256}"
-                        if is_admission
-                        else f"action:{action_sha256}"
-                    ),
-                    source_event_key=(
-                        f"action-proposed:{action_sha256}"
-                        if is_admission
-                        else f"action-proposal:{action_sha256}"
-                    ),
+                    idempotency_key=f"action-proposed:{action_sha256}",
+                    source_event_key=f"action-proposed:{action_sha256}",
+                )
+            except KernelCommandAuthorityError as exc:
+                raise ControllerWorkerRPCServiceBlocked(
+                    ("kernel_command_authority_refusal",)
+                ) from exc
+
+    elif domain == "action":
+
+        def sign_command(payload):
+            if type(payload) is not payload_type:
+                raise TypeError("kernel command RPC handler received another payload type")
+            action_sha256 = payload.submitted.action.object_ref.object_sha256
+            try:
+                return authority.authorize_action(
+                    proposal=payload.proposal,
+                    submitted=payload.submitted,
+                    idempotency_key=f"action:{action_sha256}",
+                    source_event_key=f"action-proposal:{action_sha256}",
                 )
             except KernelCommandAuthorityError as exc:
                 raise ControllerWorkerRPCServiceBlocked(
@@ -356,6 +379,7 @@ def _compose(*, deployment, configuration_bytes, domain: str):
 
 
 __all__ = [
+    "build_admission_kernel_command_rpc_service",
     "build_action_kernel_command_rpc_service",
     "build_transition_kernel_command_rpc_service",
 ]

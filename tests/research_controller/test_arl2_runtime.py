@@ -216,6 +216,7 @@ def _driver_fixture(tmp_path: Path) -> SimpleNamespace:
         tmp_path / "commands" / "question.json", canonical_json_bytes(question_command)
     )
 
+    admission_fx = _kernel_command_fixture(tmp_path, domain="admission")
     action_fx = _kernel_command_fixture(tmp_path, domain="action")
     transition_fx = _kernel_command_fixture(tmp_path, domain="transition")
     service_uid = process_uid + 1
@@ -229,6 +230,7 @@ def _driver_fixture(tmp_path: Path) -> SimpleNamespace:
         return type(pin).model_validate(payload)
 
     raw_services = ARL2KernelCommandServiceSetV1(
+        admission_kernel_command=_driver_facing_pin(admission_fx.deployment.service_pin),
         action_kernel_command=_driver_facing_pin(action_fx.deployment.service_pin),
         transition_kernel_command=_driver_facing_pin(transition_fx.deployment.service_pin),
     )
@@ -353,6 +355,7 @@ def _driver_fixture(tmp_path: Path) -> SimpleNamespace:
     )
 
     handlers = {
+        "sign_admission_command": _build_kernel_commands(admission_fx, domain="admission"),
         "sign_action_command": _build_kernel_commands(action_fx, domain="action"),
         "sign_transition_command": _build_kernel_commands(transition_fx, domain="transition"),
     }
@@ -367,6 +370,11 @@ def _driver_fixture(tmp_path: Path) -> SimpleNamespace:
             clock=lambda: NOW,
         )
         for operation, pin, receipt_key in (
+            (
+                "sign_admission_command",
+                config.kernel_command_services.admission_kernel_command,
+                admission_fx.receipt_key_path,
+            ),
             (
                 "sign_action_command",
                 config.kernel_command_services.action_kernel_command,
@@ -408,6 +416,7 @@ def _driver_fixture(tmp_path: Path) -> SimpleNamespace:
         deployment_sha256=deployment_sha,
         action_fx=action_fx,
         transition_fx=transition_fx,
+        admission_fx=admission_fx,
         services=services,
         transport=_RoutingTransport(services),
     )
@@ -438,13 +447,20 @@ def _services_payload(services: ARL2KernelCommandServiceSetV1) -> dict:
     """Dump the service set so each pin re-derives its own service id."""
 
     payload = services.model_dump(mode="python")
-    for name in ("action_kernel_command", "transition_kernel_command"):
+    for name in (
+        "admission_kernel_command",
+        "action_kernel_command",
+        "transition_kernel_command",
+    ):
         payload[name].pop("service_id", None)
     return payload
 
 
 def test_kernel_command_services_bind_exactly_one_operation_each(tmp_path: Path) -> None:
     fx = _driver_fixture(tmp_path)
+    assert fx.config.kernel_command_services.admission_kernel_command.operations == (
+        ControllerWorkerRPCOperation.SIGN_ADMISSION_COMMAND,
+    )
     assert fx.config.kernel_command_services.action_kernel_command.operations == (
         ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND,
     )
@@ -930,7 +946,11 @@ def test_carry_signing_work_round_trips_through_both_services(tmp_path: Path) ->
     # the signed admission is the submission's own command, byte-exact
     assert proposed_command.proposal_sha256 == submission.command_proposal.proposal_sha256
     assert proposed_command.payload == submission.command_proposal.payload
-    assert proposed_command.principal_id == fx.action_fx.kernel_key.principal_id
+    # the admission speaks with the PROPOSER's own principal (the bridge's
+    # :454 clause) and differs from the authorization's principal (:461)
+    assert proposed_command.principal_id == fx.admission_fx.kernel_key.principal_id
+    assert proposed_command.principal_id == submission.proposed_by_principal_id
+    assert proposed_command.principal_id != fx.action_fx.kernel_key.principal_id
     assert proposed_command.expected_stream_version == 7
     assert proposed_command.expected_tail_event_sha256 == _sha("tail")
     assert action_command.idempotency_key == f"action:{action_sha}"

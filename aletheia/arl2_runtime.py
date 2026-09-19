@@ -107,38 +107,38 @@ def _canonical_absolute_path(value: str, *, label: str) -> Path:
 
 
 class ARL2KernelCommandServiceSetV1(KernelModel):
-    """The two driver-facing signing services, one exact operation each."""
+    """The three driver-facing signing services, one exact operation each."""
 
     schema_name: Literal["aletheia.arl2_kernel_command_service_set"] = (
         "aletheia.arl2_kernel_command_service_set"
     )
     schema_version: Literal[1] = 1
+    admission_kernel_command: ControllerWorkerRPCServicePin
     action_kernel_command: ControllerWorkerRPCServicePin
     transition_kernel_command: ControllerWorkerRPCServicePin
 
     @model_validator(mode="after")
     def _services_are_minimal_and_disjoint(self) -> "ARL2KernelCommandServiceSetV1":
         expected_operations = {
+            "admission_kernel_command": (
+                ControllerWorkerRPCOperation.SIGN_ADMISSION_COMMAND,
+            ),
             "action_kernel_command": (ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND,),
             "transition_kernel_command": (ControllerWorkerRPCOperation.SIGN_TRANSITION_COMMAND,),
         }
         for name, pin in self.named_pins:
             if pin.operations != expected_operations[name]:
                 raise ValueError(f"ARL-2 kernel-command service {name} has another operation set")
-        if (
-            self.action_kernel_command.service_id == self.transition_kernel_command.service_id
-            or self.action_kernel_command.service_principal_id
-            == self.transition_kernel_command.service_principal_id
-            or self.action_kernel_command.receipt_key_id
-            == self.transition_kernel_command.receipt_key_id
-            or self.action_kernel_command.socket_path == self.transition_kernel_command.socket_path
-        ):
-            raise ValueError("ARL-2 kernel-command services must be pairwise distinct")
+        for field in ("service_id", "service_principal_id", "receipt_key_id", "socket_path"):
+            values = {getattr(pin, field) for _name, pin in self.named_pins}
+            if len(values) != len(self.named_pins):
+                raise ValueError("ARL-2 kernel-command services must be pairwise distinct")
         return self
 
     @property
     def named_pins(self) -> tuple[tuple[str, ControllerWorkerRPCServicePin], ...]:
         return (
+            ("admission_kernel_command", self.admission_kernel_command),
             ("action_kernel_command", self.action_kernel_command),
             ("transition_kernel_command", self.transition_kernel_command),
         )
@@ -734,6 +734,14 @@ class ARL2QuestionCampaignDriver:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._sleeper = sleeper or time.sleep
         self._receipt_lookup = receipt_lookup or self._continuation_receipt
+        self._admission_client = ControllerWorkerRPCClient(
+            pin=self.config.kernel_command_services.admission_kernel_command,
+            controller_id=self.config.controller_id,
+            controller_manifest_sha256=self.config.controller_manifest_sha256,
+            worker_process_principal_id=self.config.process_principal_id,
+            transport=transport,
+            clock=self._clock,
+        )
         self._action_client = ControllerWorkerRPCClient(
             pin=self.config.kernel_command_services.action_kernel_command,
             controller_id=self.config.controller_id,
@@ -930,8 +938,8 @@ class ARL2QuestionCampaignDriver:
     ) -> AuthorizedResearchCommand:
         """Sign the admission command the submission itself carries verbatim."""
 
-        return self._action_client.call(
-            ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND,
+        return self._admission_client.call(
+            ControllerWorkerRPCOperation.SIGN_ADMISSION_COMMAND,
             payload={
                 "proposal": submission.command_proposal.model_dump(mode="json"),
                 "submitted": submission.model_dump(mode="json"),

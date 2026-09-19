@@ -168,15 +168,17 @@ class AdmissionCommitRPCPayload(ControllerModel):
 
 
 class ActionKernelCommandRPCPayload(ControllerModel):
-    """One exact action-authorization signing request for the ARL-2 driver.
+    """One exact action signing request for the ARL-2 driver.
 
     The idempotency and source-event keys never ride the wire: the service
     derives both from the submitted action sha through the exact-proposal
-    convention.  An ACTION_AUTHORIZED proposal derives
-    ``action:{sha}`` / ``action-proposal:{sha}``; an ACTION_PROPOSED
-    admission (the byte-exact command the submission itself carries) derives
-    ``action-proposed:{sha}`` for both, so its receipt never collides with
-    the authorization's.  A request cannot express a rebound key.
+    convention.  The ACTION service derives ``action:{sha}`` /
+    ``action-proposal:{sha}`` for an ACTION_AUTHORIZED proposal; the
+    ADMISSION service (same payload shape, own operation and key) signs
+    only the byte-exact ACTION_PROPOSED command the submission itself
+    carries, deriving ``action-proposed:{sha}`` for both so its receipt
+    never collides with the authorization's.  A request cannot express a
+    rebound key.
     """
 
     proposal: ResearchCommandProposal
@@ -223,6 +225,7 @@ _OPERATION_PAYLOAD_MODELS: dict[ControllerWorkerRPCOperation, _PayloadModel] = {
     ControllerWorkerRPCOperation.COMMIT_AND_INCORPORATE: AdmissionCommitRPCPayload,
     ControllerWorkerRPCOperation.LOAD_COMMITTED_ADMISSION: ScientificSlotLookupRPCPayload,
     ControllerWorkerRPCOperation.DERIVE_CONTINUATION: ControllerTickRPCPayload,
+    ControllerWorkerRPCOperation.SIGN_ADMISSION_COMMAND: ActionKernelCommandRPCPayload,
     ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND: ActionKernelCommandRPCPayload,
     ControllerWorkerRPCOperation.SIGN_TRANSITION_COMMAND: TransitionKernelCommandRPCPayload,
 }
@@ -249,6 +252,7 @@ _OPERATION_RESULT_MODELS: dict[ControllerWorkerRPCOperation, _ResultModel] = {
     ControllerWorkerRPCOperation.COMMIT_AND_INCORPORATE: AtomicObservationAdmissionReceipt,
     ControllerWorkerRPCOperation.LOAD_COMMITTED_ADMISSION: AtomicObservationAdmissionReceipt,
     ControllerWorkerRPCOperation.DERIVE_CONTINUATION: ContinuationReceiptWrite,
+    ControllerWorkerRPCOperation.SIGN_ADMISSION_COMMAND: AuthorizedResearchCommand,
     ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND: AuthorizedResearchCommand,
     ControllerWorkerRPCOperation.SIGN_TRANSITION_COMMAND: AuthorizedResearchCommand,
 }
@@ -263,6 +267,7 @@ _SIGNED_BLOCKER_OPERATIONS = frozenset(
         # A kernel-command refusal is a deterministic domain decision, not a
         # transport failure: the driver must see the signed blocker instead of
         # an unsigned error indistinguishable from a crashed service.
+        ControllerWorkerRPCOperation.SIGN_ADMISSION_COMMAND,
         ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND,
         ControllerWorkerRPCOperation.SIGN_TRANSITION_COMMAND,
     }

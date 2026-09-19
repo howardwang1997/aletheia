@@ -16,8 +16,8 @@ _quest_fixture/_problem_command and tests/research_controller/
 test_arl2_runtime.py:967-1048):
 
 1. generates the quest-activation authority (trust root + certified policy,
-   four role keys) plus the auditor and qualifier signing keys, all 0400
-   under the working root;
+   four role keys plus the admission signer's second ORDINARY key) and the
+   auditor and qualifier signing keys, all 0400 under the working root;
 2. creates the writer CAS root once (0700, this uid; never recreated);
 3. archives charter v1, commits it, reads the real tail event sha from the
    store audit;
@@ -232,6 +232,21 @@ def main() -> int:
             "public_key_ed25519_hex": public,
             "principal_id": principal_for[role.value],
         }
+    # The admission signer holds a SECOND ORDINARY key whose principal is the
+    # ACTION_PROPOSAL binding principal itself: the scientific bridge requires
+    # the ACTION_PROPOSED event's signing principal to equal the proposer and
+    # the ACTION_AUTHORIZED signing principal to differ from it, so the two
+    # events can never share one policy key (contradiction #10, remedy a).
+    admission_private = os.urandom(32)
+    admission_path = keys_root / "admission-ordinary.key"
+    _write_private(admission_path, admission_private)
+    admission_public = ed25519_public_key_hex(admission_private)
+    key_inventory["admission_ordinary"] = {
+        "path": str(admission_path),
+        "key_id": ed25519_key_id(admission_public),
+        "public_key_ed25519_hex": admission_public,
+        "principal_id": principals.get("action_proposal", "service.arl2.action-proposal"),
+    }
     auditor_key = os.urandom(32)
     qualifier_key = os.urandom(32)
     auxiliary = {}
@@ -260,13 +275,20 @@ def main() -> int:
             ),
         ),
     )
+    def _inventory_role(name: str) -> ResearchAuthorizationRole:
+        # the admission signer's inventory entry names the second ORDINARY
+        # key, not a fifth role; every other inventory name is a role verbatim
+        if name == "admission_ordinary":
+            return ResearchAuthorizationRole.ORDINARY
+        return ResearchAuthorizationRole(name)
+
     role_keys = tuple(
         sorted(
             (
                 ResearchAuthorizationKey(
                     key_id=item["key_id"],
                     principal_id=item["principal_id"],
-                    role=ResearchAuthorizationRole(name),
+                    role=_inventory_role(name),
                     public_key_ed25519_hex=item["public_key_ed25519_hex"],
                     valid_from=valid_from,
                     expires_at=expires_at,
@@ -329,10 +351,11 @@ def main() -> int:
     store = ResearchKernelStore(trust_root=trust_root, archive=archive, genesis_policy=policy)
 
     def _role(name: str):
-        return next(
-            item for item in policy.keys
-            if item.role is ResearchAuthorizationRole(name)
-        )
+        # the policy now holds two ORDINARY keys (the admission signer's is
+        # the second); select by the inventory's key_id so the activation
+        # commands always sign under the role's own minted key
+        wanted = key_inventory[name]["key_id"]
+        return next(item for item in policy.keys if item.key_id == wanted)
 
     def _commit_and_tail(command, event_type: EventType):
         store.commit(command)
