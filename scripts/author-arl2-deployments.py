@@ -930,6 +930,21 @@ def _command_service_header(controller_paths: dict, closure: dict, service: str)
     }
 
 
+def _deployment_worker_principal(service: str) -> str:
+    """Caller principal one service's deployment record freezes.
+
+    The deployment, not the config body, is what the deployed service
+    enforces: the composition factory refuses a config whose principal
+    differs from its deployment ("kernel command config differs from
+    deployment or authority", raised at service start), and the live
+    server compares each request against the deployment's value. Keep
+    this in lockstep with _command_service_header for the kernel-command
+    pair; every other RPC surface keeps the worker caller.
+    """
+
+    return DRIVER_PRINCIPAL if service in COMMAND_SERVICES else WORKER_PRINCIPAL
+
+
 # --------------------------------------------------------------------------
 # Keys
 # --------------------------------------------------------------------------
@@ -2639,7 +2654,7 @@ def _build_service_deployments(
             service_pin=pin,
             controller_id=controller_paths["controller_id"],
             controller_manifest_sha256=controller_paths["manifest_sha256"],
-            worker_process_principal_id=WORKER_PRINCIPAL,
+            worker_process_principal_id=_deployment_worker_principal(service),
             worker_peer_uid=peer_uid,
             worker_peer_gid=driver_gid,
             process_uid=service_uid[service],
