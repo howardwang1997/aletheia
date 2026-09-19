@@ -908,6 +908,43 @@ def _kernel_policy_assignments(activation: dict) -> tuple:
     return controller_assignment, observation_assignment
 
 
+def _command_service_header(controller_paths: dict, closure: dict, service: str) -> dict:
+    """Identity header for one kernel-command signing service.
+
+    The two kernel-command services face the driver, not the worker (the
+    worker composition excludes both SIGN operations from the worker's
+    pins), and the driver's RPC clients sign under the driver's own
+    process principal (arl2_runtime builds each ControllerWorkerRPCClient
+    with config.process_principal_id). Freezing the worker principal here
+    makes the server refuse every sign request with "RPC request differs
+    from its deployment pin" — the server closes without a frame, so the
+    driver only sees "RPC response is not one canonical frame".
+    """
+
+    return {
+        "controller_id": controller_paths["controller_id"],
+        "controller_manifest_sha256": controller_paths["manifest_sha256"],
+        "worker_process_principal_id": DRIVER_PRINCIPAL,
+        "service_id": closure["driver_pins"][service].service_id,
+        "service_pin_sha256": closure["driver_pins"][service].pin_sha256,
+    }
+
+
+def _deployment_worker_principal(service: str) -> str:
+    """Caller principal one service's deployment record freezes.
+
+    The deployment, not the config body, is what the deployed service
+    enforces: the composition factory refuses a config whose principal
+    differs from its deployment ("kernel command config differs from
+    deployment or authority", raised at service start), and the live
+    server compares each request against the deployment's value. Keep
+    this in lockstep with _command_service_header for the kernel-command
+    pair; every other RPC surface keeps the worker caller.
+    """
+
+    return DRIVER_PRINCIPAL if service in COMMAND_SERVICES else WORKER_PRINCIPAL
+
+
 # --------------------------------------------------------------------------
 # Keys
 # --------------------------------------------------------------------------
@@ -2537,11 +2574,7 @@ def _build_service_deployments(
     for service in COMMAND_SERVICES:
         key = keys["domain"][service]
         configs[service] = {
-            "controller_id": controller_paths["controller_id"],
-            "controller_manifest_sha256": controller_paths["manifest_sha256"],
-            "worker_process_principal_id": WORKER_PRINCIPAL,
-            "service_id": closure["driver_pins"][service].service_id,
-            "service_pin_sha256": closure["driver_pins"][service].pin_sha256,
+            **_command_service_header(controller_paths, closure, service),
             "prepared_at": _iso(prepared_at),
             "authorization_key_id": activation["ordinary"]["key_id"],
             "kernel_authority_source_path": controller_authority_path,
@@ -2621,7 +2654,7 @@ def _build_service_deployments(
             service_pin=pin,
             controller_id=controller_paths["controller_id"],
             controller_manifest_sha256=controller_paths["manifest_sha256"],
-            worker_process_principal_id=WORKER_PRINCIPAL,
+            worker_process_principal_id=_deployment_worker_principal(service),
             worker_peer_uid=peer_uid,
             worker_peer_gid=driver_gid,
             process_uid=service_uid[service],
