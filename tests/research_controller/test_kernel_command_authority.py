@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -22,6 +22,7 @@ from aletheia.research_controller.continuation import (
 from aletheia.research_controller.kernel_authority import (
     ControllerKernelPolicyAssignment,
     ExactActionKernelAuthority,
+    ExactAdmissionKernelAuthority,
     ExactTransitionKernelAuthority,
     KernelCommandAuthorityError,
     continuation_receipt_evidence_ref,
@@ -36,7 +37,12 @@ from aletheia.research_kernel.commands import (
     ResearchScopeBinding,
     required_authorization_role,
 )
-from aletheia.research_kernel.policy import ResearchAuthorizationRole
+from aletheia.research_kernel.policy import (
+    ResearchAuthorizationKey,
+    ResearchAuthorizationRole,
+    ed25519_key_id,
+    ed25519_public_key_hex,
+)
 from aletheia.research_kernel.schemas import (
     ActionAuthorizedPayload,
     ActionKind,
@@ -115,6 +121,46 @@ def _transition_authority(
         assignments=(assignment,),
         authorization_key_id=key.key_id,
         private_key=COMMAND_PRIVATE_KEYS[role],
+    )
+
+
+# The admission signer's second ORDINARY key speaks with the ACTION_PROPOSAL
+# binding principal itself (contradiction #10 remedy a): the bridge requires
+# the ACTION_PROPOSED principal to equal the proposer while the paired
+# ACTION_AUTHORIZED stays with the separate action authority.
+_ADMISSION_PRIVATE = b"\x25" * 32
+_ADMISSION_PRINCIPAL = "service:action-proposal"
+
+
+def _admission_extra_key() -> ResearchAuthorizationKey:
+    public = ed25519_public_key_hex(_ADMISSION_PRIVATE)
+    return ResearchAuthorizationKey(
+        key_id=ed25519_key_id(public),
+        principal_id=_ADMISSION_PRINCIPAL,
+        role=ResearchAuthorizationRole.ORDINARY,
+        public_key_ed25519_hex=public,
+        valid_from=datetime(2026, 8, 23, tzinfo=timezone.utc),
+        expires_at=datetime(2026, 9, 3, tzinfo=timezone.utc),
+    )
+
+
+def _admission_authority() -> ExactAdmissionKernelAuthority:
+    trust_root, policy = command_authority(
+        quest_id=QUEST_ID, extra_keys=(_admission_extra_key(),)
+    )
+    key = next(
+        item for item in policy.keys if item.principal_id == _ADMISSION_PRINCIPAL
+    )
+    assignment = ControllerKernelPolicyAssignment(
+        quest_id=QUEST_ID,
+        scope_binding=ResearchScopeBinding(quest_id=QUEST_ID),
+        authorization_policy=policy,
+    )
+    return ExactAdmissionKernelAuthority(
+        trust_root=trust_root,
+        assignments=(assignment,),
+        authorization_key_id=key.key_id,
+        private_key=_ADMISSION_PRIVATE,
     )
 
 
@@ -310,14 +356,14 @@ def test_action_authority_rejects_rebound_proposals() -> None:
         )
 
 
-def test_action_authority_signs_the_submission_carried_admission_command() -> None:
-    authority = _action_authority()
+def test_admission_authority_signs_the_submission_carried_admission_command() -> None:
+    authority = _admission_authority()
     submission = _submission(ControllerStep.PROPOSE_ACTION)
     proposal = submission.command_proposal
     idempotency = f"action-proposed:{submission.action.object_sha256}"
     source = f"action-proposed:{submission.action.object_sha256}"
 
-    command = authority.authorize_action(
+    command = authority.authorize_admission(
         proposal=proposal,
         submitted=submission,
         idempotency_key=idempotency,
@@ -327,10 +373,13 @@ def test_action_authority_signs_the_submission_carried_admission_command() -> No
     assert command.proposal_sha256 == proposal.proposal_sha256
     assert command.idempotency_key == idempotency
     assert command.principal_id == authority.principal_id
+    # the bridge's :454 clause — the ACTION_PROPOSED event's principal IS the
+    # action's proposer — holds by construction on the signed command
+    assert command.principal_id == submission.proposed_by_principal_id
 
 
-def test_action_authority_rejects_a_rebound_admission_command() -> None:
-    authority = _action_authority()
+def test_admission_authority_rejects_a_rebound_admission_command() -> None:
+    authority = _admission_authority()
     submission = _submission(ControllerStep.PROPOSE_ACTION)
     idempotency = f"action-proposed:{submission.action.object_sha256}"
     source = f"action-proposed:{submission.action.object_sha256}"
@@ -347,7 +396,7 @@ def test_action_authority_rejects_a_rebound_admission_command() -> None:
         }
     )
     with pytest.raises(KernelCommandAuthorityError, match="rebound"):
-        authority.authorize_action(
+        authority.authorize_admission(
             proposal=rebound,
             submitted=submission,
             idempotency_key=idempotency,
@@ -356,7 +405,7 @@ def test_action_authority_rejects_a_rebound_admission_command() -> None:
     # the admission command under the authorization's idempotency identity is
     # the exact wiring mistake the RPC dispatch could make
     with pytest.raises(KernelCommandAuthorityError, match="rebound"):
-        authority.authorize_action(
+        authority.authorize_admission(
             proposal=submission.command_proposal,
             submitted=submission,
             idempotency_key=f"action:{submission.action.object_sha256}",
@@ -366,11 +415,66 @@ def test_action_authority_rejects_a_rebound_admission_command() -> None:
     # store's receipt lookup matches persisted rows by either key, so a shared
     # source_event_key would collide the two commands of one exchange
     with pytest.raises(KernelCommandAuthorityError, match="rebound"):
-        authority.authorize_action(
+        authority.authorize_admission(
             proposal=submission.command_proposal,
             submitted=submission,
             idempotency_key=idempotency,
             source_event_key=f"action-proposal:{submission.action.object_sha256}",
+        )
+    # an ACTION_AUTHORIZED proposal under the admission operation is the same
+    # dispatch mistake on the event side: the admission authority signs
+    # ACTION_PROPOSED only
+    version, tail = _live_pins(submission)
+    with pytest.raises(KernelCommandAuthorityError, match="rebound"):
+        authority.authorize_admission(
+            proposal=_authorization_proposal(
+                submission,
+                expected_stream_version=version,
+                expected_tail_event_sha256=tail,
+            ),
+            submitted=submission,
+            idempotency_key=f"action:{submission.action.object_sha256}",
+            source_event_key=f"action-proposal:{submission.action.object_sha256}",
+        )
+
+
+def test_admission_authority_signs_only_its_own_principal_s_proposals() -> None:
+    authority = _admission_authority()
+    # a submission whose proposer is another principal is not this authority's
+    # contract, even when every other exact-proposal clause holds
+    request = _request(ControllerStep.PROPOSE_ACTION)
+    foreign_binding = _proposal_binding().model_copy(
+        update={"principal_id": "service:another-proposer"}
+    )
+    submission = materialize_action_proposal(
+        request=request,
+        draft=_draft(request),
+        authority_binding=foreign_binding,
+        submitted_at=NOW + timedelta(seconds=2),
+    )
+    with pytest.raises(KernelCommandAuthorityError, match="own principal"):
+        authority.authorize_admission(
+            proposal=submission.command_proposal,
+            submitted=submission,
+            idempotency_key=f"action-proposed:{submission.action.object_sha256}",
+            source_event_key=f"action-proposed:{submission.action.object_sha256}",
+        )
+
+
+def test_action_authority_refuses_the_submission_carried_admission_command() -> None:
+    authority = _action_authority()
+    submission = _submission(ControllerStep.PROPOSE_ACTION)
+
+    # the ACTION_PROPOSED admission belongs to the admission authority holding
+    # the proposer's own key; this authority signing it would collapse the
+    # bridge's proposer/authorizer separation, so the event-type clause
+    # refuses it by construction
+    with pytest.raises(KernelCommandAuthorityError, match="rebound"):
+        authority.authorize_action(
+            proposal=submission.command_proposal,
+            submitted=submission,
+            idempotency_key=f"action-proposed:{submission.action.object_sha256}",
+            source_event_key=f"action-proposed:{submission.action.object_sha256}",
         )
 
 
@@ -394,6 +498,14 @@ def test_command_authorities_fail_closed_on_rebound_configuration() -> None:
     for build in (_action_authority, _transition_authority):
         with pytest.raises(KernelCommandAuthorityError, match="ordinary Kernel key"):
             build(role=ResearchAuthorizationRole.EMERGENCY)
+    admission = _admission_authority()
+    with pytest.raises(KernelCommandAuthorityError, match="private key"):
+        ExactAdmissionKernelAuthority(
+            trust_root=admission.trust_root,
+            assignments=admission.assignments,
+            authorization_key_id=admission.authorization_key_id,
+            private_key=COMMAND_PRIVATE_KEYS[ResearchAuthorizationRole.AMENDMENT],
+        )
 
 
 def test_transition_authority_signs_only_the_receipt_forced_fork() -> None:

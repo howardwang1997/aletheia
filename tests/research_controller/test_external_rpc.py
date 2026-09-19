@@ -521,9 +521,10 @@ def test_rpc_facades_cover_each_closed_operation_without_a_catch_all() -> None:
             getattr(facade, method_name)(**kwargs)
         observed.extend(facade._client.operations)
 
-    # The two kernel-command signing operations face the ARL-2 driver; the
+    # The three kernel-command signing operations face the ARL-2 driver; the
     # worker's facade set must still cover every remaining operation exactly.
     driver_facing = {
+        ControllerWorkerRPCOperation.SIGN_ADMISSION_COMMAND,
         ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND,
         ControllerWorkerRPCOperation.SIGN_TRANSITION_COMMAND,
     }

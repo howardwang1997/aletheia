@@ -114,6 +114,7 @@ class ControllerWorkerRPCOperation(str, Enum):
     COMMIT_AND_INCORPORATE = "commit_and_incorporate"
     LOAD_COMMITTED_ADMISSION = "load_committed_admission"
     DERIVE_CONTINUATION = "derive_continuation"
+    SIGN_ADMISSION_COMMAND = "sign_admission_command"
     SIGN_ACTION_COMMAND = "sign_action_command"
     SIGN_TRANSITION_COMMAND = "sign_transition_command"
 

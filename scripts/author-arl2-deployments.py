@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Author the full ARL-2 commissioning deployment set (runbook W1 step 6).
 
-One window, one invocation: eleven of the fourteen RPC service deployments
-(the eight simply-keyed/keyless worker-facing services, the two
+One window, one invocation: twelve of the fifteen RPC service deployments
+(the eight simply-keyed/keyless worker-facing services, the three
 kernel-command signers, and the cuprate diagnostic), the four role
 deployments, the controller manifest with its policy documents, the worker
 composition (adapter set + the full eleven-service pin set), and the driver
@@ -93,7 +93,11 @@ WORKER_SERVICES: tuple[str, ...] = (
     "atomic_admission",
     "continuation_assessment",
 )
-COMMAND_SERVICES: tuple[str, ...] = ("action_kernel_command", "transition_kernel_command")
+COMMAND_SERVICES: tuple[str, ...] = (
+    "admission_kernel_command",
+    "action_kernel_command",
+    "transition_kernel_command",
+)
 CUPRATE_SERVICE = "cuprate_diagnostic"
 ALL_SERVICES: tuple[str, ...] = (*WORKER_SERVICES, *COMMAND_SERVICES, CUPRATE_SERVICE)
 
@@ -155,6 +159,10 @@ _SERVICE_FACTORIES: dict[str, tuple[str, str]] = {
         "aletheia.research_controller_continuation_runtime",
         "build_continuation_assessment_rpc_service",
     ),
+    "admission_kernel_command": (
+        "aletheia.research_controller_kernel_command_runtime",
+        "build_admission_kernel_command_rpc_service",
+    ),
     "action_kernel_command": (
         "aletheia.research_controller_kernel_command_runtime",
         "build_action_kernel_command_rpc_service",
@@ -198,6 +206,7 @@ SERVICE_PRINCIPALS = {
     "committed_validation_source": "service.arl2.committed-validation-source",
     "atomic_admission": "service.arl2.atomic-admission",
     "continuation_assessment": "service.arl2.continuation-assessor",
+    "admission_kernel_command": "service.arl2.admission-kernel-command",
     "action_kernel_command": "service.arl2.action-kernel-command",
     "transition_kernel_command": "service.arl2.transition-kernel-command",
     CUPRATE_SERVICE: "service.arl2.cuprate-diagnostic",
@@ -240,6 +249,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--service-uid", type=int, required=True, help="uid for the worker-facing services (readers stay DISTINCT from the CAS owner uid)")
     parser.add_argument("--worker-uid", type=int, required=True, help="uid for the worker role subprocess (distinct from driver/services; primary gid = --driver-gid)")
     parser.add_argument("--admission-uid", type=int, required=True, help="uid for atomic-admission (a CAS writer: equals --driver-uid under the 0750 topology)")
+    parser.add_argument("--admission-signer-uid", type=int, required=True, help="uid for the admission kernel-command signer")
     parser.add_argument("--action-signer-uid", type=int, required=True, help="uid for the action kernel-command signer")
     parser.add_argument("--transition-signer-uid", type=int, required=True, help="uid for the transition kernel-command signer")
     parser.add_argument("--cuprate-uid", type=int, required=True, help="uid for the cuprate diagnostic service / executor")
@@ -434,6 +444,7 @@ def main() -> int:
         args.service_uid,
         args.worker_uid,
         args.admission_uid,
+        args.admission_signer_uid,
         args.action_signer_uid,
         args.transition_signer_uid,
         args.cuprate_uid,
@@ -446,6 +457,7 @@ def main() -> int:
     service_uid = {
         **{name: args.service_uid for name in WORKER_SERVICES},
         "atomic_admission": args.admission_uid,
+        "admission_kernel_command": args.admission_signer_uid,
         "action_kernel_command": args.action_signer_uid,
         "transition_kernel_command": args.transition_signer_uid,
         CUPRATE_SERVICE: args.cuprate_uid,
@@ -639,6 +651,7 @@ _KEY_OWNERSHIP: dict[str, tuple[str, ...]] = {
     "independent_validation": ("validator",),
     "independent_admission": ("admission",),
     "atomic_admission": ("database", "kernel"),
+    "admission_kernel_command": ("command",),
     "action_kernel_command": ("command",),
     "transition_kernel_command": ("command",),
 }
@@ -798,6 +811,22 @@ def _load_activation_inputs(state_path: str) -> dict:
     ordinary_bytes = _read_bytes(Path(ordinary["path"]))
     if _sha256_bytes(bytes.fromhex(ordinary["public_key_ed25519_hex"])) != ordinary["key_id"]:
         _fail("activation ordinary key id does not match its recorded public key")
+    # the admission signer's second ORDINARY key (principal = the
+    # ACTION_PROPOSAL binding principal); absent in pre-#10 activation files
+    try:
+        admission_ordinary = authority["role_keys"]["admission_ordinary"]
+    except KeyError:
+        _fail(
+            "activation authority carries no admission_ordinary key; re-run "
+            "author-arl2-authorities.py for the admission signing service "
+            "(contradiction #10, remedy a)"
+        )
+    admission_bytes = _read_bytes(Path(admission_ordinary["path"]))
+    if (
+        _sha256_bytes(bytes.fromhex(admission_ordinary["public_key_ed25519_hex"]))
+        != admission_ordinary["key_id"]
+    ):
+        _fail("activation admission-ordinary key id does not match its recorded public key")
 
     valid_from = datetime.fromisoformat(authority["valid_from"])
     expires_at = datetime.fromisoformat(authority["expires_at"])
@@ -819,6 +848,13 @@ def _load_activation_inputs(state_path: str) -> dict:
             "public_key_ed25519_hex": ordinary["public_key_ed25519_hex"],
             "principal_id": ordinary["principal_id"],
             "bytes": ordinary_bytes,
+        },
+        "admission_ordinary": {
+            "path": admission_ordinary["path"],
+            "key_id": admission_ordinary["key_id"],
+            "public_key_ed25519_hex": admission_ordinary["public_key_ed25519_hex"],
+            "principal_id": admission_ordinary["principal_id"],
+            "bytes": admission_bytes,
         },
         "auditor": authority["auxiliary_keys"]["auditor"],
         "qualifier": authority["auxiliary_keys"]["qualifier"],
@@ -911,7 +947,7 @@ def _kernel_policy_assignments(activation: dict) -> tuple:
 def _command_service_header(controller_paths: dict, closure: dict, service: str) -> dict:
     """Identity header for one kernel-command signing service.
 
-    The two kernel-command services face the driver, not the worker (the
+    The three kernel-command services face the driver, not the worker (the
     worker composition excludes both SIGN operations from the worker's
     pins), and the driver's RPC clients sign under the driver's own
     process principal (arl2_runtime builds each ControllerWorkerRPCClient
@@ -1034,15 +1070,22 @@ def _generate_keys(layout, engine, *, activation, service_uid, driver_uid, drive
             gid=driver_gid,
         ),
     }
+    admission_ordinary = activation["admission_ordinary"]
     for service in COMMAND_SERVICES:
+        # the admission signer's custody copy carries the SECOND ORDINARY key
+        # (principal = the ACTION_PROPOSAL binding principal), so its config's
+        # authorization_key_id and key bytes both name that identity
+        material = (
+            admission_ordinary if service == "admission_kernel_command" else ordinary
+        )
         keys["domain"][service] = {
             "path": str(layout["domain_key_dirs"][service]["command"] / "command.key"),
-            "private": ordinary["bytes"],
-            "public_hex": ordinary["public_key_ed25519_hex"],
-            "key_id": ordinary["key_id"],
+            "private": material["bytes"],
+            "public_hex": material["public_key_ed25519_hex"],
+            "key_id": material["key_id"],
             "file_sha256": _write_key(
                 layout["domain_key_dirs"][service]["command"] / "command.key",
-                ordinary["bytes"],
+                material["bytes"],
                 uid=service_uid[service],
                 gid=driver_gid,
             ),
@@ -1478,7 +1521,7 @@ def _build_service_pins(
     capability_catalog,
     resource_catalog,
 ) -> dict:
-    """Author policies, identity manifests, bindings, and all fourteen pins."""
+    """Author policies, identity manifests, bindings, and all fifteen pins."""
 
     from aletheia.observations.scientific_bridge import (
         ObservationDatabaseAuthorityPin,
@@ -1532,6 +1575,7 @@ def _build_service_pins(
         "independent_admission": (ControllerWorkerRPCOperation.ISSUE_ADMISSION_DECISION,),
         "atomic_admission": (ControllerWorkerRPCOperation.COMMIT_AND_INCORPORATE,),
         "continuation_assessment": (ControllerWorkerRPCOperation.DERIVE_CONTINUATION,),
+        "admission_kernel_command": (ControllerWorkerRPCOperation.SIGN_ADMISSION_COMMAND,),
         "action_kernel_command": (ControllerWorkerRPCOperation.SIGN_ACTION_COMMAND,),
         "transition_kernel_command": (ControllerWorkerRPCOperation.SIGN_TRANSITION_COMMAND,),
         CUPRATE_SERVICE: (ControllerWorkerRPCOperation.RUN_CUPRATE_DIAGNOSTIC,),
@@ -1549,6 +1593,7 @@ def _build_service_pins(
         "independent_admission": 8 * 1024 * 1024,
         "atomic_admission": 16 * 1024 * 1024,
         "continuation_assessment": 1024 * 1024,
+        "admission_kernel_command": 4 * 1024 * 1024,
         "action_kernel_command": 4 * 1024 * 1024,
         "transition_kernel_command": 4 * 1024 * 1024,
         CUPRATE_SERVICE: 8 * 1024 * 1024,
@@ -1682,6 +1727,7 @@ def _build_service_pins(
             "raw_run_source",
             "committed_validation_source",
             "atomic_admission",
+            "admission_kernel_command",
             "action_kernel_command",
             "transition_kernel_command",
             CUPRATE_SERVICE,
@@ -1856,7 +1902,7 @@ def _build_service_pins(
         ),
     }
 
-    # ---- the fourteen service pins ------------------------------------------
+    # ---- the fifteen service pins -------------------------------------------
     def service_pin(service: str) -> ControllerWorkerRPCServicePin:
         principal, policy_sha = pin_identity(service)
         role_names = _SERVICE_BINDING_ROLES.get(service, ())
@@ -2248,7 +2294,7 @@ def _build_service_deployments(
     worker_uid,
     driver_gid,
 ) -> dict:
-    """Author the eleven live configs/deployments (three deferred services skipped)."""
+    """Author the twelve live configs/deployments (three deferred services skipped)."""
 
     from aletheia.execution.registration_custody import QualificationExecutionRegistrationConfig
     from aletheia.research_controller_rpc_runtime import ControllerWorkerRPCServerDeployment
@@ -2598,7 +2644,13 @@ def _build_service_deployments(
         configs[service] = {
             **_command_service_header(controller_paths, closure, service),
             "prepared_at": _iso(prepared_at),
-            "authorization_key_id": activation["ordinary"]["key_id"],
+            # the admission signer authorizes under the second ORDINARY key;
+            # _compose refuses any config whose key bytes and key_id disagree
+            "authorization_key_id": (
+                activation["admission_ordinary"]["key_id"]
+                if service == "admission_kernel_command"
+                else activation["ordinary"]["key_id"]
+            ),
             "kernel_authority_source_path": controller_authority_path,
             "kernel_authority_source_sha256": controller_authority_sha,
             "trust_root": trust_root_json,
@@ -2658,7 +2710,7 @@ def _build_service_deployments(
         factory_path = release / "aletheia" / f"{module_name.rsplit('.', 1)[-1]}.py"
         socket_metadata = _stat_directory(layout["sockets"][service])
         if service in COMMAND_SERVICES:
-            # the two kernel-command signers face the DRIVER, not the
+            # the three kernel-command signers face the DRIVER, not the
             # worker: worker_composition excludes their operations from the
             # worker's set, and every signing connection arrives from the
             # driver's own _carry_signing_work pass
@@ -2778,6 +2830,7 @@ def _build_driver(
         max_object_bytes=MAX_OBJECT_BYTES,
     )
     kernel_command_services = ARL2KernelCommandServiceSetV1(
+        admission_kernel_command=closure["driver_pins"]["admission_kernel_command"],
         action_kernel_command=closure["driver_pins"]["action_kernel_command"],
         transition_kernel_command=closure["driver_pins"]["transition_kernel_command"],
     )

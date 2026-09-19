@@ -1,4 +1,4 @@
-"""Exact-policy ordinary Research Kernel authorities for actions and transitions."""
+"""Exact-policy ordinary Research Kernel authorities for the ARL-2 commands."""
 
 from __future__ import annotations
 
@@ -170,6 +170,117 @@ def _directive_branch_id(directive: TransitionDirective) -> str:
     return getattr(directive, "branch_id", getattr(directive, "source_branch_id", ""))
 
 
+class ExactAdmissionKernelAuthority:
+    """Sign only the byte-exact ACTION_PROPOSED command a submission carries.
+
+    This authority holds the action-proposal service's own Kernel key: the
+    scientific bridge requires the ACTION_PROPOSED event's principal to be
+    the action's proposer (``_binding_is_exact``), so the admission signer
+    speaks with the proposer's identity while the authorization stays with
+    the separate action authority — the two-event exchange keeps proposer
+    and authorizer distinct.  Signing its own principal's proposal is the
+    contract here, not a self-authorization.
+    """
+
+    def __init__(
+        self,
+        *,
+        trust_root: ResearchAuthorizationTrustRootV1,
+        assignments: tuple[ControllerKernelPolicyAssignment, ...],
+        authorization_key_id: str,
+        private_key: bytes,
+    ) -> None:
+        (
+            self.trust_root,
+            self.assignments,
+            self.principal_id,
+            self.public_key_ed25519_hex,
+        ) = _single_ordinary_signing_identity(
+            trust_root=trust_root,
+            assignments=assignments,
+            authorization_key_id=authorization_key_id,
+            private_key=private_key,
+            domain="admission",
+        )
+        self.authorization_key_id = authorization_key_id
+        self._private_key = private_key
+        self._by_quest = {item.quest_id: item for item in self.assignments}
+
+    def authorize_admission(
+        self,
+        *,
+        proposal: ResearchCommandProposal,
+        submitted: SubmittedActionProposal,
+        idempotency_key: str,
+        source_event_key: str,
+    ) -> AuthorizedResearchCommand:
+        try:
+            proposal = ResearchCommandProposal.model_validate(proposal.model_dump(mode="python"))
+            submitted = SubmittedActionProposal.model_validate(
+                submitted.model_dump(mode="python")
+            )
+            assignment = self._by_quest.get(proposal.quest_id)
+            if assignment is None or proposal.scope_binding != assignment.scope_binding:
+                raise KernelCommandAuthorityError(
+                    "admission proposal escaped its exact Quest policy assignment"
+                )
+            _require_exact_admission_proposal(
+                proposal=proposal,
+                submitted=submitted,
+                idempotency_key=idempotency_key,
+                source_event_key=source_event_key,
+            )
+            if submitted.proposed_by_principal_id != self.principal_id:
+                raise KernelCommandAuthorityError(
+                    "admission Kernel authority only signs its own principal's proposals"
+                )
+            return authorize_research_proposal(
+                proposal,
+                idempotency_key=idempotency_key,
+                source_event_key=source_event_key,
+                authorization_policy=assignment.authorization_policy,
+                trust_root=self.trust_root,
+                authorization_key_id=self.authorization_key_id,
+                private_key=self._private_key,
+                authorized_at=proposal.proposed_at,
+            )
+        except KernelCommandAuthorityError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - external command authority fails closed
+            raise KernelCommandAuthorityError(
+                "admission Kernel authorization failed closed"
+            ) from exc
+
+
+def _require_exact_admission_proposal(
+    *,
+    proposal: ResearchCommandProposal,
+    submitted: SubmittedActionProposal,
+    idempotency_key: str,
+    source_event_key: str,
+) -> None:
+    payload = proposal.payload
+    action_ref = submitted.action.object_ref
+    # The admission command the spool submission itself carries: only the
+    # byte-exact command_proposal is signed, because the real store admits an
+    # action into state.actions through this event and refuses every later
+    # ACTION_AUTHORIZED commit without it.  Its idempotency AND source
+    # identities are distinct from the authorization's: the store's receipt
+    # lookup matches persisted rows by either key, so the two commands of one
+    # exchange must never share one.
+    if (
+        proposal.event_type is not EventType.ACTION_PROPOSED
+        or not isinstance(payload, ActionProposedPayload)
+        or proposal.proposal_sha256 != submitted.command_proposal.proposal_sha256
+        or not submitted.awaiting_independent_kernel_authority
+        or idempotency_key != f"action-proposed:{action_ref.object_sha256}"
+        or source_event_key != f"action-proposed:{action_ref.object_sha256}"
+    ):
+        raise KernelCommandAuthorityError(
+            "admission Kernel proposal rebound its submitted action proposal"
+        )
+
+
 class ExactActionKernelAuthority:
     """Sign only action-authorization proposals under frozen Quest policies."""
 
@@ -254,25 +365,10 @@ def _require_exact_action_proposal(
     action_ref = submitted.action.object_ref
     expected_idempotency = f"action:{action_ref.object_sha256}"
     expected_source = f"action-proposal:{action_ref.object_sha256}"
-    if proposal.event_type is EventType.ACTION_PROPOSED:
-        # The admission command the spool submission itself carries: only the
-        # byte-exact command_proposal is signed, because the real store admits
-        # an action into state.actions through this event and refuses every
-        # later ACTION_AUTHORIZED commit without it.  Its idempotency AND
-        # source identities are distinct from the authorization's: the store's
-        # receipt lookup matches persisted rows by either key, so the two
-        # commands of one exchange must never share one.
-        if (
-            not isinstance(payload, ActionProposedPayload)
-            or proposal.proposal_sha256 != submitted.command_proposal.proposal_sha256
-            or not submitted.awaiting_independent_kernel_authority
-            or idempotency_key != f"action-proposed:{action_ref.object_sha256}"
-            or source_event_key != f"action-proposed:{action_ref.object_sha256}"
-        ):
-            raise KernelCommandAuthorityError(
-                "action Kernel proposal rebound its submitted action proposal"
-            )
-        return
+    # Only the authorization is signed here: the ACTION_PROPOSED admission
+    # belongs to the admission authority holding the proposer's own key (the
+    # scientific bridge requires the two events' principals to differ), so a
+    # PROPOSED proposal fails the event-type clause below by construction.
     if (
         proposal.event_type is not EventType.ACTION_AUTHORIZED
         or not isinstance(payload, ActionAuthorizedPayload)
@@ -428,6 +524,7 @@ def _require_exact_transition_proposal(
 __all__ = [
     "ControllerKernelPolicyAssignment",
     "ExactActionKernelAuthority",
+    "ExactAdmissionKernelAuthority",
     "ExactTransitionKernelAuthority",
     "KernelCommandAuthorityError",
     "continuation_receipt_evidence_ref",

@@ -2,7 +2,7 @@
 
 The driver's RPC clients sign under config.process_principal_id (arl2_runtime
 builds each ControllerWorkerRPCClient with it), and the deployments authoring
-writes that field as DRIVER_PRINCIPAL. The two kernel-command services used
+writes that field as DRIVER_PRINCIPAL. The three kernel-command services used
 to freeze WORKER_PRINCIPAL in both their config bodies and their deployment
 records, even though every other value in their block came from the driver
 side, so the deployed server refused every sign request with "RPC request
@@ -64,6 +64,7 @@ def test_kernel_command_sides_freeze_one_caller_principal() -> None:
     }
 
     assert deployments.COMMAND_SERVICES == (
+        "admission_kernel_command",
         "action_kernel_command",
         "transition_kernel_command",
     )
