@@ -908,6 +908,28 @@ def _kernel_policy_assignments(activation: dict) -> tuple:
     return controller_assignment, observation_assignment
 
 
+def _command_service_header(controller_paths: dict, closure: dict, service: str) -> dict:
+    """Identity header for one kernel-command signing service.
+
+    The two kernel-command services face the driver, not the worker (the
+    worker composition excludes both SIGN operations from the worker's
+    pins), and the driver's RPC clients sign under the driver's own
+    process principal (arl2_runtime builds each ControllerWorkerRPCClient
+    with config.process_principal_id). Freezing the worker principal here
+    makes the server refuse every sign request with "RPC request differs
+    from its deployment pin" — the server closes without a frame, so the
+    driver only sees "RPC response is not one canonical frame".
+    """
+
+    return {
+        "controller_id": controller_paths["controller_id"],
+        "controller_manifest_sha256": controller_paths["manifest_sha256"],
+        "worker_process_principal_id": DRIVER_PRINCIPAL,
+        "service_id": closure["driver_pins"][service].service_id,
+        "service_pin_sha256": closure["driver_pins"][service].pin_sha256,
+    }
+
+
 # --------------------------------------------------------------------------
 # Keys
 # --------------------------------------------------------------------------
@@ -2537,11 +2559,7 @@ def _build_service_deployments(
     for service in COMMAND_SERVICES:
         key = keys["domain"][service]
         configs[service] = {
-            "controller_id": controller_paths["controller_id"],
-            "controller_manifest_sha256": controller_paths["manifest_sha256"],
-            "worker_process_principal_id": WORKER_PRINCIPAL,
-            "service_id": closure["driver_pins"][service].service_id,
-            "service_pin_sha256": closure["driver_pins"][service].pin_sha256,
+            **_command_service_header(controller_paths, closure, service),
             "prepared_at": _iso(prepared_at),
             "authorization_key_id": activation["ordinary"]["key_id"],
             "kernel_authority_source_path": controller_authority_path,
