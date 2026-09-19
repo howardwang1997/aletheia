@@ -945,6 +945,30 @@ def _deployment_worker_principal(service: str) -> str:
     return DRIVER_PRINCIPAL if service in COMMAND_SERVICES else WORKER_PRINCIPAL
 
 
+def _initial_action_kind_preference() -> tuple:
+    """Preference order the deterministic proposal policy freezes.
+
+    The provider walks this tuple in order at every initial PROPOSE_ACTION
+    (initial requests cannot carry required_action_kind) and every ACTIVE
+    branch allows all kinds, so preference[0] always wins — while the
+    compilation policy admits DISCRIMINATE only and the campaign's staged
+    rounds are discriminate executions. Enum order puts CONTINUE first
+    (runbook contradiction #8, 2026-09-19: every fresh quest proposed
+    continue and the provider template refused "ARL-2 pins DISCRIMINATE"),
+    so DISCRIMINATE must be pinned ahead of the plain enum order. The
+    downstream refine/follow-up proposals are unaffected: their requests
+    carry required_action_kind and never consult the preference.
+    """
+
+    from aletheia.research_kernel.schemas import ActionKind
+
+    return (ActionKind.DISCRIMINATE,) + tuple(
+        kind
+        for kind in ActionKind
+        if kind is not ActionKind.ACTIVATE and kind is not ActionKind.DISCRIMINATE
+    )
+
+
 # --------------------------------------------------------------------------
 # Keys
 # --------------------------------------------------------------------------
@@ -1599,9 +1623,7 @@ def _build_service_pins(
             _read_bytes(release / "aletheia" / "research_controller" / "action_proposal_provider.py")
         ),
         provider_principal_id=SERVICE_PRINCIPALS["action_proposal"],
-        initial_action_kind_preference=tuple(
-            kind for kind in ActionKind if kind is not ActionKind.ACTIVATE
-        ),
+        initial_action_kind_preference=_initial_action_kind_preference(),
         initial_epistemic_purpose=(
             "Propose the discriminating diagnostic action that maximizes information "
             "about the active hypothesis under the frozen protocol catalog."
