@@ -440,3 +440,31 @@ def test_programless_or_disagreeing_activations_are_refused(
     )
     with pytest.raises(SystemExit, match="carries no program scope"):
         deployments._load_activation_inputs(str(programless_path))
+
+
+def test_activation_without_the_admission_ordinary_key_is_refused(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import pytest
+
+    # a pre-contradiction-#10 authority manifest carries no
+    # admission_ordinary role key; the deployments loader must refuse it
+    # instead of silently keying the admission service to the ordinary key
+    _module, _working_root, state = _run_authorities(
+        tmp_path, monkeypatch, label="arl2-admission-key-negative-test"
+    )
+    authority = json.loads(Path(state["authority_manifest_path"]).read_text())
+    del authority["role_keys"]["admission_ordinary"]
+    doctored_authority = tmp_path / "doctored-pre10-authority.json"
+    doctored_authority.write_text(json.dumps(authority))
+    pre10 = dict(state)
+    pre10["authority_manifest_path"] = str(doctored_authority)
+    pre10_state = tmp_path / "doctored-pre10-state.json"
+    pre10_state.write_text(json.dumps(pre10))
+
+    deployments = _load_script(
+        "author_arl2_deployments_under_test", _DEPLOYMENTS
+    )
+    with pytest.raises(SystemExit, match="carries no admission_ordinary"):
+        deployments._load_activation_inputs(str(pre10_state))

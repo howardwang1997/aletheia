@@ -519,6 +519,29 @@ def test_transport_receipt_key_reuse_fails_closed(tmp_path: Path) -> None:
         )
 
 
+def test_admission_config_keyed_to_the_activation_ordinary_key_fails_closed(
+    tmp_path: Path,
+) -> None:
+    # the kit's config loop special-cases the admission service's
+    # authorization_key_id to the SECOND ordinary key; a reversion that keys
+    # the config to the activation ordinary key (the action service's key)
+    # must die at composition, not wedge the first signing pass on the box
+    fx = _fixture(tmp_path, domain="admission")
+    ordinary_key_id = next(
+        item["key_id"]
+        for item in fx.config["policy_assignments"][0]["authorization_policy"]["keys"]
+        if item["role"] == "ordinary" and item["key_id"] != fx.config["authorization_key_id"]
+    )
+    rebound = {**fx.config, "authorization_key_id": ordinary_key_id}
+    config_path = fx.config_path.with_name("ordinary-keyed.json")
+    config_path.write_bytes(canonical_json_bytes(rebound))
+    with pytest.raises(ValueError, match="differs from deployment or authority"):
+        build_admission_kernel_command_rpc_service(
+            deployment=fx.deployment,
+            configuration_bytes=config_path.read_bytes(),
+        )
+
+
 def test_signing_key_custody_drift_fails_closed(tmp_path: Path) -> None:
     fx = _fixture(tmp_path, domain="action")
     fx.key_path.chmod(0o600)
