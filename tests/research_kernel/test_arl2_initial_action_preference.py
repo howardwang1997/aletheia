@@ -15,6 +15,7 @@ selection function produces the discriminate initial action under it.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
@@ -63,3 +64,28 @@ def test_authored_preference_selects_the_discriminate_initial_action() -> None:
     ))
 
     assert kind is ActionKind.DISCRIMINATE
+
+
+def test_policy_pin_construction_consumes_the_pinned_preference() -> None:
+    deployments = _load_deployments()
+
+    # the construction site itself must consume the helper: re-inlining a
+    # plain-order tuple at this one keyword (the exact line this drift
+    # class lives at) regresses the deployed policy to CONTINUE-first
+    # while the helper-only tests stay green — _authored_driver_principal
+    # precedent for pinning the call site, not just the constant
+    site = None
+    for node in ast.walk(ast.parse(_DEPLOYMENTS.read_text())):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "DeterministicActionProposalPolicyPin"
+        ):
+            for keyword in node.keywords:
+                if keyword.arg == "initial_action_kind_preference":
+                    site = keyword.value
+    assert site is not None, "DeterministicActionProposalPolicyPin call not found"
+    assert isinstance(site, ast.Call) and isinstance(site.func, ast.Name)
+    helper = getattr(deployments, site.func.id)
+    assert callable(helper)
+    assert helper()[0] is ActionKind.DISCRIMINATE
