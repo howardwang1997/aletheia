@@ -67,7 +67,7 @@ def _compose(*, deployment, configuration_bytes, domain: str):
         KernelCommandAuthorityError,
     )
     from aletheia.research_kernel.policy import ResearchAuthorizationTrustRootV1
-    from aletheia.research_kernel.schemas import canonical_json_bytes
+    from aletheia.research_kernel.schemas import EventType, canonical_json_bytes
 
     _SHA256_PATTERN = r"^[0-9a-f]{64}$"
     if domain == "action":
@@ -283,7 +283,14 @@ def _compose(*, deployment, configuration_bytes, domain: str):
                 return authority.authorize_action(
                     proposal=payload.proposal,
                     submitted=payload.submitted,
-                    idempotency_key=f"action:{action_sha256}",
+                    idempotency_key=(
+                        # the admission command the submission carries gets its
+                        # own idempotency identity; the store admits the action
+                        # through this event before any authorization resolves
+                        f"action-proposed:{action_sha256}"
+                        if payload.proposal.event_type is EventType.ACTION_PROPOSED
+                        else f"action:{action_sha256}"
+                    ),
                     source_event_key=f"action-proposal:{action_sha256}",
                 )
             except KernelCommandAuthorityError as exc:

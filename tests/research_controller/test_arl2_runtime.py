@@ -429,7 +429,7 @@ def _driver(fx: SimpleNamespace, **overrides) -> ARL2QuestionCampaignDriver:
         request=overrides.pop("request", fx.request),
         deployment_sha256=fx.deployment_sha256,
         kernel_store=overrides.pop("kernel_store", SimpleNamespace()),
-        kernel_archive=overrides.pop("kernel_archive", object()),
+        kernel_archive=overrides.pop("kernel_archive", fx.archive),
         **overrides,
     )
 
@@ -674,7 +674,16 @@ def test_entrypoint_refuses_without_explicit_apply(tmp_path: Path) -> None:
 
 def test_action_authorization_matches_the_b4_canon() -> None:
     submission = _submission(ControllerStep.PROPOSE_ACTION)
-    assert action_authorization_proposal(submission) == _authorization_proposal(submission)
+    version, tail = submission.request.expected_stream_version + 1, "b" * 64
+    assert action_authorization_proposal(
+        submission,
+        expected_stream_version=version,
+        expected_tail_event_sha256=tail,
+    ) == _authorization_proposal(
+        submission,
+        expected_stream_version=version,
+        expected_tail_event_sha256=tail,
+    )
 
 
 def _stop_receipt() -> ContinuationReceipt:
@@ -810,14 +819,18 @@ def _decoy_observation_event(index: int) -> ResearchEvent:
 
 
 class _CASKernelStore:
-    """Kernel-store double enforcing the real CAS head rule on every commit.
+    """Kernel-store double enforcing the real CAS head and admission rules.
 
     The real store refuses a command unless its pins name the current head
     (research_store store.commit); this double asserts the same equality, so a
     driver proposing a transition on stale pins fails here rather than only in
-    production.  The initial head comes from the submission's request pins (the
-    canon projection pins 7 / "tail"), standing in for the seven audited events
-    a real quest stream would already carry.
+    production.  It also enforces the admission rule the real store applies to
+    every ACTION_AUTHORIZED commit (_resolved_action): the action must already
+    sit on the stream through its ACTION_PROPOSED event, so an authorization
+    without its admission fails here rather than only in production.  The
+    initial head comes from the submission's request pins (the canon projection
+    pins 7 / "tail"), standing in for the seven audited events a real quest
+    stream would already carry.
     """
 
     def __init__(self, submission, incorporated: ResearchEvent) -> None:
@@ -834,6 +847,16 @@ class _CASKernelStore:
     def commit(self, command) -> None:
         expected = (command.expected_stream_version, command.expected_tail_event_sha256)
         assert expected == self.head, f"stale kernel head pin: {expected} != {self.head}"
+        if command.event_type is EventType.ACTION_AUTHORIZED:
+            admitted = {
+                event.payload.action_ref.object_id
+                for event in self.events
+                if event.event_type is EventType.ACTION_PROPOSED
+            }
+            assert command.payload.action_id in admitted, (
+                "action authorization does not resolve to one admitted action: "
+                f"{command.payload.action_id}"
+            )
         self.commits.append(command)
         self.events.append(
             ResearchEvent(
@@ -874,19 +897,29 @@ def test_carry_signing_work_round_trips_through_both_services(tmp_path: Path) ->
         ),
     )
 
-    # Round 1: the action commits on the submission pins, then the transition
-    # commits on the live head the action commit just moved (8 / action event).
+    # Round 1: the admission commits on the submission pins (7 / tail), the
+    # authorization commits on the live head the admission just moved
+    # (8 / proposed event), then the transition commits on the live head the
+    # authorization just moved (9 / authorized event).
     driver._carry_signing_work(store.audit(QUEST_ID).events)
-    assert fx.transport.exchanges == 2
-    assert len(store.commits) == 2
-    action_command, transition_command = store.commits
+    assert fx.transport.exchanges == 3
+    assert len(store.commits) == 3
+    proposed_command, action_command, transition_command = store.commits
+    assert proposed_command.idempotency_key == f"action-proposed:{action_sha}"
+    assert proposed_command.event_type is EventType.ACTION_PROPOSED
+    # the signed admission is the submission's own command, byte-exact
+    assert proposed_command.proposal_sha256 == submission.command_proposal.proposal_sha256
+    assert proposed_command.payload == submission.command_proposal.payload
+    assert proposed_command.principal_id == fx.action_fx.kernel_key.principal_id
+    assert proposed_command.expected_stream_version == 7
+    assert proposed_command.expected_tail_event_sha256 == _sha("tail")
     assert action_command.idempotency_key == f"action:{action_sha}"
     assert action_command.principal_id == fx.action_fx.kernel_key.principal_id
-    assert action_command.expected_stream_version == 7
-    assert action_command.expected_tail_event_sha256 == _sha("tail")
+    assert action_command.expected_stream_version == 8
+    assert action_command.expected_tail_event_sha256 == store.events[7].event_sha256
     assert transition_command.idempotency_key.startswith("transition:")
-    assert transition_command.expected_stream_version == 8
-    assert transition_command.expected_tail_event_sha256 == store.events[7].event_sha256
+    assert transition_command.expected_stream_version == 9
+    assert transition_command.expected_tail_event_sha256 == store.events[8].event_sha256
     refine_decision = transition_command.payload.decision
     assert refine_decision.transition_id == (
         "transition:"
@@ -894,19 +927,20 @@ def test_carry_signing_work_round_trips_through_both_services(tmp_path: Path) ->
     )
     assert refine_decision.directive.source_branch_id == submission.target_branch_id
 
-    # Round 2: both artifacts are already on the stream; nothing new is signed.
+    # Round 2: all three artifacts are already on the stream; nothing new is
+    # signed.
     driver._carry_signing_work(store.audit(QUEST_ID).events)
-    assert fx.transport.exchanges == 2
-    assert len(store.commits) == 2
+    assert fx.transport.exchanges == 3
+    assert len(store.commits) == 3
 
     # Round 3: a second, distinct redesign receipt (same world model, so the
     # authority still binds it to the same incorporated event) derives a new
     # transition id and commits exactly one more transition.
     carried["receipt"] = second_refine_receipt
     driver._carry_signing_work(store.audit(QUEST_ID).events)
-    assert fx.transport.exchanges == 3
-    assert len(store.commits) == 3
-    second_decision = store.commits[2].payload.decision
+    assert fx.transport.exchanges == 4
+    assert len(store.commits) == 4
+    second_decision = store.commits[3].payload.decision
     assert second_decision.transition_id != refine_decision.transition_id
     assert second_decision.transition_id == (
         "transition:"
@@ -938,11 +972,12 @@ def test_carry_skips_transitions_whose_admission_binds_no_event(tmp_path: Path) 
 
     driver._carry_signing_work(store.audit(QUEST_ID).events)
 
-    # The action still commits; the receipt's admission sha binds no
-    # incorporated event on the stream, so no transition is signed.
-    assert fx.transport.exchanges == 1
-    assert len(store.commits) == 1
-    assert store.commits[0].idempotency_key == f"action:{action_sha}"
+    # The admission and the action still commit; the receipt's admission sha
+    # binds no incorporated event on the stream, so no transition is signed.
+    assert fx.transport.exchanges == 2
+    assert len(store.commits) == 2
+    assert store.commits[0].idempotency_key == f"action-proposed:{action_sha}"
+    assert store.commits[1].idempotency_key == f"action:{action_sha}"
 
 
 def test_run_receipt_kind_carries_exactly_its_evidence() -> None:
