@@ -315,7 +315,7 @@ def test_action_authority_signs_the_submission_carried_admission_command() -> No
     submission = _submission(ControllerStep.PROPOSE_ACTION)
     proposal = submission.command_proposal
     idempotency = f"action-proposed:{submission.action.object_sha256}"
-    source = f"action-proposal:{submission.action.object_sha256}"
+    source = f"action-proposed:{submission.action.object_sha256}"
 
     command = authority.authorize_action(
         proposal=proposal,
@@ -333,7 +333,7 @@ def test_action_authority_rejects_a_rebound_admission_command() -> None:
     authority = _action_authority()
     submission = _submission(ControllerStep.PROPOSE_ACTION)
     idempotency = f"action-proposed:{submission.action.object_sha256}"
-    source = f"action-proposal:{submission.action.object_sha256}"
+    source = f"action-proposed:{submission.action.object_sha256}"
 
     # any drift from the byte-exact command the submission carries — here a
     # re-pinned stream head — must be refused: the real store admits the
@@ -361,6 +361,16 @@ def test_action_authority_rejects_a_rebound_admission_command() -> None:
             submitted=submission,
             idempotency_key=f"action:{submission.action.object_sha256}",
             source_event_key=source,
+        )
+    # and so is the admission under the authorization's source identity: the
+    # store's receipt lookup matches persisted rows by either key, so a shared
+    # source_event_key would collide the two commands of one exchange
+    with pytest.raises(KernelCommandAuthorityError, match="rebound"):
+        authority.authorize_action(
+            proposal=submission.command_proposal,
+            submitted=submission,
+            idempotency_key=idempotency,
+            source_event_key=f"action-proposal:{submission.action.object_sha256}",
         )
 
 

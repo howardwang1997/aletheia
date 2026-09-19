@@ -819,7 +819,7 @@ def _decoy_observation_event(index: int) -> ResearchEvent:
 
 
 class _CASKernelStore:
-    """Kernel-store double enforcing the real CAS head and admission rules.
+    """Kernel-store double enforcing the real CAS, admission, and receipt rules.
 
     The real store refuses a command unless its pins name the current head
     (research_store store.commit); this double asserts the same equality, so a
@@ -827,10 +827,14 @@ class _CASKernelStore:
     production.  It also enforces the admission rule the real store applies to
     every ACTION_AUTHORIZED commit (_resolved_action): the action must already
     sit on the stream through its ACTION_PROPOSED event, so an authorization
-    without its admission fails here rather than only in production.  The
-    initial head comes from the submission's request pins (the canon projection
-    pins 7 / "tail"), standing in for the seven audited events a real quest
-    stream would already carry.
+    without its admission fails here rather than only in production.  And it
+    models the receipt-identity lookup (_find_existing_command): a command
+    whose idempotency_key OR source_event_key matches a persisted receipt
+    bound to different content fails here rather than only in production —
+    the exact collision a second command sharing the first one's source key
+    would hit.  The initial head comes from the submission's request pins
+    (the canon projection pins 7 / "tail"), standing in for the seven audited
+    events a real quest stream would already carry.
     """
 
     def __init__(self, submission, incorporated: ResearchEvent) -> None:
@@ -840,6 +844,7 @@ class _CASKernelStore:
             submission.request.expected_tail_event_sha256,
         )
         self.commits: list[object] = []
+        self._receipts: dict[str, object] = {}
 
     def audit(self, quest_id: str) -> SimpleNamespace:
         return SimpleNamespace(events=tuple(self.events))
@@ -847,6 +852,14 @@ class _CASKernelStore:
     def commit(self, command) -> None:
         expected = (command.expected_stream_version, command.expected_tail_event_sha256)
         assert expected == self.head, f"stale kernel head pin: {expected} != {self.head}"
+        for key in (command.idempotency_key, command.source_event_key):
+            if key is None:
+                continue
+            persisted = self._receipts.get(key)
+            assert persisted is None or persisted == command, (
+                "research command idempotency/source identity is bound to "
+                f"different content: {key}"
+            )
         if command.event_type is EventType.ACTION_AUTHORIZED:
             admitted = {
                 event.payload.action_ref.object_id
@@ -858,6 +871,9 @@ class _CASKernelStore:
                 f"{command.payload.action_id}"
             )
         self.commits.append(command)
+        self._receipts[command.idempotency_key] = command
+        if command.source_event_key is not None:
+            self._receipts[command.source_event_key] = command
         self.events.append(
             ResearchEvent(
                 quest_id=command.quest_id,
@@ -904,6 +920,10 @@ def test_carry_signing_work_round_trips_through_both_services(tmp_path: Path) ->
     driver._carry_signing_work(store.audit(QUEST_ID).events)
     assert fx.transport.exchanges == 3
     assert len(store.commits) == 3
+    # the action object is staged in the writer archive before the admission
+    # commits, so the event's action_ref resolves to authored content
+    staged = fx.archive.load_object(submission.action.object_ref)
+    assert staged.payload == submission.action
     proposed_command, action_command, transition_command = store.commits
     assert proposed_command.idempotency_key == f"action-proposed:{action_sha}"
     assert proposed_command.event_type is EventType.ACTION_PROPOSED

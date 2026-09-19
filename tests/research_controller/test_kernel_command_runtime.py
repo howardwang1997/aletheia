@@ -346,11 +346,11 @@ def test_action_service_signs_the_submission_carried_admission_command(
     )
 
     # the admission command the submission carries is signed under its own
-    # idempotency identity; the store admits the action through this event
-    # before any authorization resolves
+    # idempotency AND source identity; the store admits the action through
+    # this event before any authorization resolves
     assert command.proposal_sha256 == submission.command_proposal.proposal_sha256
     assert command.idempotency_key == f"action-proposed:{action_sha}"
-    assert command.source_event_key == f"action-proposal:{action_sha}"
+    assert command.source_event_key == f"action-proposed:{action_sha}"
     assert command.principal_id == fx.kernel_key.principal_id
 
 

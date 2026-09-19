@@ -258,13 +258,16 @@ def _require_exact_action_proposal(
         # The admission command the spool submission itself carries: only the
         # byte-exact command_proposal is signed, because the real store admits
         # an action into state.actions through this event and refuses every
-        # later ACTION_AUTHORIZED commit without it.
+        # later ACTION_AUTHORIZED commit without it.  Its idempotency AND
+        # source identities are distinct from the authorization's: the store's
+        # receipt lookup matches persisted rows by either key, so the two
+        # commands of one exchange must never share one.
         if (
             not isinstance(payload, ActionProposedPayload)
-            or proposal != submitted.command_proposal
+            or proposal.proposal_sha256 != submitted.command_proposal.proposal_sha256
             or not submitted.awaiting_independent_kernel_authority
             or idempotency_key != f"action-proposed:{action_ref.object_sha256}"
-            or source_event_key != expected_source
+            or source_event_key != f"action-proposed:{action_ref.object_sha256}"
         ):
             raise KernelCommandAuthorityError(
                 "action Kernel proposal rebound its submitted action proposal"
