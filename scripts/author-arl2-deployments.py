@@ -74,6 +74,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import stat
 import sys
 from datetime import datetime, timedelta, timezone
@@ -391,6 +392,11 @@ def main() -> int:
     request = _load_request_inputs(args.request_state)
     if activation["quest_id"] != request["quest_id"]:
         _fail("activation state and request state name different quests")
+    if activation["program_id"] != request["program_id"]:
+        _fail(
+            "activation state and campaign request name different program scopes; "
+            "the request was not authored against this activation"
+        )
     if activation["database_url_sha256"] != database_url_sha256:
         _fail("activation authority was generated against a different database URL")
 
@@ -776,6 +782,17 @@ def _load_activation_inputs(state_path: str) -> dict:
         _fail("activation trust root does not hash to the state's pin")
     if canonical_sha256(policy) != state["policy_sha256"]:
         _fail("activation policy does not hash to the state's pin")
+    # The deployed signing authorities compare proposals against this binding
+    # with exact equality, so it must carry the stream's frozen program scope
+    # (a program-less binding would refuse every runtime proposal once the
+    # quest stream carries prg_... in its head scope).
+    program_id = state.get("program_id")
+    if not isinstance(program_id, str) or not re.fullmatch(r"prg_[0-9a-f]{32}", program_id):
+        _fail(
+            "activation state carries no program scope; the quest was activated "
+            "without the program-id authoring, so the deployments cannot bind "
+            "the signing authorities to the stream's frozen scope"
+        )
 
     ordinary = authority["role_keys"]["ordinary"]
     ordinary_bytes = _read_bytes(Path(ordinary["path"]))
@@ -789,6 +806,7 @@ def _load_activation_inputs(state_path: str) -> dict:
 
     return {
         "quest_id": state["quest_id"],
+        "program_id": program_id,
         "root_branch_id": state["root_branch_id"],
         "trust_root": trust_root,
         "policy": policy,
@@ -854,9 +872,40 @@ def _load_request_inputs(state_path: str) -> dict:
         "request_file_sha256": _sha256_bytes(request_bytes),
         "request_sha256": request.request_sha256,
         "request_id": request.request_id,
+        "program_id": request.launch_request.program_id,
         "dataset_csv_path": state["dataset_content"]["path"],
         "dataset_content_sha256": state["dataset_content"]["file_sha256"],
     }
+
+
+def _kernel_policy_assignments(activation: dict) -> tuple:
+    """Controller/observation assignments bound to the stream's frozen scope.
+
+    The deployed signing authorities compare proposals against these bindings
+    with exact equality while every runtime proposal derives its scope from
+    the audited stream head, so the binding must carry the activation's
+    program scope; a program-less binding would refuse every proposal once
+    the stream head carries prg_... .
+    """
+
+    from aletheia.observations.kernel_authority import ObservationKernelPolicyAssignment
+    from aletheia.research_controller.kernel_authority import ControllerKernelPolicyAssignment
+    from aletheia.research_kernel.commands import ResearchScopeBinding
+
+    scope_binding = ResearchScopeBinding(
+        quest_id=activation["quest_id"], program_id=activation["program_id"]
+    )
+    controller_assignment = ControllerKernelPolicyAssignment(
+        quest_id=activation["quest_id"],
+        scope_binding=scope_binding,
+        authorization_policy=activation["policy"],
+    )
+    observation_assignment = ObservationKernelPolicyAssignment(
+        quest_id=activation["quest_id"],
+        scope_binding=scope_binding,
+        authorization_policy=activation["policy"],
+    )
+    return controller_assignment, observation_assignment
 
 
 # --------------------------------------------------------------------------
@@ -2143,9 +2192,6 @@ def _build_service_deployments(
     """Author the eleven live configs/deployments (three deferred services skipped)."""
 
     from aletheia.execution.registration_custody import QualificationExecutionRegistrationConfig
-    from aletheia.observations.kernel_authority import ObservationKernelPolicyAssignment
-    from aletheia.research_kernel.commands import ResearchScopeBinding
-    from aletheia.research_controller.kernel_authority import ControllerKernelPolicyAssignment
     from aletheia.research_controller_rpc_runtime import ControllerWorkerRPCServerDeployment
     from aletheia.research_kernel.schemas import canonical_json_bytes
 
@@ -2192,17 +2238,10 @@ def _build_service_deployments(
         prepared_at=prepared_at,
     )
 
-    scope_binding = ResearchScopeBinding(quest_id=activation["quest_id"])
-    controller_assignment = ControllerKernelPolicyAssignment(
-        quest_id=activation["quest_id"],
-        scope_binding=scope_binding,
-        authorization_policy=activation["policy"],
-    )
-    observation_assignment = ObservationKernelPolicyAssignment(
-        quest_id=activation["quest_id"],
-        scope_binding=scope_binding,
-        authorization_policy=activation["policy"],
-    )
+    # carries the stream's frozen program scope so the exact-match signing
+    # authorities accept the runtime proposals (which derive their scope from
+    # the audited stream head, not from this file)
+    controller_assignment, observation_assignment = _kernel_policy_assignments(activation)
 
     def header(service: str, *, with_database: bool = True) -> dict:
         pin = _pin_for(closure, service)

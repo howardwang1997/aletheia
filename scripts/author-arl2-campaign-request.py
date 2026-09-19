@@ -53,6 +53,7 @@ import io
 import json
 import math
 import os
+import re
 import stat
 import sys
 import tempfile
@@ -402,11 +403,19 @@ def main() -> int:
     tail_sha = audit.events[-1].event_sha256
     if tail_sha != state["question_event_sha256"]:
         _fail("store audit tail differs from the activation state's question event sha")
+    program_id = state.get("program_id")
+    if not isinstance(program_id, str) or not re.fullmatch(r"prg_[0-9a-f]{32}", program_id):
+        _fail(
+            "activation state carries no program scope; re-author the activation "
+            "with the program-id authoring so the stream and the launch request agree"
+        )
+    if audit.scope_binding.program_id != program_id:
+        _fail(
+            "store stream scope program differs from the activation state's; "
+            "the quest was activated without the program-id authoring"
+        )
     launch = ResearchControllerLaunchRequest(
-        program_id=(
-            "prg_"
-            + hashlib.sha256(f"{quest_id}:arl2-dryrun-program".encode()).hexdigest()[:32]
-        ),
+        program_id=program_id,
         quest_id=quest_id,
         idempotency_key=f"arl2dry:{quest_id}:campaign-launch",
         expected_stream_version=3,
