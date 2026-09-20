@@ -32,8 +32,9 @@ a B8 commissioning input, and this script is that input):
    artifacts so the output passes the same code path ARL-1's pinned
    verifier would run;
 4. writes the canonical capability catalog (the single qualified
-   manifest) and the canonical static resource catalog (one CPU class
-   whose structural values come from the sampled host facts) whose file
+   manifest) and the canonical static resource catalog (one external
+   class serving the authored capability's action kind, whose capacity
+   values come from the sampled host facts) whose file
    shas scripts/author-arl2-deployments.py pins into the compilation
    policy (runbook W1 step 6), plus the trust and runtime-inventory
    documents the retained evidence stays verifiable against.
@@ -202,10 +203,16 @@ def _policy_document(subject: str, policy: str, prepared_at: datetime) -> dict:
     }
 
 
-def _resource_class_from_facts(facts: dict, cores: int, memory_bytes: int, scratch_bytes: int) -> dict:
+def _resource_class_from_facts(
+    facts: dict, cores: int, memory_bytes: int, scratch_bytes: int, action_kind: str
+) -> dict:
     # The stage0 facts sheet carries the uname string but no capacity fields;
     # the capacities arrive as explicit operator-sampled values instead of
-    # silently flooring on absent keys.
+    # silently flooring on absent keys. The class is kind=external because the
+    # authored capability's runtime_kind is external_service and the compile
+    # gate (typecheck.py _check_capability_and_resource) only accepts external
+    # classes carrying the capability's exact action kind for such steps; the
+    # sampled capacities still bound the step's structural resource request.
     fields = str(facts.get("uname") or "").split()
     if not fields:
         _fail("host facts carry no uname string; cannot derive the resource architecture")
@@ -213,8 +220,8 @@ def _resource_class_from_facts(facts: dict, cores: int, memory_bytes: int, scrat
     return {
         "schema_name": "aletheia.static_resource_class",
         "schema_version": 1,
-        "class_key": "v100ts.host-cpu.v1",
-        "kind": "cpu",
+        "class_key": "v100ts.cuprate-diagnostic.v1",
+        "kind": "external",
         "cpu_architecture": machine,
         "oci_platform": f"linux/{'amd64' if machine == 'x86_64' else machine}",
         "container_runtime": "host-process",
@@ -224,6 +231,7 @@ def _resource_class_from_facts(facts: dict, cores: int, memory_bytes: int, scrat
         "network_policies": ["none"],
         "features": ["conda-env:arl2-cuprate"],
         "supports_exclusive": True,
+        "external_action_kinds": [action_kind],
     }
 
 
@@ -693,10 +701,14 @@ def main() -> int:
         {
             "schema_name": "aletheia.static_resource_catalog",
             "schema_version": 1,
-            "catalog_key": f"{_WINDOW_LABEL}.host-cpu.v1",
+            "catalog_key": f"{_WINDOW_LABEL}.cuprate-diagnostic-external.v1",
             "resource_classes": [
                 _resource_class_from_facts(
-                    facts, args.cpu_cores, args.memory_bytes, args.scratch_bytes
+                    facts,
+                    args.cpu_cores,
+                    args.memory_bytes,
+                    args.scratch_bytes,
+                    action_kind=_OPERATION,
                 )
             ],
         }
