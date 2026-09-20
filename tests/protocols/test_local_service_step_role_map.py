@@ -43,8 +43,9 @@ def test_step_role_map_pairs_differ_only_where_the_dag_demands(behavior_role, st
     SCIENTIFIC_EXECUTOR the archive-input gate requires.
     """
 
-    # the crossing, pinned explicitly: an identity pair for cuprate would
-    # pass the loop above while breaking the archive-input gate
+    # the crossing, pinned to its operation: swapping cuprate's pair with
+    # another operation's passes both the per-pair loop and the coverage
+    # set — only this pin (or the verifier's live-contract check) catches it
     assert closure._EXPECTED_LOCAL_SERVICE_ROLES["run_cuprate_diagnostic"] == (
         "analysis",
         "scientific_executor",
