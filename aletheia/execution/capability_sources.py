@@ -287,6 +287,10 @@ def _verify_local_service_sources(root, manifest, runtime, step):
         "local service implementation or operation identity differs",
     )
     behavior = contract["behavior"]
+    _require(
+        operation in _EXPECTED_LOCAL_SERVICE_ROLES,
+        "local service operation has no step-role bridge entry",
+    )
     behavior_role, step_role = _EXPECTED_LOCAL_SERVICE_ROLES[operation]
     _require(
         behavior["role"] == behavior_role

@@ -101,8 +101,9 @@ _INDEPENDENCE_GROUPS = (
 # operations, all runtime_kind external_service; the deployed bridge pins
 # their principals (deployments script SERVICE_PRINCIPALS / BRIDGE_PRINCIPALS).
 # The role/side_effect_class values are the contracts' own declared behavior
-# and only guard against contract drift; which protocol step role each
-# capability serves is authored at protocol level, not here.
+# and only guard against contract drift; the step role each capability
+# serves is fixed per operation by the verifier's bridge
+# (capability_sources.expected_local_service_step_role).
 _OPERATIONS = {
     "load_raw_run": {
         "capability_id": "raw_run_envelope_source",

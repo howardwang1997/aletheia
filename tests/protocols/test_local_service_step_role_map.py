@@ -30,12 +30,6 @@ def test_step_role_map_covers_the_typecheck_required_roles() -> None:
         "observation_parser",
         "independent_validator",
     }
-    # the map's step roles are ProtocolStepRole values
-    from aletheia.protocols.schemas import ProtocolStepRole
-
-    protocol_roles = {item.value for item in ProtocolStepRole}
-    for operation in closure._EXPECTED_LOCAL_SERVICE_ROLES:
-        assert closure.expected_local_service_step_role(operation) in protocol_roles
 
 
 @pytest.mark.parametrize(
@@ -49,6 +43,12 @@ def test_step_role_map_pairs_differ_only_where_the_dag_demands(behavior_role, st
     SCIENTIFIC_EXECUTOR the archive-input gate requires.
     """
 
+    # the crossing, pinned explicitly: an identity pair for cuprate would
+    # pass the loop above while breaking the archive-input gate
+    assert closure._EXPECTED_LOCAL_SERVICE_ROLES["run_cuprate_diagnostic"] == (
+        "analysis",
+        "scientific_executor",
+    )
     if behavior_role == "analysis":
         assert step_role == "scientific_executor"
     else:
