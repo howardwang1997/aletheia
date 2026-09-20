@@ -1,13 +1,16 @@
 """Kit-side coverage for the catalog script's authored resource class.
 
-`scripts/author-arl2-capability-catalog.py` authors the cuprate capability
-manifest with runtime_kind external_service alongside the campaign's single
-static resource class. The compile gate (typecheck.py
-_check_capability_and_resource) only accepts external-kind classes carrying
-the capability's exact action kind for such steps — the 2f-q7 dry run
-commissioned a cpu class and no protocol could ever compile against it
-(contradiction #13). The script has no package, so this file loads it
-directly and checks the authored class against the gate's condition.
+`scripts/author-arl2-capability-catalog.py` authors the three bridge
+capability manifests (runtime_kind external_service) alongside the
+campaign's single static resource class. The compile gate (typecheck.py
+_check_capability_and_resource) only accepts external-kind classes whose
+external_action_kinds carry the capability's exact action kind for such
+steps — the 2f-q7 dry run commissioned a cpu class and no protocol could
+ever compile against it (contradiction #13); the triad extension
+(contradiction #16) made one class serve all three operations, which the
+gate's membership predicate admits. The script has no package, so this
+file loads it directly and checks the authored class against the gate's
+condition.
 """
 
 from __future__ import annotations
@@ -21,9 +24,7 @@ _SCRIPT_PATH = _REPO_ROOT / "scripts" / "author-arl2-capability-catalog.py"
 
 
 def _script_module():
-    spec = importlib.util.spec_from_file_location(
-        "author_arl2_capability_catalog", _SCRIPT_PATH
-    )
+    spec = importlib.util.spec_from_file_location("author_arl2_capability_catalog", _SCRIPT_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -40,15 +41,15 @@ def test_authored_resource_class_serves_the_external_service_capability() -> Non
         16,
         33610205824,
         14110695424,
-        action_kind=module._OPERATION,
     )
     resource_class = StaticResourceClass.model_validate(authored)
 
     # the external-runtime branch of the compile gate: a class serving an
     # external_service capability must be external-kind and carry the
-    # capability's exact action kind
+    # capability's exact action kind; the predicate is membership, so one
+    # class carrying all three triad action kinds serves every step
     assert resource_class.kind is ResourceKind.EXTERNAL
-    assert module._OPERATION in resource_class.external_action_kinds
+    assert set(resource_class.external_action_kinds) == set(module._OPERATIONS)
     # the cuprate manifest pins network_egress "none", so the step request
     # resolves to NetworkPolicy.NONE and the class must offer it
     assert NetworkPolicy.NONE in resource_class.network_policies

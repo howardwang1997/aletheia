@@ -1,14 +1,16 @@
 """Kit-side coverage for the catalog script's authored claim ceiling.
 
-`scripts/author-arl2-capability-catalog.py` freezes the cuprate capability
-manifest's ClaimCeiling. The schema default for
-independent_validation_required is True, and a true value forces an
-INDEPENDENT_VALIDATOR step that consumes the observable's output port —
-unsatisfiable against this single-capability catalog, because a step port
-must exist in its capability's interface and no second capability carries
-the diagnostic output as an input (2f-q7 dry run, contradiction #14).
-The ceiling is therefore authored explicitly. The script has no package,
-so this file loads it directly.
+`scripts/author-arl2-capability-catalog.py` freezes the same ClaimCeiling
+into every triad capability manifest. The schema default for
+independent_validation_required is True, and a true value forces the
+validator-flow gate (every claim-supporting observable must transitively
+reach an INDEPENDENT_VALIDATOR step that consumes the observable's own
+output port) — unsatisfiable against this triad, because the validation
+service consumes the raw-run envelope, not the diagnostic result (2f-q7
+dry run, contradictions #14/#16). The ceiling is therefore authored
+explicitly; the unconditional three-role requirement is met by the triad's
+validator step, a different gate. The script has no package, so this file
+loads it directly.
 """
 
 from __future__ import annotations
@@ -22,9 +24,7 @@ _SCRIPT_PATH = _REPO_ROOT / "scripts" / "author-arl2-capability-catalog.py"
 
 
 def _script_module():
-    spec = importlib.util.spec_from_file_location(
-        "author_arl2_capability_catalog", _SCRIPT_PATH
-    )
+    spec = importlib.util.spec_from_file_location("author_arl2_capability_catalog", _SCRIPT_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
