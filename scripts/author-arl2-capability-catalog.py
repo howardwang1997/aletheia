@@ -38,7 +38,10 @@ a B8 commissioning input, and this script is that input):
    come from the sampled host facts) whose file shas
    scripts/author-arl2-deployments.py pins into the compilation policy
    (runbook W1 step 6), plus the trust and runtime-inventory documents the
-   retained evidence stays verifiable against.
+   retained evidence stays verifiable against. The runtime-sources
+   document keys each manifest's sources by the manifest sha; the pinned
+   verifier requires that key set to equal the selected catalog's
+   manifest shas exactly, so the two files change together.
 
 Outputs under the working root: keys/capability/, the source root, and
 configs/arl2-capability-{catalog,trust,runtime-sources,state}.json,
@@ -78,7 +81,11 @@ _WINDOW_LABEL = "arl2-dryrun-20260917"
 # The four independence groups a three-role protocol separates (typecheck
 # requires them distinct; every manifest declares all four so a step of any
 # role sees the other roles' groups inside required_independence_groups).
-# Kept in canonical order — the manifest validator rejects any other.
+# Kept in canonical order — the manifest validator rejects any other. The
+# protocol body's IndependenceContract must then use exactly these four
+# group-id strings (typecheck group containment); that is a protocol-
+# authoring requirement carried by the authoring prompt, not something
+# this script can enforce.
 _INDEPENDENCE_GROUPS = (
     "arl2-bridge-admission-uid",
     "arl2-executor-uid",
@@ -370,6 +377,30 @@ def _policy_document(subject: str, policy: str, prepared_at: datetime) -> dict:
     }
 
 
+def _runtime_block(
+    operation: str, contract: dict, implementation_sha: str, environment_sha: str
+) -> dict:
+    # The pinned source verifier (capability_sources.py
+    # _verify_local_service_sources) pins these clauses per operation:
+    # determinism is frozen_seeds with seeds [0] on the cuprate diagnostic
+    # and declared_stochastic on the two bridge services, checkpointing is
+    # unsupported everywhere, and only the campaign service replays its
+    # committed write. Table-tested in test_arl2_catalog_capability_triad.py.
+    spec = _OPERATIONS[operation]
+    cuprate = operation == "run_cuprate_diagnostic"
+    return {
+        "runtime_kind": contract["runtime_kind"],
+        "adapter_ref": contract["adapter_ref"],
+        "implementation_sha256": implementation_sha,
+        "environment_sha256": environment_sha,
+        "determinism": "frozen_seeds" if cuprate else "declared_stochastic",
+        "frozen_seeds": [0] if cuprate else [],
+        "maximum_wall_time_seconds": spec["wall_time_seconds"],
+        "checkpoint_supported": False,
+        "reconciliation_supported": operation == "prepare_validation_campaign",
+    }
+
+
 def _resource_class_from_facts(
     facts: dict, cores: int, memory_bytes: int, scratch_bytes: int
 ) -> dict:
@@ -586,11 +617,8 @@ def main() -> int:
         materials.update(put(_canonical_bytes(schema)) for schema in service.schemas.values())
         implementation_sha = _sha256_bytes(service.implementation_path.read_bytes())
 
-        policies = {}
-
         def policy(name: str, subject: str, text: str) -> str:
-            policies[name] = put(_canonical_bytes(_policy_document(subject, text, now)))
-            return policies[name]
+            return put(_canonical_bytes(_policy_document(subject, text, now)))
 
         ports = {}
         for direction, spec, description in (
@@ -658,20 +686,7 @@ def main() -> int:
                 "credential_class": "unix.socket.peer-cred",
                 "required_independence_groups": list(_INDEPENDENCE_GROUPS),
             },
-            "runtime": {
-                "runtime_kind": contract["runtime_kind"],
-                "adapter_ref": contract["adapter_ref"],
-                "implementation_sha256": implementation_sha,
-                "environment_sha256": environment_sha,
-                "determinism": "frozen_seeds"
-                if operation == "run_cuprate_diagnostic"
-                else "declared_stochastic",
-                "frozen_seeds": [0] if operation == "run_cuprate_diagnostic" else [],
-                "maximum_wall_time_seconds": expected["wall_time_seconds"],
-                "checkpoint_supported": False,
-                # replay of the committed campaign returns the original digest
-                "reconciliation_supported": operation == "prepare_validation_campaign",
-            },
+            "runtime": _runtime_block(operation, contract, implementation_sha, environment_sha),
             "applicability": {
                 "epistemic_kinds": ["hypothesis_discrimination"],
                 "domain_tags": ["materials", "superconductivity"],

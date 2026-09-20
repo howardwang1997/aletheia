@@ -6,8 +6,10 @@ four distinct independence groups and disjoint per-role principal sets
 (contradiction #16), and every manifest declares all four groups so a
 step of any role sees the other roles' groups inside
 required_independence_groups. The structural preconditions the protocol
-layer depends on are checked here against the script's own tables; the
-script has no package, so this file loads it directly.
+layer depends on are checked here against the script's own tables, and
+the authored runtime blocks are pinned against the source verifier's
+hardcoded per-operation clauses; the script has no package, so this
+file loads it directly.
 """
 
 from __future__ import annotations
@@ -76,4 +78,41 @@ def test_every_manifest_declares_all_four_independence_groups() -> None:
 
     module = _script_module()
 
-    assert len(set(module._INDEPENDENCE_GROUPS)) == 4
+    groups = list(module._INDEPENDENCE_GROUPS)
+    assert len(set(groups)) == 4
+    # the manifest validator requires canonical (sorted) order
+    assert groups == sorted(groups)
+    # the manifests carry the list itself — the principal block's wiring
+    source = _SCRIPT_PATH.read_text()
+    assert '"required_independence_groups": list(_INDEPENDENCE_GROUPS)' in source
+
+
+def test_runtime_blocks_match_the_pinned_verifier_clauses() -> None:
+    """capability_sources.py _verify_local_service_sources hardcodes these
+    per-operation expectations: determinism frozen_seeds with seeds [0] on
+    the cuprate diagnostic and declared_stochastic elsewhere, no
+    checkpointing, and reconciliation only on the campaign service. A drift
+    here passes authoring and kills the real run at PAUSE-2.
+    """
+
+    module = _script_module()
+
+    for operation in module._OPERATIONS:
+        runtime = module._runtime_block(
+            operation,
+            {"runtime_kind": "external_service", "adapter_ref": "adapter.probe"},
+            "impl-sha",
+            "env-sha",
+        )
+        if operation == "run_cuprate_diagnostic":
+            assert runtime["determinism"] == "frozen_seeds"
+            assert runtime["frozen_seeds"] == [0]
+        else:
+            assert runtime["determinism"] == "declared_stochastic"
+            assert runtime["frozen_seeds"] == []
+        assert runtime["checkpoint_supported"] is False
+        assert runtime["reconciliation_supported"] == (operation == "prepare_validation_campaign")
+        assert (
+            runtime["maximum_wall_time_seconds"]
+            == module._OPERATIONS[operation]["wall_time_seconds"]
+        )
