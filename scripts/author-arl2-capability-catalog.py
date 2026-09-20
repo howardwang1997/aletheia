@@ -72,6 +72,48 @@ _MAX_WALL_TIME_SECONDS = 3600  # P0.5 measured 86-89 s per round on the box
 
 # (failure_id, category, description): the fail-closed guards B7 added to
 # the diagnostic itself; every one refuses the typed result outright.
+def _claim_ceiling():
+    from aletheia.protocols.claim_contracts import (
+        ClaimAllowance,
+        ClaimCeiling,
+        ClaimKind,
+        ClaimStrength,
+        EvidenceModality,
+        ReplicationTier,
+    )
+
+    return ClaimCeiling(
+        # canonical order: associational < comparative < descriptive
+        allowances=(
+            ClaimAllowance(kind=ClaimKind.ASSOCIATIONAL, maximum_strength=ClaimStrength.TENTATIVE),
+            ClaimAllowance(kind=ClaimKind.COMPARATIVE, maximum_strength=ClaimStrength.TENTATIVE),
+            ClaimAllowance(kind=ClaimKind.DESCRIPTIVE, maximum_strength=ClaimStrength.SUPPORTED),
+        ),
+        required_evidence_modalities=(EvidenceModality.COMPUTATIONAL,),
+        required_replication_tier=ReplicationTier.EXACT_REEXECUTION,
+        # authored explicitly, NOT inherited: the schema default for
+        # independent_validation_required is True, and a true value forces an
+        # INDEPENDENT_VALIDATOR step that consumes the observable's output
+        # port — unsatisfiable against a single-capability catalog, because a
+        # step port must exist in its capability's interface and no second
+        # capability can carry the diagnostic output as an input (2f-q7
+        # contradiction #14). This dry run's independent validation rides the
+        # observation bridge (independent-validation service plus the bridge
+        # observation-validator/admitter principals); in-protocol independent
+        # re-execution is the real-run follow-up.
+        independent_validation_required=False,
+        rationale=(
+            "Two preregistered discriminators over the registered card's "
+            "bound-batch rows; comparative and associational ceilings stay "
+            "tentative because the matched-control contrast and the "
+            "stratification test ride one dataset and one frozen seed. "
+            "Independent validation rides the observation bridge "
+            "(independent-validation service, observation-validator and "
+            "admitter principals), not an in-protocol validator step."
+        ),
+    )
+
+
 _FAILURE_MODES = (
     (
         "dataset_sha_mismatch",
@@ -253,14 +295,6 @@ def main() -> int:
         local_service_capability_sources,
     )
     from aletheia.protocols.capabilities import CapabilityCatalog, CapabilityManifestV2
-    from aletheia.protocols.claim_contracts import (
-        ClaimAllowance,
-        ClaimCeiling,
-        ClaimKind,
-        ClaimStrength,
-        EvidenceModality,
-        ReplicationTier,
-    )
     from aletheia.protocols.schemas import (
         CapabilityAuditBinding,
         CapabilityAuditKind,
@@ -544,28 +578,7 @@ def main() -> int:
             "status": "provisional",
             "qualification_rule_sha256": rule_sha,
         },
-        "claim_ceiling": ClaimCeiling(
-            # canonical order: associational < comparative < descriptive
-            allowances=(
-                ClaimAllowance(
-                    kind=ClaimKind.ASSOCIATIONAL, maximum_strength=ClaimStrength.TENTATIVE
-                ),
-                ClaimAllowance(
-                    kind=ClaimKind.COMPARATIVE, maximum_strength=ClaimStrength.TENTATIVE
-                ),
-                ClaimAllowance(
-                    kind=ClaimKind.DESCRIPTIVE, maximum_strength=ClaimStrength.SUPPORTED
-                ),
-            ),
-            required_evidence_modalities=(EvidenceModality.COMPUTATIONAL,),
-            required_replication_tier=ReplicationTier.EXACT_REEXECUTION,
-            rationale=(
-                "Two preregistered discriminators over the registered card's "
-                "bound-batch rows; comparative and associational ceilings stay "
-                "tentative because the matched-control contrast and the "
-                "stratification test ride one dataset and one frozen seed."
-            ),
-        ).model_dump(mode="json"),
+        "claim_ceiling": _claim_ceiling().model_dump(mode="json"),
         "frozen_by_principal_id": _FROZEN_BY_PRINCIPAL,
         "frozen_at": now.isoformat(),
     }
