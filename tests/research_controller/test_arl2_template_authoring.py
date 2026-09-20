@@ -121,3 +121,37 @@ def test_merged_round_split_values_require_readable_bindings(capsys) -> None:
     with pytest.raises(SystemExit):
         module._merged_round_split_values({}, round_index=1)
     assert "readable round_split_bindings" in capsys.readouterr().err
+
+
+def test_provider_refusal_formatter_reads_the_real_blocker_field() -> None:
+    """The dirty-compile refusal join must read ProtocolBlocker.code.
+
+    The 2f-q7 dry run hit a dirty compile whose refusal crashed inside the
+    formatter itself (`blocker_code` does not exist on ProtocolBlocker),
+    masking the actual blockers behind an AttributeError. The formatter
+    lives mid-_run_provider behind a full commissioning harness, so this
+    check executes the shipped join expression itself against a real
+    blocker — the same source-scrape idiom the migration inventory uses.
+    """
+
+    from aletheia.protocols.schemas import ProtocolBlocker, ProtocolBlockerCode
+
+    blocker = ProtocolBlocker.model_validate(
+        {
+            "code": ProtocolBlockerCode.CAPABILITY_UNAVAILABLE.value,
+            "location": "steps[0].capability_requirement",
+            "subject_id": "requirement.step.01",
+            "detail": "no frozen capability manifest satisfies the exact selector",
+        }
+    )
+    join_line = next(
+        line
+        for line in _SCRIPT_PATH.read_text().splitlines()
+        if "result.report.blockers)" in line and "join(" in line
+    )
+    from types import SimpleNamespace
+
+    result = SimpleNamespace(report=SimpleNamespace(blockers=(blocker,)))
+    expression = compile(join_line.split("=", 1)[1].strip(), "<formatter>", "eval")
+    formatted = eval(expression, {"result": result})
+    assert formatted == "capability_unavailable"

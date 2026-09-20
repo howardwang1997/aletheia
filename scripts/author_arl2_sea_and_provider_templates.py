@@ -767,7 +767,7 @@ def _run_provider(args, state: dict, state_path: Path) -> int:
     result = compile_protocol(request)
     verify_compilation(request, result)
     if not result.report.accepted or result.work_order is None:
-        blockers = "; ".join(item.blocker_code.value for item in result.report.blockers)
+        blockers = "; ".join(item.code.value for item in result.report.blockers)
         _fail(f"protocol does not compile cleanly (blockers: {blockers or 'unknown'})")
     _assert_executor_rigidity(result)
 
