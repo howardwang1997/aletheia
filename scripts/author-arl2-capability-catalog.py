@@ -70,8 +70,6 @@ _OPERATION = "run_cuprate_diagnostic"
 _WINDOW_LABEL = "arl2-dryrun-20260917"
 _MAX_WALL_TIME_SECONDS = 3600  # P0.5 measured 86-89 s per round on the box
 
-# (failure_id, category, description): the fail-closed guards B7 added to
-# the diagnostic itself; every one refuses the typed result outright.
 def _claim_ceiling():
     from aletheia.protocols.claim_contracts import (
         ClaimAllowance,
@@ -114,6 +112,8 @@ def _claim_ceiling():
     )
 
 
+# (failure_id, category, description): the fail-closed guards B7 added to
+# the diagnostic itself; every one refuses the typed result outright.
 _FAILURE_MODES = (
     (
         "dataset_sha_mismatch",
