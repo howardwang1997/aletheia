@@ -144,11 +144,13 @@ def test_provider_refusal_formatter_reads_the_real_blocker_field() -> None:
             "detail": "no frozen capability manifest satisfies the exact selector",
         }
     )
-    join_line = next(
+    join_lines = [
         line
         for line in _SCRIPT_PATH.read_text().splitlines()
         if "result.report.blockers)" in line and "join(" in line
-    )
+    ]
+    assert len(join_lines) == 1, "expected exactly one blocker-join line to scrape"
+    join_line = join_lines[0]
     from types import SimpleNamespace
 
     result = SimpleNamespace(report=SimpleNamespace(blockers=(blocker,)))
