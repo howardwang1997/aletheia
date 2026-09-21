@@ -427,6 +427,23 @@ def test_lease_attempt_class_key_mirror_mismatch_is_rejected_at_commit(migrated_
     _assert_attempt_rolled_back(migrated_engine, suffix)
 
 
+def test_lease_json_class_key_mirror_mismatch_is_rejected_at_commit(migrated_engine) -> None:
+    # the lease ROW keeps the attempt's key (authority fields agree) and only
+    # lease_json disagrees: this isolates the payload guard's lease_json key
+    # conjunct, which the row-mirror case above never reaches alone
+    suffix = _suffix()
+    with pytest.raises(IntegrityError, match="differs from exact intent/quote payload") as failure:
+        _seed_external_placement(
+            migrated_engine,
+            suffix,
+            committed_class_key="bridge.placement-trigger-honest",
+            catalog_class_key="bridge.placement-trigger-honest",
+            lease_json_key_mirror="bridge.other-lease-json-key",
+        )
+    assert _sqlstate(failure.value) == "23514"
+    _assert_attempt_rolled_back(migrated_engine, suffix)
+
+
 def test_quote_bundle_class_key_disagreement_is_rejected_at_commit(migrated_engine) -> None:
     # the admission's serialized quote names a different key than the rows
     # committed under: E1's quote-agreement conjunct must fail closed
