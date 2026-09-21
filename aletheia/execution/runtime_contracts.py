@@ -1968,9 +1968,7 @@ class ExecutionCostQuote(ExecutionModel):
                 raise ValueError(
                     "external cost quote cannot name node manifests or live resource ids"
                 )
-        elif (
-            self.selected_node_manifest_sha256 not in self.permitted_node_manifest_sha256s
-        ):
+        elif self.selected_node_manifest_sha256 not in self.permitted_node_manifest_sha256s:
             raise ValueError("selected node manifest is outside the quote placement envelope")
         expected_charge = self.fixed_charge_microunits + (
             self.charge_per_second_microunits * self.maximum_lease_seconds
@@ -2017,6 +2015,10 @@ def verify_external_qualification_profile(
         or request.memory_bytes > resource_class.memory_bytes
         or request.scratch_bytes > resource_class.scratch_bytes
         or not set(request.required_features).issubset(set(resource_class.features))
+        # nodeless placement owns no devices; a request for one would die at
+        # the frozen device-count clause (0 <> count) at COMMIT, so the
+        # shared profile rejects it here with a named error instead
+        or request.accelerator_count != 0
     ):
         raise ValueError(
             "quoted external resource class does not carry the intent action kind profile"
@@ -2238,14 +2240,10 @@ class EngineeringQualificationBundle(ExecutionModel):
             verify_external_qualification_profile(
                 intent=self.intent,
                 quote=self.cost_quote,
-                resource_classes=(
-                    self.compilation_request.resource_catalog.resource_classes
-                ),
+                resource_classes=(self.compilation_request.resource_catalog.resource_classes),
             )
             if self.intent.retry_policy.mode is not ExecutionRetryMode.NEVER:
-                raise ValueError(
-                    "external engineering qualification requires a never-retry policy"
-                )
+                raise ValueError("external engineering qualification requires a never-retry policy")
         if self.intent.resource_request.network_policy is not NetworkPolicy.NONE:
             raise ValueError("engineering qualification requires network-none execution")
         if self.intent.retry_policy.mode not in {

@@ -17,7 +17,11 @@ constraint triggers are rewritten in the same migration: the attempt-bundle
 function keeps every node-mode guard verbatim behind
 ``attempt_row.node_id IS NOT NULL`` and gains external-mode mirrors (lease
 payload/class agreement against the admission bundle, the frozen-catalog
-class profile, and the grant/quote/budget deadline window), the assignment
+class profile, and the grant/quote/budget deadline window; the catalog
+mirror joins only on fields ``model_dump`` serializes — the derived
+``resource_class_id`` never serializes, so the attempt's class id ties to
+the catalog through the quote selection and the intent's accepted ids),
+the assignment
 envelope requirement and the node-capacity head check skip nodeless rows,
 and the lease/attempt authority-field comparison moves to
 ``IS DISTINCT FROM`` so NULL placement fields compare exactly.  The
@@ -39,9 +43,7 @@ depends_on: str | Sequence[str] | None = None
 
 _SHA256_SQL = "~ '^[0-9a-f]{64}$'"
 _NARROW_INVENTORY = f"node_inventory_sha256 {_SHA256_SQL}"
-_WIDE_INVENTORY = (
-    f"(node_inventory_sha256 IS NULL OR node_inventory_sha256 {_SHA256_SQL})"
-)
+_WIDE_INVENTORY = f"(node_inventory_sha256 IS NULL OR node_inventory_sha256 {_SHA256_SQL})"
 
 
 def _attempt_hashes(inventory_clause: str) -> str:
@@ -71,6 +73,8 @@ def _attempt_hashes(inventory_clause: str) -> str:
     clauses.append(inventory_clause)
     clauses.extend(f"({item} IS NULL OR {item} {_SHA256_SQL})" for item in optional)
     return " AND ".join(clauses)
+
+
 _PLACEMENT_MODE = (
     "((node_id IS NULL) = (external_resource_class_id IS NOT NULL)) "
     "AND ((node_id IS NULL) = (node_inventory_sha256 IS NULL))"
@@ -89,9 +93,7 @@ def upgrade() -> None:
         " ALTER COLUMN node_inventory_sha256 DROP NOT NULL,"
         " ADD COLUMN IF NOT EXISTS external_resource_class_id VARCHAR(128)"
     )
-    op.execute(
-        "ALTER TABLE execution_attempts DROP CONSTRAINT ck_execution_attempts_hashes"
-    )
+    op.execute("ALTER TABLE execution_attempts DROP CONSTRAINT ck_execution_attempts_hashes")
     op.execute(
         "ALTER TABLE execution_attempts"
         " ADD CONSTRAINT ck_execution_attempts_hashes"
@@ -109,8 +111,7 @@ def upgrade() -> None:
         " ADD COLUMN IF NOT EXISTS external_resource_class_id VARCHAR(128)"
     )
     op.execute(
-        "ALTER TABLE execution_resource_leases"
-        " DROP CONSTRAINT ck_execution_resource_leases_hashes"
+        "ALTER TABLE execution_resource_leases DROP CONSTRAINT ck_execution_resource_leases_hashes"
     )
     op.execute(
         "ALTER TABLE execution_resource_leases"
@@ -138,9 +139,7 @@ def downgrade() -> None:
         " CHECK (inventory_sha256 "
         f"{_SHA256_SQL} AND lease_sha256 {_SHA256_SQL})"
     )
-    op.execute(
-        "ALTER TABLE execution_resource_leases DROP COLUMN external_resource_class_id"
-    )
+    op.execute("ALTER TABLE execution_resource_leases DROP COLUMN external_resource_class_id")
     op.execute(
         "ALTER TABLE execution_resource_leases"
         " ALTER COLUMN node_id SET NOT NULL,"
@@ -172,14 +171,12 @@ _ENVELOPE_NODELESS = (
     "          END IF;\n"
 )
 _ENVELOPE_NODELESS_RELAXED = (
-    _ENVELOPE_NODELESS
-    + "          IF attempt_row.node_id IS NULL THEN\n"
+    _ENVELOPE_NODELESS + "          IF attempt_row.node_id IS NULL THEN\n"
     "            RETURN NULL;\n"
     "          END IF;\n"
 )
 _CAPACITY_HEAD = (
-    "        BEGIN\n"
-    "          SELECT COALESCE(sum(cpu_cores),0), COALESCE(sum(memory_bytes),0),\n"
+    "        BEGIN\n          SELECT COALESCE(sum(cpu_cores),0), COALESCE(sum(memory_bytes),0),\n"
 )
 _CAPACITY_HEAD_RELAXED = (
     "        BEGIN\n"
@@ -210,8 +207,7 @@ _GUARD_TWO_HEAD_RELAXED = (
     "               AND lease_row.cpu_cores =\n"
 )
 _GUARD_THREE_HEAD = (
-    "          IF NOT EXISTS (\n"
-    "            SELECT 1 FROM execution_inventory_attestations i\n"
+    "          IF NOT EXISTS (\n            SELECT 1 FROM execution_inventory_attestations i\n"
 )
 _GUARD_THREE_HEAD_RELAXED = (
     "          IF attempt_row.node_id IS NOT NULL AND NOT EXISTS (\n"
@@ -227,9 +223,7 @@ _GUARD_FOUR_HEAD_RELAXED = (
     "            SELECT 1 FROM execution_qualification_admissions q\n"
     "             JOIN execution_nodes n ON n.node_id = attempt_row.node_id\n"
 )
-_DEVICE_COUNT_ANCHOR = (
-    "          SELECT count(*) INTO device_count FROM execution_device_leases\n"
-)
+_DEVICE_COUNT_ANCHOR = "          SELECT count(*) INTO device_count FROM execution_device_leases\n"
 _EXTERNAL_LEASE_GUARD = """
           IF attempt_row.node_id IS NULL AND NOT EXISTS (
             SELECT 1 FROM execution_qualification_admissions q
@@ -276,8 +270,6 @@ _EXTERNAL_LEASE_GUARD = """
                        ->'resource_classes'
                    ) cls(value)
              WHERE q.admission_sha256 = attempt_row.admission_sha256
-               AND cls.value->>'resource_class_id' =
-                   attempt_row.external_resource_class_id
                AND cls.value->>'kind' = 'external'
                AND q.bundle_json->'intent'->>'external_action_kind' = ANY (
                    SELECT jsonb_array_elements_text(cls.value->'external_action_kinds'))
@@ -296,6 +288,11 @@ _EXTERNAL_LEASE_GUARD = """
                         ) req(feature)
                   WHERE NOT (cls.value->'features' @> to_jsonb(ARRAY[req.feature]))
                )
+               AND attempt_row.external_resource_class_id = ANY (
+                   SELECT jsonb_array_elements_text(
+                     q.bundle_json->'intent'->'resource_request'
+                       ->'accepted_resource_class_ids'
+                   ))
           ) THEN
             RAISE EXCEPTION 'external placement class is absent from the frozen catalog'
               USING ERRCODE = '23514';

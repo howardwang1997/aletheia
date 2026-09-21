@@ -310,6 +310,7 @@ def _prepared(
     bridge_registered: bool = True,
     bridge_active: bool = True,
     bridge_container_runtime: str = "host-process",
+    extra_bridge_authorities: tuple[ExternalBridgeAuthority, ...] = (),
 ) -> _Prepared:
     case = (
         _external_qualification_case()
@@ -393,8 +394,7 @@ def _prepared(
         static_class = next(
             item
             for item in case.bundle.compilation_request.resource_catalog.resource_classes
-            if item.resource_class_id
-            == case.bundle.cost_quote.selected_external_resource_class_id
+            if item.resource_class_id == case.bundle.cost_quote.selected_external_resource_class_id
         )
     else:
         static_class = next(
@@ -576,7 +576,7 @@ def _prepared(
         ),
         node_authorities=(authority,),
         node_assignment_transport_pins=(transport_pin,),
-        external_bridge_authorities=external_bridge_authorities,
+        external_bridge_authorities=external_bridge_authorities + extra_bridge_authorities,
         terminal_verification_authority=TerminalVerificationAuthorityVerifier(terminal_pin),
         allocator_principal_id="principal:allocator",
         max_inventory_ttl_seconds=30,
@@ -745,9 +745,7 @@ def test_external_bridge_admission_rejects_unregistered_inactive_and_mismatched(
 
     mismatched = _prepared(monkeypatch, external=True, bridge_container_runtime="oci-v1")
     with pytest.raises(AdmissionConflict, match="does not match the quoted class"):
-        mismatched.allocator.admit_and_reserve(
-            bundle=mismatched.bundle, grant=mismatched.grant
-        )
+        mismatched.allocator.admit_and_reserve(bundle=mismatched.bundle, grant=mismatched.grant)
 
 
 def test_external_attempt_expiry_reconciles_nodelessly_and_node_paths_refuse(
@@ -791,6 +789,24 @@ def test_external_attempt_expiry_reconciles_nodelessly_and_node_paths_refuse(
 
     # repeat sweeps are idempotent: the attempt no longer matches the filter
     assert prepared.allocator.reconcile_expired() == ()
+
+
+def test_allocator_constructor_rejects_duplicate_external_bridge_pins(
+    monkeypatch,
+) -> None:
+    # the registration layer rejects duplicate served classes, but only the
+    # constructor guards pin identity: two bridges presenting the same key or
+    # principal must fail before any admission can treat them as distinct
+    prepared = _prepared(monkeypatch, external=True)
+    bridge = next(iter(prepared.allocator._external_bridge_authorities.values()))
+    duplicate = ExternalBridgeAuthority(
+        manifest=bridge.manifest.model_copy(
+            update={"resource_class_ids": ("rsc_bridge-duplicate-pin",)}
+        ),
+        bridge_authority_pin=bridge.bridge_authority_pin,
+    )
+    with pytest.raises(ValueError, match="unique per bridge host"):
+        _prepared(monkeypatch, external=True, extra_bridge_authorities=(duplicate,))
 
 
 def test_caller_owned_admission_transaction_rolls_back_without_an_orphan_attempt(

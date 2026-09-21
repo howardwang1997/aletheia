@@ -578,9 +578,7 @@ def _rebuilt_bundle(
         compilation_result=external_case.result,
         work_order=external_case.bundle.work_order,
         intent=external_case.bundle.intent,
-        input_artifact_verified_receipt_sha256s=(
-            external_case.resolution.verified_receipt_sha256,
-        ),
+        input_artifact_verified_receipt_sha256s=(external_case.resolution.verified_receipt_sha256,),
         budget_authorization=external_case.bundle.budget_authorization,
         cost_quote=quote,
     )
@@ -677,6 +675,26 @@ def test_external_profile_rejects_each_clause_in_isolation(mutation: dict) -> No
         )
 
 
+def test_external_profile_rejects_accelerated_requests() -> None:
+    # external placement owns no devices; an accelerated request would die at
+    # the frozen device-count clause at COMMIT (opaque 23514), so the shared
+    # profile must reject it up front with the named clause error
+    case = _external_qualification_case()
+    accelerated = case.bundle.intent.model_copy(
+        update={
+            "resource_request": case.bundle.intent.resource_request.model_copy(
+                update={"accelerator_count": 1}
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="does not carry the intent action kind profile"):
+        verify_external_qualification_profile(
+            intent=accelerated,
+            quote=case.bundle.cost_quote,
+            resource_classes=case.request.resource_catalog.resource_classes,
+        )
+
+
 def test_external_bridge_authority_pin_key_must_differ_from_node_signing_key() -> None:
     # the bridge host may repeat a node manifest, but the bridge pin signing
     # as the node's own key would let the node self-certify bridge admission
@@ -757,9 +775,7 @@ def test_external_qualification_requires_never_retry() -> None:
             compilation_result=case.result,
             work_order=case.bundle.work_order,
             intent=intent,
-            input_artifact_verified_receipt_sha256s=(
-                case.resolution.verified_receipt_sha256,
-            ),
+            input_artifact_verified_receipt_sha256s=(case.resolution.verified_receipt_sha256,),
             budget_authorization=case.bundle.budget_authorization,
             cost_quote=quote,
         )
