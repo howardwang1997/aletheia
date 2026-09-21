@@ -750,6 +750,49 @@ def test_external_bridge_admission_rejects_unregistered_inactive_and_mismatched(
         )
 
 
+def test_external_attempt_expiry_reconciles_nodelessly_and_node_paths_refuse(
+    monkeypatch,
+) -> None:
+    prepared = _prepared(monkeypatch, external=True)
+    first = prepared.allocator.admit_and_reserve(bundle=prepared.bundle, grant=prepared.grant)
+    assert first.created is True and first.lease_token is not None
+
+    # the node runtime lifecycle refuses the nodeless attempt before any
+    # lease-token or custody reasoning (take-4 owns bridge dispatch)
+    with pytest.raises(LeaseAuthorityError, match="do not enter the node runtime lifecycle"):
+        prepared.allocator.mark_terminated(
+            attempt_id=first.snapshot.attempt_id,
+            lease_token=first.lease_token,
+            fencing_epoch=first.snapshot.fencing_epoch,
+        )
+
+    monkeypatch.setattr(
+        allocator_module,
+        "_database_time",
+        lambda _session: first.snapshot.lease_expires_at,
+    )
+    snapshots = prepared.allocator.reconcile_expired()
+    assert [item.attempt_id for item in snapshots] == [first.snapshot.attempt_id]
+    assert snapshots[0].status == "reconciliation_required"
+
+    with session_factory()() as session:
+        attempt = session.get(_ExecutionAttemptRecord, first.snapshot.attempt_id)
+        lease = session.execute(
+            select(_ExecutionResourceLeaseRecord).where(
+                _ExecutionResourceLeaseRecord.attempt_id == first.snapshot.attempt_id
+            )
+        ).scalar_one()
+        assert attempt.status == "reconciliation_required"
+        assert attempt.reconciliation_reason == "lease_expired"
+        # the retained hold flips state but is never released nodelessly
+        assert lease.state == "reconciliation_required"
+        with pytest.raises(LeaseAuthorityError, match="do not enter node runtime custody paths"):
+            prepared.allocator._lock_runtime_holds(session, attempt)
+
+    # repeat sweeps are idempotent: the attempt no longer matches the filter
+    assert prepared.allocator.reconcile_expired() == ()
+
+
 def test_caller_owned_admission_transaction_rolls_back_without_an_orphan_attempt(
     monkeypatch,
 ) -> None:

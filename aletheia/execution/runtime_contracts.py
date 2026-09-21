@@ -2540,6 +2540,8 @@ class ExternalBridgeAuthority(ExecutionModel):
             raise ValueError("external bridge authority manifest serves no resource class")
         if self.bridge_authority_pin.principal_id == self.manifest.principal_id:
             raise ValueError("bridge authority role must be distinct from the node role")
+        if self.bridge_authority_pin.key_id == self.manifest.node_signing_key_id:
+            raise ValueError("bridge authority key must be distinct from the node signing key")
         return self
 
     @property

@@ -125,9 +125,13 @@ class QualificationExecutionRegistrationConfig(BaseModel):
             for item in self.external_bridge_authorities
             for class_id in item.served_resource_class_ids
         )
-        if served_classes != tuple(sorted(set(served_classes))):
+        duplicate_classes = tuple(
+            sorted(value for value, count in Counter(served_classes).items() if count > 1)
+        )
+        if duplicate_classes:
             raise ValueError(
-                "execution registration bridge authorities must serve unique classes"
+                "execution registration bridge authorities must serve unique classes: "
+                f"{duplicate_classes}"
             )
         for item in self.external_bridge_authorities:
             if not item.bridge_authority_pin.active_at(self.prepared_at):

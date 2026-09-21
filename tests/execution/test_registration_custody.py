@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import hashlib
 import sys
 from pathlib import Path
 
@@ -12,13 +13,21 @@ from aletheia.execution.registration_custody import (
     QualificationExecutionRegistrationConfig,
     compose_qualification_execution_registration,
 )
-from aletheia.execution.runtime_contracts import QualificationVerificationError
+from aletheia.execution.runtime_contracts import (
+    ExternalBridgeAuthority,
+    QualificationAuthorityPin,
+    QualificationVerificationError,
+    qualification_key_id,
+)
 
 _CONTROLLER_TESTS = Path(__file__).resolve().parents[1] / "research_controller"
 if str(_CONTROLLER_TESTS) not in sys.path:
     sys.path.insert(0, str(_CONTROLLER_TESTS))
 
-from test_terminal_runtime import _config as _terminal_config  # noqa: E402
+from test_terminal_runtime import (  # noqa: E402
+    _config as _terminal_config,
+    _public_key,
+)
 
 
 def _config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -93,4 +102,54 @@ def test_registration_custody_rejects_role_overlap_or_mutation_expansion(
     payload = config.model_dump(mode="python")
     payload["initial_assignment_lease_seconds"] = 7201
     with pytest.raises(ValidationError):
+        QualificationExecutionRegistrationConfig.model_validate(payload)
+
+
+def _bridge_authority(terminal, *, label: str, class_ids: tuple[str, ...]):
+    manifest = terminal.node_authorities[0].manifest.model_copy(
+        update={"resource_class_ids": class_ids}
+    )
+    public_key = _public_key(f"registration-external-bridge-{label}")
+    pin = QualificationAuthorityPin(
+        policy_sha256=hashlib.sha256(
+            f"registration-external-bridge-{label}:policy".encode()
+        ).hexdigest(),
+        principal_id=f"principal:registration-external-bridge-{label}",
+        key_id=qualification_key_id(public_key),
+        public_key_ed25519_hex=public_key,
+        valid_from=terminal.prepared_at - timedelta(days=1),
+        expires_at=terminal.prepared_at + timedelta(days=1),
+    )
+    return ExternalBridgeAuthority(manifest=manifest, bridge_authority_pin=pin)
+
+
+def test_registration_accepts_unsorted_unique_bridge_classes_but_no_duplicates(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(monkeypatch, tmp_path)
+    payload = config.model_dump(mode="python")
+    terminal_root = tmp_path / "bridge-terminal"
+    terminal_root.mkdir()
+    terminal, _controller_manifest = _terminal_config(monkeypatch, terminal_root)
+
+    # two bridge hosts whose served-class concatenation is not hash-sorted:
+    # unique classes, so the closure must accept it (contradiction #15 review
+    # finding: the old ordering check rejected this shape)
+    payload["external_bridge_authorities"] = (
+        _bridge_authority(terminal, label="one", class_ids=("rsc_mmmm",)),
+        _bridge_authority(terminal, label="two", class_ids=("rsc_bbbb",)),
+    )
+    accepted = QualificationExecutionRegistrationConfig.model_validate(payload)
+    assert accepted.external_bridge_authorities[0].served_resource_class_ids == (
+        "rsc_mmmm",
+    )
+
+    # two distinct bridges both serving rsc_dup: duplicate service must fail
+    # on uniqueness alone, whatever the ordering
+    payload["external_bridge_authorities"] = (
+        _bridge_authority(terminal, label="one", class_ids=("rsc_aaaa", "rsc_dup")),
+        _bridge_authority(terminal, label="two", class_ids=("rsc_bbbb", "rsc_dup")),
+    )
+    with pytest.raises(ValidationError, match="must serve unique classes"):
         QualificationExecutionRegistrationConfig.model_validate(payload)

@@ -1116,6 +1116,16 @@ class PostgreSQLExecutionAllocator:
             raise ValueError("node assignment transport role must be independently declared")
         terminal_key_id = self._terminal_verification_authority.pin.key_id
         self._external_bridge_authorities: dict[str, ExternalBridgeAuthority] = {}
+        bridge_pin_key_ids = tuple(
+            item.bridge_authority_pin.key_id for item in external_bridge_authorities
+        )
+        bridge_pin_principals = tuple(
+            item.bridge_authority_pin.principal_id for item in external_bridge_authorities
+        )
+        if len(set(bridge_pin_key_ids)) != len(bridge_pin_key_ids) or len(
+            set(bridge_pin_principals)
+        ) != len(bridge_pin_principals):
+            raise ValueError("external bridge authority pins must be unique per bridge host")
         for bridge_authority in external_bridge_authorities:
             pinned = ExternalBridgeAuthority.model_validate(
                 bridge_authority.model_dump(mode="python")
@@ -7320,6 +7330,10 @@ class PostgreSQLExecutionAllocator:
     ) -> AttemptTransitionReceipt:
         with self._sessions() as session, session.begin():
             _head, attempt = self._lock_execution_attempt(session, attempt_id)
+            if attempt.node_id is None:
+                raise LeaseAuthorityError(
+                    "nodeless external attempts do not enter the node runtime lifecycle"
+                )
             node = session.execute(
                 select(_ExecutionNodeRecord)
                 .where(_ExecutionNodeRecord.node_id == attempt.node_id)
@@ -7678,11 +7692,12 @@ class PostgreSQLExecutionAllocator:
             )
             .with_for_update()
         ).scalar_one()
-        session.execute(
-            select(_ExecutionNodeRecord)
-            .where(_ExecutionNodeRecord.node_id == attempt.node_id)
-            .with_for_update()
-        ).scalar_one()
+        if attempt.node_id is not None:
+            session.execute(
+                select(_ExecutionNodeRecord)
+                .where(_ExecutionNodeRecord.node_id == attempt.node_id)
+                .with_for_update()
+            ).scalar_one()
         device_leases = tuple(
             session.execute(
                 select(_ExecutionDeviceLeaseRecord)
@@ -8276,6 +8291,10 @@ class PostgreSQLExecutionAllocator:
         tuple[_ExecutionDeviceLeaseRecord, ...],
         _ExecutionBudgetReservationRecord,
     ]:
+        if attempt.node_id is None:
+            raise LeaseAuthorityError(
+                "nodeless external attempts do not enter node runtime custody paths"
+            )
         reservation_identity = session.execute(
             select(_ExecutionBudgetReservationRecord).where(
                 _ExecutionBudgetReservationRecord.attempt_id == attempt.attempt_id

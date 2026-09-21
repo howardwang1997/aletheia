@@ -18,6 +18,7 @@ from aletheia.execution.runtime_contracts import (
     EngineeringQualificationGrant,
     ExecutionCostQuote,
     ExecutionRetryMode,
+    ExternalBridgeAuthority,
     NodeEnrollmentAuthorityPin,
     NodeEnrollmentAuthorityVerifier,
     NodeExecutionReceipt,
@@ -45,6 +46,7 @@ from aletheia.execution.runtime_contracts import (
     issue_worker_node_enrollment,
     qualification_key_id,
     verify_attempt_adoption,
+    verify_external_qualification_profile,
     verify_engineering_qualification,
     verify_node_inventory_attestation,
     verify_node_execution_receipt,
@@ -622,6 +624,73 @@ def test_external_quote_wrong_profile_class_is_rejected() -> None:
     quote = _external_quote_with(case, selected_external_resource_class_id=site.resource_class_id)
     with pytest.raises(ValidationError, match="does not carry the intent action kind profile"):
         _rebuilt_bundle(case, quote)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        pytest.param({"external_action_kinds": ("bridge.other_slot",)}, id="action-kind"),
+        pytest.param({"network_policies": (NetworkPolicy.ALLOWLIST,)}, id="network-policy"),
+        pytest.param({"cpu_cores": 1}, id="cpu-floor"),
+        pytest.param({"memory_bytes": 1}, id="memory-floor"),
+        pytest.param({"scratch_bytes": 1}, id="scratch-floor"),
+        pytest.param({"features": ()}, id="features-subset"),
+    ],
+)
+def test_external_profile_rejects_each_clause_in_isolation(mutation: dict) -> None:
+    # the wrong-profile test above violates ~6 clauses at once; here exactly
+    # one dimension of the selected class changes while the quote still
+    # selects it and the intent still accepts it, so a regression in any
+    # single clause (capacity floors, network, action kind, features) fails
+    # its own case instead of hiding behind the others
+    case = _external_qualification_case()
+    intent = case.bundle.intent
+    quote = case.bundle.cost_quote
+    selected = verify_external_qualification_profile(
+        intent=intent,
+        quote=quote,
+        resource_classes=case.request.resource_catalog.resource_classes,
+    )
+    # the mutated floors stay real violations against this request
+    assert intent.resource_request.cpu_cores > 1
+    assert intent.resource_request.memory_bytes > 1
+    assert intent.resource_request.scratch_bytes > 1
+    assert intent.resource_request.required_features
+    under_cover = selected.model_copy(update=mutation)
+    classes = tuple(
+        under_cover if item.resource_class_id == selected.resource_class_id else item
+        for item in case.request.resource_catalog.resource_classes
+    )
+    requoted = quote.model_copy(
+        update={"selected_external_resource_class_id": under_cover.resource_class_id}
+    )
+    reaccepted = intent.model_copy(
+        update={
+            "resource_request": intent.resource_request.model_copy(
+                update={"accepted_resource_class_ids": (under_cover.resource_class_id,)}
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="does not carry the intent action kind profile"):
+        verify_external_qualification_profile(
+            intent=reaccepted, quote=requoted, resource_classes=classes
+        )
+
+
+def test_external_bridge_authority_pin_key_must_differ_from_node_signing_key() -> None:
+    # the bridge host may repeat a node manifest, but the bridge pin signing
+    # as the node's own key would let the node self-certify bridge admission
+    manifest = _worker_manifest()
+    pin = QualificationAuthorityPin(
+        policy_sha256=_digest("bridge-policy:v1"),
+        principal_id="principal:bridge-execution",
+        key_id=manifest.node_signing_key_id,
+        public_key_ed25519_hex=manifest.node_signing_public_key_ed25519_hex,
+        valid_from=NOW - timedelta(days=1),
+        expires_at=NOW + timedelta(days=1),
+    )
+    with pytest.raises(ValidationError, match="bridge authority key must be distinct"):
+        ExternalBridgeAuthority(manifest=manifest, bridge_authority_pin=pin)
 
 
 def test_external_action_kind_cannot_ride_a_node_quote() -> None:

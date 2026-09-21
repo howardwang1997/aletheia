@@ -1470,6 +1470,7 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
         infrastructure_attempt_id=intent.infrastructure_attempt.infrastructure_attempt_id,
         accepted_resource_class_ids=intent.resource_request.accepted_resource_class_ids,
     )
+    external_bridge_active_until = None
     if node.external_action_kind is not None:
         # external placement mode: exactly one frozen EXTERNAL class carrying
         # the node's action kind (the bundle validator profile)
@@ -1488,6 +1489,17 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
                 "the frozen resource catalog does not hold exactly one accepted "
                 f"EXTERNAL class carrying action kind {node.external_action_kind}"
             )
+        # the quote's uniqueness key burns on append; admission re-checks the
+        # bridge pin, so a window it cannot survive must fail HERE (contradiction
+        # #15 review: fold the bridge authority's active window into expiry)
+        external_bridge_active_until = _external_bridge_active_until(state)
+        if external_bridge_active_until is None:
+            _fail(
+                "external placement quotes need the deployment's external bridge "
+                "authority pin; re-author the deployment carrying it"
+            )
+        if external_bridge_active_until <= now:
+            _fail("external bridge authority pin is no longer active at quote time")
         placement = dict(
             permitted_node_manifest_sha256s=(),
             selected_node_manifest_sha256=None,
@@ -1501,6 +1513,14 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
             selected_resource_ids=(node_id,),
             selected_external_resource_class_id=None,
         )
+    quote_window = [
+        source.expires_at,
+        intent_deadline,
+        card.active_until,
+        pricing_pin.active_until,
+    ]
+    if external_bridge_active_until is not None:
+        quote_window.append(external_bridge_active_until)
     quote = ExecutionCostQuote(
         **quote_fields,
         **placement,
@@ -1515,12 +1535,7 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
         pricing_policy_sha256=pricing_pin.policy_sha256,
         quoted_by_principal_id=pricing_pin.principal_id,
         quoted_at=now,
-        expires_at=min(
-            source.expires_at,
-            intent_deadline,
-            card.active_until,
-            pricing_pin.active_until,
-        ),
+        expires_at=min(quote_window),
     )
     if quote.expires_at <= now:
         _fail("derived quote expiry is not in the future; check the source window and pins")
@@ -1886,6 +1901,19 @@ def _bridge_active_until(state: dict, role: str) -> datetime:
     if revoked_at is None:
         return expires_at
     return min(expires_at, _parse_iso(revoked_at, f"bridge {role} revoked_at"))
+
+
+def _external_bridge_active_until(state: dict) -> datetime | None:
+    """The deployment's external bridge admission pin window, if authored."""
+
+    pin = state.get("qualification", {}).get("external_bridge_pin")
+    if not pin:
+        return None
+    expires_at = _parse_iso(pin["expires_at"], "external bridge expires_at")
+    revoked_at = pin.get("revoked_at")
+    if revoked_at is None:
+        return expires_at
+    return min(expires_at, _parse_iso(revoked_at, "external bridge revoked_at"))
 
 
 def main() -> int:
