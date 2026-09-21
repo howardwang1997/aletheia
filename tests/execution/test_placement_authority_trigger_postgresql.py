@@ -255,7 +255,7 @@ def _seed_external_placement(
                 "  cost_quote_sha256, authority_policy_sha256, authority_key_id,"
                 "  bundle_json, grant_json, verified_receipt_json, verified_at, admitted_at)"
                 " VALUES (:a, :grant, :bundle, :intent, :e, :attempt, :auth, :quote,"
-                "         :policy, 'key:qualification-test', CAST(:bundle_json AS jsonb),"
+                "         :policy, :authority_key, CAST(:bundle_json AS jsonb),"
                 "         CAST(:grant_json AS jsonb), CAST('{}' AS jsonb),"
                 "         :authorized, :authorized)"
             ),
@@ -269,6 +269,8 @@ def _seed_external_placement(
                 "auth": authorization,
                 "quote": quote_sha,
                 "policy": sha("policy"),
+                # the frozen CHECK pins authority_key_id to the 64-hex shape
+                "authority_key": sha("authority-key"),
                 "bundle_json": json.dumps(bundle_json),
                 "grant_json": json.dumps(grant_json),
                 "authorized": _iso(authorized_at),
@@ -458,7 +460,7 @@ def test_half_external_rows_violate_the_placement_mode_check(migrated_engine) ->
                 "  cost_quote_sha256, authority_policy_sha256, authority_key_id,"
                 "  bundle_json, grant_json, verified_receipt_json, verified_at, admitted_at)"
                 " VALUES (:a, :grant, :bundle, :intent, :e, :attempt, :auth, :quote,"
-                "         :policy, 'key:qualification-test', CAST('{}' AS jsonb),"
+                "         :policy, :authority_key, CAST('{}' AS jsonb),"
                 "         CAST('{}' AS jsonb), CAST('{}' AS jsonb), :now, :now)"
             ),
             {
@@ -471,6 +473,7 @@ def test_half_external_rows_violate_the_placement_mode_check(migrated_engine) ->
                 "auth": sha("budget-authorization"),
                 "quote": sha("quote"),
                 "policy": sha("policy"),
+                "authority_key": sha("authority-key"),
                 "now": _iso(_NOW),
             },
         )
