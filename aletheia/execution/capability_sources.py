@@ -239,6 +239,28 @@ def contract_sources(root, manifest):
     return digests
 
 
+# A local bridge service contract speaks service vocabulary
+# (behavior.role, e.g. the cuprate diagnostic self-describes "analysis")
+# while the protocol DAG speaks ProtocolStepRole vocabulary, and typecheck
+# plus the archive-input gate require the cuprate step to be the
+# SCIENTIFIC_EXECUTOR whose archived observation the parser loads. The
+# verifier is the bridge layer and owns this mapping instead of equating
+# the two vocabularies (contradiction #17); each side is pinned against
+# its own expected value so a drift on either side fails loudly.
+_EXPECTED_LOCAL_SERVICE_ROLES = {
+    "load_raw_run": ("observation_parser", "observation_parser"),
+    "run_cuprate_diagnostic": ("analysis", "scientific_executor"),
+    "prepare_validation_campaign": ("independent_validator", "independent_validator"),
+}
+
+
+def expected_local_service_step_role(operation: str) -> str:
+    """The protocol step role a compiled protocol must assign the step that
+    binds this local bridge service operation (enforced at verification)."""
+
+    return _EXPECTED_LOCAL_SERVICE_ROLES[operation][1]
+
+
 def _verify_local_service_sources(root, manifest, runtime, step):
     from aletheia.observations.service_capabilities import local_service_capability_sources
 
@@ -266,7 +288,13 @@ def _verify_local_service_sources(root, manifest, runtime, step):
     )
     behavior = contract["behavior"]
     _require(
-        step.role.value == behavior["role"]
+        operation in _EXPECTED_LOCAL_SERVICE_ROLES,
+        "local service operation has no step-role bridge entry",
+    )
+    behavior_role, step_role = _EXPECTED_LOCAL_SERVICE_ROLES[operation]
+    _require(
+        behavior["role"] == behavior_role
+        and step.role.value == step_role
         and manifest.side_effect_class.value == behavior["side_effect_class"]
         and manifest.runtime.determinism.value
         == ("frozen_seeds" if operation == "run_cuprate_diagnostic" else "declared_stochastic")

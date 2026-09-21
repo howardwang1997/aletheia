@@ -272,8 +272,11 @@ def case(tmp_path, request):
             ),
             steps=(
                 NS(
+                    # the step role a compiled protocol assigns, per the
+                    # verifier's operation->role bridge (the contract's own
+                    # behavior.role string is service vocabulary)
                     role=NS(
-                        value=service.contract["behavior"]["role"]
+                        value=closure.expected_local_service_step_role(service_operation)
                         if service
                         else "scientific_executor"
                     ),

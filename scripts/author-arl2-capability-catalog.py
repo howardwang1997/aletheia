@@ -40,8 +40,9 @@ a B8 commissioning input, and this script is that input):
    (runbook W1 step 6), plus the trust and runtime-inventory documents the
    retained evidence stays verifiable against. The runtime-sources
    document keys each manifest's sources by the manifest sha; the pinned
-   verifier requires that key set to equal the selected catalog's
-   manifest shas exactly, so the two files change together.
+   verifier requires that key set to equal exactly the manifests a
+   protocol's steps select (not the whole catalog), so a protocol using
+   a subset needs a pruned runtime-sources document.
 
 Outputs under the working root: keys/capability/, the source root, and
 configs/arl2-capability-{catalog,trust,runtime-sources,state}.json,
@@ -100,8 +101,9 @@ _INDEPENDENCE_GROUPS = (
 # operations, all runtime_kind external_service; the deployed bridge pins
 # their principals (deployments script SERVICE_PRINCIPALS / BRIDGE_PRINCIPALS).
 # The role/side_effect_class values are the contracts' own declared behavior
-# and only guard against contract drift; which protocol step role each
-# capability serves is authored at protocol level, not here.
+# and only guard against contract drift; the step role each capability
+# serves is fixed per operation by the verifier's bridge
+# (capability_sources.expected_local_service_step_role).
 _OPERATIONS = {
     "load_raw_run": {
         "capability_id": "raw_run_envelope_source",
@@ -982,7 +984,11 @@ def main() -> int:
             )
         stub_steps.append(
             NS(
-                role=NS(value=contract["behavior"]["role"]),
+                # the step role a compiled protocol assigns (the verifier's
+                # operation->role bridge), not the contract's own behavior
+                # role string — echoing the contract's string would pass the
+                # verifier tautologically and miss a bridge/contract drift
+                role=NS(value=engineering.expected_local_service_step_role(operation)),
                 expected_artifacts=stub_artifacts,
                 archived_observation_input=archive_input,
                 capability_requirement=stub_requirement,
