@@ -432,6 +432,7 @@ class _ExecutionAttemptRecord(Base):
         ),
         CheckConstraint(
             "((node_id IS NULL) = (external_resource_class_id IS NOT NULL)) "
+            "AND ((node_id IS NULL) = (external_resource_class_key IS NOT NULL)) "
             "AND ((node_id IS NULL) = (node_inventory_sha256 IS NULL))",
             name="ck_execution_attempts_placement_mode",
         ),
@@ -485,13 +486,12 @@ class _ExecutionAttemptRecord(Base):
     grant_sha256: Mapped[str] = mapped_column(String(64))
     bundle_sha256: Mapped[str] = mapped_column(String(64))
     cost_quote_sha256: Mapped[str] = mapped_column(String(64))
-    node_id: Mapped[str | None] = mapped_column(
-        ForeignKey("execution_nodes.node_id"), index=True
-    )
+    node_id: Mapped[str | None] = mapped_column(ForeignKey("execution_nodes.node_id"), index=True)
     node_inventory_sha256: Mapped[str | None] = mapped_column(
         ForeignKey("execution_inventory_attestations.inventory_sha256"), index=True
     )
     external_resource_class_id: Mapped[str | None] = mapped_column(String(128))
+    external_resource_class_key: Mapped[str | None] = mapped_column(String(128))
     status: Mapped[str] = mapped_column(String(32), index=True)
     state_version: Mapped[int] = mapped_column(BigInteger)
     fencing_epoch: Mapped[int] = mapped_column(BigInteger)
@@ -1152,6 +1152,7 @@ class _ExecutionResourceLeaseRecord(Base):
         ),
         CheckConstraint(
             "((node_id IS NULL) = (external_resource_class_id IS NOT NULL)) "
+            "AND ((node_id IS NULL) = (external_resource_class_key IS NOT NULL)) "
             "AND ((node_id IS NULL) = (inventory_sha256 IS NULL))",
             name="ck_execution_resource_leases_placement_mode",
         ),
@@ -1160,13 +1161,12 @@ class _ExecutionResourceLeaseRecord(Base):
 
     lease_id: Mapped[str] = mapped_column(String(96), primary_key=True)
     attempt_id: Mapped[str] = mapped_column(ForeignKey("execution_attempts.attempt_id"), index=True)
-    node_id: Mapped[str | None] = mapped_column(
-        ForeignKey("execution_nodes.node_id"), index=True
-    )
+    node_id: Mapped[str | None] = mapped_column(ForeignKey("execution_nodes.node_id"), index=True)
     inventory_sha256: Mapped[str | None] = mapped_column(
         ForeignKey("execution_inventory_attestations.inventory_sha256")
     )
     external_resource_class_id: Mapped[str | None] = mapped_column(String(128))
+    external_resource_class_key: Mapped[str | None] = mapped_column(String(128))
     lease_sha256: Mapped[str] = mapped_column(String(64), unique=True)
     lease_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
     state: Mapped[str] = mapped_column(String(32), index=True)

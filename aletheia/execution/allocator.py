@@ -2277,9 +2277,7 @@ class PostgreSQLExecutionAllocator:
             infrastructure_attempt_id=(
                 bundle.intent.infrastructure_attempt.infrastructure_attempt_id
             ),
-            budget_authorization_sha256=(
-                bundle.budget_authorization.authorization_sha256
-            ),
+            budget_authorization_sha256=(bundle.budget_authorization.authorization_sha256),
             cost_quote_sha256=bundle.cost_quote.quote_sha256,
             authority_policy_sha256=(grant.message.qualification_authority_policy_sha256),
             authority_key_id=grant.message.authorization_key_id,
@@ -2391,9 +2389,7 @@ class PostgreSQLExecutionAllocator:
         resource_class = verify_external_qualification_profile(
             intent=intent,
             quote=quote,
-            resource_classes=(
-                bundle.compilation_request.resource_catalog.resource_classes
-            ),
+            resource_classes=(bundle.compilation_request.resource_catalog.resource_classes),
         )
         if not self._resource_class_matches(
             resource_class=resource_class,
@@ -2466,6 +2462,7 @@ class PostgreSQLExecutionAllocator:
             "attempt_id": attempt_id,
             "intent_sha256": intent.intent_sha256,
             "external_resource_class_id": class_id,
+            "external_resource_class_key": resource_class.class_key,
             "bridge_authority_principal_id": bridge_pin.principal_id,
             "bridge_node_manifest_sha256": authority.manifest.manifest_sha256,
             "selected_resource_ids": (),
@@ -2494,6 +2491,7 @@ class PostgreSQLExecutionAllocator:
                 node_id=None,
                 node_inventory_sha256=None,
                 external_resource_class_id=class_id,
+                external_resource_class_key=resource_class.class_key,
                 status="reserved",
                 state_version=1,
                 fencing_epoch=fencing_epoch,
@@ -2523,6 +2521,7 @@ class PostgreSQLExecutionAllocator:
                 node_id=None,
                 inventory_sha256=None,
                 external_resource_class_id=class_id,
+                external_resource_class_key=resource_class.class_key,
                 lease_sha256=lease_sha256,
                 lease_json=lease_payload,
                 state="held",

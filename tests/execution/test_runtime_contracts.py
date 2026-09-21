@@ -435,6 +435,7 @@ def _signed_case(
             selected_node_manifest_sha256=None,
             selected_resource_ids=(),
             selected_external_resource_class_id=carried[0].resource_class_id,
+            selected_external_resource_class_key=carried[0].class_key,
         )
     else:
         node_manifest_sha256 = _digest("worker-node-manifest")
@@ -443,6 +444,7 @@ def _signed_case(
             selected_node_manifest_sha256=node_manifest_sha256,
             selected_resource_ids=("cpu.socket-0",),
             selected_external_resource_class_id=None,
+            selected_external_resource_class_key=None,
         )
     quote = ExecutionCostQuote(
         quest_id=intent.quest_id,
@@ -695,6 +697,30 @@ def test_external_profile_rejects_accelerated_requests() -> None:
         )
 
 
+def test_external_quote_must_carry_the_selected_class_catalog_key() -> None:
+    # the catalog key is the only serialized identity of the selected class
+    # (the derived id never leaves model_dump); a quote that drops it cannot
+    # be tied to a catalog row at COMMIT time
+    case = _external_qualification_case()
+    with pytest.raises(ValidationError, match="must name the selected class's catalog key"):
+        _external_quote_with(case, selected_external_resource_class_key=None)
+
+
+def test_external_profile_rejects_a_quote_key_from_another_class() -> None:
+    # a key that names a different catalog class than the id would let the
+    # frozen E2 join evaluate envelope clauses on the wrong class row
+    case = _external_qualification_case()
+    requoted = case.bundle.cost_quote.model_copy(
+        update={"selected_external_resource_class_key": _digest("other-external-class-key")}
+    )
+    with pytest.raises(ValueError, match="quoted external class key does not match"):
+        verify_external_qualification_profile(
+            intent=case.bundle.intent,
+            quote=requoted,
+            resource_classes=case.request.resource_catalog.resource_classes,
+        )
+
+
 def test_external_bridge_authority_pin_key_must_differ_from_node_signing_key() -> None:
     # the bridge host may repeat a node manifest, but the bridge pin signing
     # as the node's own key would let the node self-certify bridge admission
@@ -720,6 +746,7 @@ def test_external_action_kind_cannot_ride_a_node_quote() -> None:
         selected_node_manifest_sha256=node_manifest_sha256,
         selected_resource_ids=("cpu.socket-0",),
         selected_external_resource_class_id=None,
+        selected_external_resource_class_key=None,
     )
     with pytest.raises(ValidationError, match="requires an external-class cost quote"):
         _rebuilt_bundle(case, quote)
@@ -734,6 +761,7 @@ def test_external_quote_without_action_kind_is_rejected() -> None:
             "selected_node_manifest_sha256": None,
             "selected_resource_ids": (),
             "selected_external_resource_class_id": _digest("unaccepted-external-class"),
+            "selected_external_resource_class_key": _digest("unaccepted-external-class-key"),
         }
     )
     with pytest.raises(ValidationError, match="external cost quote requires an external action"):

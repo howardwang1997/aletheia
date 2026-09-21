@@ -1505,6 +1505,7 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
             selected_node_manifest_sha256=None,
             selected_resource_ids=(),
             selected_external_resource_class_id=external_classes[0].resource_class_id,
+            selected_external_resource_class_key=external_classes[0].class_key,
         )
     else:
         placement = dict(
@@ -1512,6 +1513,7 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
             selected_node_manifest_sha256=manifest_sha256,
             selected_resource_ids=(node_id,),
             selected_external_resource_class_id=None,
+            selected_external_resource_class_key=None,
         )
     quote_window = [
         source.expires_at,

@@ -10,7 +10,8 @@ node-bound by construction.  The allocator now admits external-mode cost
 quotes (one frozen EXTERNAL resource class, deployment-pinned bridge
 authority) without local node inventory: ``execution_attempts`` and
 ``execution_resource_leases`` relax ``node_id`` and the inventory sha to
-NULLABLE, gain ``external_resource_class_id``, and a placement-mode CHECK
+NULLABLE, gain ``external_resource_class_id`` and
+``external_resource_class_key``, and a placement-mode CHECK
 keeps the two modes exclusive at the database level.  The sha-pattern
 CHECKs widen so a NULL inventory sha passes.  The frozen 0024/0025
 constraint triggers are rewritten in the same migration: the attempt-bundle
@@ -19,8 +20,10 @@ function keeps every node-mode guard verbatim behind
 payload/class agreement against the admission bundle, the frozen-catalog
 class profile, and the grant/quote/budget deadline window; the catalog
 mirror joins only on fields ``model_dump`` serializes — the derived
-``resource_class_id`` never serializes, so the attempt's class id ties to
-the catalog through the quote selection and the intent's accepted ids),
+``resource_class_id`` never serializes, so quotes, attempts, and leases
+carry the selected class's ``class_key`` and the envelope predicates
+evaluate on that exact catalog row, closing the class-identity loop the
+node-mode guards close through live inventory ids),
 the assignment
 envelope requirement and the node-capacity head check skip nodeless rows,
 and the lease/attempt authority-field comparison moves to
@@ -77,10 +80,12 @@ def _attempt_hashes(inventory_clause: str) -> str:
 
 _PLACEMENT_MODE = (
     "((node_id IS NULL) = (external_resource_class_id IS NOT NULL)) "
+    "AND ((node_id IS NULL) = (external_resource_class_key IS NOT NULL)) "
     "AND ((node_id IS NULL) = (node_inventory_sha256 IS NULL))"
 )
 _LEASE_PLACEMENT_MODE = (
     "((node_id IS NULL) = (external_resource_class_id IS NOT NULL)) "
+    "AND ((node_id IS NULL) = (external_resource_class_key IS NOT NULL)) "
     "AND ((node_id IS NULL) = (inventory_sha256 IS NULL))"
 )
 
@@ -91,7 +96,8 @@ def upgrade() -> None:
         "ALTER TABLE execution_attempts"
         " ALTER COLUMN node_id DROP NOT NULL,"
         " ALTER COLUMN node_inventory_sha256 DROP NOT NULL,"
-        " ADD COLUMN IF NOT EXISTS external_resource_class_id VARCHAR(128)"
+        " ADD COLUMN IF NOT EXISTS external_resource_class_id VARCHAR(128),"
+        " ADD COLUMN IF NOT EXISTS external_resource_class_key VARCHAR(128)"
     )
     op.execute("ALTER TABLE execution_attempts DROP CONSTRAINT ck_execution_attempts_hashes")
     op.execute(
@@ -108,7 +114,8 @@ def upgrade() -> None:
         "ALTER TABLE execution_resource_leases"
         " ALTER COLUMN node_id DROP NOT NULL,"
         " ALTER COLUMN inventory_sha256 DROP NOT NULL,"
-        " ADD COLUMN IF NOT EXISTS external_resource_class_id VARCHAR(128)"
+        " ADD COLUMN IF NOT EXISTS external_resource_class_id VARCHAR(128),"
+        " ADD COLUMN IF NOT EXISTS external_resource_class_key VARCHAR(128)"
     )
     op.execute(
         "ALTER TABLE execution_resource_leases DROP CONSTRAINT ck_execution_resource_leases_hashes"
@@ -139,7 +146,10 @@ def downgrade() -> None:
         " CHECK (inventory_sha256 "
         f"{_SHA256_SQL} AND lease_sha256 {_SHA256_SQL})"
     )
-    op.execute("ALTER TABLE execution_resource_leases DROP COLUMN external_resource_class_id")
+    op.execute(
+        "ALTER TABLE execution_resource_leases DROP COLUMN external_resource_class_id,"
+        " DROP COLUMN external_resource_class_key"
+    )
     op.execute(
         "ALTER TABLE execution_resource_leases"
         " ALTER COLUMN node_id SET NOT NULL,"
@@ -155,7 +165,10 @@ def downgrade() -> None:
         " ADD CONSTRAINT ck_execution_attempts_hashes"
         f" CHECK ({_attempt_hashes(_NARROW_INVENTORY)})"
     )
-    op.execute("ALTER TABLE execution_attempts DROP COLUMN external_resource_class_id")
+    op.execute(
+        "ALTER TABLE execution_attempts DROP COLUMN external_resource_class_id,"
+        " DROP COLUMN external_resource_class_key"
+    )
     op.execute(
         "ALTER TABLE execution_attempts"
         " ALTER COLUMN node_id SET NOT NULL,"
@@ -230,6 +243,8 @@ _EXTERNAL_LEASE_GUARD = """
              WHERE q.admission_sha256 = attempt_row.admission_sha256
                AND lease_row.external_resource_class_id =
                    attempt_row.external_resource_class_id
+               AND lease_row.external_resource_class_key =
+                   attempt_row.external_resource_class_key
                AND lease_row.cpu_cores =
                    (q.bundle_json->'intent'->'resource_request'->>'cpu_cores')::integer
                AND lease_row.memory_bytes =
@@ -246,6 +261,10 @@ _EXTERNAL_LEASE_GUARD = """
                AND lease_row.lease_json->>'intent_sha256' = attempt_row.intent_sha256
                AND lease_row.lease_json->>'external_resource_class_id' =
                    attempt_row.external_resource_class_id
+               AND lease_row.lease_json->>'external_resource_class_key' =
+                   attempt_row.external_resource_class_key
+               AND q.bundle_json->'cost_quote'->>'selected_external_resource_class_key' =
+                   attempt_row.external_resource_class_key
                AND lease_row.lease_json->'selected_resource_ids' =
                    q.bundle_json->'cost_quote'->'selected_resource_ids'
                AND (lease_row.lease_json->>'fencing_epoch_at_acquisition')::bigint =
@@ -256,6 +275,8 @@ _EXTERNAL_LEASE_GUARD = """
                    attempt_row.hard_deadline
                AND q.bundle_json->'cost_quote'->>'selected_external_resource_class_id' =
                    attempt_row.external_resource_class_id
+               AND q.bundle_json->'cost_quote'->>'selected_external_resource_class_key' =
+                   attempt_row.external_resource_class_key
                AND q.bundle_json->'cost_quote'->>'selected_node_manifest_sha256' IS NULL
                AND q.bundle_json->'intent'->>'external_action_kind' IS NOT NULL
           ) THEN
@@ -270,6 +291,7 @@ _EXTERNAL_LEASE_GUARD = """
                        ->'resource_classes'
                    ) cls(value)
              WHERE q.admission_sha256 = attempt_row.admission_sha256
+               AND cls.value->>'class_key' = attempt_row.external_resource_class_key
                AND cls.value->>'kind' = 'external'
                AND q.bundle_json->'intent'->>'external_action_kind' = ANY (
                    SELECT jsonb_array_elements_text(cls.value->'external_action_kinds'))

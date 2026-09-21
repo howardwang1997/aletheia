@@ -1925,6 +1925,12 @@ class ExecutionCostQuote(ExecutionModel):
     selected_external_resource_class_id: str | None = Field(
         default=None, pattern=_SYMBOLIC_ID_PATTERN
     )
+    # The catalog key travels with the id so the frozen placement guards can
+    # tie the envelope predicates to the exact catalog class at COMMIT time;
+    # the derived id alone never serializes into the bundle's catalog JSON.
+    selected_external_resource_class_key: str | None = Field(
+        default=None, pattern=_SYMBOLIC_ID_PATTERN
+    )
     currency_code: str = Field(pattern=r"^[A-Z]{3}$")
     rate_card_sha256: str = Field(pattern=_SHA256_PATTERN)
     fixed_charge_microunits: int = Field(ge=0)
@@ -1943,6 +1949,8 @@ class ExecutionCostQuote(ExecutionModel):
             raise ValueError(
                 "cost quote must select exactly one of a node manifest or an external class"
             )
+        if external != (self.selected_external_resource_class_key is not None):
+            raise ValueError("external cost quote must name the selected class's catalog key")
         _canonical_strings(
             self.accepted_resource_class_ids,
             "quoted resource classes",
@@ -2023,6 +2031,8 @@ def verify_external_qualification_profile(
         raise ValueError(
             "quoted external resource class does not carry the intent action kind profile"
         )
+    if quote.selected_external_resource_class_key != resource_class.class_key:
+        raise ValueError("quoted external class key does not match the selected catalog class")
     return resource_class
 
 
