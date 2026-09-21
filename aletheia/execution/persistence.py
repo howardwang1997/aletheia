@@ -491,7 +491,9 @@ class _ExecutionAttemptRecord(Base):
         ForeignKey("execution_inventory_attestations.inventory_sha256"), index=True
     )
     external_resource_class_id: Mapped[str | None] = mapped_column(String(128))
-    external_resource_class_key: Mapped[str | None] = mapped_column(String(128))
+    # class_key is authored catalog text validated by _SYMBOLIC_ID_PATTERN (192),
+    # unlike the derived fixed-length id above
+    external_resource_class_key: Mapped[str | None] = mapped_column(String(192))
     status: Mapped[str] = mapped_column(String(32), index=True)
     state_version: Mapped[int] = mapped_column(BigInteger)
     fencing_epoch: Mapped[int] = mapped_column(BigInteger)
@@ -1166,7 +1168,7 @@ class _ExecutionResourceLeaseRecord(Base):
         ForeignKey("execution_inventory_attestations.inventory_sha256")
     )
     external_resource_class_id: Mapped[str | None] = mapped_column(String(128))
-    external_resource_class_key: Mapped[str | None] = mapped_column(String(128))
+    external_resource_class_key: Mapped[str | None] = mapped_column(String(192))
     lease_sha256: Mapped[str] = mapped_column(String(64), unique=True)
     lease_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
     state: Mapped[str] = mapped_column(String(32), index=True)

@@ -97,7 +97,9 @@ def upgrade() -> None:
         " ALTER COLUMN node_id DROP NOT NULL,"
         " ALTER COLUMN node_inventory_sha256 DROP NOT NULL,"
         " ADD COLUMN IF NOT EXISTS external_resource_class_id VARCHAR(128),"
-        " ADD COLUMN IF NOT EXISTS external_resource_class_key VARCHAR(128)"
+        # class_key is authored catalog text (pattern up to 192), not a derived
+        # hash like the id column, so it gets the repo's symbolic-id width
+        " ADD COLUMN IF NOT EXISTS external_resource_class_key VARCHAR(192)"
     )
     op.execute("ALTER TABLE execution_attempts DROP CONSTRAINT ck_execution_attempts_hashes")
     op.execute(
@@ -115,7 +117,7 @@ def upgrade() -> None:
         " ALTER COLUMN node_id DROP NOT NULL,"
         " ALTER COLUMN inventory_sha256 DROP NOT NULL,"
         " ADD COLUMN IF NOT EXISTS external_resource_class_id VARCHAR(128),"
-        " ADD COLUMN IF NOT EXISTS external_resource_class_key VARCHAR(128)"
+        " ADD COLUMN IF NOT EXISTS external_resource_class_key VARCHAR(192)"
     )
     op.execute(
         "ALTER TABLE execution_resource_leases DROP CONSTRAINT ck_execution_resource_leases_hashes"

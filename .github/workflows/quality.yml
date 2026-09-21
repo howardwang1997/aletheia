@@ -62,6 +62,7 @@ jobs:
           ALETHEIA_DATABASE_URL=postgresql+psycopg://aletheia:aletheia-ci@localhost:5432/aletheia_test_full_ci conda run --no-capture-output -n aletheia alembic upgrade head
           ALETHEIA_DATABASE_URL=postgresql+psycopg://aletheia:aletheia-ci@localhost:5432/aletheia_test_full_ci conda run --no-capture-output -n aletheia alembic check
           ALETHEIA_TEST_MIGRATED_POSTGRES_URL=postgresql+psycopg://aletheia:aletheia-ci@localhost:5432/aletheia_test_full_ci conda run --no-capture-output -n aletheia python -m pytest -q tests/observations/test_migrated_observation_postgresql.py
+          ALETHEIA_TEST_MIGRATED_POSTGRES_URL=postgresql+psycopg://aletheia:aletheia-ci@localhost:5432/aletheia_test_full_ci conda run --no-capture-output -n aletheia python -m pytest -q tests/execution/test_placement_authority_trigger_postgresql.py
       - name: Lint Python
         run: |
           conda run -n aletheia ruff --version

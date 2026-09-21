@@ -685,6 +685,8 @@ def test_external_bridge_admission_reserves_nodelessly_and_is_idempotent(
     prepared = _prepared(monkeypatch, external=True)
     class_id = prepared.bundle.cost_quote.selected_external_resource_class_id
     assert class_id is not None
+    class_key = prepared.bundle.cost_quote.selected_external_resource_class_key
+    assert class_key is not None
 
     first = prepared.allocator.admit_and_reserve(bundle=prepared.bundle, grant=prepared.grant)
     assert first.created is True and first.lease_token is not None
@@ -704,10 +706,13 @@ def test_external_bridge_admission_reserves_nodelessly_and_is_idempotent(
         assert attempt is not None and attempt.node_id is None
         assert attempt.node_inventory_sha256 is None
         assert attempt.external_resource_class_id == class_id
+        assert attempt.external_resource_class_key == class_key
         assert lease.node_id is None and lease.inventory_sha256 is None
         assert lease.external_resource_class_id == class_id
+        assert lease.external_resource_class_key == class_key
         assert lease.lease_json["schema_name"] == "aletheia.external_resource_lease"
         assert lease.lease_json["external_resource_class_id"] == class_id
+        assert lease.lease_json["external_resource_class_key"] == class_key
         assert budget is not None
         assert budget.reserved_microunits == first.snapshot.held_microunits
         # nodeless placement writes no assignment envelope

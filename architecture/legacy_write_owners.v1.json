@@ -51,7 +51,7 @@
     "migration_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "migration_source_ast_roots": ["aletheia/migration", "migrations"],
     "migration_source_ast_file_count": 42,
-    "migration_source_ast_graph_sha256": "10df474523a3962b993b39ec8ec55da712a7dff75406980df0756510439dcae8",
+    "migration_source_ast_graph_sha256": "2d473ebed735ba7760cb634ea85c1d0552f03855161229dec2899d09fa35c2da",
     "migration_source_ast_review_limit": "Migration tooling and immutable Alembic revision history have a separate normalized-AST freeze. Historical schema DML/backfills remain deployment authority reviewed through the migration chain rather than runtime scientific write owners.",
     "non_python_invocation_source_scheme": "git_index_regular_mode_path_byte_sha256_v1",
     "non_python_invocation_source_roots": [
