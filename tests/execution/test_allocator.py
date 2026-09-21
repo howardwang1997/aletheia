@@ -55,8 +55,10 @@ from aletheia.execution.runtime_contracts import (
     AttemptAdoptionReason,
     EngineeringQualificationBundle,
     ExecutionCostQuote,
+    ExternalBridgeAuthority,
     NodeHealth,
     NodeInventoryResource,
+    QualificationAuthorityPin,
     RuntimeInspectionState,
     TerminalVerificationAuthorityPin,
     TerminalVerificationAuthorityVerifier,
@@ -93,6 +95,7 @@ from test_runtime_contracts import (  # noqa: E402
     TERMINAL_PRIVATE_KEY,
     _AuthorityResolver,
     _digest,
+    _external_qualification_case,
     _intent,
     _output_manifest,
     _protocol_input_resolution,
@@ -126,6 +129,7 @@ _EXECUTION_TABLES = (
 )
 
 TRANSPORT_PRIVATE_KEY = bytes.fromhex("71" * 32)
+BRIDGE_PRIVATE_KEY = bytes.fromhex("43" * 32)
 
 
 @pytest.fixture(autouse=True)
@@ -302,14 +306,22 @@ def _prepared(
     retryable: bool = False,
     artifact_quota_bytes: int | None = None,
     initial_assignment_lease_seconds: int | None = None,
+    external: bool = False,
+    bridge_registered: bool = True,
+    bridge_active: bool = True,
+    bridge_container_runtime: str = "host-process",
 ) -> _Prepared:
     case = (
-        _accelerator_qualification_case(
-            accelerator_count=accelerator_count,
-            retryable=retryable,
+        _external_qualification_case()
+        if external
+        else (
+            _accelerator_qualification_case(
+                accelerator_count=accelerator_count,
+                retryable=retryable,
+            )
+            if accelerator_count
+            else _qualification_case()
         )
-        if accelerator_count
-        else _qualification_case()
     )
     if artifact_quota_bytes is not None:
         original_node = next(
@@ -377,41 +389,59 @@ def _prepared(
             observed_at=case.observed_at,
         )
     request = case.bundle.intent.resource_request
-    static_class = next(
-        item
-        for item in case.bundle.compilation_request.resource_catalog.resource_classes
-        if item.resource_class_id in request.accepted_resource_class_ids
-    )
+    if external:
+        static_class = next(
+            item
+            for item in case.bundle.compilation_request.resource_catalog.resource_classes
+            if item.resource_class_id
+            == case.bundle.cost_quote.selected_external_resource_class_id
+        )
+    else:
+        static_class = next(
+            item
+            for item in case.bundle.compilation_request.resource_catalog.resource_classes
+            if item.resource_class_id in request.accepted_resource_class_ids
+        )
     base_manifest = _worker_manifest()
     manifest = type(base_manifest).model_validate(
         {
             **base_manifest.model_dump(mode="python"),
-            "resource_class_ids": request.accepted_resource_class_ids,
-            "container_runtime": static_class.container_runtime,
+            "resource_class_ids": (
+                (static_class.resource_class_id,)
+                if external
+                else request.accepted_resource_class_ids
+            ),
+            "container_runtime": (
+                bridge_container_runtime if external else static_class.container_runtime
+            ),
             "allowed_data_classifications": tuple(
                 sorted({item.data_classification for item in case.bundle.intent.expected_artifacts})
             ),
         }
     )
     authority = _worker_authority(manifest, observed_at=case.observed_at)
-    quote = ExecutionCostQuote.model_validate(
-        {
-            **case.bundle.cost_quote.model_dump(mode="python"),
-            "permitted_node_manifest_sha256s": (manifest.manifest_sha256,),
-            "selected_node_manifest_sha256": manifest.manifest_sha256,
-            "selected_resource_ids": (
-                (
-                    "cpu.socket-0",
-                    *(f"gpu.{index}" for index in range(accelerator_count)),
-                )
-                if accelerator_count
-                else ("cpu.socket-0",)
-            ),
-        }
-    )
-    bundle = EngineeringQualificationBundle.model_validate(
-        {**case.bundle.model_dump(mode="python"), "cost_quote": quote}
-    )
+    if external:
+        # the external-mode quote is already placement-final (one frozen class)
+        bundle = case.bundle
+    else:
+        quote = ExecutionCostQuote.model_validate(
+            {
+                **case.bundle.cost_quote.model_dump(mode="python"),
+                "permitted_node_manifest_sha256s": (manifest.manifest_sha256,),
+                "selected_node_manifest_sha256": manifest.manifest_sha256,
+                "selected_resource_ids": (
+                    (
+                        "cpu.socket-0",
+                        *(f"gpu.{index}" for index in range(accelerator_count)),
+                    )
+                    if accelerator_count
+                    else ("cpu.socket-0",)
+                ),
+            }
+        )
+        bundle = EngineeringQualificationBundle.model_validate(
+            {**case.bundle.model_dump(mode="python"), "cost_quote": quote}
+        )
     authority_resolver = _AuthorityResolver(bundle)
     artifacts = _TestArtifactResolver(case.resolution)
     grant = issue_engineering_qualification_grant(
@@ -515,18 +545,38 @@ def _prepared(
         expires_at=case.observed_at + timedelta(days=1),
     )
     transport_pin = _transport_pin(manifest, observed_at=case.observed_at)
+    external_bridge_authorities: tuple[ExternalBridgeAuthority, ...] = ()
+    if external and bridge_registered:
+        bridge_public_key = _public_key_hex(BRIDGE_PRIVATE_KEY)
+        bridge_pin = QualificationAuthorityPin(
+            policy_sha256=_digest("allocator-bridge-authority-policy:v1"),
+            principal_id="principal:external-bridge",
+            key_id=qualification_key_id(bridge_public_key),
+            public_key_ed25519_hex=bridge_public_key,
+            valid_from=case.observed_at - timedelta(days=1),
+            expires_at=(
+                case.observed_at - timedelta(seconds=1)
+                if not bridge_active
+                else case.observed_at + timedelta(days=1)
+            ),
+        )
+        external_bridge_authorities = (
+            ExternalBridgeAuthority(manifest=manifest, bridge_authority_pin=bridge_pin),
+        )
+    cost_quote = bundle.cost_quote
     allocator = PostgreSQLExecutionAllocator(
         authority=QualificationAuthorityVerifier(case.pin),
         artifact_resolver=artifacts,
         execution_authority_resolver=authority_resolver,
         pricing_authority=LocalPricingAuthorityPin(
-            quote_principal_ids=frozenset({quote.quoted_by_principal_id}),
-            rate_card_sha256s=frozenset({quote.rate_card_sha256}),
-            pricing_policy_sha256s=frozenset({quote.pricing_policy_sha256}),
-            currency_codes=frozenset({quote.currency_code}),
+            quote_principal_ids=frozenset({cost_quote.quoted_by_principal_id}),
+            rate_card_sha256s=frozenset({cost_quote.rate_card_sha256}),
+            pricing_policy_sha256s=frozenset({cost_quote.pricing_policy_sha256}),
+            currency_codes=frozenset({cost_quote.currency_code}),
         ),
         node_authorities=(authority,),
         node_assignment_transport_pins=(transport_pin,),
+        external_bridge_authorities=external_bridge_authorities,
         terminal_verification_authority=TerminalVerificationAuthorityVerifier(terminal_pin),
         allocator_principal_id="principal:allocator",
         max_inventory_ttl_seconds=30,
@@ -627,6 +677,77 @@ def test_atomic_admission_is_exactly_idempotent_and_token_is_one_time(monkeypatc
         assert first.lease_token not in str(envelope_record.__dict__)
         assert budget is not None
         assert budget.reserved_microunits == first.snapshot.held_microunits
+
+
+def test_external_bridge_admission_reserves_nodelessly_and_is_idempotent(
+    monkeypatch,
+) -> None:
+    prepared = _prepared(monkeypatch, external=True)
+    class_id = prepared.bundle.cost_quote.selected_external_resource_class_id
+    assert class_id is not None
+
+    first = prepared.allocator.admit_and_reserve(bundle=prepared.bundle, grant=prepared.grant)
+    assert first.created is True and first.lease_token is not None
+    assert first.snapshot.node_id is None
+    assert first.snapshot.node_inventory_sha256 is None
+    assert first.snapshot.external_resource_class_id == class_id
+    assert first.snapshot.selected_resource_ids == ()
+
+    with session_factory()() as session:
+        attempt = session.get(_ExecutionAttemptRecord, first.snapshot.attempt_id)
+        lease = session.execute(
+            select(_ExecutionResourceLeaseRecord).where(
+                _ExecutionResourceLeaseRecord.attempt_id == first.snapshot.attempt_id
+            )
+        ).scalar_one()
+        budget = session.get(_ExecutionBudgetHeadRecord, first.snapshot.budget_authorization_sha256)
+        assert attempt is not None and attempt.node_id is None
+        assert attempt.node_inventory_sha256 is None
+        assert attempt.external_resource_class_id == class_id
+        assert lease.node_id is None and lease.inventory_sha256 is None
+        assert lease.external_resource_class_id == class_id
+        assert lease.lease_json["schema_name"] == "aletheia.external_resource_lease"
+        assert lease.lease_json["external_resource_class_id"] == class_id
+        assert budget is not None
+        assert budget.reserved_microunits == first.snapshot.held_microunits
+        # nodeless placement writes no assignment envelope
+        assert (
+            session.execute(
+                select(_ExecutionAssignmentEnvelopeRecord).where(
+                    _ExecutionAssignmentEnvelopeRecord.attempt_id == first.snapshot.attempt_id
+                )
+            ).scalar_one_or_none()
+            is None
+        )
+
+    monkeypatch.setattr(
+        allocator_module,
+        "_database_time",
+        lambda _session: prepared.observed_at + timedelta(seconds=1),
+    )
+    replay = prepared.allocator.admit_and_reserve(bundle=prepared.bundle, grant=prepared.grant)
+    assert replay.created is False and replay.lease_token is None
+    assert replay.snapshot == first.snapshot
+
+
+def test_external_bridge_admission_rejects_unregistered_inactive_and_mismatched(
+    monkeypatch,
+) -> None:
+    unregistered = _prepared(monkeypatch, external=True, bridge_registered=False)
+    with pytest.raises(AdmissionConflict, match="no registered bridge authority"):
+        unregistered.allocator.admit_and_reserve(
+            bundle=unregistered.bundle, grant=unregistered.grant
+        )
+
+    inactive = _prepared(monkeypatch, external=True, bridge_active=False)
+    with pytest.raises(AdmissionConflict, match="not active at locked DB time"):
+        inactive.allocator.admit_and_reserve(bundle=inactive.bundle, grant=inactive.grant)
+
+    mismatched = _prepared(monkeypatch, external=True, bridge_container_runtime="oci-v1")
+    with pytest.raises(AdmissionConflict, match="does not match the quoted class"):
+        mismatched.allocator.admit_and_reserve(
+            bundle=mismatched.bundle, grant=mismatched.grant
+        )
 
 
 def test_caller_owned_admission_transaction_rolls_back_without_an_orphan_attempt(

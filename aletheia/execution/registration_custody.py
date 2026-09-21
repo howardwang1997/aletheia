@@ -34,6 +34,7 @@ from aletheia.execution.qualification_custody import (
     QualificationPreAdmissionCustodyConfig,
 )
 from aletheia.execution.runtime_contracts import (
+    ExternalBridgeAuthority,
     NodeEnrollmentAuthorityVerifier,
     QualificationAuthorityVerifier,
     TerminalVerificationAuthorityVerifier,
@@ -60,6 +61,10 @@ class QualificationExecutionRegistrationConfig(BaseModel):
     qualification_custody: QualificationPreAdmissionCustodyConfig
     runtime_control_authority_pin: RuntimeControlAuthorityPin
     node_authorities: tuple[TerminalNodeAuthorityConfig, ...] = Field(min_length=1)
+    # external bridge admission (contradiction #15): optional because a
+    # deployment with no external class pins nothing; the manifest may repeat
+    # a node authority's manifest (the same bridge host), the bridge pin may not
+    external_bridge_authorities: tuple[ExternalBridgeAuthority, ...] = ()
     allowed_rate_card_sha256s: tuple[str, ...] = Field(min_length=1)
     allowed_currency_codes: tuple[str, ...] = Field(min_length=1)
     allocator_principal_id: str = Field(pattern=_IDENTITY_PATTERN)
@@ -115,6 +120,18 @@ class QualificationExecutionRegistrationConfig(BaseModel):
                 and manifest.key_valid_from <= self.prepared_at < manifest_active_until
             ):
                 raise ValueError("execution registration node authority is inactive")
+        served_classes = tuple(
+            class_id
+            for item in self.external_bridge_authorities
+            for class_id in item.served_resource_class_ids
+        )
+        if served_classes != tuple(sorted(set(served_classes))):
+            raise ValueError(
+                "execution registration bridge authorities must serve unique classes"
+            )
+        for item in self.external_bridge_authorities:
+            if not item.bridge_authority_pin.active_at(self.prepared_at):
+                raise ValueError("execution registration bridge authority is inactive")
 
         principals = (
             custody.artifact_verifier_principal_id,
@@ -131,6 +148,7 @@ class QualificationExecutionRegistrationConfig(BaseModel):
                 item.assignment_transport_pin.transport_principal_id
                 for item in self.node_authorities
             ),
+            *(item.bridge_authority_pin.principal_id for item in self.external_bridge_authorities),
         )
         keys = (
             custody.pricing_authority_pin.key_id,
@@ -141,6 +159,7 @@ class QualificationExecutionRegistrationConfig(BaseModel):
             *(item.manifest.node_signing_key_id for item in self.node_authorities),
             *(item.enrollment_authority_pin.key_id for item in self.node_authorities),
             *(item.assignment_transport_pin.transport_key_id for item in self.node_authorities),
+            *(item.bridge_authority_pin.key_id for item in self.external_bridge_authorities),
         )
         policies = (
             custody.pricing_authority_pin.policy_sha256,
@@ -153,6 +172,7 @@ class QualificationExecutionRegistrationConfig(BaseModel):
                 item.assignment_transport_pin.transport_policy_sha256
                 for item in self.node_authorities
             ),
+            *(item.bridge_authority_pin.policy_sha256 for item in self.external_bridge_authorities),
         )
         duplicate_principals = tuple(
             sorted(value for value, count in Counter(principals).items() if count > 1)
@@ -187,6 +207,7 @@ class QualificationExecutionRegistrationConfig(BaseModel):
                 item.assignment_transport_pin.transport_principal_id
                 for item in self.node_authorities
             ),
+            *(item.bridge_authority_pin.principal_id for item in self.external_bridge_authorities),
         )
 
     @property
@@ -201,6 +222,7 @@ class QualificationExecutionRegistrationConfig(BaseModel):
             *(item.manifest.node_signing_key_id for item in self.node_authorities),
             *(item.enrollment_authority_pin.key_id for item in self.node_authorities),
             *(item.assignment_transport_pin.transport_key_id for item in self.node_authorities),
+            *(item.bridge_authority_pin.key_id for item in self.external_bridge_authorities),
         )
 
     @property
@@ -217,6 +239,7 @@ class QualificationExecutionRegistrationConfig(BaseModel):
                 item.assignment_transport_pin.transport_policy_sha256
                 for item in self.node_authorities
             ),
+            *(item.bridge_authority_pin.policy_sha256 for item in self.external_bridge_authorities),
         )
 
 
@@ -300,6 +323,10 @@ def compose_qualification_execution_registration(
         node_authorities=node_authorities,
         node_assignment_transport_pins=tuple(
             item.assignment_transport_pin for item in config.node_authorities
+        ),
+        external_bridge_authorities=tuple(
+            ExternalBridgeAuthority.model_validate(item.model_dump(mode="python"))
+            for item in config.external_bridge_authorities
         ),
         terminal_verification_authority=terminal_verifier,
         allocator_principal_id=config.allocator_principal_id,

@@ -1316,7 +1316,7 @@ def _build_qualification(
         operating_system="linux",
         cpu_architecture="x86_64",
         oci_platform="linux/amd64",
-        container_runtime="host",
+        container_runtime="host-process",
         sandbox_policy_sha256=policies["node-sandbox"],
         resource_class_ids=(resource_class_id,),
         allowed_data_classifications=("public",),

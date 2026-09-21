@@ -1327,15 +1327,16 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
         )
     from aletheia.execution.schemas import ExecutionEffectClass, NetworkPolicy
 
+    # contradiction #15: an external bridge action kind is admissible when the
+    # frozen catalog's EXTERNAL class carries it; one-shot external effects and
+    # non-NONE networks stay outside engineering qualification
     if (
         node.effect_class is not ExecutionEffectClass.REPLAY_SAFE
-        or node.external_action_kind is not None
         or node.resource_request.network_policy is not NetworkPolicy.NONE
     ):
         _fail(
             f"node {node.node_id} is not replay-safe; the qualification bundle forbids "
-            "non-replay-safe effect classes, external action kinds, and non-NONE "
-            "network policies"
+            "non-replay-safe effect classes and non-NONE network policies"
         )
     slot = ScientificReplicateSlot(
         quest_id=work_order.quest_id,
@@ -1460,7 +1461,7 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
 
     manifest_sha256 = reader.node_authorities[0].manifest.manifest_sha256
     node_id = reader.node_authorities[0].manifest.node_id
-    quote = ExecutionCostQuote(
+    quote_fields = dict(
         quest_id=work_order.quest_id,
         protocol_sha256=work_order.protocol_sha256,
         work_order_sha256=work_order.work_order_sha256,
@@ -1468,9 +1469,41 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
         execution_id=intent.execution_id,
         infrastructure_attempt_id=intent.infrastructure_attempt.infrastructure_attempt_id,
         accepted_resource_class_ids=intent.resource_request.accepted_resource_class_ids,
-        permitted_node_manifest_sha256s=(manifest_sha256,),
-        selected_node_manifest_sha256=manifest_sha256,
-        selected_resource_ids=(node_id,),
+    )
+    if node.external_action_kind is not None:
+        # external placement mode: exactly one frozen EXTERNAL class carrying
+        # the node's action kind (the bundle validator profile)
+        from aletheia.execution.schemas import ResourceKind
+
+        external_classes = [
+            item
+            for item in request.resource_catalog.resource_classes
+            if item.kind is ResourceKind.EXTERNAL
+            and node.external_action_kind in item.external_action_kinds
+            and item.resource_class_id
+            in intent.resource_request.accepted_resource_class_ids
+        ]
+        if len(external_classes) != 1:
+            _fail(
+                "the frozen resource catalog does not hold exactly one accepted "
+                f"EXTERNAL class carrying action kind {node.external_action_kind}"
+            )
+        placement = dict(
+            permitted_node_manifest_sha256s=(),
+            selected_node_manifest_sha256=None,
+            selected_resource_ids=(),
+            selected_external_resource_class_id=external_classes[0].resource_class_id,
+        )
+    else:
+        placement = dict(
+            permitted_node_manifest_sha256s=(manifest_sha256,),
+            selected_node_manifest_sha256=manifest_sha256,
+            selected_resource_ids=(node_id,),
+            selected_external_resource_class_id=None,
+        )
+    quote = ExecutionCostQuote(
+        **quote_fields,
+        **placement,
         currency_code=protocol.resource_budget.currency_code,
         rate_card_sha256=card.rate_card_sha256,
         fixed_charge_microunits=line.fixed_charge_microunits,

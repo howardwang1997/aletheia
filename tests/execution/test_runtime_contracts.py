@@ -17,6 +17,7 @@ from aletheia.execution.runtime_contracts import (
     EngineeringQualificationBundle,
     EngineeringQualificationGrant,
     ExecutionCostQuote,
+    ExecutionRetryMode,
     NodeEnrollmentAuthorityPin,
     NodeEnrollmentAuthorityVerifier,
     NodeExecutionReceipt,
@@ -61,6 +62,9 @@ from aletheia.execution.schemas import (
     ExecutionFailureCategory,
     ExecutionIntent,
     ExecutionReceipt,
+    ExecutionRetryDisposition,
+    ExecutionRetryPolicy,
+    ExecutionRetryRule,
     ExecutionTerminalState,
     InfrastructureAttempt,
     InputArtifactBinding,
@@ -396,6 +400,7 @@ def _signed_case(
     resolution: VerifiedInputArtifactResolution,
     observed_at: datetime,
     prior_execution_receipt: ExecutionReceipt | None = None,
+    external: bool = False,
     quote_at: datetime = NOW,
     grant_at: datetime = NOW + timedelta(minutes=1),
     grant_expires_at: datetime = NOW + timedelta(minutes=10),
@@ -415,7 +420,28 @@ def _signed_case(
         authorized_at=NOW - timedelta(minutes=30),
         expires_at=NOW + timedelta(minutes=30),
     )
-    node_manifest_sha256 = _digest("worker-node-manifest")
+    if external:
+        carried = [
+            item
+            for item in request.resource_catalog.resource_classes
+            if item.kind is ResourceKind.EXTERNAL
+            and intent.external_action_kind in item.external_action_kinds
+        ]
+        assert len(carried) == 1
+        placement = dict(
+            permitted_node_manifest_sha256s=(),
+            selected_node_manifest_sha256=None,
+            selected_resource_ids=(),
+            selected_external_resource_class_id=carried[0].resource_class_id,
+        )
+    else:
+        node_manifest_sha256 = _digest("worker-node-manifest")
+        placement = dict(
+            permitted_node_manifest_sha256s=(node_manifest_sha256,),
+            selected_node_manifest_sha256=node_manifest_sha256,
+            selected_resource_ids=("cpu.socket-0",),
+            selected_external_resource_class_id=None,
+        )
     quote = ExecutionCostQuote(
         quest_id=intent.quest_id,
         protocol_sha256=intent.protocol_sha256,
@@ -424,15 +450,13 @@ def _signed_case(
         execution_id=intent.execution_id,
         infrastructure_attempt_id=intent.infrastructure_attempt.infrastructure_attempt_id,
         accepted_resource_class_ids=intent.resource_request.accepted_resource_class_ids,
-        permitted_node_manifest_sha256s=(node_manifest_sha256,),
-        selected_node_manifest_sha256=node_manifest_sha256,
-        selected_resource_ids=("cpu.socket-0",),
+        **placement,
         currency_code=budget.currency_code,
         rate_card_sha256=_digest("rate-card:v1"),
         fixed_charge_microunits=100,
         charge_per_second_microunits=5,
-        maximum_lease_seconds=120,
-        maximum_charge_microunits=700,
+        maximum_lease_seconds=intent.resource_request.wall_time_seconds,
+        maximum_charge_microunits=100 + 5 * intent.resource_request.wall_time_seconds,
         pricing_policy_sha256=_digest("pricing-policy:v1"),
         quoted_by_principal_id="principal:allocator",
         quoted_at=quote_at,
@@ -506,6 +530,170 @@ def _qualification_case() -> QualificationCase:
         resolution=resolution,
         observed_at=observed_at,
     )
+
+
+def _external_qualification_case() -> QualificationCase:
+    fixture = fixture_by_name("bridge_service")
+    request = fixture.request
+    result = compile_protocol(request)
+    assert result.work_order is not None
+    work_order = result.work_order
+    node = next(item for item in work_order.nodes if item.protocol_step_id == "step.01_load")
+    observed_at = NOW + timedelta(minutes=5)
+    resolution = _protocol_input_resolution(
+        request=request,
+        input_port_id=node.input_port_ids[0],
+        resolved_at=observed_at,
+    )
+    binding = InputArtifactBinding(
+        input_port_id=node.input_port_ids[0],
+        source_kind="protocol_input",
+        artifact_verified_receipt_sha256=resolution.verified_receipt_sha256,
+    )
+    intent = _intent(work_order=work_order, node=node, input_bindings=(binding,))
+    return _signed_case(
+        request=request,
+        result=result,
+        intent=intent,
+        resolution=resolution,
+        observed_at=observed_at,
+        external=True,
+        grant_expires_at=NOW + timedelta(minutes=15),
+    )
+
+
+def _external_quote_with(external_case: QualificationCase, **updates) -> ExecutionCostQuote:
+    return ExecutionCostQuote.model_validate(
+        {**external_case.bundle.cost_quote.model_dump(mode="python"), **updates}
+    )
+
+
+def _rebuilt_bundle(
+    external_case: QualificationCase, quote: ExecutionCostQuote
+) -> EngineeringQualificationBundle:
+    return EngineeringQualificationBundle(
+        compilation_request=external_case.request,
+        compilation_result=external_case.result,
+        work_order=external_case.bundle.work_order,
+        intent=external_case.bundle.intent,
+        input_artifact_verified_receipt_sha256s=(
+            external_case.resolution.verified_receipt_sha256,
+        ),
+        budget_authorization=external_case.bundle.budget_authorization,
+        cost_quote=quote,
+    )
+
+
+def test_external_bridge_qualification_is_verified_end_to_end() -> None:
+    case = _external_qualification_case()
+    assert case.bundle.intent.external_action_kind == "bridge.load_slot"
+    assert case.bundle.cost_quote.selected_external_resource_class_id is not None
+    assert case.bundle.cost_quote.selected_node_manifest_sha256 is None
+    verifier = QualificationAuthorityVerifier(case.pin)
+    verifier.verify_signature(case.grant, observed_at=case.observed_at)
+    verify_engineering_qualification(
+        bundle=case.bundle,
+        grant=case.grant,
+        authority=verifier,
+        artifact_resolver=_Resolver((case.resolution,)),
+        authority_resolver=_AuthorityResolver(case.bundle),
+        observed_at=case.observed_at,
+    )
+
+
+def test_external_quote_absent_class_is_rejected() -> None:
+    case = _external_qualification_case()
+    quote = _external_quote_with(
+        case, selected_external_resource_class_id=_digest("no-such-external-class")
+    )
+    with pytest.raises(ValidationError, match="absent from the frozen catalog"):
+        _rebuilt_bundle(case, quote)
+
+
+def test_external_quote_wrong_profile_class_is_rejected() -> None:
+    case = _external_qualification_case()
+    # the catalog's site-managed class: present, EXTERNAL, but unaccepted and
+    # carrying neither the action kind, network NONE, nor the capacities
+    site = next(
+        item
+        for item in case.request.resource_catalog.resource_classes
+        if item.container_runtime == "site-managed"
+    )
+    quote = _external_quote_with(case, selected_external_resource_class_id=site.resource_class_id)
+    with pytest.raises(ValidationError, match="does not carry the intent action kind profile"):
+        _rebuilt_bundle(case, quote)
+
+
+def test_external_action_kind_cannot_ride_a_node_quote() -> None:
+    case = _external_qualification_case()
+    node_manifest_sha256 = _digest("worker-node-manifest")
+    quote = _external_quote_with(
+        case,
+        permitted_node_manifest_sha256s=(node_manifest_sha256,),
+        selected_node_manifest_sha256=node_manifest_sha256,
+        selected_resource_ids=("cpu.socket-0",),
+        selected_external_resource_class_id=None,
+    )
+    with pytest.raises(ValidationError, match="requires an external-class cost quote"):
+        _rebuilt_bundle(case, quote)
+
+
+def test_external_quote_without_action_kind_is_rejected() -> None:
+    case = _qualification_case()
+    quote = ExecutionCostQuote.model_validate(
+        {
+            **case.bundle.cost_quote.model_dump(mode="python"),
+            "permitted_node_manifest_sha256s": (),
+            "selected_node_manifest_sha256": None,
+            "selected_resource_ids": (),
+            "selected_external_resource_class_id": _digest("unaccepted-external-class"),
+        }
+    )
+    with pytest.raises(ValidationError, match="external cost quote requires an external action"):
+        _rebuilt_bundle(case, quote)
+
+
+def test_external_qualification_requires_never_retry() -> None:
+    case = _external_qualification_case()
+    never = case.bundle.intent.retry_policy
+    retryable = ExecutionRetryPolicy(
+        mode=ExecutionRetryMode.IDEMPOTENT_NEW_ATTEMPT,
+        maximum_attempts_per_scientific_slot=2,
+        retry_rules=(
+            ExecutionRetryRule(
+                capability_failure_id="failure.step.01_load.terminal",
+                capability_failure_category=ExecutionFailureCategory.INFRASTRUCTURE,
+                detection_rule_sha256=_digest("bridge-retry-detection:v1"),
+                disposition=ExecutionRetryDisposition.RETRYABLE,
+            ),
+        ),
+        idempotency_rule_sha256=_digest("bridge-load-idempotency:v1"),
+    )
+    assert never.mode is ExecutionRetryMode.NEVER
+    intent = ExecutionIntent.model_validate(
+        {
+            **case.bundle.intent.model_dump(mode="python"),
+            "retry_policy": retryable.model_dump(mode="python"),
+        }
+    )
+    quote = ExecutionCostQuote.model_validate(
+        {
+            **case.bundle.cost_quote.model_dump(mode="python"),
+            "intent_sha256": intent.intent_sha256,
+        }
+    )
+    with pytest.raises(ValidationError, match="never-retry"):
+        EngineeringQualificationBundle(
+            compilation_request=case.request,
+            compilation_result=case.result,
+            work_order=case.bundle.work_order,
+            intent=intent,
+            input_artifact_verified_receipt_sha256s=(
+                case.resolution.verified_receipt_sha256,
+            ),
+            budget_authorization=case.bundle.budget_authorization,
+            cost_quote=quote,
+        )
 
 
 def _intermediate_qualification_case(*, include_producer_lineage: bool) -> QualificationCase:

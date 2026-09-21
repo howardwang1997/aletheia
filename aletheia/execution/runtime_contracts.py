@@ -37,6 +37,7 @@ from aletheia.execution.schemas import (
     ExecutionTerminalState,
     NetworkPolicy,
     ResourceKind,
+    StaticResourceClass,
     canonical_json_bytes,
     canonical_sha256,
     verify_execution_retry_binding,
@@ -1916,9 +1917,14 @@ class ExecutionCostQuote(ExecutionModel):
     execution_id: str = Field(pattern=_EXECUTION_ID_PATTERN)
     infrastructure_attempt_id: str = Field(pattern=_ATTEMPT_ID_PATTERN)
     accepted_resource_class_ids: tuple[str, ...] = Field(min_length=1, max_length=256)
-    permitted_node_manifest_sha256s: tuple[str, ...] = Field(min_length=1, max_length=256)
-    selected_node_manifest_sha256: str = Field(pattern=_SHA256_PATTERN)
-    selected_resource_ids: tuple[str, ...] = Field(min_length=1, max_length=256)
+    # Placement mode is exclusive: a local node placement names its manifest,
+    # an external bridge placement names the frozen static resource class.
+    permitted_node_manifest_sha256s: tuple[str, ...] = Field(max_length=256)
+    selected_node_manifest_sha256: str | None = Field(default=None, pattern=_SHA256_PATTERN)
+    selected_resource_ids: tuple[str, ...] = Field(max_length=256)
+    selected_external_resource_class_id: str | None = Field(
+        default=None, pattern=_SYMBOLIC_ID_PATTERN
+    )
     currency_code: str = Field(pattern=r"^[A-Z]{3}$")
     rate_card_sha256: str = Field(pattern=_SHA256_PATTERN)
     fixed_charge_microunits: int = Field(ge=0)
@@ -1932,6 +1938,11 @@ class ExecutionCostQuote(ExecutionModel):
 
     @model_validator(mode="after")
     def _quote_is_canonical(self) -> "ExecutionCostQuote":
+        external = self.selected_external_resource_class_id is not None
+        if external == (self.selected_node_manifest_sha256 is not None):
+            raise ValueError(
+                "cost quote must select exactly one of a node manifest or an external class"
+            )
         _canonical_strings(
             self.accepted_resource_class_ids,
             "quoted resource classes",
@@ -1940,19 +1951,26 @@ class ExecutionCostQuote(ExecutionModel):
         _canonical_strings(
             self.permitted_node_manifest_sha256s,
             "quoted node manifests",
-            required=True,
+            required=not external,
         )
         _canonical_strings(
             self.selected_resource_ids,
             "quoted selected resource ids",
-            required=True,
+            required=not external,
         )
         if any(
             re.fullmatch(_SHA256_PATTERN, item) is None
             for item in self.permitted_node_manifest_sha256s
         ):
             raise ValueError("quoted node manifests must be SHA-256 identities")
-        if self.selected_node_manifest_sha256 not in self.permitted_node_manifest_sha256s:
+        if external:
+            if self.permitted_node_manifest_sha256s or self.selected_resource_ids:
+                raise ValueError(
+                    "external cost quote cannot name node manifests or live resource ids"
+                )
+        elif (
+            self.selected_node_manifest_sha256 not in self.permitted_node_manifest_sha256s
+        ):
             raise ValueError("selected node manifest is outside the quote placement envelope")
         expected_charge = self.fixed_charge_microunits + (
             self.charge_per_second_microunits * self.maximum_lease_seconds
@@ -1966,6 +1984,44 @@ class ExecutionCostQuote(ExecutionModel):
     @property
     def quote_sha256(self) -> str:
         return canonical_sha256(self)
+
+
+def verify_external_qualification_profile(
+    *,
+    intent: ExecutionIntent,
+    quote: ExecutionCostQuote,
+    resource_classes: tuple[StaticResourceClass, ...],
+) -> StaticResourceClass:
+    """The constrained profile an external-mode quote must satisfy everywhere.
+
+    Both the bundle validator and the allocator's external admission branch
+    close over the same clauses: exactly one frozen EXTERNAL class, accepted
+    by the intent, carrying the intent's action kind, network-none, and
+    structurally covering the request. Returns the selected class.
+    """
+
+    class_id = quote.selected_external_resource_class_id
+    if class_id is None:
+        raise ValueError("external qualification profile requires an external-mode quote")
+    selected = tuple(item for item in resource_classes if item.resource_class_id == class_id)
+    if len(selected) != 1:
+        raise ValueError("quoted external resource class is absent from the frozen catalog")
+    resource_class = selected[0]
+    request = intent.resource_request
+    if (
+        resource_class.kind is not ResourceKind.EXTERNAL
+        or class_id not in request.accepted_resource_class_ids
+        or intent.external_action_kind not in resource_class.external_action_kinds
+        or NetworkPolicy.NONE not in resource_class.network_policies
+        or request.cpu_cores > resource_class.cpu_cores
+        or request.memory_bytes > resource_class.memory_bytes
+        or request.scratch_bytes > resource_class.scratch_bytes
+        or not set(request.required_features).issubset(set(resource_class.features))
+    ):
+        raise ValueError(
+            "quoted external resource class does not carry the intent action kind profile"
+        )
+    return resource_class
 
 
 class BudgetAuthorization(ExecutionModel):
@@ -2165,8 +2221,31 @@ class EngineeringQualificationBundle(ExecutionModel):
             raise ValueError("qualification compilation receipt names another WorkOrder")
         if self.intent.effect_class is not ExecutionEffectClass.REPLAY_SAFE:
             raise ValueError("engineering qualification permits only replay-safe execution")
-        if self.intent.external_action_kind is not None or self.intent.external_request is not None:
+        if self.intent.external_request is not None:
             raise ValueError("engineering qualification cannot invoke an external adapter")
+        # Constrained external profile (contradiction #15): a replay-safe step
+        # may ride a deployment-pinned external bridge iff its action kind is
+        # declared by a frozen EXTERNAL resource class the intent accepts and
+        # the cost quote selects exactly that class; one-shot external effects
+        # stay outside engineering qualification.
+        external_action_kind = self.intent.external_action_kind
+        if external_action_kind is None:
+            if self.cost_quote.selected_external_resource_class_id is not None:
+                raise ValueError("external cost quote requires an external action kind")
+        else:
+            if self.cost_quote.selected_node_manifest_sha256 is not None:
+                raise ValueError("external action kind requires an external-class cost quote")
+            verify_external_qualification_profile(
+                intent=self.intent,
+                quote=self.cost_quote,
+                resource_classes=(
+                    self.compilation_request.resource_catalog.resource_classes
+                ),
+            )
+            if self.intent.retry_policy.mode is not ExecutionRetryMode.NEVER:
+                raise ValueError(
+                    "external engineering qualification requires a never-retry policy"
+                )
         if self.intent.resource_request.network_policy is not NetworkPolicy.NONE:
             raise ValueError("engineering qualification requires network-none execution")
         if self.intent.retry_policy.mode not in {
@@ -2441,6 +2520,31 @@ def _resolve_registered_execution_authority(
         raise QualificationVerificationError(
             "registered execution authority resolver returned invalid bytes"
         ) from exc
+
+
+class ExternalBridgeAuthority(ExecutionModel):
+    """Deployment-pinned authority for external-class admission (contradiction #15).
+
+    The bridge host manifest names the resource classes it serves; the pin is
+    the deployment's bridge execution authority.  External admission demands
+    the pin active and the manifest structurally matching the quoted frozen
+    external class — no local node inventory is consulted.
+    """
+
+    manifest: WorkerNodeManifest
+    bridge_authority_pin: QualificationAuthorityPin
+
+    @model_validator(mode="after")
+    def _bridge_authority_is_pinned(self) -> "ExternalBridgeAuthority":
+        if not self.manifest.resource_class_ids:
+            raise ValueError("external bridge authority manifest serves no resource class")
+        if self.bridge_authority_pin.principal_id == self.manifest.principal_id:
+            raise ValueError("bridge authority role must be distinct from the node role")
+        return self
+
+    @property
+    def served_resource_class_ids(self) -> tuple[str, ...]:
+        return self.manifest.resource_class_ids
 
 
 class QualificationAuthorityVerifier:

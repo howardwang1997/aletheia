@@ -388,7 +388,7 @@ class _ExecutionAttemptRecord(Base):
             f"intent_sha256 {_SHA256_SQL} AND admission_sha256 {_SHA256_SQL} "
             f"AND grant_sha256 {_SHA256_SQL} AND bundle_sha256 {_SHA256_SQL} "
             f"AND cost_quote_sha256 {_SHA256_SQL} AND lease_token_sha256 {_SHA256_SQL} "
-            f"AND node_inventory_sha256 {_SHA256_SQL} "
+            f"AND (node_inventory_sha256 IS NULL OR node_inventory_sha256 {_SHA256_SQL}) "
             f"AND (latest_adoption_sha256 IS NULL OR latest_adoption_sha256 {_SHA256_SQL}) "
             f"AND (last_runtime_inspection_sha256 IS NULL OR "
             f"last_runtime_inspection_sha256 {_SHA256_SQL}) "
@@ -429,6 +429,11 @@ class _ExecutionAttemptRecord(Base):
         CheckConstraint(
             "(runtime_identity_sha256 IS NULL) = (runtime_identity_json IS NULL)",
             name="ck_execution_attempts_runtime_identity_pair",
+        ),
+        CheckConstraint(
+            "((node_id IS NULL) = (external_resource_class_id IS NOT NULL)) "
+            "AND ((node_id IS NULL) = (node_inventory_sha256 IS NULL))",
+            name="ck_execution_attempts_placement_mode",
         ),
         CheckConstraint(
             "(last_runtime_inspection_sequence = 0) = "
@@ -480,10 +485,13 @@ class _ExecutionAttemptRecord(Base):
     grant_sha256: Mapped[str] = mapped_column(String(64))
     bundle_sha256: Mapped[str] = mapped_column(String(64))
     cost_quote_sha256: Mapped[str] = mapped_column(String(64))
-    node_id: Mapped[str] = mapped_column(ForeignKey("execution_nodes.node_id"), index=True)
-    node_inventory_sha256: Mapped[str] = mapped_column(
+    node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("execution_nodes.node_id"), index=True
+    )
+    node_inventory_sha256: Mapped[str | None] = mapped_column(
         ForeignKey("execution_inventory_attestations.inventory_sha256"), index=True
     )
+    external_resource_class_id: Mapped[str | None] = mapped_column(String(128))
     status: Mapped[str] = mapped_column(String(32), index=True)
     state_version: Mapped[int] = mapped_column(BigInteger)
     fencing_epoch: Mapped[int] = mapped_column(BigInteger)
@@ -1138,18 +1146,27 @@ class _ExecutionResourceLeaseRecord(Base):
             name="ck_execution_resource_leases_time",
         ),
         CheckConstraint(
-            f"inventory_sha256 {_SHA256_SQL} AND lease_sha256 {_SHA256_SQL}",
+            f"(inventory_sha256 IS NULL OR inventory_sha256 {_SHA256_SQL}) "
+            f"AND lease_sha256 {_SHA256_SQL}",
             name="ck_execution_resource_leases_hashes",
+        ),
+        CheckConstraint(
+            "((node_id IS NULL) = (external_resource_class_id IS NOT NULL)) "
+            "AND ((node_id IS NULL) = (inventory_sha256 IS NULL))",
+            name="ck_execution_resource_leases_placement_mode",
         ),
         UniqueConstraint("attempt_id", name="uq_execution_resource_leases_attempt"),
     )
 
     lease_id: Mapped[str] = mapped_column(String(96), primary_key=True)
     attempt_id: Mapped[str] = mapped_column(ForeignKey("execution_attempts.attempt_id"), index=True)
-    node_id: Mapped[str] = mapped_column(ForeignKey("execution_nodes.node_id"), index=True)
-    inventory_sha256: Mapped[str] = mapped_column(
+    node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("execution_nodes.node_id"), index=True
+    )
+    inventory_sha256: Mapped[str | None] = mapped_column(
         ForeignKey("execution_inventory_attestations.inventory_sha256")
     )
+    external_resource_class_id: Mapped[str | None] = mapped_column(String(128))
     lease_sha256: Mapped[str] = mapped_column(String(64), unique=True)
     lease_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
     state: Mapped[str] = mapped_column(String(32), index=True)
