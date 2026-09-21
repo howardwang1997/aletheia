@@ -73,6 +73,7 @@ from aletheia.execution.runtime_contracts import (
     AttemptAdoptionReceipt,
     EngineeringQualificationBundle,
     EngineeringQualificationGrant,
+    ExternalBridgeAuthority,
     NodeHealth,
     NodeInventoryAttestation,
     NodeExecutionReceipt,
@@ -92,6 +93,7 @@ from aletheia.execution.runtime_contracts import (
     WorkerNodeEnrollment,
     WorkerNodeManifest,
     verify_engineering_qualification,
+    verify_external_qualification_profile,
     verify_attempt_adoption,
     verify_node_inventory_attestation,
     verify_node_execution_receipt,
@@ -230,8 +232,9 @@ class ReservationSnapshot:
     admission_sha256: str
     grant_sha256: str
     bundle_sha256: str
-    node_id: str
-    node_inventory_sha256: str
+    # exactly one placement mode is populated: local node or external bridge
+    node_id: str | None
+    node_inventory_sha256: str | None
     status: str
     state_version: int
     fencing_epoch: int
@@ -251,6 +254,7 @@ class ReservationSnapshot:
     lease_expires_at: datetime
     hard_deadline: datetime
     reconciliation_reason: str | None
+    external_resource_class_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1025,6 +1029,7 @@ class PostgreSQLExecutionAllocator:
         pricing_authority: LocalPricingAuthorityPin,
         node_authorities: tuple[WorkerNodeAuthorityVerifier, ...],
         node_assignment_transport_pins: tuple[NodeAssignmentTransportPin, ...],
+        external_bridge_authorities: tuple[ExternalBridgeAuthority, ...] = (),
         terminal_verification_authority: TerminalVerificationAuthorityVerifier,
         allocator_principal_id: str,
         runtime_control_issuer: RuntimeControlIssuancePort | None = None,
@@ -1110,11 +1115,33 @@ class PostgreSQLExecutionAllocator:
         if set(transport_principals) & non_transport_principals:
             raise ValueError("node assignment transport role must be independently declared")
         terminal_key_id = self._terminal_verification_authority.pin.key_id
+        self._external_bridge_authorities: dict[str, ExternalBridgeAuthority] = {}
+        bridge_pin_key_ids = tuple(
+            item.bridge_authority_pin.key_id for item in external_bridge_authorities
+        )
+        bridge_pin_principals = tuple(
+            item.bridge_authority_pin.principal_id for item in external_bridge_authorities
+        )
+        if len(set(bridge_pin_key_ids)) != len(bridge_pin_key_ids) or len(
+            set(bridge_pin_principals)
+        ) != len(bridge_pin_principals):
+            raise ValueError("external bridge authority pins must be unique per bridge host")
+        for bridge_authority in external_bridge_authorities:
+            pinned = ExternalBridgeAuthority.model_validate(
+                bridge_authority.model_dump(mode="python")
+            )
+            for served_class_id in pinned.served_resource_class_ids:
+                if served_class_id in self._external_bridge_authorities:
+                    raise ValueError(
+                        "external bridge authorities must serve unique resource classes"
+                    )
+                self._external_bridge_authorities[served_class_id] = pinned
         forbidden_key_ids = {
             self._authority.pin.key_id,
             *(item.manifest.node_signing_key_id for item in node_authorities),
             *(item.enrollment_authority_pin.key_id for item in node_authorities),
             *(item.transport_key_id for item in node_assignment_transport_pins),
+            *(item.bridge_authority_pin.key_id for item in external_bridge_authorities),
         }
         terminal_principal_id = self._terminal_verification_authority.pin.principal_id
         authority_principal_ids = {
@@ -1122,6 +1149,7 @@ class PostgreSQLExecutionAllocator:
             *(item.manifest.principal_id for item in node_authorities),
             *(item.enrollment_authority_pin.principal_id for item in node_authorities),
             *(item.transport_principal_id for item in node_assignment_transport_pins),
+            *(item.bridge_authority_pin.principal_id for item in external_bridge_authorities),
         }
         if self._allocator_principal_id in authority_principal_ids:
             raise ValueError("allocator role must be distinct from qualification and node roles")
@@ -1892,6 +1920,15 @@ class PostgreSQLExecutionAllocator:
                 budget_head.cap_microunits
             ):
                 raise BudgetUnavailable("exact cost quote exceeds remaining authorized budget")
+            if quote.selected_external_resource_class_id is not None:
+                return self._admit_external_and_reserve(
+                    session,
+                    bundle=bundle,
+                    grant=grant,
+                    execution_head=execution_head,
+                    budget_head=budget_head,
+                    hold=hold,
+                )
             node = session.execute(
                 select(_ExecutionNodeRecord)
                 .where(
@@ -2028,36 +2065,9 @@ class PostgreSQLExecutionAllocator:
                 item.resource_id for item in device_resources
             ):
                 raise CapacityUnavailable("locked exact device placement changed during admission")
-            admission_sha256 = _stable_admission_sha256(verified)
-            admission_values = dict(
-                admission_sha256=admission_sha256,
-                grant_sha256=grant.grant_sha256,
-                bundle_sha256=bundle.bundle_sha256,
-                intent_sha256=intent.intent_sha256,
-                execution_id=intent.execution_id,
-                infrastructure_attempt_id=attempt_id,
-                budget_authorization_sha256=authorization.authorization_sha256,
-                cost_quote_sha256=quote.quote_sha256,
-                authority_policy_sha256=(grant.message.qualification_authority_policy_sha256),
-                authority_key_id=grant.message.authorization_key_id,
-                bundle_json=_model_json(bundle),
-                grant_json=_model_json(grant),
-                verified_receipt_json=_model_json(verified),
-                verified_at=verified.verified_at,
-                admitted_at=now,
+            admission_sha256 = self._record_qualification_admission(
+                session, bundle=bundle, grant=grant, verified=verified, now=now
             )
-            session.execute(
-                postgresql_insert(_ExecutionQualificationAdmissionRecord)
-                .values(**admission_values)
-                .on_conflict_do_nothing(index_elements=["admission_sha256"])
-            )
-            admission = session.get(_ExecutionQualificationAdmissionRecord, admission_sha256)
-            if admission is None or any(
-                getattr(admission, key) != value
-                for key, value in admission_values.items()
-                if key not in {"verified_at", "admitted_at"}
-            ):
-                raise AdmissionConflict("qualification admission digest is rebound")
             previous_fence = session.execute(
                 select(func.max(_ExecutionAttemptRecord.fencing_epoch)).where(
                     _ExecutionAttemptRecord.execution_id == intent.execution_id
@@ -2218,45 +2228,14 @@ class PostgreSQLExecutionAllocator:
                 device_head.active_device_lease_id = device_lease_id
                 device_head.state_version += 1
                 device_head.updated_at = now
-            reservation_id = _stable_id("brv", {"attempt_id": attempt_id})
-            session.add(
-                _ExecutionBudgetReservationRecord(
-                    reservation_id=reservation_id,
-                    authorization_sha256=authorization.authorization_sha256,
-                    attempt_id=attempt_id,
-                    execution_id=intent.execution_id,
-                    cost_quote_sha256=quote.quote_sha256,
-                    currency_code=quote.currency_code,
-                    fixed_charge_microunits=quote.fixed_charge_microunits,
-                    charge_per_second_microunits=(quote.charge_per_second_microunits),
-                    maximum_lease_seconds=quote.maximum_lease_seconds,
-                    actual_lease_seconds=None,
-                    held_microunits=hold,
-                    settled_microunits=0,
-                    state="held",
-                    reserved_at=now,
-                    settled_at=None,
-                )
-            )
-            self._append_budget_event(
+            self._reserve_budget_hold(
                 session,
-                reservation_id=reservation_id,
-                authorization_sha256=authorization.authorization_sha256,
-                event_type="reserved",
-                reserved_delta_microunits=hold,
-                spent_delta_microunits=0,
-                recorded_at=now,
-                details={
-                    "cost_quote_sha256": quote.quote_sha256,
-                    "fixed_charge_microunits": quote.fixed_charge_microunits,
-                    "charge_per_second_microunits": (quote.charge_per_second_microunits),
-                    "maximum_lease_seconds": quote.maximum_lease_seconds,
-                    "held_microunits": hold,
-                },
+                bundle=bundle,
+                budget_head=budget_head,
+                attempt_id=attempt_id,
+                hold=hold,
+                now=now,
             )
-            budget_head.reserved_microunits += hold
-            budget_head.state_version += 1
-            budget_head.updated_at = now
             node.reserved_cpu_cores += resource_request.cpu_cores
             node.reserved_memory_bytes += resource_request.memory_bytes
             node.reserved_scratch_bytes += resource_request.scratch_bytes
@@ -2276,6 +2255,308 @@ class PostgreSQLExecutionAllocator:
                 created=True,
                 lease_token=raw_token,
             )
+
+    def _record_qualification_admission(
+        self,
+        session: Session,
+        *,
+        bundle: EngineeringQualificationBundle,
+        grant: EngineeringQualificationGrant,
+        verified: VerifiedEngineeringQualification,
+        now: datetime,
+    ) -> str:
+        """Shared admission-custody write for both placement modes."""
+
+        admission_sha256 = _stable_admission_sha256(verified)
+        admission_values = dict(
+            admission_sha256=admission_sha256,
+            grant_sha256=grant.grant_sha256,
+            bundle_sha256=bundle.bundle_sha256,
+            intent_sha256=bundle.intent.intent_sha256,
+            execution_id=bundle.intent.execution_id,
+            infrastructure_attempt_id=(
+                bundle.intent.infrastructure_attempt.infrastructure_attempt_id
+            ),
+            budget_authorization_sha256=(bundle.budget_authorization.authorization_sha256),
+            cost_quote_sha256=bundle.cost_quote.quote_sha256,
+            authority_policy_sha256=(grant.message.qualification_authority_policy_sha256),
+            authority_key_id=grant.message.authorization_key_id,
+            bundle_json=_model_json(bundle),
+            grant_json=_model_json(grant),
+            verified_receipt_json=_model_json(verified),
+            verified_at=verified.verified_at,
+            admitted_at=now,
+        )
+        session.execute(
+            postgresql_insert(_ExecutionQualificationAdmissionRecord)
+            .values(**admission_values)
+            .on_conflict_do_nothing(index_elements=["admission_sha256"])
+        )
+        admission = session.get(_ExecutionQualificationAdmissionRecord, admission_sha256)
+        if admission is None or any(
+            getattr(admission, key) != value
+            for key, value in admission_values.items()
+            if key not in {"verified_at", "admitted_at"}
+        ):
+            raise AdmissionConflict("qualification admission digest is rebound")
+        return admission_sha256
+
+    def _reserve_budget_hold(
+        self,
+        session: Session,
+        *,
+        bundle: EngineeringQualificationBundle,
+        budget_head: _ExecutionBudgetHeadRecord,
+        attempt_id: str,
+        hold: int,
+        now: datetime,
+    ) -> None:
+        """Shared budget reservation, event, and head mutation for both modes."""
+
+        quote = bundle.cost_quote
+        authorization = bundle.budget_authorization
+        reservation_id = _stable_id("brv", {"attempt_id": attempt_id})
+        session.add(
+            _ExecutionBudgetReservationRecord(
+                reservation_id=reservation_id,
+                authorization_sha256=authorization.authorization_sha256,
+                attempt_id=attempt_id,
+                execution_id=bundle.intent.execution_id,
+                cost_quote_sha256=quote.quote_sha256,
+                currency_code=quote.currency_code,
+                fixed_charge_microunits=quote.fixed_charge_microunits,
+                charge_per_second_microunits=(quote.charge_per_second_microunits),
+                maximum_lease_seconds=quote.maximum_lease_seconds,
+                actual_lease_seconds=None,
+                held_microunits=hold,
+                settled_microunits=0,
+                state="held",
+                reserved_at=now,
+                settled_at=None,
+            )
+        )
+        self._append_budget_event(
+            session,
+            reservation_id=reservation_id,
+            authorization_sha256=authorization.authorization_sha256,
+            event_type="reserved",
+            reserved_delta_microunits=hold,
+            spent_delta_microunits=0,
+            recorded_at=now,
+            details={
+                "cost_quote_sha256": quote.quote_sha256,
+                "fixed_charge_microunits": quote.fixed_charge_microunits,
+                "charge_per_second_microunits": (quote.charge_per_second_microunits),
+                "maximum_lease_seconds": quote.maximum_lease_seconds,
+                "held_microunits": hold,
+            },
+        )
+        budget_head.reserved_microunits += hold
+        budget_head.state_version += 1
+        budget_head.updated_at = now
+
+    def _admit_external_and_reserve(
+        self,
+        session: Session,
+        *,
+        bundle: EngineeringQualificationBundle,
+        grant: EngineeringQualificationGrant,
+        execution_head: _ExecutionHeadRecord,
+        budget_head: _ExecutionBudgetHeadRecord,
+        hold: int,
+    ) -> ReservationClaim:
+        """External bridge admission (contradiction #15).
+
+        The quote already selected one frozen EXTERNAL resource class; this
+        branch demands a registered, active, structurally matching bridge
+        authority and reserves nodelessly — no inventory, device heads,
+        transport pin, or assignment envelope.  Worker dispatch and the
+        observation bridge carry execution custody from here.
+        """
+
+        intent = bundle.intent
+        quote = bundle.cost_quote
+        authorization = bundle.budget_authorization
+        attempt_id = intent.infrastructure_attempt.infrastructure_attempt_id
+        class_id = quote.selected_external_resource_class_id
+        if class_id is None:  # the caller branches on the quote placement mode
+            raise AdmissionConflict("external admission requires an external-mode quote")
+        authority = self._external_bridge_authorities.get(class_id)
+        if authority is None:
+            raise AdmissionConflict(
+                "quoted external resource class has no registered bridge authority"
+            )
+        resource_class = verify_external_qualification_profile(
+            intent=intent,
+            quote=quote,
+            resource_classes=(bundle.compilation_request.resource_catalog.resource_classes),
+        )
+        if not self._resource_class_matches(
+            resource_class=resource_class,
+            resource_kind=ResourceKind.EXTERNAL,
+            manifest=authority.manifest,
+            bundle=bundle,
+        ):
+            raise AdmissionConflict(
+                "external bridge authority manifest does not match the quoted class"
+            )
+        # Every placement-relevant mutable row is locked before the authoritative
+        # clock sample; re-resolve every external authority at that observation.
+        now = _database_time(session)
+        verified = verify_engineering_qualification(
+            bundle=bundle,
+            grant=grant,
+            authority=self._authority,
+            artifact_resolver=self._artifact_resolver,
+            authority_resolver=self._execution_authority_resolver,
+            observed_at=now,
+        )
+        terminal_pin = self._terminal_verification_authority.pin
+        bridge_pin = authority.bridge_authority_pin
+        if not terminal_pin.active_at(now) or not bridge_pin.active_at(now):
+            raise AdmissionConflict(
+                "terminal or external bridge authority is not active at locked DB time"
+            )
+        active_until = min(
+            grant.message.expires_at,
+            quote.expires_at,
+            authorization.expires_at,
+            intent.deadline,
+            self._authority.pin.active_until,
+            terminal_pin.active_until,
+            bridge_pin.active_until,
+        )
+        hard_deadline = now + timedelta(seconds=quote.maximum_lease_seconds)
+        if hard_deadline > active_until:
+            raise AdmissionConflict(
+                "full quoted lease no longer fits inside every locked authority window"
+            )
+        if self._runtime_control_authority is not None:
+            artifact_submission_deadline = hard_deadline + self._artifact_submission_grace
+            runtime_pin = self._runtime_control_authority.authority_pin
+            if not runtime_pin.active_at(now) or artifact_submission_deadline > min(
+                bridge_pin.active_until,
+                runtime_pin.active_until,
+                terminal_pin.active_until,
+            ):
+                raise AdmissionConflict(
+                    "runtime-v2 authority pins do not cover the fixed artifact grace"
+                )
+        admission_sha256 = self._record_qualification_admission(
+            session, bundle=bundle, grant=grant, verified=verified, now=now
+        )
+        previous_fence = session.execute(
+            select(func.max(_ExecutionAttemptRecord.fencing_epoch)).where(
+                _ExecutionAttemptRecord.execution_id == intent.execution_id
+            )
+        ).scalar_one_or_none()
+        fencing_epoch = (previous_fence or 0) + 1
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = _token_sha256(raw_token)
+        lease_expires_at = min(now + self._initial_assignment_lease, hard_deadline)
+        resource_request = intent.resource_request
+        lease_payload = {
+            "schema_name": "aletheia.external_resource_lease",
+            "schema_version": 1,
+            "execution_id": intent.execution_id,
+            "attempt_id": attempt_id,
+            "intent_sha256": intent.intent_sha256,
+            "external_resource_class_id": class_id,
+            "external_resource_class_key": resource_class.class_key,
+            "bridge_authority_principal_id": bridge_pin.principal_id,
+            "bridge_node_manifest_sha256": authority.manifest.manifest_sha256,
+            "selected_resource_ids": (),
+            "fencing_epoch_at_acquisition": fencing_epoch,
+            "cpu_cores": resource_request.cpu_cores,
+            "memory_bytes": resource_request.memory_bytes,
+            "scratch_bytes": resource_request.scratch_bytes,
+            "accelerator_count": resource_request.accelerator_count,
+            "exclusive": resource_request.exclusive,
+            "acquired_at": now.isoformat(),
+            "hard_deadline": hard_deadline.isoformat(),
+        }
+        lease_sha256 = canonical_sha256(lease_payload)
+        lease_id = _stable_id("rle", {"attempt_id": attempt_id})
+        session.add(
+            _ExecutionAttemptRecord(
+                attempt_id=attempt_id,
+                execution_id=intent.execution_id,
+                attempt_number=intent.infrastructure_attempt.attempt_number,
+                intent_sha256=intent.intent_sha256,
+                intent_json=_model_json(intent),
+                admission_sha256=admission_sha256,
+                grant_sha256=grant.grant_sha256,
+                bundle_sha256=bundle.bundle_sha256,
+                cost_quote_sha256=quote.quote_sha256,
+                node_id=None,
+                node_inventory_sha256=None,
+                external_resource_class_id=class_id,
+                external_resource_class_key=resource_class.class_key,
+                status="reserved",
+                state_version=1,
+                fencing_epoch=fencing_epoch,
+                lease_token_sha256=token_hash,
+                adoption_count=0,
+                latest_adoption_sha256=None,
+                last_runtime_inspection_sequence=0,
+                last_runtime_inspection_sha256=None,
+                last_runtime_inspected_at=None,
+                last_runtime_inspected_monotonic_ns=None,
+                authorized_at=grant.message.authorized_at,
+                reserved_at=now,
+                heartbeat_at=now,
+                lease_expires_at=lease_expires_at,
+                hard_deadline=hard_deadline,
+                reconciliation_reason=None,
+                runtime_identity_sha256=None,
+                runtime_identity_json=null(),
+                terminal_receipt_sha256=None,
+                updated_at=now,
+            )
+        )
+        session.add(
+            _ExecutionResourceLeaseRecord(
+                lease_id=lease_id,
+                attempt_id=attempt_id,
+                node_id=None,
+                inventory_sha256=None,
+                external_resource_class_id=class_id,
+                external_resource_class_key=resource_class.class_key,
+                lease_sha256=lease_sha256,
+                lease_json=lease_payload,
+                state="held",
+                fencing_epoch=fencing_epoch,
+                cpu_cores=resource_request.cpu_cores,
+                memory_bytes=resource_request.memory_bytes,
+                scratch_bytes=resource_request.scratch_bytes,
+                exclusive=resource_request.exclusive,
+                accelerator_count=resource_request.accelerator_count,
+                acquired_at=now,
+                heartbeat_at=now,
+                lease_expires_at=lease_expires_at,
+                released_at=None,
+            )
+        )
+        self._reserve_budget_hold(
+            session,
+            bundle=bundle,
+            budget_head=budget_head,
+            attempt_id=attempt_id,
+            hold=hold,
+            now=now,
+        )
+        execution_head.last_attempt_number = intent.infrastructure_attempt.attempt_number
+        execution_head.active_attempt_id = attempt_id
+        execution_head.state_version += 1
+        execution_head.updated_at = now
+        session.flush()
+        attempt = session.get(_ExecutionAttemptRecord, attempt_id)
+        assert attempt is not None
+        return ReservationClaim(
+            snapshot=self._snapshot(session, attempt),
+            created=True,
+            lease_token=raw_token,
+        )
 
     def _validate_pricing_authority(self, bundle: EngineeringQualificationBundle) -> None:
         quote = bundle.cost_quote
@@ -2573,6 +2854,17 @@ class PostgreSQLExecutionAllocator:
         if resource_kind is ResourceKind.CPU:
             return (
                 request.cpu_cores <= resource_class.cpu_cores
+                and request.memory_bytes <= resource_class.memory_bytes
+                and request.scratch_bytes <= resource_class.scratch_bytes
+                and set(request.required_features).issubset(set(resource_class.features))
+            )
+        if resource_kind is ResourceKind.EXTERNAL:
+            # external admission: the manifest pins the bridge host's
+            # arch/platform/runtime (checked above); the class must carry the
+            # intent's action kind and structurally cover the request
+            return (
+                bundle.intent.external_action_kind in resource_class.external_action_kinds
+                and request.cpu_cores <= resource_class.cpu_cores
                 and request.memory_bytes <= resource_class.memory_bytes
                 and request.scratch_bytes <= resource_class.scratch_bytes
                 and set(request.required_features).issubset(set(resource_class.features))
@@ -7037,6 +7329,10 @@ class PostgreSQLExecutionAllocator:
     ) -> AttemptTransitionReceipt:
         with self._sessions() as session, session.begin():
             _head, attempt = self._lock_execution_attempt(session, attempt_id)
+            if attempt.node_id is None:
+                raise LeaseAuthorityError(
+                    "nodeless external attempts do not enter the node runtime lifecycle"
+                )
             node = session.execute(
                 select(_ExecutionNodeRecord)
                 .where(_ExecutionNodeRecord.node_id == attempt.node_id)
@@ -7395,11 +7691,12 @@ class PostgreSQLExecutionAllocator:
             )
             .with_for_update()
         ).scalar_one()
-        session.execute(
-            select(_ExecutionNodeRecord)
-            .where(_ExecutionNodeRecord.node_id == attempt.node_id)
-            .with_for_update()
-        ).scalar_one()
+        if attempt.node_id is not None:
+            session.execute(
+                select(_ExecutionNodeRecord)
+                .where(_ExecutionNodeRecord.node_id == attempt.node_id)
+                .with_for_update()
+            ).scalar_one()
         device_leases = tuple(
             session.execute(
                 select(_ExecutionDeviceLeaseRecord)
@@ -7993,6 +8290,10 @@ class PostgreSQLExecutionAllocator:
         tuple[_ExecutionDeviceLeaseRecord, ...],
         _ExecutionBudgetReservationRecord,
     ]:
+        if attempt.node_id is None:
+            raise LeaseAuthorityError(
+                "nodeless external attempts do not enter node runtime custody paths"
+            )
         reservation_identity = session.execute(
             select(_ExecutionBudgetReservationRecord).where(
                 _ExecutionBudgetReservationRecord.attempt_id == attempt.attempt_id
@@ -8209,12 +8510,13 @@ class PostgreSQLExecutionAllocator:
             bundle_sha256=attempt.bundle_sha256,
             node_id=attempt.node_id,
             node_inventory_sha256=attempt.node_inventory_sha256,
+            external_resource_class_id=attempt.external_resource_class_id,
             status=attempt.status,
             state_version=attempt.state_version,
             fencing_epoch=attempt.fencing_epoch,
             lease_token_sha256=attempt.lease_token_sha256,
             resource_lease_sha256=resource.lease_sha256,
-            selected_resource_ids=tuple(resource.lease_json["selected_resource_ids"]),
+            selected_resource_ids=tuple(resource.lease_json.get("selected_resource_ids") or ()),
             cpu_cores=resource.cpu_cores,
             memory_bytes=resource.memory_bytes,
             scratch_bytes=resource.scratch_bytes,

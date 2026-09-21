@@ -360,10 +360,17 @@ def aligned_f9_case(causal_source, tmp_path_factory) -> _AlignedF9Case:
         patch.object(bridge_test_module, "NOW", bridge_now),
         patch.object(runtime_test_module, "NOW", bridge_now),
         patch.object(protocol_fixture_module, "_NOW", bridge_now),
+        # merge into the live kwdefaults instead of replacing the mapping:
+        # replacing dropped every default the fixture did not name (e.g. the
+        # external flag added with external admission), turning later calls
+        # into missing-required-argument TypeErrors
         patch.object(
             runtime_test_module._signed_case,
             "__kwdefaults__",
-            signed_case_defaults,
+            {
+                **runtime_test_module._signed_case.__kwdefaults__,
+                **signed_case_defaults,
+            },
         ),
     ):
         bridge_case = _bridge_case()

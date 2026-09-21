@@ -50,8 +50,8 @@
     "legacy_source_ast_review_limit": "This normalized-AST backstop freezes every parseable Python file in the declared legacy production roots after explicitly removing new-authority and migration-tooling roots. It catches added, removed or semantically changed legacy Python source even when a specialized sink scanner does not recognize the syntax; comments, formatting, generated runtime code, non-Python launchers and the explicitly excluded roots are outside this digest.",
     "migration_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "migration_source_ast_roots": ["aletheia/migration", "migrations"],
-    "migration_source_ast_file_count": 41,
-    "migration_source_ast_graph_sha256": "7864c04ed57c14105433cea68e72bdbc52737970e36f8ce75629365f380acedb",
+    "migration_source_ast_file_count": 42,
+    "migration_source_ast_graph_sha256": "2d473ebed735ba7760cb634ea85c1d0552f03855161229dec2899d09fa35c2da",
     "migration_source_ast_review_limit": "Migration tooling and immutable Alembic revision history have a separate normalized-AST freeze. Historical schema DML/backfills remain deployment authority reviewed through the migration chain rather than runtime scientific write owners.",
     "non_python_invocation_source_scheme": "git_index_regular_mode_path_byte_sha256_v1",
     "non_python_invocation_source_roots": [
@@ -98,8 +98,8 @@
     "service_mutator_call_graph_sha256": "13e491fdfcf7637e3ee2652a465eb9e119126e1360f379985cf628bf38138f5f",
     "service_boundary_limit": "This mechanically freezes statically declared aletheia.memory.service imports and imported-name uses across aletheia and operational scripts in module and nested lexical scopes. It does not claim to discover arbitrary dynamic imports or direct ORM, SQL, filesystem or external-system mutations; those are handled by separate reviewed surface baselines.",
     "writer_surface_usage_scheme": "ast_all_scope_import_alias_instance_scope_v2",
-    "writer_surface_usage_count": 390,
-    "writer_surface_call_graph_sha256": "e6d8c0bebf678d712c9b67f4405331e196a9d31120387fd5db17c6b0a5d8c531",
+    "writer_surface_usage_count": 395,
+    "writer_surface_call_graph_sha256": "29135be8befcd0ed5a429cb7ed6ac2b334acad3e2ddf379406d00c5066804b28",
     "allowed_legacy_caller_scope": "Every current aletheia-package caller must be covered by allowed_legacy_callers. Operational scripts are fully frozen in call_sites and may be omitted from the post-cutover application allowlist.",
     "shared_generic_writer_implementations": {
       "aletheia.observations.store._append_exact": {
@@ -460,9 +460,9 @@
       "aletheia.notify.feishu|provider.http_post": ["feishu.notify"]
     },
     "direct_orm_mutation_scheme": "ast_import_bound_orm_mutation_v2",
-    "direct_orm_mutation_scope_count": 275,
-    "direct_orm_mutation_call_count": 438,
-    "direct_orm_mutation_graph_sha256": "5553d93b2e27ea32219fd160028a9e22a8bc21d556d498ce434707a09b1e2eef",
+    "direct_orm_mutation_scope_count": 280,
+    "direct_orm_mutation_call_count": 446,
+    "direct_orm_mutation_graph_sha256": "1fbe7ad4dd0687f917353c9c5c2cfee0d0d8f52c115ded124409aac7b13a82ba",
     "direct_orm_authority_source": "Every resolved table is classified by the postgres storage_target/storage_targets records in this inventory; non-constructor mutation scopes must match a declared legacy_entrypoint or additional_writers symbol.",
     "direct_orm_review_limit": "This static AST baseline resolves explicit imports/re-exports and aliases for every declared SQLAlchemy model; ORM class self/cls bindings; model construction; query/get/select/scalar result flows; attribute, setattr and relationship mutation; explicit aliases of recognized setattr/session/query/table/SQLAlchemy mutation callables; session add/delete/merge/bulk APIs; SQLAlchemy/table/query insert/update/delete; literal mutating SQL; and fail-closed f-string/binary SQL edges. The sole declared dynamic SQL scope is the SHA-pinned qualification role/database/ACL DDL transaction below; it is operational host commissioning rather than an ORM-table writer. It does not claim to resolve dynamic imports, reflection-generated models, runtime monkeypatching, helper-returned model instances, dynamically selected mutator callables, or other dynamic SQL hidden behind an untyped variable; any semantic change in legacy Python remains guarded by the separate normalized-AST source freeze.",
     "direct_dynamic_sql_writers": [
@@ -3142,6 +3142,18 @@
         },
         {
           "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._admit_external_and_reserve"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._record_qualification_admission"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._reserve_budget_hold"
+        },
+        {
+          "module": "aletheia.execution.allocator",
           "symbol": "PostgreSQLExecutionAllocator.register_node"
         },
         {
@@ -3256,11 +3268,23 @@
         },
         {
           "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._admit_external_and_reserve"
+        },
+        {
+          "module": "aletheia.execution.allocator",
           "symbol": "PostgreSQLExecutionAllocator._reconcile_expired_attempt"
         },
         {
           "module": "aletheia.execution.allocator",
           "symbol": "PostgreSQLExecutionAllocator._reconcile_locked"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._record_qualification_admission"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._reserve_budget_hold"
         },
         {
           "module": "aletheia.execution.allocator",
@@ -3438,11 +3462,23 @@
         },
         {
           "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._admit_external_and_reserve"
+        },
+        {
+          "module": "aletheia.execution.allocator",
           "symbol": "PostgreSQLExecutionAllocator._reconcile_expired_attempt"
         },
         {
           "module": "aletheia.execution.allocator",
           "symbol": "PostgreSQLExecutionAllocator._reconcile_locked"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._record_qualification_admission"
+        },
+        {
+          "module": "aletheia.execution.allocator",
+          "symbol": "PostgreSQLExecutionAllocator._reserve_budget_hold"
         },
         {
           "module": "aletheia.execution.allocator",

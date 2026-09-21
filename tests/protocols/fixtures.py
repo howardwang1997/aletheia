@@ -1212,10 +1212,115 @@ def _external_measurement_fixture() -> ProtocolFixture:
     )
 
 
+def _bridge_service_resource() -> StaticResourceClass:
+    """The bridge-service external class: a host-process runtime with no
+    network, carrying the read-only bridge action kind (contradiction #15)."""
+
+    return StaticResourceClass(
+        class_key="resource.external.bridge-service",
+        kind=ResourceKind.EXTERNAL,
+        cpu_architecture="x86_64",
+        oci_platform="linux/amd64",
+        container_runtime="host-process",
+        cpu_cores=4,
+        memory_bytes=8 * 1024**3,
+        scratch_bytes=32 * 1024**3,
+        features=("deterministic-runtime",),
+        network_policies=(NetworkPolicy.NONE,),
+        external_action_kinds=("bridge.load_slot",),
+        supports_exclusive=True,
+    )
+
+
+def _bridge_resource_request(
+    resource: StaticResourceClass,
+    *,
+    wall_time_seconds: int = 120,
+) -> ExecutionResourceRequest:
+    return ExecutionResourceRequest(
+        accepted_resource_class_ids=(resource.resource_class_id,),
+        cpu_cores=2,
+        memory_bytes=2 * 1024**3,
+        scratch_bytes=4 * 1024**3,
+        wall_time_seconds=wall_time_seconds,
+        required_features=("deterministic-runtime",),
+        network_policy=NetworkPolicy.NONE,
+        artifact_quota_bytes=8 * 1024**2,
+    )
+
+
+def _bridge_service_fixture() -> ProtocolFixture:
+    """An engineering-qualification-shaped protocol whose scientific executor
+    is a read-only external bridge service (EXTERNAL_SERVICE runtime,
+    read_only_external side effects, network NONE)."""
+
+    bridge = _bridge_service_resource()
+    cpu = _cpu_resource("resource.cpu.bridge-analysis")
+    site = _external_resource()  # present but unaccepted: the wrong-profile class
+    ports = (
+        _PortSpec("input.records", ProtocolPortDirection.INPUT, ArtifactKind.TABLE),
+        _PortSpec("intermediate.raw_slot", ProtocolPortDirection.INTERMEDIATE, ArtifactKind.JSON),
+        _PortSpec("intermediate.parsed_slot", ProtocolPortDirection.INTERMEDIATE, ArtifactKind.JSON),
+        _PortSpec("output.measurement", ProtocolPortDirection.OUTPUT, ArtifactKind.JSON),
+        _PortSpec("output.lineage", ProtocolPortDirection.OUTPUT, ArtifactKind.RECEIPT),
+        _PortSpec("output.validation", ProtocolPortDirection.OUTPUT, ArtifactKind.RECEIPT),
+    )
+    plans = (
+        _StepPlan(
+            "step.01_load",
+            "capability.load_bridge_slot",
+            "operation.load_bridge_slot",
+            ("input.records",),
+            ("intermediate.raw_slot",),
+            (),
+            _bridge_resource_request(bridge, wall_time_seconds=600),
+            ProtocolStepRole.SCIENTIFIC_EXECUTOR,
+            runtime_kind=RuntimeKind.EXTERNAL_SERVICE,
+            side_effect_class=SideEffectClass.READ_ONLY_EXTERNAL,
+            external_action_kind="bridge.load_slot",
+        ),
+        _StepPlan(
+            "step.02_parse",
+            "capability.parse_bridge_slot",
+            "operation.parse_bridge_slot",
+            ("intermediate.raw_slot",),
+            ("intermediate.parsed_slot", "output.lineage"),
+            ("step.01_load",),
+            _resource_request(cpu),
+            ProtocolStepRole.OBSERVATION_PARSER,
+        ),
+        _StepPlan(
+            "step.03_validate",
+            "capability.validate_bridge_measurement",
+            "operation.validate_bridge_measurement",
+            ("intermediate.parsed_slot",),
+            ("output.measurement", "output.validation"),
+            ("step.02_parse",),
+            _resource_request(cpu),
+            ProtocolStepRole.INDEPENDENT_VALIDATOR,
+        ),
+    )
+    return _build_fixture(
+        name="bridge_service",
+        identity="4",
+        action_category=ProtocolActionCategory.EXTERNAL_MEASUREMENT_REQUEST,
+        epistemic_kind=EpistemicKind.CHARACTERIZATION,
+        claim_kind=ClaimKind.DESCRIPTIVE,
+        claim_strength=ClaimStrength.SUPPORTED,
+        evidence_modality=EvidenceModality.EMPIRICAL,
+        port_specs=ports,
+        step_plans=plans,
+        resources=(bridge, cpu, site),
+        measurement_step_id="step.01_load",
+        epistemic_shape="characterization",
+    )
+
+
 def accepted_protocol_fixtures() -> tuple[ProtocolFixture, ...]:
     """Build all accepted compiler fixtures in stable name order."""
 
     return (
+        _bridge_service_fixture(),
         _external_measurement_fixture(),
         _grouped_regression_fixture(),
         _structural_intervention_fixture(),

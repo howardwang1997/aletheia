@@ -224,6 +224,7 @@ QUALIFICATION_PRINCIPALS = {
     "allocator": "principal.qualification.allocator",
     "input_resolver": "principal.qualification.input_resolver",
     "artifact_verifier": "principal.qualification.artifact_verifier",
+    "external_bridge": "principal.qualification.external_bridge",
 }
 
 NODE_ID = "node.arlcup-1"
@@ -1105,7 +1106,7 @@ def _generate_keys(layout, engine, *, activation, service_uid, driver_uid, drive
             "file_sha256": _write_key(path, material, uid=driver_uid, gid=driver_gid),
         }
 
-    for name in ("pricing", "source_budget", "runtime_control", "enrollment"):
+    for name in ("pricing", "source_budget", "runtime_control", "enrollment", "external-bridge"):
         keys["qualification"][name] = qualification_key(name)
 
     signing_material, signing_public = _generate_ed25519(engine)
@@ -1179,6 +1180,7 @@ def _build_qualification(
     from aletheia.execution.authority_contracts import PRICING_RATE_CARD_SIGNATURE_DOMAIN
     from aletheia.execution.qualification_custody import QualificationPreAdmissionCustodyConfig
     from aletheia.execution.runtime_contracts import (
+        ExternalBridgeAuthority,
         NodeEnrollmentAuthorityPin,
         QualificationAuthorityPin,
         TerminalVerificationAuthorityPin,
@@ -1186,7 +1188,11 @@ def _build_qualification(
         issue_worker_node_enrollment,
     )
     from aletheia.execution.runtime_v2_contracts import RuntimeControlAuthorityPin
-    from aletheia.execution.schemas import NetworkPolicy, StaticResourceCatalog
+    from aletheia.execution.schemas import (
+        NetworkPolicy,
+        ResourceKind,
+        StaticResourceCatalog,
+    )
     from aletheia.execution.terminal_runtime import (
         QualificationTerminalReaderConfig,
         TerminalNodeAuthorityConfig,
@@ -1234,6 +1240,11 @@ def _build_qualification(
         ("artifact-verification", "Artifact verification projection for raw-run custody."),
         ("cost-screening", "Deterministic proposal cost screening; screening is never authorization."),
         ("risk-screening", "Deterministic proposal risk screening; screening is never authorization."),
+        (
+            "external-bridge",
+            "External bridge execution authority for the ARL-2 dry-run window; "
+            "pins external-class admission only, never node custody.",
+        ),
     ):
         write_policy(name, policy)
 
@@ -1316,7 +1327,7 @@ def _build_qualification(
         operating_system="linux",
         cpu_architecture="x86_64",
         oci_platform="linux/amd64",
-        container_runtime="host",
+        container_runtime="host-process",
         sandbox_policy_sha256=policies["node-sandbox"],
         resource_class_ids=(resource_class_id,),
         allowed_data_classifications=("public",),
@@ -1352,6 +1363,25 @@ def _build_qualification(
         enrollment_authority_pin=enrollment_pin,
         assignment_transport_pin=transport_pin,
     )
+
+    # ---- external bridge authority (contradiction #15) -------------------
+    # The dry-run catalog's single class is an EXTERNAL class; admitting its
+    # quotes needs a deployment-pinned bridge authority.  The bridge host
+    # repeats the worker node manifest (same host, same served class); the
+    # pin is a fresh principal/key/policy, never the node's own.
+    external_bridge_authority = None
+    if catalog_classes[0].kind == ResourceKind.EXTERNAL:
+        bridge_pin = authority_pin(
+            QualificationAuthorityPin,
+            policy_sha256=policies["external-bridge"],
+            principal_id=QUALIFICATION_PRINCIPALS["external_bridge"],
+            key_id=keys["qualification"]["external-bridge"]["key_id"],
+            public_hex=keys["qualification"]["external-bridge"]["public_hex"],
+        )
+        external_bridge_authority = ExternalBridgeAuthority(
+            manifest=manifest,
+            bridge_authority_pin=bridge_pin,
+        )
 
     # ---- frozen authority registry (one zero-cost rate card) -------------
     card = ExecutionRateCard(
@@ -1493,6 +1523,7 @@ def _build_qualification(
         "custody_json": custody.model_dump(mode="json"),
         "runtime_pin": runtime_pin,
         "node_authority": node_authority,
+        "external_bridge_authority": external_bridge_authority,
         "policies": policies,
         "rate_card_sha256": card_sha,
         "artifact_authority": artifact_authority,
@@ -2337,6 +2368,11 @@ def _build_service_deployments(
         qualification_custody=qualification["custody"],
         runtime_control_authority_pin=qualification["runtime_pin"],
         node_authorities=(qualification["node_authority"],),
+        external_bridge_authorities=(
+            (qualification["external_bridge_authority"],)
+            if qualification["external_bridge_authority"] is not None
+            else ()
+        ),
         allowed_rate_card_sha256s=(qualification["rate_card_sha256"],),
         allowed_currency_codes=(CURRENCY_CODE,),
         allocator_principal_id=QUALIFICATION_PRINCIPALS["allocator"],
@@ -3102,6 +3138,13 @@ def _write_state_file(
             "custody": qualification["custody_json"],
             "rate_card_sha256": qualification["rate_card_sha256"],
             "runtime_control_pin": qualification["runtime_pin"].model_dump(mode="json"),
+            "external_bridge_pin": (
+                qualification["external_bridge_authority"].bridge_authority_pin.model_dump(
+                    mode="json"
+                )
+                if qualification["external_bridge_authority"] is not None
+                else None
+            ),
         },
         "services": {
             service: {
