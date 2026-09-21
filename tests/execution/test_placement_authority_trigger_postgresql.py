@@ -355,15 +355,15 @@ def _seed_external_placement(
         )
         session.execute(
             text(
+                # event_id is a bigint identity column; the sequence mints it
                 "INSERT INTO execution_budget_events"
-                " (event_id, event_sha256, reservation_id, authorization_sha256,"
+                " (event_sha256, reservation_id, authorization_sha256,"
                 "  sequence, previous_event_sha256, event_type, reserved_delta_microunits,"
                 "  spent_delta_microunits, payload_sha256, payload_json, recorded_at)"
-                " VALUES (:event, :event_sha, :reservation, :auth, 1, NULL, 'reserved',"
+                " VALUES (:event_sha, :reservation, :auth, 1, NULL, 'reserved',"
                 "         :held, 0, :payload_sha, CAST(:payload AS jsonb), :reserved)"
             ),
             {
-                "event": f"bev_{suffix[:29]}",
                 "event_sha": sha("budget-event"),
                 "reservation": reservation_id,
                 "auth": authorization,
