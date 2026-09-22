@@ -157,3 +157,148 @@ def test_provider_refusal_formatter_reads_the_real_blocker_field() -> None:
     expression = compile(join_line.split("=", 1)[1].strip(), "<formatter>", "eval")
     formatted = eval(expression, {"result": result})
     assert formatted == "capability_unavailable"
+
+
+def test_protocol_input_media_type_settles_each_supported_kind() -> None:
+    """Contradiction #18 field sourcing: the kind→media map must be total.
+
+    Only the four byte-oriented kinds carry a canonical admission media type;
+    every other ArtifactKind (model, sample, measurement, proof, receipt) has
+    no operator-staged byte form and must fail loudly instead of guessing.
+    """
+
+    from aletheia.protocols.capabilities import ArtifactKind
+
+    module = _script_module()
+    for kind, expected in (
+        ("json", "application/json"),
+        ("table", "text/csv"),
+        ("text", "text/plain"),
+        ("binary", "application/octet-stream"),
+    ):
+        # both the enum member and the raw wire string reach the same media type
+        assert module._protocol_input_media_type(kind) == expected
+        assert module._protocol_input_media_type(ArtifactKind(kind)) == expected
+
+
+def test_protocol_input_media_type_refuses_unsettleable_kinds(capsys) -> None:
+    from aletheia.protocols.capabilities import ArtifactKind
+
+    module = _script_module()
+    admissible = set(module._ARTIFACT_KIND_MEDIA_TYPES)
+    unsettleable = [kind for kind in ArtifactKind if kind.value not in admissible]
+    assert len(unsettleable) == 5, "expected model/sample/measurement/proof/receipt"
+    for kind in (*unsettleable, "video"):
+        with pytest.raises(SystemExit):
+            module._protocol_input_media_type(kind)
+    assert "must settle on one of" in capsys.readouterr().err
+
+
+def test_protocol_input_requirement_sources_fields_from_the_port_contract() -> None:
+    """The admission ExpectedArtifact must be derived, field for field.
+
+    artifact_key is the port id, role stays RAW_OUTPUT (the qualification
+    input check only resolves raw-output receipts), schema_sha256 comes from
+    the port's schema ref, data_classification accepts both the enum and its
+    wire string, and retention/max_bytes pass through unchanged.
+    """
+
+    from types import SimpleNamespace
+
+    from aletheia.execution.schemas import ArtifactRole
+    from aletheia.protocols.capabilities import DataClassification
+
+    module = _script_module()
+    port = SimpleNamespace(
+        port_id="input.dataset_rows",
+        artifact_kind="json",
+        schema_ref=SimpleNamespace(schema_sha256=_sha("port-schema")),
+        data_classification=DataClassification.PUBLIC,
+    )
+    requirement = module._protocol_input_requirement(
+        port=port,
+        retention_policy_sha256=_sha("retention"),
+        max_bytes=4096,
+    )
+    assert requirement.artifact_key == "input.dataset_rows"
+    assert requirement.role is ArtifactRole.RAW_OUTPUT
+    assert requirement.media_type == "application/json"
+    assert requirement.schema_sha256 == _sha("port-schema")
+    assert requirement.data_classification == DataClassification.PUBLIC
+    assert requirement.retention_policy_sha256 == _sha("retention")
+    assert requirement.max_bytes == 4096
+    # the enum shim: a raw wire string classification survives too
+    wire_port = SimpleNamespace(
+        port_id="input.dataset_rows",
+        artifact_kind="json",
+        schema_ref=port.schema_ref,
+        data_classification="public",
+    )
+    assert (
+        module._protocol_input_requirement(
+            port=wire_port,
+            retention_policy_sha256=_sha("retention"),
+            max_bytes=4096,
+        ).data_classification
+        == DataClassification.PUBLIC
+    )
+
+
+def test_produced_output_port_ids_spans_every_work_order_node() -> None:
+    """Contradiction #18's input partition keys on ALL producers, not one.
+
+    An executor input fed by a sibling node's output port is a lineage edge
+    even when that sibling is not the executor itself; missing a producer
+    would silently reclassify a lineage input as protocol-level.
+    """
+
+    from types import SimpleNamespace
+
+    module = _script_module()
+    work_order = SimpleNamespace(
+        nodes=(
+            SimpleNamespace(node_id="loader", output_port_ids=("intermediate.groups",)),
+            SimpleNamespace(node_id="executor", output_port_ids=()),
+            SimpleNamespace(
+                node_id="validator", output_port_ids=("validation.report",)
+            ),
+        )
+    )
+    assert module._produced_output_port_ids(work_order) == {
+        "intermediate.groups",
+        "validation.report",
+    }
+
+
+def test_sea_admission_pins_the_store_limit_and_hands_over_ownership() -> None:
+    """Root-only call-site pins the box-side review round demanded.
+
+    Both guards live in the root-run _run_sea path that no unit test can
+    execute (chown to another uid needs root), so this scrapes the shipped
+    source the way the blocker-join check does: the admission store must
+    carry the custody pin's artifact_max_object_bytes (an oversized
+    admission would burn registry uniqueness keys and never resolve at the
+    allocator's stricter store), and every admission run must hand its
+    root-owned store entries to the commissioned custody before the
+    commissioning intent is finalized (root-owned 0700/0400 entries would
+    EACCES every non-root service after the script reported success).
+    """
+
+    source = _SCRIPT_PATH.read_text()
+    assert (
+        "max_object_bytes=custody.artifact_max_object_bytes" in source
+    ), "admission store lost the custody-pinned object limit"
+    handover = source.find("_hand_over_root_owned_store_entries(Path(")
+    last_append = source.rfind("admission_records.append(")
+    finalize = source.find("input_bindings = tuple(sorted(input_bindings")
+    assert (
+        handover != -1 and last_append != -1 and finalize != -1
+        and last_append < handover < finalize
+    ), (
+        "admission ownership hand-over must run after the admission loop and "
+        "before the commissioning intent is finalized"
+    )
+    # a plain trailing call only covers clean exits; a mid-loop _fail or store
+    # raise must still hand over, so the call has to live in a finally block
+    preceding = source[max(0, handover - 400):handover]
+    assert "finally:" in preceding, "hand-over call must sit inside a finally block"

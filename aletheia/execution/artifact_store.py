@@ -28,6 +28,7 @@ from aletheia.execution.schemas import (
     ArtifactCustodyMode,
     ArtifactManifest,
     ArtifactManifestEntry,
+    ArtifactRole,
     ArtifactVerifiedReceipt,
     ExecutionEffectClass,
     ExecutionIntent,
@@ -1081,6 +1082,129 @@ class LocalArtifactStore:
         for entry in manifest.entries:
             receipts.append(self._persist_verification_receipt(manifest=manifest, entry=entry))
         return tuple(receipts)
+
+    def admit_protocol_input(
+        self,
+        *,
+        intent: ExecutionIntent,
+        requirement: ExpectedArtifact,
+        content: bytes,
+        produced_at: datetime,
+    ) -> ArtifactVerifiedReceipt:
+        """Stage one operator-held protocol input through the full custody chain.
+
+        Protocol inputs never come from a workload output tree, so this stages the
+        exact operator bytes into quarantine, derives the manifest entry exactly the
+        way the output path does, and reuses ``verify_manifest`` for the central
+        rehash, CAS promotion, and manifest/receipt publication.  The intent must be
+        a dedicated admission intent: its replicate slot and infrastructure attempt
+        must be derived for the admission alone, because a terminal-archive row
+        filed later under the same attempt identity would make every fresh
+        resolution of this receipt fail producer-lineage validation.
+        """
+
+        self._require_writable(error_type=ArtifactQuarantineError)
+        if produced_at.tzinfo is None or produced_at.utcoffset() is None:
+            raise ArtifactQuarantineError("protocol input admission needs an aware instant")
+        try:
+            intent = ExecutionIntent.model_validate(
+                intent.model_dump(mode="python", warnings="none")
+            )
+            requirement = ExpectedArtifact.model_validate(
+                requirement.model_dump(mode="python", warnings="none")
+            )
+        except (AttributeError, TypeError, ValidationError, ValueError) as exc:
+            raise ArtifactQuarantineError(
+                "admission contracts failed closed-model revalidation"
+            ) from exc
+        if intent.effect_class is not ExecutionEffectClass.REPLAY_SAFE:
+            raise ArtifactQuarantineError(
+                "protocol input admission supports replay-safe intents only"
+            )
+        if requirement.role is not ArtifactRole.RAW_OUTPUT:
+            raise ArtifactQuarantineError(
+                "protocol input admission requires the raw-output artifact role"
+            )
+        if not content:
+            raise ArtifactQuarantineError("protocol input content is empty")
+        if len(content) > requirement.max_bytes:
+            raise ArtifactQuarantineError(
+                "protocol input exceeds its declared per-artifact quota"
+            )
+
+        digest = hashlib.sha256(content).hexdigest()
+        size = len(content)
+        quarantine_id = self._quarantine_id(
+            intent=intent,
+            requirement=requirement,
+            digest=digest,
+            size=size,
+        )
+        try:
+            staging_parent = self._open_directory("quarantine", "staging", create=False)
+        except ArtifactStoreError as exc:
+            raise ArtifactQuarantineError("quarantine staging directory is unsafe") from exc
+        temporary_name = f".{secrets.token_hex(24)}.tmp"
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            try:
+                destination = os.open(temporary_name, flags, 0o600, dir_fd=staging_parent)
+            except OSError as exc:
+                raise ArtifactQuarantineError(
+                    "quarantine refused a staging object"
+                ) from exc
+            try:
+                _write_all(destination, memoryview(content))
+                os.fchmod(destination, 0o400)
+                os.fsync(destination)
+            finally:
+                os.close(destination)
+            self._publish_staged(
+                staging_parent=staging_parent,
+                staging_name=temporary_name,
+                target_components=(
+                    "quarantine",
+                    "objects",
+                    quarantine_id.removeprefix("qtn_")[:2],
+                ),
+                target_name=quarantine_id,
+                expected_sha256=digest,
+                expected_bytes=size,
+                error_type=ArtifactQuarantineError,
+            )
+        finally:
+            try:
+                os.unlink(temporary_name, dir_fd=staging_parent)
+                os.fsync(staging_parent)
+            except FileNotFoundError:
+                pass
+            finally:
+                os.close(staging_parent)
+
+        entry = ArtifactManifestEntry(
+            expected_artifact_id=requirement.expected_artifact_id,
+            artifact_key=requirement.artifact_key,
+            role=requirement.role,
+            content_sha256=digest,
+            bytes=size,
+            media_type=requirement.media_type,
+            schema_sha256=requirement.schema_sha256,
+            quarantine_ref=quarantine_id,
+        )
+        manifest = ArtifactManifest(
+            intent_sha256=intent.intent_sha256,
+            execution_id=intent.execution_id,
+            replicate_slot_id=intent.replicate_slot.replicate_slot_id,
+            infrastructure_attempt_id=intent.infrastructure_attempt.infrastructure_attempt_id,
+            entries=(entry,),
+            produced_at=produced_at,
+        )
+        receipts = self.verify_manifest(intent=intent, manifest=manifest)
+        if len(receipts) != 1:
+            raise ArtifactStoreCorruption(
+                "protocol input admission produced an unexpected receipt set"
+            )
+        return receipts[0]
 
     def load_manifest(self, *, manifest_sha256: str) -> ArtifactManifest | None:
         """Reload a canonical manifest sidecar and freshly rehash every named CAS object."""

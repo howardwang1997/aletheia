@@ -560,3 +560,118 @@ def test_receipt_sidecar_tampering_is_detected_before_cas_is_trusted(tmp_path: P
 
     with pytest.raises(ArtifactStoreCorruption, match="stored artifact receipt"):
         store.load_verified_receipt(verified_receipt_sha256=receipt.verified_receipt_sha256)
+
+
+def test_admit_protocol_input_publishes_the_full_custody_chain(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    requirement = _expected(key="input.dataset_rows", max_bytes=1024)
+    intent = _intent(expected=(requirement,))
+
+    receipt = store.admit_protocol_input(
+        intent=intent,
+        requirement=requirement,
+        content=b"protocol input bytes",
+        produced_at=NOW + timedelta(seconds=30),
+    )
+
+    digest = hashlib.sha256(b"protocol input bytes").hexdigest()
+    assert receipt.artifact.content_sha256 == digest
+    assert receipt.artifact.role is ArtifactRole.RAW_OUTPUT
+    assert receipt.custody_mode.value == "central_rehash"
+    assert receipt.final_object_ref == f"cas://sha256/{digest}"
+    assert _cas_path(store, digest).read_bytes() == b"protocol input bytes"
+    quarantine_ref = receipt.artifact.quarantine_ref
+    assert _quarantine_path(store, quarantine_ref).exists()
+    reloaded = store.load_verified_receipt(
+        verified_receipt_sha256=receipt.verified_receipt_sha256
+    )
+    assert reloaded == receipt
+    assert store.load_manifest(
+        manifest_sha256=receipt.artifact_manifest_sha256
+    ) is not None
+
+
+def test_admit_protocol_input_is_idempotent_for_identical_content(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    requirement = _expected(key="input.dataset_rows")
+    intent = _intent(expected=(requirement,))
+
+    first = store.admit_protocol_input(
+        intent=intent,
+        requirement=requirement,
+        content=b"same bytes",
+        produced_at=NOW,
+    )
+    second = store.admit_protocol_input(
+        intent=intent,
+        requirement=requirement,
+        content=b"same bytes",
+        produced_at=NOW,
+    )
+    # a different produced_at mints a distinct sidecar (verified_at is part of
+    # the receipt identity), which is what drives the script's fresh-id
+    # discipline on re-runs; identical inputs republish the same winner
+    third = store.admit_protocol_input(
+        intent=intent,
+        requirement=requirement,
+        content=b"same bytes",
+        produced_at=NOW + timedelta(minutes=1),
+    )
+
+    assert first.verified_receipt_sha256 == second.verified_receipt_sha256
+    assert third.verified_receipt_sha256 != first.verified_receipt_sha256
+    assert store.load_verified_receipt(
+        verified_receipt_sha256=third.verified_receipt_sha256
+    ) is not None
+
+
+@pytest.mark.parametrize(
+    "content, max_bytes, role, effect_class, kwargs",
+    [
+        (b"x" * 2048, 1024, ArtifactRole.RAW_OUTPUT, ExecutionEffectClass.REPLAY_SAFE, {}),
+        (b"", 1024, ArtifactRole.RAW_OUTPUT, ExecutionEffectClass.REPLAY_SAFE, {}),
+        (
+            b"ok",
+            1024,
+            ArtifactRole.CHECKPOINT,
+            ExecutionEffectClass.REPLAY_SAFE,
+            {},
+        ),
+        (
+            b"ok",
+            1024,
+            ArtifactRole.RAW_OUTPUT,
+            ExecutionEffectClass.ONE_TIME_EXTERNAL,
+            {},
+        ),
+        (
+            b"ok",
+            1024,
+            ArtifactRole.RAW_OUTPUT,
+            ExecutionEffectClass.REPLAY_SAFE,
+            {"produced_at": datetime(2026, 8, 24, 12, 0)},
+        ),
+    ],
+)
+def test_admit_protocol_input_rejects_inadmissible_contracts(
+    tmp_path: Path,
+    content: bytes,
+    max_bytes: int,
+    role: ArtifactRole,
+    effect_class: ExecutionEffectClass,
+    kwargs: dict,
+) -> None:
+    store = _store(tmp_path)
+    requirement = _expected(key="input.dataset_rows", max_bytes=max_bytes)
+    requirement = requirement.model_copy(update={"role": role})
+    intent = _intent(expected=(requirement,)).model_copy(
+        update={"effect_class": effect_class}
+    )
+
+    with pytest.raises(ArtifactQuarantineError):
+        store.admit_protocol_input(
+            intent=intent,
+            requirement=requirement,
+            content=content,
+            produced_at=kwargs.get("produced_at", NOW),
+        )
