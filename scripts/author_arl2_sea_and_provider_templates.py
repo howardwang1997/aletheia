@@ -28,6 +28,16 @@ compilation-row read run in a forked child that drops to the driver identity
 effective uid, and the child mirrors the writer-handle audit the runtime
 itself performs (the owner-only CAS custody admits no other reader).
 
+Protocol inputs (contradiction #18 remedy): every executor input port with no
+WorkOrder producer must be declared with --protocol-input PORT=PATH. The bytes
+are admitted through the deployment artifact store's real custody chain
+(quarantine -> central rehash -> CAS -> manifest -> verified receipt) under a
+dedicated admission replicate slot and infrastructure attempt — an identity
+that never gains terminal-archive rows, so later fresh resolutions of the
+bound receipt cannot collide with an unrelated producer lineage. The intent
+binds one protocol_input binding per port; work-order lineage inputs stay
+refused in first-round commissioning.
+
 Provenance rules:
 
 - action identity comes from the spool submission (action.object_sha256 is a
@@ -107,6 +117,60 @@ def _fail(message: str) -> None:
 
 def _sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
+
+
+_ARTIFACT_KIND_MEDIA_TYPES = {
+    "json": "application/json",
+    "table": "text/csv",
+    "text": "text/plain",
+    "binary": "application/octet-stream",
+}
+
+
+def _protocol_input_media_type(artifact_kind) -> str:
+    value = getattr(artifact_kind, "value", artifact_kind)
+    media_type = _ARTIFACT_KIND_MEDIA_TYPES.get(value)
+    if media_type is None:
+        _fail(
+            f"no canonical media type for artifact kind {value!r}; the port contract "
+            "must settle on one of " + ", ".join(sorted(_ARTIFACT_KIND_MEDIA_TYPES))
+        )
+    return media_type
+
+
+def _protocol_input_requirement(*, port, retention_policy_sha256: str, max_bytes: int):
+    """ExpectedArtifact for one protocol-level input port (contradiction #18).
+
+    role stays RAW_OUTPUT because the qualification input check resolves every
+    bound receipt to a verified raw-output artifact; schema/classification come
+    from the frozen protocol port, retention from the selected capability's
+    license/egress contract — the same source the compiled output artifacts use.
+    """
+
+    from aletheia.execution.schemas import ArtifactRole, ExpectedArtifact
+
+    return ExpectedArtifact(
+        artifact_key=port.port_id,
+        role=ArtifactRole.RAW_OUTPUT,
+        media_type=_protocol_input_media_type(port.artifact_kind),
+        schema_sha256=port.schema_ref.schema_sha256,
+        data_classification=getattr(port.data_classification, "value", port.data_classification),
+        retention_policy_sha256=retention_policy_sha256,
+        max_bytes=max_bytes,
+    )
+
+
+def _produced_output_port_ids(work_order) -> set:
+    """Output ports ANY work-order node produces (contradiction #18).
+
+    Executor inputs split on this set: the intersection is work-order lineage
+    (first-round commissioning refuses it; continuation rounds carry it), the
+    difference is protocol-level inputs bound through admitted receipts.
+    """
+
+    return {
+        port_id for other in work_order.nodes for port_id in other.output_port_ids
+    }
 
 
 def _read_bytes(path: Path) -> bytes:
@@ -839,14 +903,25 @@ def _run_provider(args, state: dict, state_path: Path) -> int:
 
 
 class _FailClosedArtifactResolver:
-    """First-round qualification carries no input bindings, so the input
-    resolver is never called; refuse loudly if that assumption breaks."""
+    """First-round qualification without input bindings never calls the input
+    resolver; refuse loudly if that assumption breaks."""
 
     def resolve_artifact_manifest(self, *, manifest_sha256: str, observed_at: datetime):
         _fail("artifact manifests cannot be resolved during first-attempt commissioning")
 
     def resolve_verified_input_artifact(self, *, verified_receipt_sha256: str, observed_at: datetime):
         _fail("input artifacts cannot be resolved during first-attempt commissioning")
+
+
+class _EmptyTerminalArchive:
+    """Offline dry-run stand-in for the terminal receipt archive.
+
+    Admission attempts never gain terminal rows by construction (their slot
+    identity exists only for the admission), so an empty listing is the exact
+    offline truth, not a stub that hides lineage."""
+
+    def list_terminal_receipts_for_attempt(self, *, infrastructure_attempt_id: str):
+        return ()
 
 
 class _FailClosedReceiptResolver:
@@ -1320,10 +1395,16 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
     if len(nodes) != 1:
         _fail("work order does not hold exactly one scientific-executor node (pass --node-id)")
     node = nodes[0]
-    if node.input_port_ids:
+    # contradiction #18: executor input ports are admissible when they are
+    # protocol-level inputs (no WorkOrder producer); lineage edges stay
+    # first-round-refused exactly like the compiler's binding verifier treats
+    # them — continuation rounds carry those, not the commissioning intent
+    produced_ports = _produced_output_port_ids(work_order)
+    lineage_inputs = sorted(set(node.input_port_ids) & produced_ports)
+    if lineage_inputs:
         _fail(
-            f"node {node.node_id} declares input ports; first-round commissioning "
-            "supports only input-free executor nodes"
+            f"node {node.node_id} declares work-order lineage inputs {lineage_inputs}; "
+            "first-round commissioning binds only protocol-level inputs"
         )
     from aletheia.execution.schemas import ExecutionEffectClass, NetworkPolicy
 
@@ -1431,6 +1512,145 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
     if not card.active_at(now) or not pricing_pin.active_at(now):
         _fail("rate card or pricing authority is inactive at quote time")
 
+    # ---- protocol-input admission (contradiction #18 remedy, PI-approved
+    # design B, 2026-09-22) ---------------------------------------------
+    # Every executor input port without a WorkOrder producer is bound to a
+    # verified receipt minted through the deployment artifact store's real
+    # custody chain (quarantine -> central rehash -> CAS -> manifest -> AVR)
+    # under a DEDICATED admission slot and attempt. The dedicated identity is
+    # load-bearing: a terminal-archive row filed later under the admission
+    # attempt would make every fresh resolution of the bound receipt fail
+    # producer-lineage validation, so the admission slot must never be the
+    # round slot. Admission writes only content-addressed store objects (no
+    # registry uniqueness keys burn), and re-runs read the published winner.
+    protocol_ports = {item.port_id: item for item in protocol.data_ports}
+    unproduced_inputs = sorted(set(node.input_port_ids) - produced_ports)
+    declared_inputs = {}
+    for item in args.protocol_input:
+        port_id, separator, raw_path = item.partition("=")
+        if not separator or not port_id or not raw_path:
+            _fail(f"--protocol-input entries must look like PORT=PATH, got {item!r}")
+        if port_id in declared_inputs:
+            _fail(f"duplicate --protocol-input for port {port_id!r}")
+        declared_inputs[port_id] = Path(raw_path)
+    missing_inputs = sorted(set(unproduced_inputs) - set(declared_inputs))
+    unknown_inputs = sorted(set(declared_inputs) - set(unproduced_inputs))
+    if missing_inputs or unknown_inputs:
+        _fail(
+            "--protocol-input declarations do not match the executor's protocol-level "
+            f"input ports: missing {missing_inputs}, not protocol-level {unknown_inputs}"
+        )
+    input_bindings = []
+    admission_records = []
+    artifact_store = None
+    if unproduced_inputs:
+        from aletheia.execution.artifact_store import LocalArtifactStore
+        from aletheia.execution.schemas import InputArtifactBinding
+        from aletheia.protocols.schemas import ProtocolPortDirection
+
+        manifests_by_sha = {
+            item.manifest_sha256: item for item in request.capability_catalog.manifests
+        }
+        node_manifest = manifests_by_sha.get(node.capability_manifest_sha256)
+        if node_manifest is None:
+            _fail("executor capability manifest is absent from the frozen catalog")
+        custody = state["qualification"]["custody"]
+        artifact_store = LocalArtifactStore(
+            Path(custody["artifact_store_root"]),
+            verifier_principal_id=custody["artifact_verifier_principal_id"],
+            object_store_id=custody["artifact_object_store_id"],
+        )
+    for port_id in unproduced_inputs:
+        port = protocol_ports.get(port_id)
+        if port is None or port.direction is not ProtocolPortDirection.INPUT:
+            _fail(f"executor input port {port_id!r} is not a protocol-level input port")
+        requirement = _protocol_input_requirement(
+            port=port,
+            retention_policy_sha256=node_manifest.license_egress.retention_policy_sha256,
+            max_bytes=args.protocol_input_max_bytes,
+        )
+        content = _read_bytes(declared_inputs[port_id])
+        if len(content) > args.protocol_input_max_bytes:
+            _fail(
+                f"protocol input {port_id} exceeds --protocol-input-max-bytes "
+                f"({len(content)} > {args.protocol_input_max_bytes})"
+            )
+        admission_slot = ScientificReplicateSlot(
+            quest_id=work_order.quest_id,
+            protocol_sha256=work_order.protocol_sha256,
+            work_order_id=work_order.work_order_id,
+            work_order_node_id=node.node_id,
+            work_order_node_sha256=node.node_sha256,
+            slot_count=1,
+            slot_index=1,
+            replicate_kind=node.replicate_kind,
+            preregistration_sha256=requirement.expected_artifact_sha256,
+            randomization_seed_sha256=_sha256_bytes(content),
+            independent_site_required=node.independent_site_required,
+        )
+        admission_intent = ExecutionIntent(
+            quest_id=work_order.quest_id,
+            protocol_sha256=work_order.protocol_sha256,
+            work_order_id=work_order.work_order_id,
+            work_order_sha256=work_order.work_order_sha256,
+            work_order_node_id=node.node_id,
+            work_order_node_sha256=node.node_sha256,
+            capability_id=node.capability_id,
+            capability_manifest_sha256=node.capability_manifest_sha256,
+            external_action_kind=node.external_action_kind,
+            resource_catalog_sha256=work_order.resource_catalog_sha256,
+            resource_request=node.resource_request.model_copy(
+                update={
+                    "artifact_quota_bytes": max(
+                        node.resource_request.artifact_quota_bytes, len(content)
+                    )
+                }
+            ),
+            retry_policy=node.retry_policy,
+            replicate_slot=admission_slot,
+            infrastructure_attempt=InfrastructureAttempt(
+                replicate_slot_id=admission_slot.replicate_slot_id,
+                attempt_number=1,
+            ),
+            input_artifact_bindings=(),
+            expected_artifacts=(requirement,),
+            environment_sha256=node.environment_sha256,
+            command_sha256=node.command_sha256,
+            execution_parameters_sha256=node.execution_parameters_sha256,
+            effect_class=node.effect_class,
+            authorized_at=now,
+            deadline=intent_deadline,
+        )
+        receipt = artifact_store.admit_protocol_input(
+            intent=admission_intent,
+            requirement=requirement,
+            content=content,
+            produced_at=now,
+        )
+        input_bindings.append(
+            InputArtifactBinding(
+                input_port_id=port_id,
+                source_kind="protocol_input",
+                artifact_verified_receipt_sha256=receipt.verified_receipt_sha256,
+            )
+        )
+        admission_records.append(
+            {
+                "port_id": port_id,
+                "admission_replicate_slot_id": admission_slot.replicate_slot_id,
+                "admission_infrastructure_attempt_id": (
+                    admission_intent.infrastructure_attempt.infrastructure_attempt_id
+                ),
+                "artifact_verified_receipt_sha256": receipt.verified_receipt_sha256,
+                "content_sha256": _sha256_bytes(content),
+                "bytes": len(content),
+            }
+        )
+    input_bindings = tuple(sorted(input_bindings, key=lambda item: item.input_port_id))
+    bound_receipt_sha256s = tuple(
+        sorted({item.artifact_verified_receipt_sha256 for item in input_bindings})
+    )
+
     intent = ExecutionIntent(
         quest_id=work_order.quest_id,
         protocol_sha256=work_order.protocol_sha256,
@@ -1449,7 +1669,7 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
             replicate_slot_id=slot.replicate_slot_id,
             attempt_number=1,
         ),
-        input_artifact_bindings=(),
+        input_artifact_bindings=input_bindings,
         expected_artifacts=node.expected_artifacts,
         environment_sha256=node.environment_sha256,
         command_sha256=node.command_sha256,
@@ -1562,7 +1782,7 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
         work_order=work_order,
         intent=intent,
         prior_execution_receipt=None,
-        input_artifact_verified_receipt_sha256s=(),
+        input_artifact_verified_receipt_sha256s=bound_receipt_sha256s,
         budget_authorization=budget_authorization,
         cost_quote=quote,
     )
@@ -1825,10 +2045,23 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
         _fail("re-instantiated registry does not resolve the appended projection")
 
     # ---- grant ------------------------------------------------------------
+    # With input bindings the grant's custody resolution runs for real against
+    # the deployment artifact store: the resolver freshly rehashes each bound
+    # AVR/manifest/CAS closure. The terminal-archive stand-in lists nothing —
+    # correct offline, because admission attempts never gain terminal rows.
+    if input_bindings:
+        from aletheia.execution.input_resolver import LocalVerifiedInputArtifactResolver
+
+        grant_artifact_resolver = LocalVerifiedInputArtifactResolver(
+            artifact_store=artifact_store,
+            terminal_receipt_archive=_EmptyTerminalArchive(),
+        )
+    else:
+        grant_artifact_resolver = _FailClosedArtifactResolver()
     grant = issue_engineering_qualification_grant(
         bundle,
         pin=qualification_pin,
-        artifact_resolver=_FailClosedArtifactResolver(),
+        artifact_resolver=grant_artifact_resolver,
         authority_resolver=resolver,
         private_key=_read_bytes(qualifier_key),
         authorized_at=grant_authorized_at,
@@ -1840,7 +2073,7 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
         bundle=bundle,
         grant=grant,
         authority=verifier,
-        artifact_resolver=_FailClosedArtifactResolver(),
+        artifact_resolver=grant_artifact_resolver,
         authority_resolver=resolver,
         observed_at=now,
     )
@@ -1887,6 +2120,7 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
         "quote_sha256": quote.quote_sha256,
         "source_budget_authorization_sha256": source.source_budget_authorization_sha256,
         "projection_sha256": projection.projection_sha256,
+        "protocol_input_admissions": admission_records,
         "grant_expires_at": _iso(grant_expires_at),
         "sea_expires_at": _iso(sea_expires_at),
         "observation_admission_deadline": _iso(protocol_deadline),
@@ -1939,6 +2173,19 @@ def main() -> int:
     parser.add_argument("--author-principal-id", help="default: first allowed protocol author")
     parser.add_argument("--database-url", help="sea mode: commissioned database URL")
     parser.add_argument("--node-id", help="sea mode: override the executor node choice")
+    parser.add_argument(
+        "--protocol-input",
+        action="append",
+        default=[],
+        metavar="PORT=PATH",
+        help="sea mode: admit PORT's artifact from PATH as a verified protocol input",
+    )
+    parser.add_argument(
+        "--protocol-input-max-bytes",
+        type=int,
+        default=8_388_608,
+        help="sea mode: per-port admission cap in bytes (default 8 MiB)",
+    )
     parser.add_argument("--observation-namespace-sha256", help="sea mode: F9 campaign record")
     parser.add_argument("--selection-campaign-sha256", help="sea mode: F9 campaign record")
     parser.add_argument("--prediction-campaign-sha256", help="sea mode: F9 campaign record")

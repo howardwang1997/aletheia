@@ -157,3 +157,111 @@ def test_provider_refusal_formatter_reads_the_real_blocker_field() -> None:
     expression = compile(join_line.split("=", 1)[1].strip(), "<formatter>", "eval")
     formatted = eval(expression, {"result": result})
     assert formatted == "capability_unavailable"
+
+
+def test_protocol_input_media_type_settles_each_supported_kind() -> None:
+    """Contradiction #18 field sourcing: the kind→media map must be total.
+
+    Only the four byte-oriented kinds carry a canonical admission media type;
+    every other ArtifactKind (model, sample, measurement, proof, receipt) has
+    no operator-staged byte form and must fail loudly instead of guessing.
+    """
+
+    from aletheia.protocols.capabilities import ArtifactKind
+
+    module = _script_module()
+    for kind, expected in (
+        ("json", "application/json"),
+        ("table", "text/csv"),
+        ("text", "text/plain"),
+        ("binary", "application/octet-stream"),
+    ):
+        # both the enum member and the raw wire string reach the same media type
+        assert module._protocol_input_media_type(kind) == expected
+        assert module._protocol_input_media_type(ArtifactKind(kind)) == expected
+
+
+def test_protocol_input_media_type_refuses_unsettleable_kinds(capsys) -> None:
+    from aletheia.protocols.capabilities import ArtifactKind
+
+    module = _script_module()
+    for kind in (ArtifactKind.MODEL, ArtifactKind.PROOF, "video"):
+        with pytest.raises(SystemExit):
+            module._protocol_input_media_type(kind)
+    assert "must settle on one of" in capsys.readouterr().err
+
+
+def test_protocol_input_requirement_sources_fields_from_the_port_contract() -> None:
+    """The admission ExpectedArtifact must be derived, field for field.
+
+    artifact_key is the port id, role stays RAW_OUTPUT (the qualification
+    input check only resolves raw-output receipts), schema_sha256 comes from
+    the port's schema ref, data_classification accepts both the enum and its
+    wire string, and retention/max_bytes pass through unchanged.
+    """
+
+    from types import SimpleNamespace
+
+    from aletheia.execution.schemas import ArtifactRole
+    from aletheia.protocols.capabilities import DataClassification
+
+    module = _script_module()
+    port = SimpleNamespace(
+        port_id="input.dataset_rows",
+        artifact_kind="json",
+        schema_ref=SimpleNamespace(schema_sha256=_sha("port-schema")),
+        data_classification=DataClassification.PUBLIC,
+    )
+    requirement = module._protocol_input_requirement(
+        port=port,
+        retention_policy_sha256=_sha("retention"),
+        max_bytes=4096,
+    )
+    assert requirement.artifact_key == "input.dataset_rows"
+    assert requirement.role is ArtifactRole.RAW_OUTPUT
+    assert requirement.media_type == "application/json"
+    assert requirement.schema_sha256 == _sha("port-schema")
+    assert requirement.data_classification == DataClassification.PUBLIC
+    assert requirement.retention_policy_sha256 == _sha("retention")
+    assert requirement.max_bytes == 4096
+    # the enum shim: a raw wire string classification survives too
+    wire_port = SimpleNamespace(
+        port_id="input.dataset_rows",
+        artifact_kind="json",
+        schema_ref=port.schema_ref,
+        data_classification="public",
+    )
+    assert (
+        module._protocol_input_requirement(
+            port=wire_port,
+            retention_policy_sha256=_sha("retention"),
+            max_bytes=4096,
+        ).data_classification
+        == DataClassification.PUBLIC
+    )
+
+
+def test_produced_output_port_ids_spans_every_work_order_node() -> None:
+    """Contradiction #18's input partition keys on ALL producers, not one.
+
+    An executor input fed by a sibling node's output port is a lineage edge
+    even when that sibling is not the executor itself; missing a producer
+    would silently reclassify a lineage input as protocol-level.
+    """
+
+    from types import SimpleNamespace
+
+    module = _script_module()
+    work_order = SimpleNamespace(
+        nodes=(
+            SimpleNamespace(node_id="loader", output_port_ids=("intermediate.groups",)),
+            SimpleNamespace(node_id="executor", output_port_ids=()),
+            SimpleNamespace(
+                node_id="validator", output_port_ids=("validation.report",)
+            ),
+        )
+    )
+    assert module._produced_output_port_ids(work_order) == {
+        "intermediate.groups",
+        "validation.report",
+    }
