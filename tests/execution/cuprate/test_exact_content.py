@@ -85,6 +85,30 @@ def test_combined_outcome_bin_id_can_be_a_frozen_admission_policy_member(
     assert re.fullmatch(_LOCAL_ID_PATTERN, combined_outcome_bin_id(_result(d1_bin, d2_bin)))
 
 
+@pytest.mark.parametrize("d1_bin", _D1_BINS)
+@pytest.mark.parametrize("d2_bin", _D2_BINS)
+def test_combined_outcome_bin_id_constructs_as_an_admission_policy_mapping(
+    d1_bin, d2_bin
+):
+    """Pin #19's actual seam, not just the shared regex.
+
+    The fullmatch test above and the mapping field's pattern share one
+    constant, so they coincide today; constructing the policy mapping row
+    itself keeps the constructibility guarantee even if that field is ever
+    decoupled from the shared constant.
+    """
+
+    from aletheia.observations.scientific_bridge import (
+        ScientificObservationOutcome,
+        ScientificOutcomeBinMapping,
+    )
+
+    ScientificOutcomeBinMapping(
+        outcome_bin_id=combined_outcome_bin_id(_result(d1_bin, d2_bin)),
+        outcome=ScientificObservationOutcome.POSITIVE,
+    )
+
+
 def test_unknown_bins_fail_closed():
     result = _result()
     tampered = result.model_copy(
