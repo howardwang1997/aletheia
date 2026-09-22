@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -54,16 +55,19 @@ class _Archive:
         return self.rows
 
 
-def _intent(now: datetime) -> ExecutionIntent:
-    expected = ExpectedArtifact(
-        artifact_key="raw",
-        role=ArtifactRole.RAW_OUTPUT,
-        media_type="application/octet-stream",
-        schema_sha256=H1,
-        max_bytes=1024,
-        data_classification="research-internal",
-        retention_policy_sha256=H2,
-    )
+def _intent(now: datetime, *, expected: tuple[ExpectedArtifact, ...] | None = None) -> ExecutionIntent:
+    if expected is None:
+        expected = (
+            ExpectedArtifact(
+                artifact_key="raw",
+                role=ArtifactRole.RAW_OUTPUT,
+                media_type="application/octet-stream",
+                schema_sha256=H1,
+                max_bytes=1024,
+                data_classification="research-internal",
+                retention_policy_sha256=H2,
+            ),
+        )
     slot = ScientificReplicateSlot(
         quest_id=QUEST_ID,
         protocol_sha256=H0,
@@ -104,7 +108,7 @@ def _intent(now: datetime) -> ExecutionIntent:
             replicate_slot_id=slot.replicate_slot_id,
             attempt_number=1,
         ),
-        expected_artifacts=(expected,),
+        expected_artifacts=tuple(expected),
         environment_sha256=H1,
         command_sha256=H2,
         execution_parameters_sha256=H3,
@@ -477,3 +481,100 @@ def test_resolution_requires_allocator_utc_observation_and_current_avr(tmp_path:
         )
         is None
     )
+
+
+def test_admitted_protocol_input_resolves_without_producer_lineage(tmp_path: Path) -> None:
+    store = LocalArtifactStore(
+        tmp_path / "custody",
+        verifier_principal_id="principal.input-artifact-verifier",
+        object_store_id="store.input-resolution-test",
+    )
+    expected = ExpectedArtifact(
+        artifact_key="input.dataset_rows",
+        role=ArtifactRole.RAW_OUTPUT,
+        media_type="application/json",
+        schema_sha256=H1,
+        max_bytes=4096,
+        data_classification="public",
+        retention_policy_sha256=H2,
+    )
+    base = _intent(datetime.now(timezone.utc).replace(microsecond=0))
+    admission_slot = base.replicate_slot.model_copy(
+        update={
+            "preregistration_sha256": expected.expected_artifact_sha256,
+            "randomization_seed_sha256": canonical_sha256({"seed": "rows"}),
+        }
+    )
+    admission = base.model_copy(
+        update={
+            "replicate_slot": admission_slot,
+            "infrastructure_attempt": InfrastructureAttempt(
+                replicate_slot_id=admission_slot.replicate_slot_id,
+                attempt_number=1,
+            ),
+            "expected_artifacts": (expected,),
+        }
+    )
+    produced_at = datetime.now(timezone.utc).replace(microsecond=0)
+    receipt = store.admit_protocol_input(
+        intent=admission,
+        requirement=expected,
+        content=b"rows",
+        produced_at=produced_at,
+    )
+    resolver = _resolver(store, _Archive())
+
+    resolution = resolver.resolve_verified_input_artifact(
+        verified_receipt_sha256=receipt.verified_receipt_sha256,
+        observed_at=produced_at + timedelta(seconds=1),
+    )
+
+    assert resolution is not None
+    assert resolution.producer_execution_receipt is None
+    assert resolution.verified_receipt.artifact.content_sha256 == hashlib.sha256(b"rows").hexdigest()
+
+
+def test_admitted_protocol_input_fails_once_its_attempt_gains_a_terminal_row(
+    tmp_path: Path,
+) -> None:
+    store, round_intent, round_manifest, round_verified = _custody(tmp_path)
+    expected = ExpectedArtifact(
+        artifact_key="input.dataset_rows",
+        role=ArtifactRole.RAW_OUTPUT,
+        media_type="application/json",
+        schema_sha256=H1,
+        max_bytes=4096,
+        data_classification="public",
+        retention_policy_sha256=H2,
+    )
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    admission = _intent(now, expected=(expected,))
+    receipt = store.admit_protocol_input(
+        intent=admission,
+        requirement=expected,
+        content=b"rows",
+        produced_at=now,
+    )
+    # The landmine this admission shape exists to dodge: a round executor's
+    # terminal row filed under an attempt id that collides with the admission's
+    # poisons every later fresh resolution of the admission receipt, because the
+    # row can never be the exact lineage of a manifest it did not produce.  The
+    # dedicated admission slot/attempt guarantees this collision never happens.
+    round_row = _row(
+        _execution_receipt(
+            intent=round_intent,
+            manifest=round_manifest,
+            verified=round_verified,
+        )
+    )
+    colliding_row = replace(
+        round_row,
+        attempt_id=admission.infrastructure_attempt.infrastructure_attempt_id,
+    )
+    resolver = _resolver(store, _Archive((colliding_row,)))
+
+    with pytest.raises(InputArtifactResolutionError):
+        resolver.resolve_verified_input_artifact(
+            verified_receipt_sha256=receipt.verified_receipt_sha256,
+            observed_at=now + timedelta(seconds=2),
+        )
