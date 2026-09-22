@@ -173,6 +173,33 @@ def _produced_output_port_ids(work_order) -> set:
     }
 
 
+def _hand_over_root_owned_store_entries(store_root: Path) -> int:
+    """Hand this run's root-owned store entries to the commissioned custody.
+
+    Admission publishes 0400 files and 0700 prefix dirs as the root-run
+    script's own uid; the commissioned services resolve receipts at the
+    service uid, so root-owned entries would EACCES every later reader after
+    the script has already reported success. The deployment handed the whole
+    subtree to one service uid and gid, so the store root's own ownership is
+    the commissioned target; only entries still owned by root move (exactly
+    what this run created — nothing else in the commissioned store is
+    root-owned). Dirs land at the deployment's 0750, files at 0440 (both
+    within the store's immutable-mode set, so group-class readers such as
+    the driver keep access).
+    """
+
+    root_metadata = store_root.stat()
+    handed = 0
+    for entry in (store_root, *sorted(store_root.rglob("*"))):
+        metadata = entry.lstat()
+        if metadata.st_uid != 0:
+            continue
+        os.chown(entry, root_metadata.st_uid, root_metadata.st_gid)
+        os.chmod(entry, 0o750 if stat.S_ISDIR(metadata.st_mode) else 0o440)
+        handed += 1
+    return handed
+
+
 def _read_bytes(path: Path) -> bytes:
     try:
         return path.read_bytes()
@@ -1554,11 +1581,14 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
         node_manifest = manifests_by_sha.get(node.capability_manifest_sha256)
         if node_manifest is None:
             _fail("executor capability manifest is absent from the frozen catalog")
-        custody = state["qualification"]["custody"]
+        # the pinned byte limit matters: an admission larger than the
+        # allocator-side store's limit would pass here and burn the registry
+        # uniqueness keys, then never resolve at qualification time
         artifact_store = LocalArtifactStore(
-            Path(custody["artifact_store_root"]),
-            verifier_principal_id=custody["artifact_verifier_principal_id"],
-            object_store_id=custody["artifact_object_store_id"],
+            Path(custody.artifact_store_root),
+            verifier_principal_id=custody.artifact_verifier_principal_id,
+            object_store_id=custody.artifact_object_store_id,
+            max_object_bytes=custody.artifact_max_object_bytes,
         )
     for port_id in unproduced_inputs:
         port = protocol_ports.get(port_id)
@@ -1646,6 +1676,8 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
                 "bytes": len(content),
             }
         )
+    if admission_records:
+        _hand_over_root_owned_store_entries(Path(custody.artifact_store_root))
     input_bindings = tuple(sorted(input_bindings, key=lambda item: item.input_port_id))
     bound_receipt_sha256s = tuple(
         sorted({item.artifact_verified_receipt_sha256 for item in input_bindings})

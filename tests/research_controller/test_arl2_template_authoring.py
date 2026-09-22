@@ -185,7 +185,10 @@ def test_protocol_input_media_type_refuses_unsettleable_kinds(capsys) -> None:
     from aletheia.protocols.capabilities import ArtifactKind
 
     module = _script_module()
-    for kind in (ArtifactKind.MODEL, ArtifactKind.PROOF, "video"):
+    admissible = set(module._ARTIFACT_KIND_MEDIA_TYPES)
+    unsettleable = [kind for kind in ArtifactKind if kind.value not in admissible]
+    assert len(unsettleable) == 5, "expected model/sample/measurement/proof/receipt"
+    for kind in (*unsettleable, "video"):
         with pytest.raises(SystemExit):
             module._protocol_input_media_type(kind)
     assert "must settle on one of" in capsys.readouterr().err
@@ -265,3 +268,29 @@ def test_produced_output_port_ids_spans_every_work_order_node() -> None:
         "intermediate.groups",
         "validation.report",
     }
+
+
+def test_sea_admission_pins_the_store_limit_and_hands_over_ownership() -> None:
+    """Root-only call-site pins the box-side review round demanded.
+
+    Both guards live in the root-run _run_sea path that no unit test can
+    execute (chown to another uid needs root), so this scrapes the shipped
+    source the way the blocker-join check does: the admission store must
+    carry the custody pin's artifact_max_object_bytes (an oversized
+    admission would burn registry uniqueness keys and never resolve at the
+    allocator's stricter store), and every admission run must hand its
+    root-owned store entries to the commissioned custody before the
+    commissioning intent is finalized (root-owned 0700/0400 entries would
+    EACCES every non-root service after the script reported success).
+    """
+
+    source = _SCRIPT_PATH.read_text()
+    assert (
+        "max_object_bytes=custody.artifact_max_object_bytes" in source
+    ), "admission store lost the custody-pinned object limit"
+    handover = source.find("_hand_over_root_owned_store_entries(Path(")
+    finalize = source.find("input_bindings = tuple(sorted(input_bindings")
+    assert handover != -1 and finalize != -1 and handover < finalize, (
+        "admission ownership hand-over must run after the admission loop and "
+        "before the commissioning intent is finalized"
+    )
