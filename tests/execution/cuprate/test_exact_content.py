@@ -61,7 +61,52 @@ def _result(d1_bin=_D1_BINS[0], d2_bin=_D2_BINS[0]) -> CuprateDiagnosticResult:
 @pytest.mark.parametrize("d1_bin", _D1_BINS)
 @pytest.mark.parametrize("d2_bin", _D2_BINS)
 def test_combined_outcome_bin_id_is_mechanical_over_both_bins(d1_bin, d2_bin):
-    assert combined_outcome_bin_id(_result(d1_bin, d2_bin)) == f"cuprate.d1:{d1_bin}.d2:{d2_bin}"
+    assert combined_outcome_bin_id(_result(d1_bin, d2_bin)) == f"cuprate.d1-{d1_bin}.d2-{d2_bin}"
+
+
+@pytest.mark.parametrize("d1_bin", _D1_BINS)
+@pytest.mark.parametrize("d2_bin", _D2_BINS)
+def test_combined_outcome_bin_id_can_be_a_frozen_admission_policy_member(
+    d1_bin, d2_bin
+):
+    """Contradiction #19: the emitted id must survive the bridge's id pattern.
+
+    The assessor admits an observation only when the emitted bin id is a
+    member of the admission policy's outcome-bin mappings, and every such
+    id is constrained by the local-id pattern. The colon-bearing form could
+    never satisfy it, so the emission and the pattern are pinned together
+    here — a future format change that breaks membership fails this test.
+    """
+
+    import re
+
+    from aletheia.observations.scientific_bridge import _LOCAL_ID_PATTERN
+
+    assert re.fullmatch(_LOCAL_ID_PATTERN, combined_outcome_bin_id(_result(d1_bin, d2_bin)))
+
+
+@pytest.mark.parametrize("d1_bin", _D1_BINS)
+@pytest.mark.parametrize("d2_bin", _D2_BINS)
+def test_combined_outcome_bin_id_constructs_as_an_admission_policy_mapping(
+    d1_bin, d2_bin
+):
+    """Pin #19's actual seam, not just the shared regex.
+
+    The fullmatch test above and the mapping field's pattern share one
+    constant, so they coincide today; constructing the policy mapping row
+    itself keeps the constructibility guarantee even if that field is ever
+    decoupled from the shared constant.
+    """
+
+    from aletheia.observations.scientific_bridge import (
+        ScientificObservationOutcome,
+        ScientificOutcomeBinMapping,
+    )
+
+    ScientificOutcomeBinMapping(
+        outcome_bin_id=combined_outcome_bin_id(_result(d1_bin, d2_bin)),
+        outcome=ScientificObservationOutcome.POSITIVE,
+    )
 
 
 def test_unknown_bins_fail_closed():

@@ -47,13 +47,19 @@ def diagnostic_observation_bytes(result: CuprateDiagnosticResult) -> bytes:
 
 
 def combined_outcome_bin_id(result: CuprateDiagnosticResult) -> str:
-    """Mechanical combined bin id over the two preregistered outcome bins."""
+    """Mechanical combined bin id over the two preregistered outcome bins.
+
+    The id must satisfy the bridge's local-id pattern: it is compared for
+    membership against the admission policy's frozen outcome-bin mappings,
+    whose ids that pattern constrains (contradiction #19 — the earlier
+    colon-bearing form could never be a member of any constructible policy).
+    """
 
     d1 = result.d1_matched_control.outcome_bin
     d2 = result.d2_doping_stratification.outcome_bin
     if d1 not in _KNOWN_BINS or d2 not in _KNOWN_BINS:
         raise ValueError("cuprate diagnostic result carries an unknown outcome bin")
-    return f"cuprate.d1:{d1}.d2:{d2}"
+    return f"cuprate.d1-{d1}.d2-{d2}"
 
 
 def diagnostic_assessment_template(
