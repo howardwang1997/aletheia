@@ -1590,6 +1590,15 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
             object_store_id=custody.artifact_object_store_id,
             max_object_bytes=custody.artifact_max_object_bytes,
         )
+        if args.protocol_input_max_bytes > custody.artifact_max_object_bytes:
+            # pre-flight, not a stored rejection: dying inside the store's
+            # streaming rehash would skip the ownership hand-over and leave
+            # this run's root-owned entries in the commissioned store
+            _fail(
+                "--protocol-input-max-bytes exceeds the commissioned store's "
+                "pinned artifact_max_object_bytes "
+                f"({args.protocol_input_max_bytes} > {custody.artifact_max_object_bytes})"
+            )
     for port_id in unproduced_inputs:
         port = protocol_ports.get(port_id)
         if port is None or port.direction is not ProtocolPortDirection.INPUT:

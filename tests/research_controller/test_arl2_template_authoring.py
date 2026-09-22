@@ -289,8 +289,12 @@ def test_sea_admission_pins_the_store_limit_and_hands_over_ownership() -> None:
         "max_object_bytes=custody.artifact_max_object_bytes" in source
     ), "admission store lost the custody-pinned object limit"
     handover = source.find("_hand_over_root_owned_store_entries(Path(")
+    last_append = source.rfind("admission_records.append(")
     finalize = source.find("input_bindings = tuple(sorted(input_bindings")
-    assert handover != -1 and finalize != -1 and handover < finalize, (
+    assert (
+        handover != -1 and last_append != -1 and finalize != -1
+        and last_append < handover < finalize
+    ), (
         "admission ownership hand-over must run after the admission loop and "
         "before the commissioning intent is finalized"
     )
