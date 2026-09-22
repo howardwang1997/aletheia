@@ -1154,10 +1154,7 @@ class LocalArtifactStore:
                     "quarantine refused a staging object"
                 ) from exc
             try:
-                view = memoryview(content)
-                while view:
-                    written = os.write(destination, view)
-                    view = view[written:]
+                _write_all(destination, memoryview(content))
                 os.fchmod(destination, 0o400)
                 os.fsync(destination)
             finally:
