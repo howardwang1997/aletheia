@@ -298,3 +298,7 @@ def test_sea_admission_pins_the_store_limit_and_hands_over_ownership() -> None:
         "admission ownership hand-over must run after the admission loop and "
         "before the commissioning intent is finalized"
     )
+    # a plain trailing call only covers clean exits; a mid-loop _fail or store
+    # raise must still hand over, so the call has to live in a finally block
+    preceding = source[max(0, handover - 400):handover]
+    assert "finally:" in preceding, "hand-over call must sit inside a finally block"

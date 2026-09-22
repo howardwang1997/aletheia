@@ -1581,6 +1581,15 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
         node_manifest = manifests_by_sha.get(node.capability_manifest_sha256)
         if node_manifest is None:
             _fail("executor capability manifest is absent from the frozen catalog")
+        if args.protocol_input_max_bytes > custody.artifact_max_object_bytes:
+            # pre-flight ABOVE the store constructor, which itself writes
+            # root-owned layout dirs on a wiped store: a stored rejection or
+            # a post-ctor _fail would strand them outside the hand-over
+            _fail(
+                "--protocol-input-max-bytes exceeds the commissioned store's "
+                "pinned artifact_max_object_bytes "
+                f"({args.protocol_input_max_bytes} > {custody.artifact_max_object_bytes})"
+            )
         # the pinned byte limit matters: an admission larger than the
         # allocator-side store's limit would pass here and burn the registry
         # uniqueness keys, then never resolve at qualification time
@@ -1590,103 +1599,99 @@ def _run_sea(args, state: dict, state_path: Path) -> int:
             object_store_id=custody.artifact_object_store_id,
             max_object_bytes=custody.artifact_max_object_bytes,
         )
-        if args.protocol_input_max_bytes > custody.artifact_max_object_bytes:
-            # pre-flight, not a stored rejection: dying inside the store's
-            # streaming rehash would skip the ownership hand-over and leave
-            # this run's root-owned entries in the commissioned store
-            _fail(
-                "--protocol-input-max-bytes exceeds the commissioned store's "
-                "pinned artifact_max_object_bytes "
-                f"({args.protocol_input_max_bytes} > {custody.artifact_max_object_bytes})"
+    try:
+        for port_id in unproduced_inputs:
+            port = protocol_ports.get(port_id)
+            if port is None or port.direction is not ProtocolPortDirection.INPUT:
+                _fail(f"executor input port {port_id!r} is not a protocol-level input port")
+            requirement = _protocol_input_requirement(
+                port=port,
+                retention_policy_sha256=node_manifest.license_egress.retention_policy_sha256,
+                max_bytes=args.protocol_input_max_bytes,
             )
-    for port_id in unproduced_inputs:
-        port = protocol_ports.get(port_id)
-        if port is None or port.direction is not ProtocolPortDirection.INPUT:
-            _fail(f"executor input port {port_id!r} is not a protocol-level input port")
-        requirement = _protocol_input_requirement(
-            port=port,
-            retention_policy_sha256=node_manifest.license_egress.retention_policy_sha256,
-            max_bytes=args.protocol_input_max_bytes,
-        )
-        content = _read_bytes(declared_inputs[port_id])
-        if len(content) > args.protocol_input_max_bytes:
-            _fail(
-                f"protocol input {port_id} exceeds --protocol-input-max-bytes "
-                f"({len(content)} > {args.protocol_input_max_bytes})"
+            content = _read_bytes(declared_inputs[port_id])
+            if len(content) > args.protocol_input_max_bytes:
+                _fail(
+                    f"protocol input {port_id} exceeds --protocol-input-max-bytes "
+                    f"({len(content)} > {args.protocol_input_max_bytes})"
+                )
+            admission_slot = ScientificReplicateSlot(
+                quest_id=work_order.quest_id,
+                protocol_sha256=work_order.protocol_sha256,
+                work_order_id=work_order.work_order_id,
+                work_order_node_id=node.node_id,
+                work_order_node_sha256=node.node_sha256,
+                slot_count=1,
+                slot_index=1,
+                replicate_kind=node.replicate_kind,
+                preregistration_sha256=requirement.expected_artifact_sha256,
+                randomization_seed_sha256=_sha256_bytes(content),
+                independent_site_required=node.independent_site_required,
             )
-        admission_slot = ScientificReplicateSlot(
-            quest_id=work_order.quest_id,
-            protocol_sha256=work_order.protocol_sha256,
-            work_order_id=work_order.work_order_id,
-            work_order_node_id=node.node_id,
-            work_order_node_sha256=node.node_sha256,
-            slot_count=1,
-            slot_index=1,
-            replicate_kind=node.replicate_kind,
-            preregistration_sha256=requirement.expected_artifact_sha256,
-            randomization_seed_sha256=_sha256_bytes(content),
-            independent_site_required=node.independent_site_required,
-        )
-        admission_intent = ExecutionIntent(
-            quest_id=work_order.quest_id,
-            protocol_sha256=work_order.protocol_sha256,
-            work_order_id=work_order.work_order_id,
-            work_order_sha256=work_order.work_order_sha256,
-            work_order_node_id=node.node_id,
-            work_order_node_sha256=node.node_sha256,
-            capability_id=node.capability_id,
-            capability_manifest_sha256=node.capability_manifest_sha256,
-            external_action_kind=node.external_action_kind,
-            resource_catalog_sha256=work_order.resource_catalog_sha256,
-            resource_request=node.resource_request.model_copy(
-                update={
-                    "artifact_quota_bytes": max(
-                        node.resource_request.artifact_quota_bytes, len(content)
-                    )
-                }
-            ),
-            retry_policy=node.retry_policy,
-            replicate_slot=admission_slot,
-            infrastructure_attempt=InfrastructureAttempt(
-                replicate_slot_id=admission_slot.replicate_slot_id,
-                attempt_number=1,
-            ),
-            input_artifact_bindings=(),
-            expected_artifacts=(requirement,),
-            environment_sha256=node.environment_sha256,
-            command_sha256=node.command_sha256,
-            execution_parameters_sha256=node.execution_parameters_sha256,
-            effect_class=node.effect_class,
-            authorized_at=now,
-            deadline=intent_deadline,
-        )
-        receipt = artifact_store.admit_protocol_input(
-            intent=admission_intent,
-            requirement=requirement,
-            content=content,
-            produced_at=now,
-        )
-        input_bindings.append(
-            InputArtifactBinding(
-                input_port_id=port_id,
-                source_kind="protocol_input",
-                artifact_verified_receipt_sha256=receipt.verified_receipt_sha256,
-            )
-        )
-        admission_records.append(
-            {
-                "port_id": port_id,
-                "admission_replicate_slot_id": admission_slot.replicate_slot_id,
-                "admission_infrastructure_attempt_id": (
-                    admission_intent.infrastructure_attempt.infrastructure_attempt_id
+            admission_intent = ExecutionIntent(
+                quest_id=work_order.quest_id,
+                protocol_sha256=work_order.protocol_sha256,
+                work_order_id=work_order.work_order_id,
+                work_order_sha256=work_order.work_order_sha256,
+                work_order_node_id=node.node_id,
+                work_order_node_sha256=node.node_sha256,
+                capability_id=node.capability_id,
+                capability_manifest_sha256=node.capability_manifest_sha256,
+                external_action_kind=node.external_action_kind,
+                resource_catalog_sha256=work_order.resource_catalog_sha256,
+                resource_request=node.resource_request.model_copy(
+                    update={
+                        "artifact_quota_bytes": max(
+                            node.resource_request.artifact_quota_bytes, len(content)
+                        )
+                    }
                 ),
-                "artifact_verified_receipt_sha256": receipt.verified_receipt_sha256,
-                "content_sha256": _sha256_bytes(content),
-                "bytes": len(content),
-            }
-        )
-    if admission_records:
-        _hand_over_root_owned_store_entries(Path(custody.artifact_store_root))
+                retry_policy=node.retry_policy,
+                replicate_slot=admission_slot,
+                infrastructure_attempt=InfrastructureAttempt(
+                    replicate_slot_id=admission_slot.replicate_slot_id,
+                    attempt_number=1,
+                ),
+                input_artifact_bindings=(),
+                expected_artifacts=(requirement,),
+                environment_sha256=node.environment_sha256,
+                command_sha256=node.command_sha256,
+                execution_parameters_sha256=node.execution_parameters_sha256,
+                effect_class=node.effect_class,
+                authorized_at=now,
+                deadline=intent_deadline,
+            )
+            receipt = artifact_store.admit_protocol_input(
+                intent=admission_intent,
+                requirement=requirement,
+                content=content,
+                produced_at=now,
+            )
+            input_bindings.append(
+                InputArtifactBinding(
+                    input_port_id=port_id,
+                    source_kind="protocol_input",
+                    artifact_verified_receipt_sha256=receipt.verified_receipt_sha256,
+                )
+            )
+            admission_records.append(
+                {
+                    "port_id": port_id,
+                    "admission_replicate_slot_id": admission_slot.replicate_slot_id,
+                    "admission_infrastructure_attempt_id": (
+                        admission_intent.infrastructure_attempt.infrastructure_attempt_id
+                    ),
+                    "artifact_verified_receipt_sha256": receipt.verified_receipt_sha256,
+                    "content_sha256": _sha256_bytes(content),
+                    "bytes": len(content),
+                }
+            )
+    finally:
+        # any exit after the store constructor ran must hand over:
+        # a mid-loop _fail or store raise would otherwise strand the
+        # root-owned entries this run already published
+        if artifact_store is not None:
+            _hand_over_root_owned_store_entries(Path(custody.artifact_store_root))
     input_bindings = tuple(sorted(input_bindings, key=lambda item: item.input_port_id))
     bound_receipt_sha256s = tuple(
         sorted({item.artifact_verified_receipt_sha256 for item in input_bindings})
