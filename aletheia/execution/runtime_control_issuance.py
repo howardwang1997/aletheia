@@ -27,6 +27,13 @@ from aletheia.execution.runtime_v2_contracts import (
     issue_runtime_launch_authorization,
     issue_runtime_termination_acceptance_challenge,
 )
+from aletheia.execution.external_bridge_contracts import (
+    issue_accepted_external_runtime_termination as external_issue_accepted_termination,
+    issue_accepted_external_qualification_terminal_submission as external_issue_terminal_submission_acceptance,
+    issue_external_launch_authorization as external_issue_launch_authorization,
+    issue_external_qualification_terminal_deadline_expiration as external_issue_terminal_deadline_expiration,
+    issue_external_termination_acceptance_challenge as external_issue_termination_challenge,
+)
 
 
 class PinnedRuntimeControlIssuanceAuthority:
@@ -177,6 +184,31 @@ class PinnedRuntimeControlIssuanceAuthority:
             private_key=self._private_key,
             runtime_authority=self._verifier,
             **scope,
+        )
+
+    def issue_external_launch_authorization(self, **scope):
+        return external_issue_launch_authorization(
+            pin=self._pin, private_key=self._private_key, **scope
+        )
+
+    def issue_external_termination_challenge(self, **scope):
+        return external_issue_termination_challenge(
+            pin=self._pin, private_key=self._private_key, **scope
+        )
+
+    def issue_accepted_external_termination(self, **scope):
+        return external_issue_accepted_termination(
+            pin=self._pin, private_key=self._private_key, **scope
+        )
+
+    def issue_external_terminal_submission_acceptance(self, **scope):
+        return external_issue_terminal_submission_acceptance(
+            pin=self._pin, private_key=self._private_key, **scope
+        )
+
+    def issue_external_terminal_deadline_expiration(self, **scope):
+        return external_issue_terminal_deadline_expiration(
+            pin=self._pin, private_key=self._private_key, **scope
         )
 
 

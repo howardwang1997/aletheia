@@ -44,6 +44,13 @@ from aletheia.execution.persistence import (
     _ExecutionBudgetReservationRecord,
     _ExecutionDeviceHeadRecord,
     _ExecutionDeviceLeaseRecord,
+    _ExecutionExternalLaunchAuthorizationRecord,
+    _ExecutionExternalQualificationTerminalAcceptanceRecord,
+    _ExecutionExternalQualificationTerminalDeadlineExpirationRecord,
+    _ExecutionExternalRuntimeLaunchReceiptRecord,
+    _ExecutionExternalRuntimePreparationRecord,
+    _ExecutionExternalRuntimeTerminationAcceptanceRecord,
+    _ExecutionExternalTerminationChallengeRecord,
     _ExecutionHeadRecord,
     _ExecutionInventoryAttestationRecord,
     _ExecutionInventoryDeviceRecord,
@@ -108,6 +115,7 @@ from aletheia.execution.runtime_v2_contracts import (
     MINIMUM_LOOP_OUTPUT_FILESYSTEM_BYTES,
     NodeRuntimeLaunchReceipt,
     NodeRuntimeTerminationReceipt,
+    RuntimeControlAuthorityPin,
     PreRuntimeAbsenceReceipt,
     QualificationTerminalSubmission,
     QualificationTerminalDeadlineExpiration,
@@ -131,6 +139,27 @@ from aletheia.execution.runtime_v2_contracts import (
     verify_runtime_launch_authorization_ticket_historical,
     verify_runtime_termination_acceptance_challenge,
     validate_runtime_terminal_evidence_refresh,
+)
+from aletheia.execution.external_bridge_contracts import (
+    AcceptedExternalQualificationTerminalSubmission,
+    AcceptedExternalRuntimeTermination,
+    ExternalLaunchAuthorization,
+    ExternalQualificationTerminalDeadlineExpiration,
+    ExternalQualificationTerminalSubmission,
+    ExternalRuntimeLaunchReceipt,
+    ExternalRuntimePreparation,
+    ExternalRuntimeTerminationReceipt,
+    ExternalTerminationAcceptanceChallenge,
+    ExternalTerminationEvidence,
+    VerifiedExternalRuntimeLaunch,
+    recompute_external_disposition,
+    verify_accepted_external_qualification_terminal_submission,
+    verify_accepted_external_runtime_termination,
+    verify_external_qualification_terminal_deadline_expiration,
+    verify_external_qualification_terminal_submission,
+    verify_external_runtime_launch_receipt,
+    verify_external_runtime_termination_receipt,
+    verify_external_termination_acceptance_challenge,
 )
 from aletheia.execution.schemas import (
     ArtifactManifest,
@@ -383,6 +412,43 @@ class QualificationTerminalDeadlineExpirationCommit:
     terminal_authority_kind: Literal["terminal_deadline_expiration"] = (
         "terminal_deadline_expiration"
     )
+
+
+@dataclass(frozen=True)
+class ExternalRuntimeStartCommit:
+    snapshot: ReservationSnapshot
+    launch_authorization: ExternalLaunchAuthorization
+    replayed: bool
+
+
+@dataclass(frozen=True)
+class ExternalRuntimeLaunchCommit:
+    snapshot: ReservationSnapshot
+    verified: VerifiedExternalRuntimeLaunch
+    replayed: bool
+
+
+@dataclass(frozen=True)
+class ExternalTerminationChallengeCommit:
+    snapshot: ReservationSnapshot
+    challenge: ExternalTerminationAcceptanceChallenge
+    replayed: bool
+
+
+@dataclass(frozen=True)
+class ExternalRuntimeTerminationCommit:
+    snapshot: ReservationSnapshot
+    accepted_termination: AcceptedExternalRuntimeTermination
+    terminal_expiration: ExternalQualificationTerminalDeadlineExpiration
+    charged_microunits: int
+    replayed: bool
+
+
+@dataclass(frozen=True)
+class ExternalRuntimeTerminalArtifactCommit:
+    snapshot: ReservationSnapshot
+    terminal_acceptance: AcceptedExternalQualificationTerminalSubmission
+    replayed: bool
 
 
 class QualificationTerminalOutboxItem(ExecutionModel):
@@ -6797,6 +6863,1512 @@ class PostgreSQLExecutionAllocator:
                 replayed=False,
             )
 
+    def authorize_external_runtime_start(
+        self,
+        *,
+        attempt_id: str,
+        lease_token: str,
+        fencing_epoch: int,
+        runtime_preparation: ExternalRuntimePreparation,
+        launch_authorization_request: RuntimeLaunchAuthorizationRequest,
+    ) -> ExternalRuntimeStartCommit:
+        """Persist one inert external preparation and issue its short-lived launch ticket."""
+
+        issuer = self._require_runtime_control_issuer()
+        try:
+            preparation = ExternalRuntimePreparation.model_validate(
+                runtime_preparation.model_dump(mode="python")
+            )
+            authorization_request = RuntimeLaunchAuthorizationRequest.model_validate(
+                launch_authorization_request.model_dump(mode="python")
+            )
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise LeaseAuthorityError("external runtime start authority is not canonical") from exc
+        if preparation.infrastructure_attempt_id != attempt_id:
+            raise LeaseAuthorityError("external runtime preparation belongs to another attempt")
+        with self._sessions() as session, session.begin():
+            _execution_head, attempt = self._lock_execution_attempt(session, attempt_id)
+            self._verify_lease_authority(
+                attempt, lease_token=lease_token, fencing_epoch=fencing_epoch
+            )
+            budget_head, resource, reservation = self._lock_external_runtime_holds(session, attempt)
+            now = _database_time(session)
+            bridge = self._require_external_bridge_authority(attempt, observed_at=now)
+            if (
+                preparation.execution_id != attempt.execution_id
+                or preparation.intent_sha256 != attempt.intent_sha256
+                or preparation.bridge_manifest_sha256 != bridge.manifest.manifest_sha256
+                or preparation.fencing_epoch != attempt.fencing_epoch
+                or preparation.lease_token_sha256 != attempt.lease_token_sha256
+                or not attempt.reserved_at <= preparation.prepared_at <= now
+                or authorization_request.runtime_preparation_sha256
+                != preparation.preparation_sha256
+                or authorization_request.infrastructure_attempt_id != attempt.attempt_id
+                or authorization_request.fencing_epoch != attempt.fencing_epoch
+                or authorization_request.lease_token_sha256 != attempt.lease_token_sha256
+                or authorization_request.pre_runtime_absence_epoch != 0
+                or authorization_request.pre_runtime_absence_receipt_sha256 is not None
+                or not preparation.prepared_at <= authorization_request.requested_at <= now
+                or authorization_request.requested_monotonic_ns
+                < preparation.prepared_monotonic_ns
+            ):
+                raise LeaseAuthorityError(
+                    "external runtime preparation/request differs from locked attempt authority"
+                )
+            preparation_record = session.execute(
+                select(_ExecutionExternalRuntimePreparationRecord).where(
+                    _ExecutionExternalRuntimePreparationRecord.attempt_id == attempt_id
+                )
+            ).scalar_one_or_none()
+            preparation_payload = _model_json(preparation)
+            if preparation_record is None:
+                if attempt.runtime_preparation_sha256 is not None:
+                    raise LeaseAuthorityError("external runtime preparation head is orphaned")
+                preparation_record = _ExecutionExternalRuntimePreparationRecord(
+                    preparation_sha256=preparation.preparation_sha256,
+                    attempt_id=attempt.attempt_id,
+                    execution_id=attempt.execution_id,
+                    intent_sha256=attempt.intent_sha256,
+                    bridge_manifest_sha256=preparation.bridge_manifest_sha256,
+                    fencing_epoch=preparation.fencing_epoch,
+                    lease_token_sha256=preparation.lease_token_sha256,
+                    payload_sha256=preparation.preparation_sha256,
+                    payload_json=preparation_payload,
+                    prepared_at=preparation.prepared_at,
+                    prepared_monotonic_ns=preparation.prepared_monotonic_ns,
+                    recorded_at=now,
+                )
+                session.add(preparation_record)
+                session.flush()
+            elif (
+                preparation_record.preparation_sha256 != preparation.preparation_sha256
+                or preparation_record.payload_sha256 != preparation.preparation_sha256
+                or preparation_record.payload_json != preparation_payload
+                or attempt.runtime_preparation_sha256 != preparation_record.preparation_sha256
+            ):
+                raise LeaseAuthorityError("external runtime preparation identity is rebound")
+
+            replay_record = session.execute(
+                select(_ExecutionExternalLaunchAuthorizationRecord).where(
+                    _ExecutionExternalLaunchAuthorizationRecord.request_sha256
+                    == authorization_request.request_sha256
+                )
+            ).scalar_one_or_none()
+            if replay_record is not None:
+                try:
+                    replay_request = RuntimeLaunchAuthorizationRequest.model_validate(
+                        replay_record.request_json
+                    )
+                    replay_authorization = ExternalLaunchAuthorization.model_validate(
+                        replay_record.authorization_json
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise LeaseAuthorityError("stored external launch authority is invalid") from exc
+                if (
+                    replay_request != authorization_request
+                    or replay_record.attempt_id != attempt.attempt_id
+                    or replay_record.sequence != attempt.runtime_launch_authorization_count
+                    or replay_record.authorization_sha256
+                    != attempt.latest_runtime_launch_authorization_sha256
+                    or replay_authorization.authorization_sha256
+                    != replay_record.authorization_sha256
+                ):
+                    raise LeaseAuthorityError("external launch request replay is rebound")
+                return ExternalRuntimeStartCommit(
+                    snapshot=self._snapshot(session, attempt),
+                    launch_authorization=replay_authorization,
+                    replayed=True,
+                )
+            if now >= attempt.lease_expires_at or now >= attempt.hard_deadline:
+                raise LeaseAuthorityError("expired lease cannot receive external launch authority")
+            if attempt.status not in {"reserved", "starting"}:
+                raise LeaseAuthorityError("attempt cannot receive another external launch authorization")
+            existing_receipt = session.execute(
+                select(_ExecutionExternalRuntimeLaunchReceiptRecord.launch_receipt_sha256).where(
+                    _ExecutionExternalRuntimeLaunchReceiptRecord.attempt_id == attempt.attempt_id
+                )
+            ).scalar_one_or_none()
+            if existing_receipt is not None:
+                raise LeaseAuthorityError("already-launched external attempt cannot be reauthorized")
+
+            # The launch ticket must fit inside the retained lease (the frozen guard pins
+            # authorization.lease_expires_at <= attempt.lease_expires_at <= hard_deadline),
+            # so the initial short assignment lease grows to cover the window exactly like
+            # the node twin, in the same transaction as the attempt/resource rows.
+            runtime_pin = issuer.authority_pin
+            launch_window_expires_at = now + timedelta(
+                seconds=self._max_runtime_launch_authorization_seconds
+            )
+            if launch_window_expires_at > min(attempt.hard_deadline, runtime_pin.active_until):
+                raise LeaseAuthorityError(
+                    "runtime-control authority cannot cover the complete external launch window"
+                )
+            heartbeat_lease_expires_at = min(
+                now + self._heartbeat_extension,
+                attempt.hard_deadline,
+            )
+            bounded_launch_lease_expires_at = max(
+                heartbeat_lease_expires_at,
+                launch_window_expires_at,
+            )
+            runtime_lease_expires_at = (
+                bounded_launch_lease_expires_at
+                if attempt.status == "reserved"
+                else max(attempt.lease_expires_at, bounded_launch_lease_expires_at)
+            )
+            if runtime_lease_expires_at <= now:
+                raise LeaseAuthorityError("runtime launch lease window is empty")
+            expires_at = launch_window_expires_at
+            try:
+                authorization = issuer.issue_external_launch_authorization(
+                    admission_sha256=attempt.admission_sha256,
+                    qualification_grant_sha256=attempt.grant_sha256,
+                    bridge_manifest_sha256=bridge.manifest.manifest_sha256,
+                    execution_id=attempt.execution_id,
+                    infrastructure_attempt_id=attempt.attempt_id,
+                    intent_sha256=attempt.intent_sha256,
+                    runtime_preparation_sha256=preparation.preparation_sha256,
+                    authorization_request_sha256=authorization_request.request_sha256,
+                    launch_spec_sha256=preparation.launch_spec_sha256,
+                    workload_executable_sha256=preparation.workload_executable_sha256,
+                    workload_argv=preparation.workload_argv,
+                    enforced_placement_sha256=preparation.enforced_placement_sha256,
+                    input_materialization_receipt_sha256=(
+                        preparation.input_materialization_receipt_sha256
+                    ),
+                    fencing_epoch=preparation.fencing_epoch,
+                    lease_token_sha256=preparation.lease_token_sha256,
+                    lease_expires_at=runtime_lease_expires_at,
+                    hard_deadline=attempt.hard_deadline,
+                    issued_at=now,
+                    expires_at=expires_at,
+                    max_launch_delay_ns=(
+                        self._max_runtime_launch_authorization_seconds * 1_000_000_000
+                    ),
+                )
+                authorization = ExternalLaunchAuthorization.model_validate(
+                    authorization.model_dump(mode="python")
+                )
+                issuer.authority_verifier.verify(
+                    kind="external_launch_authorization",
+                    payload=authorization.signature_payload,
+                    signature_ed25519_hex=authorization.signature_ed25519_hex,
+                    policy_sha256=authorization.runtime_control_policy_sha256,
+                    principal_id=authorization.authorized_by_principal_id,
+                    key_id=authorization.authorization_key_id,
+                    signed_at=authorization.issued_at,
+                    expires_at=authorization.expires_at,
+                    observed_at=now,
+                )
+            except (AttributeError, TypeError, ValueError, QualificationVerificationError) as exc:
+                raise LeaseAuthorityError(
+                    "runtime-control issuer returned invalid external authority"
+                ) from exc
+            if (
+                authorization.admission_sha256 != attempt.admission_sha256
+                or authorization.qualification_grant_sha256 != attempt.grant_sha256
+                or authorization.issued_at != now
+                or authorization.expires_at != expires_at
+                or authorization.lease_expires_at != runtime_lease_expires_at
+                or authorization.hard_deadline != attempt.hard_deadline
+            ):
+                raise LeaseAuthorityError("external launch ticket differs from requested DB scope")
+
+            sequence = attempt.runtime_launch_authorization_count + 1
+            session.add(
+                _ExecutionExternalLaunchAuthorizationRecord(
+                    authorization_sha256=authorization.authorization_sha256,
+                    attempt_id=attempt.attempt_id,
+                    preparation_sha256=preparation.preparation_sha256,
+                    sequence=sequence,
+                    request_sha256=authorization_request.request_sha256,
+                    request_payload_sha256=authorization_request.request_sha256,
+                    request_json=_model_json(authorization_request),
+                    authorization_payload_sha256=authorization.authorization_sha256,
+                    authorization_json=_model_json(authorization),
+                    runtime_control_pin_sha256=canonical_sha256(runtime_pin),
+                    runtime_control_pin_json=_model_json(runtime_pin),
+                    issued_at=authorization.issued_at,
+                    expires_at=authorization.expires_at,
+                    recorded_at=now,
+                )
+            )
+            session.flush()
+            attempt.heartbeat_at = now
+            attempt.lease_expires_at = runtime_lease_expires_at
+            attempt.runtime_preparation_sha256 = preparation.preparation_sha256
+            attempt.runtime_launch_authorization_count = sequence
+            attempt.latest_runtime_launch_authorization_sha256 = (
+                authorization.authorization_sha256
+            )
+            attempt.status = "starting"
+            attempt.state_version += 1
+            attempt.updated_at = now
+            resource.heartbeat_at = now
+            resource.lease_expires_at = runtime_lease_expires_at
+            session.flush()
+            return ExternalRuntimeStartCommit(
+                snapshot=self._snapshot(session, attempt),
+                launch_authorization=authorization,
+                replayed=False,
+            )
+
+    def accept_external_runtime_launch(
+        self,
+        *,
+        attempt_id: str,
+        lease_token: str,
+        fencing_epoch: int,
+        launch_receipt: ExternalRuntimeLaunchReceipt,
+    ) -> ExternalRuntimeLaunchCommit:
+        """Accept fresh bridge launch evidence and bind the executor identity atomically."""
+
+        issuer = self._require_runtime_control_issuer()
+        try:
+            receipt = ExternalRuntimeLaunchReceipt.model_validate(
+                launch_receipt.model_dump(mode="python")
+            )
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise LeaseAuthorityError("external runtime launch receipt is not canonical") from exc
+        with self._sessions() as session, session.begin():
+            _execution_head, attempt = self._lock_execution_attempt(session, attempt_id)
+            self._verify_lease_authority(
+                attempt, lease_token=lease_token, fencing_epoch=fencing_epoch
+            )
+            _budget_head, resource, _reservation = self._lock_external_runtime_holds(
+                session, attempt
+            )
+            now = _database_time(session)
+            bridge = self._require_external_bridge_authority(attempt, observed_at=now)
+            preparation, authorization_request, authorization = self._load_external_launch_lineage(
+                session, attempt
+            )
+            existing = session.execute(
+                select(_ExecutionExternalRuntimeLaunchReceiptRecord).where(
+                    _ExecutionExternalRuntimeLaunchReceiptRecord.attempt_id == attempt_id
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                try:
+                    stored_receipt = ExternalRuntimeLaunchReceipt.model_validate(
+                        existing.launch_receipt_json
+                    )
+                    verified = verify_external_runtime_launch_receipt(
+                        receipt=stored_receipt,
+                        authorization=authorization,
+                        authorization_request=authorization_request,
+                        preparation=preparation,
+                        bridge_authority=bridge,
+                        runtime_control_authority=issuer.authority_verifier,
+                        observed_at=existing.accepted_at,
+                        maximum_age_seconds=self._max_runtime_proof_age_seconds,
+                    )
+                except (TypeError, ValueError, QualificationVerificationError) as exc:
+                    raise LeaseAuthorityError("stored external launch lineage is invalid") from exc
+                if (
+                    stored_receipt != receipt
+                    or existing.launch_receipt_sha256 != receipt.launch_receipt_sha256
+                    or existing.preparation_sha256 != preparation.preparation_sha256
+                    or existing.authorization_sha256 != authorization.authorization_sha256
+                    or attempt.runtime_identity_sha256 != verified.executor_identity_sha256
+                    or attempt.status != "running"
+                ):
+                    raise LeaseAuthorityError("external launch receipt replay is rebound")
+                return ExternalRuntimeLaunchCommit(
+                    snapshot=self._snapshot(session, attempt),
+                    verified=verified,
+                    replayed=True,
+                )
+            if attempt.status != "starting":
+                raise LeaseAuthorityError("attempt is not awaiting an external launch receipt")
+            if now >= attempt.lease_expires_at or now >= attempt.hard_deadline:
+                raise LeaseAuthorityError("expired lease cannot accept external launch evidence")
+            try:
+                verified = verify_external_runtime_launch_receipt(
+                    receipt=receipt,
+                    authorization=authorization,
+                    authorization_request=authorization_request,
+                    preparation=preparation,
+                    bridge_authority=bridge,
+                    runtime_control_authority=issuer.authority_verifier,
+                    observed_at=now,
+                    maximum_age_seconds=self._max_runtime_proof_age_seconds,
+                )
+            except QualificationVerificationError as exc:
+                raise LeaseAuthorityError("external launch receipt is stale or invalid") from exc
+            identity = receipt.launch_evidence.executor_identity
+            if not attempt.reserved_at <= identity.started_at <= now:
+                raise LeaseAuthorityError(
+                    "external executor identity started outside the attempt window"
+                )
+            bridge_pin = self._bridge_runtime_pin(bridge)
+            session.add(
+                _ExecutionExternalRuntimeLaunchReceiptRecord(
+                    launch_receipt_sha256=receipt.launch_receipt_sha256,
+                    attempt_id=attempt.attempt_id,
+                    preparation_sha256=preparation.preparation_sha256,
+                    authorization_request_sha256=authorization_request.request_sha256,
+                    authorization_sha256=authorization.authorization_sha256,
+                    executor_identity_sha256=verified.executor_identity_sha256,
+                    launch_evidence_sha256=receipt.launch_evidence_sha256,
+                    launch_payload_sha256=receipt.launch_receipt_sha256,
+                    launch_receipt_json=_model_json(receipt),
+                    bridge_pin_sha256=canonical_sha256(bridge_pin),
+                    bridge_pin_json=_model_json(bridge_pin),
+                    signed_at=receipt.signed_at,
+                    accepted_at=now,
+                )
+            )
+            session.flush()
+            attempt.status = "running"
+            attempt.runtime_identity_sha256 = verified.executor_identity_sha256
+            attempt.runtime_identity_json = _model_json(identity)
+            attempt.heartbeat_at = now
+            attempt.state_version += 1
+            attempt.updated_at = now
+            resource.heartbeat_at = now
+            session.flush()
+            return ExternalRuntimeLaunchCommit(
+                snapshot=self._snapshot(session, attempt),
+                verified=verified,
+                replayed=False,
+            )
+
+    def issue_external_termination_challenge(
+        self,
+        *,
+        attempt_id: str,
+        lease_token: str,
+        fencing_epoch: int,
+        termination_evidence: ExternalTerminationEvidence,
+    ) -> ExternalTerminationChallengeCommit:
+        """Persist one exact external terminal observation under a short-lived DB challenge."""
+
+        issuer = self._require_runtime_control_issuer()
+        try:
+            evidence = ExternalTerminationEvidence.model_validate(
+                termination_evidence.model_dump(mode="python")
+            )
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise LeaseAuthorityError("external termination evidence is not canonical") from exc
+        with self._sessions() as session, session.begin():
+            _execution_head, attempt = self._lock_execution_attempt(session, attempt_id)
+            self._verify_lease_authority(
+                attempt, lease_token=lease_token, fencing_epoch=fencing_epoch
+            )
+            _budget_head, resource, _reservation = self._lock_external_runtime_holds(
+                session, attempt
+            )
+            now = _database_time(session)
+            bridge = self._require_external_bridge_authority(attempt, observed_at=now)
+            preparation, _request, _authorization = self._load_external_launch_lineage(
+                session, attempt
+            )
+            receipt_record = session.execute(
+                select(_ExecutionExternalRuntimeLaunchReceiptRecord).where(
+                    _ExecutionExternalRuntimeLaunchReceiptRecord.attempt_id == attempt_id
+                )
+            ).scalar_one_or_none()
+            if receipt_record is None or attempt.runtime_identity_sha256 is None:
+                raise LeaseAuthorityError("external termination evidence lacks its accepted launch")
+            try:
+                launch_receipt = ExternalRuntimeLaunchReceipt.model_validate(
+                    receipt_record.launch_receipt_json
+                )
+            except (TypeError, ValueError) as exc:
+                raise LeaseAuthorityError("stored external launch receipt is invalid") from exc
+            if (
+                evidence.preparation_sha256 != preparation.preparation_sha256
+                or evidence.external_launch_receipt_sha256 != launch_receipt.launch_receipt_sha256
+                or evidence.executor_identity_sha256 != attempt.runtime_identity_sha256
+                or evidence.ended_at > now
+                or launch_receipt.launch_evidence.executor_identity_sha256
+                != evidence.executor_identity_sha256
+            ):
+                raise LeaseAuthorityError("external termination evidence differs from the launch")
+
+            runtime_pin = issuer.authority_pin
+            existing = session.execute(
+                select(_ExecutionExternalTerminationChallengeRecord).where(
+                    _ExecutionExternalTerminationChallengeRecord.attempt_id == attempt_id,
+                    _ExecutionExternalTerminationChallengeRecord.termination_evidence_sha256
+                    == evidence.termination_evidence_sha256,
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                try:
+                    challenge = ExternalTerminationAcceptanceChallenge.model_validate(
+                        existing.challenge_json
+                    )
+                    verify_external_termination_acceptance_challenge(
+                        challenge=challenge,
+                        preparation=preparation,
+                        launch_receipt=launch_receipt,
+                        termination_evidence=evidence,
+                        authority=issuer.authority_verifier,
+                        observed_at=existing.challenged_at,
+                    )
+                except (TypeError, ValueError, QualificationVerificationError) as exc:
+                    raise LeaseAuthorityError(
+                        "stored external termination challenge is invalid"
+                    ) from exc
+                if (
+                    existing.challenge_sha256 != challenge.challenge_sha256
+                    or existing.termination_evidence_json != _model_json(evidence)
+                    or existing.runtime_control_pin_sha256 != canonical_sha256(runtime_pin)
+                    or existing.runtime_control_pin_json != _model_json(runtime_pin)
+                    or attempt.runtime_termination_challenge_sha256 != challenge.challenge_sha256
+                ):
+                    raise LeaseAuthorityError("external termination challenge replay is rebound")
+                accepted_row = session.execute(
+                    select(_ExecutionExternalRuntimeTerminationAcceptanceRecord).where(
+                        _ExecutionExternalRuntimeTerminationAcceptanceRecord.challenge_sha256
+                        == challenge.challenge_sha256
+                    )
+                ).scalar_one_or_none()
+                if accepted_row is None and now >= challenge.expires_at:
+                    raise RuntimeProofReplayRejected(
+                        RuntimeProofReplayRejectionCode.TERMINATION_CHALLENGE_EXPIRED_UNACCEPTED
+                    )
+                return ExternalTerminationChallengeCommit(
+                    snapshot=self._snapshot(session, attempt),
+                    challenge=challenge,
+                    replayed=True,
+                )
+            if attempt.status != "running":
+                raise LeaseAuthorityError("attempt is not running an external executor")
+            accepted_any = session.execute(
+                select(
+                    _ExecutionExternalRuntimeTerminationAcceptanceRecord.accepted_termination_sha256
+                ).where(
+                    _ExecutionExternalRuntimeTerminationAcceptanceRecord.attempt_id == attempt_id
+                )
+            ).scalar_one_or_none()
+            if accepted_any is not None:
+                raise LeaseAuthorityError("terminated external attempt cannot be re-challenged")
+            latest_challenge = session.execute(
+                select(_ExecutionExternalTerminationChallengeRecord)
+                .where(_ExecutionExternalTerminationChallengeRecord.attempt_id == attempt_id)
+                .order_by(
+                    _ExecutionExternalTerminationChallengeRecord.challenge_sequence.desc()
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+            if latest_challenge is not None:
+                try:
+                    previous_challenge = ExternalTerminationAcceptanceChallenge.model_validate(
+                        latest_challenge.challenge_json
+                    )
+                    stored_preparation = ExternalRuntimePreparation.model_validate(
+                        session.get(
+                            _ExecutionExternalRuntimePreparationRecord,
+                            latest_challenge.preparation_sha256,
+                        ).payload_json
+                    )
+                    stored_launch_receipt = ExternalRuntimeLaunchReceipt.model_validate(
+                        session.get(
+                            _ExecutionExternalRuntimeLaunchReceiptRecord,
+                            latest_challenge.launch_receipt_sha256,
+                        ).launch_receipt_json
+                    )
+                    previous_evidence = ExternalTerminationEvidence.model_validate(
+                        latest_challenge.termination_evidence_json
+                    )
+                    verify_external_termination_acceptance_challenge(
+                        challenge=previous_challenge,
+                        preparation=stored_preparation,
+                        launch_receipt=stored_launch_receipt,
+                        termination_evidence=previous_evidence,
+                        authority=issuer.authority_verifier,
+                        observed_at=previous_challenge.challenged_at,
+                    )
+                except (AttributeError, TypeError, ValueError) as exc:
+                    raise LeaseAuthorityError(
+                        "stored external termination challenge generation is invalid"
+                    ) from exc
+                prior_acceptance = session.execute(
+                    select(_ExecutionExternalRuntimeTerminationAcceptanceRecord).where(
+                        _ExecutionExternalRuntimeTerminationAcceptanceRecord.challenge_sha256
+                        == previous_challenge.challenge_sha256
+                    )
+                ).scalar_one_or_none()
+                if (
+                    prior_acceptance is not None
+                    or now < previous_challenge.expires_at
+                    or latest_challenge.runtime_control_pin_sha256
+                    != canonical_sha256(runtime_pin)
+                    or latest_challenge.runtime_control_pin_json != _model_json(runtime_pin)
+                ):
+                    raise LeaseAuthorityError(
+                        "external termination challenge generation is still live or accepted"
+                    )
+            artifact_submission_deadline = attempt.hard_deadline + self._artifact_submission_grace
+            expires_at = min(
+                now + timedelta(seconds=self._max_runtime_proof_age_seconds),
+                runtime_pin.active_until,
+                bridge.bridge_authority_pin.active_until,
+                artifact_submission_deadline,
+            )
+            challenge_sequence = attempt.runtime_termination_challenge_count + 1
+            if (
+                expires_at <= now
+                or artifact_submission_deadline > runtime_pin.active_until
+                or artifact_submission_deadline > bridge.bridge_authority_pin.active_until
+            ):
+                raise LeaseAuthorityError("external termination proof windows exceed active pins")
+            challenge_id = canonical_sha256(
+                {
+                    "schema_name": "aletheia.external_termination_challenge_id",
+                    "schema_version": 2,
+                    "attempt_id": attempt.attempt_id,
+                    "challenge_sequence": challenge_sequence,
+                    "termination_evidence_sha256": evidence.termination_evidence_sha256,
+                }
+            )
+            try:
+                challenge = issuer.issue_external_termination_challenge(
+                    challenge_id=challenge_id,
+                    attempt_id=attempt.attempt_id,
+                    execution_id=attempt.execution_id,
+                    intent_sha256=attempt.intent_sha256,
+                    bridge_manifest_sha256=bridge.manifest.manifest_sha256,
+                    runtime_preparation_sha256=preparation.preparation_sha256,
+                    external_runtime_launch_receipt_sha256=launch_receipt.launch_receipt_sha256,
+                    executor_identity_sha256=attempt.runtime_identity_sha256,
+                    termination_evidence_sha256=evidence.termination_evidence_sha256,
+                    result_content_sha256=evidence.result_content_sha256,
+                    resource_lease_sha256=resource.lease_sha256,
+                    fencing_epoch=attempt.fencing_epoch,
+                    lease_token_sha256=attempt.lease_token_sha256,
+                    hard_deadline=attempt.hard_deadline,
+                    artifact_submission_deadline=artifact_submission_deadline,
+                    challenged_at=now,
+                    expires_at=expires_at,
+                )
+                challenge = ExternalTerminationAcceptanceChallenge.model_validate(
+                    challenge.model_dump(mode="python")
+                )
+                verify_external_termination_acceptance_challenge(
+                    challenge=challenge,
+                    preparation=preparation,
+                    launch_receipt=launch_receipt,
+                    termination_evidence=evidence,
+                    authority=issuer.authority_verifier,
+                    observed_at=now,
+                )
+            except (AttributeError, TypeError, ValueError, QualificationVerificationError) as exc:
+                raise LeaseAuthorityError("external termination challenge is invalid") from exc
+            if (
+                challenge.attempt_id != attempt.attempt_id
+                or challenge.execution_id != attempt.execution_id
+                or challenge.intent_sha256 != attempt.intent_sha256
+                or challenge.bridge_manifest_sha256 != bridge.manifest.manifest_sha256
+                or challenge.runtime_preparation_sha256 != preparation.preparation_sha256
+                or challenge.external_runtime_launch_receipt_sha256
+                != launch_receipt.launch_receipt_sha256
+                or challenge.executor_identity_sha256 != attempt.runtime_identity_sha256
+                or challenge.termination_evidence_sha256
+                != evidence.termination_evidence_sha256
+                or challenge.result_content_sha256 != evidence.result_content_sha256
+                or challenge.resource_lease_sha256 != resource.lease_sha256
+                or challenge.fencing_epoch != attempt.fencing_epoch
+                or challenge.lease_token_sha256 != attempt.lease_token_sha256
+                or challenge.hard_deadline != attempt.hard_deadline
+                or challenge.artifact_submission_deadline != artifact_submission_deadline
+                or challenge.challenged_at != now
+                or challenge.expires_at != expires_at
+            ):
+                raise LeaseAuthorityError("issued external termination challenge differs from DB scope")
+            session.add(
+                _ExecutionExternalTerminationChallengeRecord(
+                    challenge_sha256=challenge.challenge_sha256,
+                    challenge_id=challenge.challenge_id,
+                    attempt_id=attempt.attempt_id,
+                    challenge_sequence=challenge_sequence,
+                    preparation_sha256=preparation.preparation_sha256,
+                    launch_receipt_sha256=launch_receipt.launch_receipt_sha256,
+                    executor_identity_sha256=attempt.runtime_identity_sha256,
+                    termination_evidence_sha256=evidence.termination_evidence_sha256,
+                    termination_evidence_json=_model_json(evidence),
+                    challenge_payload_sha256=challenge.challenge_sha256,
+                    challenge_json=_model_json(challenge),
+                    runtime_control_pin_sha256=canonical_sha256(runtime_pin),
+                    runtime_control_pin_json=_model_json(runtime_pin),
+                    challenged_at=challenge.challenged_at,
+                    expires_at=challenge.expires_at,
+                )
+            )
+            session.flush()
+            attempt.runtime_termination_challenge_count = challenge_sequence
+            attempt.runtime_termination_challenge_sha256 = challenge.challenge_sha256
+            attempt.heartbeat_at = now
+            attempt.state_version += 1
+            attempt.updated_at = now
+            resource.heartbeat_at = now
+            session.flush()
+            return ExternalTerminationChallengeCommit(
+                snapshot=self._snapshot(session, attempt),
+                challenge=challenge,
+                replayed=False,
+            )
+
+    def accept_external_runtime_termination(
+        self,
+        *,
+        attempt_id: str,
+        lease_token: str,
+        fencing_epoch: int,
+        termination_receipt: ExternalRuntimeTerminationReceipt,
+    ) -> ExternalRuntimeTerminationCommit:
+        """Accept one fresh bridge termination proof and release compute atomically."""
+
+        issuer = self._require_runtime_control_issuer()
+        try:
+            node_receipt = ExternalRuntimeTerminationReceipt.model_validate(
+                termination_receipt.model_dump(mode="python")
+            )
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise LeaseAuthorityError("external termination receipt is not canonical") from exc
+        with self._sessions() as session, session.begin():
+            _execution_head, attempt = self._lock_execution_attempt(session, attempt_id)
+            self._verify_lease_authority(
+                attempt, lease_token=lease_token, fencing_epoch=fencing_epoch
+            )
+            budget_head, resource, reservation = self._lock_external_runtime_holds(
+                session, attempt
+            )
+            now = _database_time(session)
+            bridge = self._require_external_bridge_authority(attempt, observed_at=now)
+            preparation, authorization_request, authorization = self._load_external_launch_lineage(
+                session, attempt
+            )
+            launch_receipt = self._stored_external_launch_receipt(session, attempt)
+            if attempt.runtime_termination_challenge_sha256 is None:
+                raise LeaseAuthorityError("external termination lacks its DB challenge head")
+            challenge_record = session.get(
+                _ExecutionExternalTerminationChallengeRecord,
+                attempt.runtime_termination_challenge_sha256,
+            )
+            if challenge_record is None or challenge_record.attempt_id != attempt.attempt_id:
+                raise LeaseAuthorityError("external termination acceptance lacks its exact challenge")
+            try:
+                challenge = ExternalTerminationAcceptanceChallenge.model_validate(
+                    challenge_record.challenge_json
+                )
+                evidence = ExternalTerminationEvidence.model_validate(
+                    challenge_record.termination_evidence_json
+                )
+            except (TypeError, ValueError) as exc:
+                raise LeaseAuthorityError("stored external termination challenge is invalid") from exc
+            existing = session.execute(
+                select(_ExecutionExternalRuntimeTerminationAcceptanceRecord).where(
+                    _ExecutionExternalRuntimeTerminationAcceptanceRecord.attempt_id == attempt_id
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                try:
+                    accepted = AcceptedExternalRuntimeTermination.model_validate(
+                        existing.accepted_termination_json
+                    )
+                    stored_receipt = ExternalRuntimeTerminationReceipt.model_validate(
+                        existing.bridge_termination_receipt_json
+                    )
+                    expiration = ExternalQualificationTerminalDeadlineExpiration.model_validate(
+                        existing.conditional_terminal_expiration_json
+                    )
+                    verify_external_runtime_termination_receipt(
+                        receipt=stored_receipt,
+                        challenge=challenge,
+                        preparation=preparation,
+                        bridge_authority=bridge,
+                        observed_at=existing.accepted_at,
+                    )
+                    verify_accepted_external_runtime_termination(
+                        accepted=accepted,
+                        receipt=stored_receipt,
+                        challenge=challenge,
+                        authority=issuer.authority_verifier,
+                    )
+                    verify_external_qualification_terminal_deadline_expiration(
+                        expiration=expiration,
+                        accepted_termination=accepted,
+                        authority=issuer.authority_verifier,
+                    )
+                except (TypeError, ValueError, QualificationVerificationError) as exc:
+                    raise LeaseAuthorityError("stored external termination acceptance is invalid") from exc
+                runtime_pin = issuer.authority_pin
+                if (
+                    stored_receipt != node_receipt
+                    or existing.accepted_termination_sha256
+                    != accepted.accepted_termination_sha256
+                    or attempt.accepted_runtime_termination_sha256
+                    != accepted.accepted_termination_sha256
+                    or existing.challenge_sha256 != challenge.challenge_sha256
+                    or existing.conditional_terminal_expiration_sha256
+                    != expiration.expiration_sha256
+                    or existing.conditional_terminal_expiration_payload_sha256
+                    != expiration.expiration_sha256
+                    or existing.conditional_terminal_expiration_json
+                    != _model_json(expiration)
+                    or existing.conditional_terminal_expiration_authorized_at
+                    != expiration.authorized_at
+                    or existing.conditional_terminal_expiration_expires_at
+                    != expiration.expired_at
+                    or existing.runtime_control_pin_sha256 != canonical_sha256(runtime_pin)
+                    or existing.runtime_control_pin_json != _model_json(runtime_pin)
+                ):
+                    raise LeaseAuthorityError("external runtime termination replay is rebound")
+                return ExternalRuntimeTerminationCommit(
+                    snapshot=self._snapshot(session, attempt),
+                    accepted_termination=accepted,
+                    terminal_expiration=expiration,
+                    charged_microunits=reservation.settled_microunits,
+                    replayed=True,
+                )
+            if attempt.status != "running":
+                raise LeaseAuthorityError("attempt is not awaiting external termination acceptance")
+            try:
+                verify_external_termination_acceptance_challenge(
+                    challenge=challenge,
+                    preparation=preparation,
+                    launch_receipt=launch_receipt,
+                    termination_evidence=evidence,
+                    authority=issuer.authority_verifier,
+                    observed_at=now,
+                )
+            except QualificationVerificationError as exc:
+                try:
+                    verify_external_termination_acceptance_challenge(
+                        challenge=challenge,
+                        preparation=preparation,
+                        launch_receipt=launch_receipt,
+                        termination_evidence=evidence,
+                        authority=issuer.authority_verifier,
+                        observed_at=challenge.challenged_at,
+                    )
+                except (TypeError, ValueError, QualificationVerificationError) as exc2:
+                    raise LeaseAuthorityError("external termination challenge is invalid") from exc2
+                if now >= challenge.expires_at:
+                    raise RuntimeProofReplayRejected(
+                        RuntimeProofReplayRejectionCode.TERMINATION_CHALLENGE_EXPIRED_UNACCEPTED
+                    ) from exc
+                raise LeaseAuthorityError("external termination challenge is invalid") from exc
+            try:
+                verified = verify_external_runtime_termination_receipt(
+                    receipt=node_receipt,
+                    challenge=challenge,
+                    preparation=preparation,
+                    bridge_authority=bridge,
+                    observed_at=now,
+                )
+            except QualificationVerificationError as exc:
+                raise LeaseAuthorityError("external termination receipt is stale or invalid") from exc
+            receipt_evidence = node_receipt.termination_evidence
+            if (
+                receipt_evidence != evidence
+                or node_receipt.runtime_launch_authorization_request_sha256
+                != authorization_request.request_sha256
+                or node_receipt.external_launch_authorization_sha256
+                != authorization.authorization_sha256
+                or receipt_evidence.executor_identity_sha256
+                != attempt.runtime_identity_sha256
+                or verified.fencing_epoch != attempt.fencing_epoch
+                or verified.lease_token_sha256 != attempt.lease_token_sha256
+                or verified.infrastructure_attempt_id != attempt.attempt_id
+            ):
+                raise LeaseAuthorityError("external termination receipt differs from its DB lineage")
+
+            runtime_pin = issuer.authority_pin
+            try:
+                accepted = issuer.issue_accepted_external_termination(
+                    challenge_sha256=challenge.challenge_sha256,
+                    attempt_id=attempt.attempt_id,
+                    runtime_preparation_sha256=preparation.preparation_sha256,
+                    external_runtime_launch_receipt_sha256=launch_receipt.launch_receipt_sha256,
+                    runtime_launch_authorization_request_sha256=(
+                        authorization_request.request_sha256
+                    ),
+                    external_launch_authorization_sha256=authorization.authorization_sha256,
+                    external_runtime_termination_receipt_sha256=(
+                        node_receipt.termination_receipt_sha256
+                    ),
+                    executor_identity_sha256=attempt.runtime_identity_sha256,
+                    termination_evidence_sha256=evidence.termination_evidence_sha256,
+                    result_content_sha256=evidence.result_content_sha256,
+                    fencing_epoch=attempt.fencing_epoch,
+                    lease_token_sha256=attempt.lease_token_sha256,
+                    runtime_ended_at=evidence.ended_at,
+                    exit_code=evidence.exit_code,
+                    hard_deadline=attempt.hard_deadline,
+                    artifact_submission_deadline=challenge.artifact_submission_deadline,
+                    proof_signed_at=node_receipt.signed_at,
+                    proof_expires_at=node_receipt.expires_at,
+                    accepted_at=now,
+                    billable_ended_at=evidence.ended_at,
+                )
+                accepted = AcceptedExternalRuntimeTermination.model_validate(
+                    accepted.model_dump(mode="python")
+                )
+                verify_accepted_external_runtime_termination(
+                    accepted=accepted,
+                    receipt=node_receipt,
+                    challenge=challenge,
+                    authority=issuer.authority_verifier,
+                )
+                expiration = issuer.issue_external_terminal_deadline_expiration(
+                    attempt_id=attempt.attempt_id,
+                    execution_id=attempt.execution_id,
+                    intent_sha256=attempt.intent_sha256,
+                    bridge_manifest_sha256=bridge.manifest.manifest_sha256,
+                    resource_lease_sha256=resource.lease_sha256,
+                    runtime_preparation_sha256=preparation.preparation_sha256,
+                    runtime_launch_authorization_request_sha256=(
+                        authorization_request.request_sha256
+                    ),
+                    external_launch_authorization_sha256=authorization.authorization_sha256,
+                    external_runtime_launch_receipt_sha256=launch_receipt.launch_receipt_sha256,
+                    external_termination_challenge_sha256=challenge.challenge_sha256,
+                    external_runtime_termination_receipt_sha256=(
+                        node_receipt.termination_receipt_sha256
+                    ),
+                    accepted_external_runtime_termination_sha256=(
+                        accepted.accepted_termination_sha256
+                    ),
+                    executor_identity_sha256=attempt.runtime_identity_sha256,
+                    termination_evidence_sha256=evidence.termination_evidence_sha256,
+                    result_content_sha256=evidence.result_content_sha256,
+                    fencing_epoch=attempt.fencing_epoch,
+                    lease_token_sha256=attempt.lease_token_sha256,
+                    runtime_ended_at=evidence.ended_at,
+                    exit_code=evidence.exit_code,
+                    hard_deadline=attempt.hard_deadline,
+                    artifact_submission_deadline=challenge.artifact_submission_deadline,
+                    accepted_runtime_termination_at=now,
+                    authorized_at=now,
+                    expired_at=challenge.artifact_submission_deadline,
+                )
+                expiration = ExternalQualificationTerminalDeadlineExpiration.model_validate(
+                    expiration.model_dump(mode="python")
+                )
+                verify_external_qualification_terminal_deadline_expiration(
+                    expiration=expiration,
+                    accepted_termination=accepted,
+                    authority=issuer.authority_verifier,
+                )
+            except (
+                AttributeError,
+                TypeError,
+                ValueError,
+                QualificationVerificationError,
+            ) as exc:
+                raise LeaseAuthorityError(
+                    "accepted external termination authority is invalid"
+                ) from exc
+            if (
+                expiration.authorized_at != now
+                or expiration.expired_at != accepted.artifact_submission_deadline
+                or expiration.accepted_external_runtime_termination_sha256
+                != accepted.accepted_termination_sha256
+            ):
+                raise LeaseAuthorityError(
+                    "conditional external terminal deadline authority differs from DB scope"
+                )
+            session.add(
+                _ExecutionExternalRuntimeTerminationAcceptanceRecord(
+                    accepted_termination_sha256=accepted.accepted_termination_sha256,
+                    attempt_id=attempt.attempt_id,
+                    challenge_sha256=challenge.challenge_sha256,
+                    bridge_termination_receipt_sha256=node_receipt.termination_receipt_sha256,
+                    preparation_sha256=preparation.preparation_sha256,
+                    launch_receipt_sha256=launch_receipt.launch_receipt_sha256,
+                    authorization_request_sha256=authorization_request.request_sha256,
+                    authorization_sha256=authorization.authorization_sha256,
+                    executor_identity_sha256=attempt.runtime_identity_sha256,
+                    termination_evidence_sha256=evidence.termination_evidence_sha256,
+                    result_content_sha256=evidence.result_content_sha256,
+                    exit_code=evidence.exit_code,
+                    runtime_ended_at=evidence.ended_at,
+                    receipt_payload_sha256=node_receipt.termination_receipt_sha256,
+                    bridge_termination_receipt_json=_model_json(node_receipt),
+                    acceptance_payload_sha256=accepted.accepted_termination_sha256,
+                    accepted_termination_json=_model_json(accepted),
+                    conditional_terminal_expiration_sha256=expiration.expiration_sha256,
+                    conditional_terminal_expiration_payload_sha256=expiration.expiration_sha256,
+                    conditional_terminal_expiration_json=_model_json(expiration),
+                    conditional_terminal_expiration_authorized_at=expiration.authorized_at,
+                    conditional_terminal_expiration_expires_at=expiration.expired_at,
+                    runtime_control_pin_sha256=canonical_sha256(runtime_pin),
+                    runtime_control_pin_json=_model_json(runtime_pin),
+                    accepted_at=now,
+                )
+            )
+            session.flush()
+            charged = self._release_external_terminated_holds(
+                session,
+                attempt=attempt,
+                budget_head=budget_head,
+                resource=resource,
+                reservation=reservation,
+                accepted=accepted,
+                now=now,
+            )
+            attempt.status = "verifying"
+            attempt.accepted_runtime_termination_sha256 = accepted.accepted_termination_sha256
+            attempt.heartbeat_at = now
+            attempt.state_version += 1
+            attempt.updated_at = now
+            session.flush()
+            return ExternalRuntimeTerminationCommit(
+                snapshot=self._snapshot(session, attempt),
+                accepted_termination=accepted,
+                terminal_expiration=expiration,
+                charged_microunits=charged,
+                replayed=False,
+            )
+
+    def accept_external_terminal_artifacts(
+        self,
+        *,
+        attempt_id: str,
+        lease_token: str,
+        fencing_epoch: int,
+        terminal_submission: ExternalQualificationTerminalSubmission,
+        artifact_manifest: ArtifactManifest,
+        artifact_verified_receipts: tuple[ArtifactVerifiedReceipt, ...],
+    ) -> ExternalRuntimeTerminalArtifactCommit:
+        """Accept one bridge terminal submission at verifying status (split settle step one)."""
+
+        issuer = self._require_runtime_control_issuer()
+        try:
+            submission = ExternalQualificationTerminalSubmission.model_validate(
+                terminal_submission.model_dump(mode="python")
+            )
+            manifest = ArtifactManifest.model_validate(artifact_manifest.model_dump(mode="python"))
+            receipts = tuple(
+                ArtifactVerifiedReceipt.model_validate(item.model_dump(mode="python"))
+                for item in artifact_verified_receipts
+            )
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise LeaseAuthorityError("external terminal submission is not canonical") from exc
+        with self._sessions() as session, session.begin():
+            _execution_head, attempt = self._lock_execution_attempt(session, attempt_id)
+            self._verify_lease_authority(
+                attempt, lease_token=lease_token, fencing_epoch=fencing_epoch
+            )
+            now = _database_time(session)
+            bridge = self._require_external_bridge_authority(attempt, observed_at=now)
+            (
+                preparation,
+                authorization_request,
+                authorization,
+                launch_receipt,
+                challenge,
+                _termination_receipt,
+                accepted,
+                termination_record,
+            ) = self._load_external_termination_lineage(session, attempt)
+            try:
+                verify_external_qualification_terminal_submission(
+                    submission=submission,
+                    accepted_termination=accepted,
+                    bridge_authority=bridge,
+                    observed_at=now,
+                )
+            except QualificationVerificationError as exc:
+                raise LeaseAuthorityError("external terminal submission is stale or invalid") from exc
+            if (
+                submission.execution_id != attempt.execution_id
+                or submission.intent_sha256 != attempt.intent_sha256
+                or submission.resource_lease_sha256
+                != self._external_resource_lease_sha256(session, attempt)
+                or submission.bridge_manifest_sha256 != bridge.manifest.manifest_sha256
+            ):
+                raise LeaseAuthorityError("external terminal submission differs from DB scope")
+            self._validate_external_terminal_artifacts(
+                attempt=attempt,
+                accepted=accepted,
+                submission=submission,
+                manifest=manifest,
+                receipts=receipts,
+            )
+            existing = session.execute(
+                select(_ExecutionExternalQualificationTerminalAcceptanceRecord).where(
+                    _ExecutionExternalQualificationTerminalAcceptanceRecord.attempt_id
+                    == attempt_id
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                try:
+                    stored_submission = ExternalQualificationTerminalSubmission.model_validate(
+                        existing.terminal_submission_json
+                    )
+                    stored_acceptance = (
+                        AcceptedExternalQualificationTerminalSubmission.model_validate(
+                            existing.accepted_terminal_submission_json
+                        )
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise LeaseAuthorityError("stored external terminal acceptance is invalid") from exc
+                runtime_pin = issuer.authority_pin
+                if (
+                    stored_submission != submission
+                    or existing.terminal_submission_sha256 != submission.terminal_submission_sha256
+                    or existing.manifest_payload_sha256 != manifest.manifest_sha256
+                    or existing.artifact_manifest_json != _model_json(manifest)
+                    or existing.artifact_verified_receipts_json != [_model_json(r) for r in receipts]
+                    or existing.runtime_control_pin_sha256 != canonical_sha256(runtime_pin)
+                    or existing.runtime_control_pin_json != _model_json(runtime_pin)
+                    or attempt.accepted_terminal_submission_sha256
+                    != stored_acceptance.terminal_authority_sha256
+                    or attempt.status != "verifying"
+                ):
+                    raise LeaseAuthorityError("external terminal acceptance replay is rebound")
+                return ExternalRuntimeTerminalArtifactCommit(
+                    snapshot=self._snapshot(session, attempt),
+                    terminal_acceptance=stored_acceptance,
+                    replayed=True,
+                )
+            if attempt.status != "verifying":
+                raise LeaseAuthorityError("attempt is not verifying external terminal artifacts")
+            try:
+                accepted_terminal = issuer.issue_external_terminal_submission_acceptance(
+                    attempt_id=attempt.attempt_id,
+                    bridge_manifest_sha256=submission.bridge_manifest_sha256,
+                    terminal_submission_sha256=submission.terminal_submission_sha256,
+                    accepted_external_runtime_termination_sha256=(
+                        accepted.accepted_termination_sha256
+                    ),
+                    artifact_manifest_sha256=manifest.manifest_sha256,
+                    output_tree_sha256=submission.output_tree_sha256,
+                    artifact_verified_receipt_sha256s=submission.artifact_verified_receipt_sha256s,
+                    disposition=submission.disposition,
+                    bridge_submitted_at=submission.submitted_at,
+                    artifact_submission_deadline=accepted.artifact_submission_deadline,
+                    accepted_at=now,
+                )
+                accepted_terminal = AcceptedExternalQualificationTerminalSubmission.model_validate(
+                    accepted_terminal.model_dump(mode="python")
+                )
+                verify_accepted_external_qualification_terminal_submission(
+                    accepted=accepted_terminal,
+                    submission=submission,
+                    authority=issuer.authority_verifier,
+                )
+            except (
+                AttributeError,
+                TypeError,
+                ValueError,
+                QualificationVerificationError,
+            ) as exc:
+                raise LeaseAuthorityError("external terminal acceptance is invalid") from exc
+            runtime_pin = issuer.authority_pin
+            session.add(
+                _ExecutionExternalQualificationTerminalAcceptanceRecord(
+                    accepted_terminal_submission_sha256=(
+                        accepted_terminal.terminal_authority_sha256
+                    ),
+                    attempt_id=attempt.attempt_id,
+                    accepted_runtime_termination_sha256=accepted.accepted_termination_sha256,
+                    bridge_manifest_sha256=submission.bridge_manifest_sha256,
+                    terminal_submission_sha256=submission.terminal_submission_sha256,
+                    artifact_manifest_sha256=manifest.manifest_sha256,
+                    output_tree_sha256=submission.output_tree_sha256,
+                    disposition=submission.disposition,
+                    submission_payload_sha256=submission.terminal_submission_sha256,
+                    terminal_submission_json=_model_json(submission),
+                    manifest_payload_sha256=manifest.manifest_sha256,
+                    artifact_manifest_json=_model_json(manifest),
+                    artifact_verified_receipt_sha256s_json=[
+                        item for item in submission.artifact_verified_receipt_sha256s
+                    ],
+                    artifact_verified_receipts_json=[_model_json(r) for r in receipts],
+                    acceptance_payload_sha256=accepted_terminal.terminal_authority_sha256,
+                    accepted_terminal_submission_json=_model_json(accepted_terminal),
+                    runtime_control_pin_sha256=canonical_sha256(runtime_pin),
+                    runtime_control_pin_json=_model_json(runtime_pin),
+                    accepted_at=now,
+                )
+            )
+            session.flush()
+            attempt.accepted_terminal_submission_sha256 = (
+                accepted_terminal.terminal_authority_sha256
+            )
+            attempt.state_version += 1
+            attempt.updated_at = now
+            session.flush()
+            return ExternalRuntimeTerminalArtifactCommit(
+                snapshot=self._snapshot(session, attempt),
+                terminal_acceptance=accepted_terminal,
+                replayed=False,
+            )
+
+    def settle_external_qualification_terminal(
+        self,
+        *,
+        terminal_acceptance: AcceptedExternalQualificationTerminalSubmission,
+    ) -> QualificationTerminalCommit:
+        """Atomically publish one external terminal intent and close the execution head."""
+
+        issuer = self._require_runtime_control_issuer()
+        try:
+            supplied = AcceptedExternalQualificationTerminalSubmission.model_validate(
+                terminal_acceptance.model_dump(mode="python")
+            )
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise LeaseAuthorityError("external terminal settlement is not canonical") from exc
+        with self._sessions() as session, session.begin():
+            execution_head, attempt = self._lock_execution_attempt(session, supplied.attempt_id)
+            if attempt.node_id is not None:
+                raise LeaseAuthorityError("external terminal settlement targets a node attempt")
+            record = session.execute(
+                select(_ExecutionExternalQualificationTerminalAcceptanceRecord).where(
+                    _ExecutionExternalQualificationTerminalAcceptanceRecord.attempt_id
+                    == supplied.attempt_id
+                )
+            ).scalar_one_or_none()
+            if record is None:
+                raise LeaseAuthorityError("external terminal settlement lacks artifact acceptance")
+            now = _database_time(session)
+            bridge = self._require_external_bridge_authority(attempt, observed_at=now)
+            (
+                _preparation,
+                _request,
+                _authorization,
+                _launch_receipt,
+                _challenge,
+                _termination_receipt,
+                accepted,
+                _termination_record,
+            ) = self._load_external_termination_lineage(session, attempt)
+            try:
+                submission = ExternalQualificationTerminalSubmission.model_validate(
+                    record.terminal_submission_json
+                )
+                manifest = ArtifactManifest.model_validate(record.artifact_manifest_json)
+                receipts = tuple(
+                    ArtifactVerifiedReceipt.model_validate(item)
+                    for item in record.artifact_verified_receipts_json
+                )
+                stored_acceptance = AcceptedExternalQualificationTerminalSubmission.model_validate(
+                    record.accepted_terminal_submission_json
+                )
+                verify_external_qualification_terminal_submission(
+                    submission=submission,
+                    accepted_termination=accepted,
+                    bridge_authority=bridge,
+                    observed_at=record.accepted_at,
+                )
+                verify_accepted_external_qualification_terminal_submission(
+                    accepted=stored_acceptance,
+                    submission=submission,
+                    authority=issuer.authority_verifier,
+                )
+            except (TypeError, ValueError, QualificationVerificationError) as exc:
+                raise LeaseAuthorityError("stored external terminal authority is invalid") from exc
+            self._validate_external_terminal_artifacts(
+                attempt=attempt,
+                accepted=accepted,
+                submission=submission,
+                manifest=manifest,
+                receipts=receipts,
+            )
+            runtime_pin = issuer.authority_pin
+            if (
+                stored_acceptance != supplied
+                or record.accepted_terminal_submission_sha256
+                != supplied.terminal_authority_sha256
+                or record.acceptance_payload_sha256 != supplied.terminal_authority_sha256
+                or record.runtime_control_pin_sha256 != canonical_sha256(runtime_pin)
+                or record.runtime_control_pin_json != _model_json(runtime_pin)
+                or attempt.accepted_terminal_submission_sha256
+                != supplied.terminal_authority_sha256
+            ):
+                raise LeaseAuthorityError("external terminal settlement is rebound")
+            outbox_id = f"qto_{supplied.terminal_authority_sha256}"
+            existing_outbox = session.get(_ExecutionQualificationTerminalOutboxRecord, outbox_id)
+            terminal_status = (
+                "succeeded" if supplied.disposition == "process_succeeded" else "failed"
+            )
+            if existing_outbox is not None:
+                if (
+                    existing_outbox.terminal_authority_kind != "accepted_terminal_submission"
+                    or existing_outbox.terminal_authority_sha256
+                    != supplied.terminal_authority_sha256
+                    or existing_outbox.accepted_terminal_submission_sha256
+                    != supplied.terminal_authority_sha256
+                    or existing_outbox.terminal_deadline_expiration_sha256 is not None
+                    or existing_outbox.attempt_id != attempt.attempt_id
+                    or existing_outbox.execution_id != attempt.execution_id
+                    or existing_outbox.payload_sha256 != supplied.terminal_authority_sha256
+                    or existing_outbox.payload_json != _model_json(supplied)
+                    or attempt.status != terminal_status
+                    or execution_head.active_attempt_id is not None
+                ):
+                    raise LeaseAuthorityError("external terminal outbox replay is rebound")
+                return QualificationTerminalCommit(
+                    snapshot=self._snapshot(session, attempt),
+                    outbox_id=outbox_id,
+                    replayed=True,
+                )
+            if (
+                attempt.status != "verifying"
+                or execution_head.active_attempt_id != attempt.attempt_id
+            ):
+                raise LeaseAuthorityError(
+                    "external terminal attempt is not ready for final settlement"
+                )
+            session.add(
+                _ExecutionQualificationTerminalOutboxRecord(
+                    outbox_id=outbox_id,
+                    terminal_authority_kind="accepted_terminal_submission",
+                    terminal_authority_sha256=supplied.terminal_authority_sha256,
+                    accepted_terminal_submission_sha256=supplied.terminal_authority_sha256,
+                    terminal_deadline_expiration_sha256=None,
+                    execution_id=attempt.execution_id,
+                    attempt_id=attempt.attempt_id,
+                    topic="execution.qualification_terminal.v2",
+                    delivery_key=(f"execution-v2:{attempt.execution_id}:{attempt.attempt_id}"),
+                    payload_sha256=supplied.terminal_authority_sha256,
+                    payload_json=_model_json(supplied),
+                    created_at=now,
+                )
+            )
+            session.flush()
+            attempt.status = terminal_status
+            attempt.state_version += 1
+            attempt.updated_at = now
+            execution_head.active_attempt_id = None
+            execution_head.state_version += 1
+            execution_head.updated_at = now
+            session.flush()
+            return QualificationTerminalCommit(
+                snapshot=self._snapshot(session, attempt),
+                outbox_id=outbox_id,
+                replayed=False,
+            )
+
+    def adjudicate_expired_external_qualification_terminal(
+        self,
+        *,
+        bridge_manifest_sha256: str,
+    ) -> QualificationTerminalDeadlineExpirationCommit | None:
+        """Activate one pre-signed external no-artifact failure after its DB deadline."""
+
+        issuer = self._require_runtime_control_issuer()
+        bridge = self._external_bridge_authority_for_manifest(bridge_manifest_sha256)
+        with self._sessions() as session, session.begin():
+            candidate_id = session.execute(
+                select(_ExecutionAttemptRecord.attempt_id)
+                .join(
+                    _ExecutionExternalRuntimeTerminationAcceptanceRecord,
+                    _ExecutionExternalRuntimeTerminationAcceptanceRecord.accepted_termination_sha256
+                    == _ExecutionAttemptRecord.accepted_runtime_termination_sha256,
+                )
+                .where(
+                    _ExecutionAttemptRecord.node_id.is_(None),
+                    _ExecutionAttemptRecord.external_resource_class_id.in_(
+                        bridge.served_resource_class_ids
+                    ),
+                    _ExecutionAttemptRecord.status == "verifying",
+                    _ExecutionAttemptRecord.accepted_runtime_termination_sha256.is_not(None),
+                    _ExecutionAttemptRecord.accepted_terminal_submission_sha256.is_(None),
+                    _ExecutionAttemptRecord.terminal_deadline_expiration_sha256.is_(None),
+                    ~select(_ExecutionQualificationTerminalOutboxRecord.outbox_id)
+                    .where(
+                        _ExecutionQualificationTerminalOutboxRecord.attempt_id
+                        == _ExecutionAttemptRecord.attempt_id
+                    )
+                    .exists(),
+                )
+                .order_by(
+                    _ExecutionExternalRuntimeTerminationAcceptanceRecord.conditional_terminal_expiration_expires_at,
+                    _ExecutionAttemptRecord.reserved_at,
+                    _ExecutionAttemptRecord.attempt_id,
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+            if candidate_id is None:
+                return None
+            execution_head, attempt = self._lock_execution_attempt(session, candidate_id)
+            now = _database_time(session)
+            pinned_bridge = self._require_external_bridge_authority(attempt, observed_at=now)
+            if pinned_bridge.manifest.manifest_sha256 != bridge.manifest.manifest_sha256:
+                raise AdmissionConflict("external terminal adjudication bridge scope changed")
+            (
+                _preparation,
+                _request,
+                _authorization,
+                _launch_receipt,
+                _challenge,
+                _termination_receipt,
+                accepted,
+                termination_record,
+            ) = self._load_external_termination_lineage(session, attempt)
+            try:
+                expiration = ExternalQualificationTerminalDeadlineExpiration.model_validate(
+                    termination_record.conditional_terminal_expiration_json
+                )
+                verify_external_qualification_terminal_deadline_expiration(
+                    expiration=expiration,
+                    accepted_termination=accepted,
+                    authority=issuer.authority_verifier,
+                )
+            except (TypeError, ValueError, QualificationVerificationError) as exc:
+                raise AdmissionConflict("external terminal adjudication authority is invalid") from exc
+            expiration_sha256 = expiration.expiration_sha256
+            outbox_id = f"qto_{expiration_sha256}"
+            existing_activation = session.get(
+                _ExecutionExternalQualificationTerminalDeadlineExpirationRecord,
+                expiration_sha256,
+            )
+            existing_outbox = session.get(_ExecutionQualificationTerminalOutboxRecord, outbox_id)
+            if existing_activation is not None or existing_outbox is not None:
+                if (
+                    existing_activation is None
+                    or existing_outbox is None
+                    or existing_activation.attempt_id != attempt.attempt_id
+                    or existing_activation.accepted_runtime_termination_sha256
+                    != accepted.accepted_termination_sha256
+                    or existing_activation.payload_sha256 != expiration_sha256
+                    or existing_activation.payload_json != _model_json(expiration)
+                    or existing_activation.runtime_control_pin_sha256
+                    != canonical_sha256(issuer.authority_pin)
+                    or existing_activation.runtime_control_pin_json
+                    != _model_json(issuer.authority_pin)
+                    or existing_activation.authorized_at != expiration.authorized_at
+                    or existing_activation.expired_at != expiration.expired_at
+                    or existing_activation.activated_at < expiration.expired_at
+                    or existing_outbox.terminal_authority_kind != "terminal_deadline_expiration"
+                    or existing_outbox.terminal_authority_sha256 != expiration_sha256
+                    or existing_outbox.accepted_terminal_submission_sha256 is not None
+                    or existing_outbox.terminal_deadline_expiration_sha256 != expiration_sha256
+                    or existing_outbox.execution_id != attempt.execution_id
+                    or existing_outbox.attempt_id != attempt.attempt_id
+                    or existing_outbox.payload_sha256 != expiration_sha256
+                    or existing_outbox.payload_json != _model_json(expiration)
+                    or existing_outbox.created_at != existing_activation.activated_at
+                    or attempt.terminal_deadline_expiration_sha256 != expiration_sha256
+                    or attempt.accepted_terminal_submission_sha256 is not None
+                    or attempt.status != "failed"
+                    or execution_head.active_attempt_id is not None
+                ):
+                    raise AdmissionConflict("external terminal adjudication replay is rebound")
+                return QualificationTerminalDeadlineExpirationCommit(
+                    snapshot=self._snapshot(session, attempt),
+                    terminal_expiration=expiration,  # type: ignore[arg-type]
+                    activated_at=existing_activation.activated_at,
+                    outbox_id=outbox_id,
+                    replayed=True,
+                )
+            if (
+                attempt.status != "verifying"
+                or attempt.accepted_runtime_termination_sha256
+                != accepted.accepted_termination_sha256
+                or attempt.accepted_terminal_submission_sha256 is not None
+                or attempt.terminal_deadline_expiration_sha256 is not None
+                or execution_head.active_attempt_id != attempt.attempt_id
+                or now < expiration.expired_at
+            ):
+                return None
+            runtime_pin = issuer.authority_pin
+            session.add(
+                _ExecutionExternalQualificationTerminalDeadlineExpirationRecord(
+                    terminal_deadline_expiration_sha256=expiration_sha256,
+                    attempt_id=attempt.attempt_id,
+                    accepted_runtime_termination_sha256=accepted.accepted_termination_sha256,
+                    payload_sha256=expiration_sha256,
+                    payload_json=_model_json(expiration),
+                    runtime_control_pin_sha256=canonical_sha256(runtime_pin),
+                    runtime_control_pin_json=_model_json(runtime_pin),
+                    authorized_at=expiration.authorized_at,
+                    expired_at=expiration.expired_at,
+                    activated_at=now,
+                )
+            )
+            session.add(
+                _ExecutionQualificationTerminalOutboxRecord(
+                    outbox_id=outbox_id,
+                    terminal_authority_kind="terminal_deadline_expiration",
+                    terminal_authority_sha256=expiration_sha256,
+                    accepted_terminal_submission_sha256=None,
+                    terminal_deadline_expiration_sha256=expiration_sha256,
+                    execution_id=attempt.execution_id,
+                    attempt_id=attempt.attempt_id,
+                    topic="execution.qualification_terminal.v2",
+                    delivery_key=(f"execution-v2:{attempt.execution_id}:{attempt.attempt_id}"),
+                    payload_sha256=expiration_sha256,
+                    payload_json=_model_json(expiration),
+                    created_at=now,
+                )
+            )
+            session.flush()
+            attempt.terminal_deadline_expiration_sha256 = expiration_sha256
+            attempt.status = "failed"
+            attempt.state_version += 1
+            attempt.updated_at = now
+            execution_head.active_attempt_id = None
+            execution_head.state_version += 1
+            execution_head.updated_at = now
+            session.flush()
+            return QualificationTerminalDeadlineExpirationCommit(
+                snapshot=self._snapshot(session, attempt),
+                terminal_expiration=expiration,  # type: ignore[arg-type]
+                activated_at=now,
+                outbox_id=outbox_id,
+                replayed=False,
+            )
+
+    def pull_pending_external_qualification_terminal_settlement(
+        self,
+        *,
+        bridge_manifest_sha256: str,
+    ) -> AcceptedExternalQualificationTerminalSubmission | None:
+        """Read the oldest fully accepted external terminal result awaiting settlement."""
+
+        bridge = self._external_bridge_authority_for_manifest(bridge_manifest_sha256)
+        self._require_runtime_control_issuer()
+        with self._sessions() as session:
+            attempt = session.execute(
+                select(_ExecutionAttemptRecord)
+                .where(
+                    _ExecutionAttemptRecord.node_id.is_(None),
+                    _ExecutionAttemptRecord.external_resource_class_id.in_(
+                        bridge.served_resource_class_ids
+                    ),
+                    _ExecutionAttemptRecord.status == "verifying",
+                    _ExecutionAttemptRecord.accepted_terminal_submission_sha256.is_not(None),
+                    ~select(_ExecutionQualificationTerminalOutboxRecord.outbox_id)
+                    .where(
+                        _ExecutionQualificationTerminalOutboxRecord.attempt_id
+                        == _ExecutionAttemptRecord.attempt_id
+                    )
+                    .exists(),
+                )
+                .order_by(
+                    _ExecutionAttemptRecord.reserved_at,
+                    _ExecutionAttemptRecord.attempt_id,
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+            if attempt is None:
+                return None
+            record = session.get(
+                _ExecutionExternalQualificationTerminalAcceptanceRecord,
+                attempt.accepted_terminal_submission_sha256,
+            )
+            if record is None:
+                raise AdmissionConflict(
+                    "pending external terminal settlement has an orphaned authority head"
+                )
+            try:
+                return AcceptedExternalQualificationTerminalSubmission.model_validate(
+                    record.accepted_terminal_submission_json
+                )
+            except (TypeError, ValueError) as exc:
+                raise AdmissionConflict(
+                    "pending external terminal settlement authority is invalid"
+                ) from exc
+
     def commit_terminal_receipt(
         self,
         *,
@@ -8187,6 +9759,471 @@ class PostgreSQLExecutionAllocator:
         ):
             raise LeaseAuthorityError("stored qualification terminal acceptance row is rebound")
         return terminal_acceptance
+
+    def _require_external_bridge_authority(
+        self, attempt: _ExecutionAttemptRecord, *, observed_at: datetime
+    ) -> ExternalBridgeAuthority:
+        if attempt.node_id is not None or attempt.external_resource_class_id is None:
+            raise LeaseAuthorityError("attempt is not an external bridge attempt")
+        bridge = self._external_bridge_authorities.get(attempt.external_resource_class_id)
+        if bridge is None:
+            raise AdmissionConflict(
+                "attempt resource class has no registered bridge authority"
+            )
+        if not bridge.bridge_authority_pin.active_at(observed_at):
+            raise LeaseAuthorityError("bridge authority pin is outside its active window")
+        return bridge
+
+    def _external_bridge_authority_for_manifest(
+        self, bridge_manifest_sha256: str
+    ) -> ExternalBridgeAuthority:
+        for bridge in self._external_bridge_authorities.values():
+            if bridge.manifest.manifest_sha256 == bridge_manifest_sha256:
+                return bridge
+        raise AdmissionConflict("bridge manifest has no registered bridge authority")
+
+    @staticmethod
+    def _bridge_runtime_pin(bridge: ExternalBridgeAuthority) -> RuntimeControlAuthorityPin:
+        """Render the bridge custody pin into the v2 pin schema the frozen rows pin.
+
+        The receipt-signing key material is identical; the custody twin tables store
+        their pin documents in the runtime-control closed schema, so every stored
+        bridge pin document derives deterministically from the registered authority.
+        """
+
+        custody = bridge.bridge_authority_pin
+        try:
+            return RuntimeControlAuthorityPin.model_validate(
+                {
+                    **custody.model_dump(mode="python"),
+                    "schema_name": "aletheia.runtime_control_authority_pin",
+                    "schema_version": 2,
+                }
+            )
+        except (TypeError, ValueError) as exc:
+            raise LeaseAuthorityError(
+                "bridge custody pin cannot render its runtime pin document"
+            ) from exc
+
+    @staticmethod
+    def _lock_external_runtime_holds(
+        session: Session,
+        attempt: _ExecutionAttemptRecord,
+    ) -> tuple[
+        _ExecutionBudgetHeadRecord,
+        _ExecutionResourceLeaseRecord,
+        _ExecutionBudgetReservationRecord,
+    ]:
+        if attempt.node_id is not None or attempt.external_resource_class_id is None:
+            raise LeaseAuthorityError(
+                "node attempts do not enter external runtime custody paths"
+            )
+        reservation_identity = session.execute(
+            select(_ExecutionBudgetReservationRecord).where(
+                _ExecutionBudgetReservationRecord.attempt_id == attempt.attempt_id
+            )
+        ).scalar_one()
+        budget_head = session.execute(
+            select(_ExecutionBudgetHeadRecord)
+            .where(
+                _ExecutionBudgetHeadRecord.authorization_sha256
+                == reservation_identity.authorization_sha256
+            )
+            .with_for_update()
+        ).scalar_one()
+        resource = session.execute(
+            select(_ExecutionResourceLeaseRecord)
+            .where(_ExecutionResourceLeaseRecord.attempt_id == attempt.attempt_id)
+            .with_for_update()
+        ).scalar_one()
+        reservation = session.execute(
+            select(_ExecutionBudgetReservationRecord)
+            .where(_ExecutionBudgetReservationRecord.attempt_id == attempt.attempt_id)
+            .with_for_update()
+        ).scalar_one()
+        if reservation.reservation_id != reservation_identity.reservation_id:
+            raise LeaseAuthorityError("external runtime hold lock set is incomplete")
+        return budget_head, resource, reservation
+
+    def _release_external_terminated_holds(
+        self,
+        session: Session,
+        *,
+        attempt: _ExecutionAttemptRecord,
+        budget_head: _ExecutionBudgetHeadRecord,
+        resource: _ExecutionResourceLeaseRecord,
+        reservation: _ExecutionBudgetReservationRecord,
+        accepted: AcceptedExternalRuntimeTermination,
+        now: datetime,
+    ) -> int:
+        if (
+            resource.state not in {"held", "reconciliation_required"}
+            or reservation.state not in {"held", "reconciliation_required"}
+            or accepted.attempt_id != attempt.attempt_id
+            or accepted.fencing_epoch != attempt.fencing_epoch
+            or accepted.lease_token_sha256 != attempt.lease_token_sha256
+            or budget_head.reserved_microunits < reservation.held_microunits
+        ):
+            raise LeaseAuthorityError(
+                "accepted external termination differs from retained holds"
+            )
+        duration = accepted.billable_ended_at - resource.acquired_at
+        if duration < timedelta(0):
+            raise BudgetUnavailable(
+                "external runtime ended before its durable lease acquisition"
+            )
+        duration_microseconds = (
+            duration.days * 86_400_000_000
+            + duration.seconds * 1_000_000
+            + duration.microseconds
+        )
+        actual_lease_seconds = min(
+            (duration_microseconds + 999_999) // 1_000_000,
+            reservation.maximum_lease_seconds,
+        )
+        charged = reservation.fixed_charge_microunits + (
+            reservation.charge_per_second_microunits * actual_lease_seconds
+        )
+        if charged > reservation.held_microunits:
+            raise BudgetUnavailable(
+                "external runtime settlement exceeds its exact quote hold"
+            )
+        reservation.state = "settled"
+        reservation.actual_lease_seconds = actual_lease_seconds
+        reservation.settled_microunits = charged
+        reservation.settled_at = now
+        budget_head.reserved_microunits -= reservation.held_microunits
+        budget_head.spent_microunits += charged
+        budget_head.state_version += 1
+        budget_head.updated_at = now
+        self._append_budget_event(
+            session,
+            reservation_id=reservation.reservation_id,
+            authorization_sha256=reservation.authorization_sha256,
+            event_type="settled",
+            reserved_delta_microunits=-reservation.held_microunits,
+            spent_delta_microunits=charged,
+            recorded_at=now,
+            details={
+                "cost_quote_sha256": reservation.cost_quote_sha256,
+                "fixed_charge_microunits": reservation.fixed_charge_microunits,
+                "charge_per_second_microunits": reservation.charge_per_second_microunits,
+                "actual_lease_seconds": actual_lease_seconds,
+                "charged_microunits": charged,
+            },
+        )
+        resource.state = "released"
+        resource.released_at = now
+        return charged
+
+    def _load_external_launch_lineage(
+        self, session: Session, attempt: _ExecutionAttemptRecord
+    ) -> tuple[
+        ExternalRuntimePreparation,
+        RuntimeLaunchAuthorizationRequest,
+        ExternalLaunchAuthorization,
+    ]:
+        if attempt.runtime_preparation_sha256 is None:
+            raise LeaseAuthorityError("external attempt lacks its runtime preparation")
+        preparation_record = session.get(
+            _ExecutionExternalRuntimePreparationRecord, attempt.runtime_preparation_sha256
+        )
+        if preparation_record is None or preparation_record.attempt_id != attempt.attempt_id:
+            raise LeaseAuthorityError("external runtime preparation head is orphaned")
+        try:
+            preparation = ExternalRuntimePreparation.model_validate(
+                preparation_record.payload_json
+            )
+        except (TypeError, ValueError) as exc:
+            raise LeaseAuthorityError("stored external runtime preparation is invalid") from exc
+        if (
+            preparation.preparation_sha256 != preparation_record.preparation_sha256
+            or preparation_record.payload_sha256 != preparation_record.preparation_sha256
+            or preparation_record.payload_json != _model_json(preparation)
+            or preparation.infrastructure_attempt_id != attempt.attempt_id
+            or preparation.execution_id != attempt.execution_id
+            or preparation.intent_sha256 != attempt.intent_sha256
+            or preparation.fencing_epoch != attempt.fencing_epoch
+            or preparation.lease_token_sha256 != attempt.lease_token_sha256
+        ):
+            raise LeaseAuthorityError("external runtime preparation is rebound")
+        if attempt.latest_runtime_launch_authorization_sha256 is None:
+            raise LeaseAuthorityError("external attempt lacks its launch authorization head")
+        authorization_record = session.get(
+            _ExecutionExternalLaunchAuthorizationRecord,
+            attempt.latest_runtime_launch_authorization_sha256,
+        )
+        if authorization_record is None or authorization_record.attempt_id != attempt.attempt_id:
+            raise LeaseAuthorityError("external launch authorization head is orphaned")
+        try:
+            request = RuntimeLaunchAuthorizationRequest.model_validate(
+                authorization_record.request_json
+            )
+            authorization = ExternalLaunchAuthorization.model_validate(
+                authorization_record.authorization_json
+            )
+        except (TypeError, ValueError) as exc:
+            raise LeaseAuthorityError("stored external launch authority is invalid") from exc
+        runtime_pin = self._require_runtime_control_issuer().authority_pin
+        if (
+            authorization_record.sequence != attempt.runtime_launch_authorization_count
+            or authorization_record.preparation_sha256 != preparation.preparation_sha256
+            or authorization_record.request_sha256 != request.request_sha256
+            or authorization_record.request_payload_sha256 != request.request_sha256
+            or authorization_record.request_json != _model_json(request)
+            or authorization_record.authorization_payload_sha256
+            != authorization.authorization_sha256
+            or authorization_record.authorization_json != _model_json(authorization)
+            or authorization.authorization_sha256 != authorization_record.authorization_sha256
+            or authorization.runtime_preparation_sha256 != preparation.preparation_sha256
+            or authorization.authorization_request_sha256 != request.request_sha256
+            or authorization.infrastructure_attempt_id != attempt.attempt_id
+            or authorization.hard_deadline != attempt.hard_deadline
+            or authorization_record.runtime_control_pin_sha256
+            != canonical_sha256(runtime_pin)
+            or authorization_record.runtime_control_pin_json != _model_json(runtime_pin)
+        ):
+            raise LeaseAuthorityError("external launch authority lineage is rebound")
+        return preparation, request, authorization
+
+    def _stored_external_launch_receipt(
+        self, session: Session, attempt: _ExecutionAttemptRecord
+    ) -> ExternalRuntimeLaunchReceipt:
+        if attempt.runtime_identity_sha256 is None:
+            raise LeaseAuthorityError("external attempt lacks its accepted launch identity")
+        record = session.execute(
+            select(_ExecutionExternalRuntimeLaunchReceiptRecord).where(
+                _ExecutionExternalRuntimeLaunchReceiptRecord.attempt_id == attempt.attempt_id
+            )
+        ).scalar_one_or_none()
+        if record is None:
+            raise LeaseAuthorityError("external launch receipt head is orphaned")
+        try:
+            receipt = ExternalRuntimeLaunchReceipt.model_validate(record.launch_receipt_json)
+        except (TypeError, ValueError) as exc:
+            raise LeaseAuthorityError("stored external launch receipt is invalid") from exc
+        if (
+            record.launch_receipt_sha256 != receipt.launch_receipt_sha256
+            or record.launch_payload_sha256 != receipt.launch_receipt_sha256
+            or record.launch_receipt_json != _model_json(receipt)
+            or record.executor_identity_sha256 != attempt.runtime_identity_sha256
+            or record.preparation_sha256 != attempt.runtime_preparation_sha256
+            or record.authorization_sha256 != attempt.latest_runtime_launch_authorization_sha256
+        ):
+            raise LeaseAuthorityError("external launch receipt is rebound")
+        return receipt
+
+    def _load_external_termination_lineage(
+        self, session: Session, attempt: _ExecutionAttemptRecord
+    ) -> tuple[
+        ExternalRuntimePreparation,
+        RuntimeLaunchAuthorizationRequest,
+        ExternalLaunchAuthorization,
+        ExternalRuntimeLaunchReceipt,
+        ExternalTerminationAcceptanceChallenge,
+        ExternalRuntimeTerminationReceipt,
+        AcceptedExternalRuntimeTermination,
+        _ExecutionExternalRuntimeTerminationAcceptanceRecord,
+    ]:
+        preparation, request, authorization = self._load_external_launch_lineage(
+            session, attempt
+        )
+        launch_receipt = self._stored_external_launch_receipt(session, attempt)
+        if attempt.runtime_termination_challenge_sha256 is None:
+            raise LeaseAuthorityError("external attempt lacks its termination challenge head")
+        challenge_record = session.get(
+            _ExecutionExternalTerminationChallengeRecord,
+            attempt.runtime_termination_challenge_sha256,
+        )
+        if challenge_record is None or challenge_record.attempt_id != attempt.attempt_id:
+            raise LeaseAuthorityError("external termination challenge head is orphaned")
+        try:
+            challenge = ExternalTerminationAcceptanceChallenge.model_validate(
+                challenge_record.challenge_json
+            )
+            evidence = ExternalTerminationEvidence.model_validate(
+                challenge_record.termination_evidence_json
+            )
+        except (TypeError, ValueError) as exc:
+            raise LeaseAuthorityError("stored external termination challenge is invalid") from exc
+        if (
+            challenge_record.challenge_sha256 != challenge.challenge_sha256
+            or challenge_record.challenge_payload_sha256 != challenge.challenge_sha256
+            or challenge_record.challenge_json != _model_json(challenge)
+            or challenge_record.challenge_id != challenge.challenge_id
+            or challenge_record.termination_evidence_json != _model_json(evidence)
+            or challenge_record.preparation_sha256 != preparation.preparation_sha256
+            or challenge_record.launch_receipt_sha256 != launch_receipt.launch_receipt_sha256
+            or challenge_record.executor_identity_sha256 != attempt.runtime_identity_sha256
+            or challenge.termination_evidence_sha256 != evidence.termination_evidence_sha256
+            or challenge.runtime_preparation_sha256 != preparation.preparation_sha256
+            or challenge.external_runtime_launch_receipt_sha256
+            != launch_receipt.launch_receipt_sha256
+            or challenge.executor_identity_sha256 != attempt.runtime_identity_sha256
+            or challenge.hard_deadline != attempt.hard_deadline
+        ):
+            raise LeaseAuthorityError("external termination challenge is rebound")
+        if attempt.accepted_runtime_termination_sha256 is None:
+            raise LeaseAuthorityError("external attempt lacks its accepted termination head")
+        record = session.get(
+            _ExecutionExternalRuntimeTerminationAcceptanceRecord,
+            attempt.accepted_runtime_termination_sha256,
+        )
+        if record is None or record.attempt_id != attempt.attempt_id:
+            raise LeaseAuthorityError("external termination acceptance head is orphaned")
+        try:
+            termination_receipt = ExternalRuntimeTerminationReceipt.model_validate(
+                record.bridge_termination_receipt_json
+            )
+            accepted = AcceptedExternalRuntimeTermination.model_validate(
+                record.accepted_termination_json
+            )
+            expiration = ExternalQualificationTerminalDeadlineExpiration.model_validate(
+                record.conditional_terminal_expiration_json
+            )
+        except (TypeError, ValueError) as exc:
+            raise LeaseAuthorityError("stored external termination acceptance is invalid") from exc
+        issuer = self._require_runtime_control_issuer()
+        runtime_pin = issuer.authority_pin
+        try:
+            verify_external_termination_acceptance_challenge(
+                challenge=challenge,
+                preparation=preparation,
+                launch_receipt=launch_receipt,
+                termination_evidence=evidence,
+                authority=issuer.authority_verifier,
+                observed_at=challenge.challenged_at,
+            )
+            verify_accepted_external_runtime_termination(
+                accepted=accepted,
+                receipt=termination_receipt,
+                challenge=challenge,
+                authority=issuer.authority_verifier,
+            )
+            verify_external_qualification_terminal_deadline_expiration(
+                expiration=expiration,
+                accepted_termination=accepted,
+                authority=issuer.authority_verifier,
+            )
+        except (TypeError, ValueError, QualificationVerificationError) as exc:
+            raise LeaseAuthorityError("stored external termination authority is invalid") from exc
+        if (
+            record.challenge_sha256 != challenge.challenge_sha256
+            or record.bridge_termination_receipt_sha256
+            != termination_receipt.termination_receipt_sha256
+            or record.receipt_payload_sha256 != termination_receipt.termination_receipt_sha256
+            or record.bridge_termination_receipt_json != _model_json(termination_receipt)
+            or record.acceptance_payload_sha256 != accepted.accepted_termination_sha256
+            or record.accepted_termination_json != _model_json(accepted)
+            or record.conditional_terminal_expiration_json != _model_json(expiration)
+            or accepted.challenge_sha256 != challenge.challenge_sha256
+            or accepted.termination_evidence_sha256 != evidence.termination_evidence_sha256
+            or accepted.runtime_preparation_sha256 != preparation.preparation_sha256
+            or accepted.external_runtime_launch_receipt_sha256
+            != launch_receipt.launch_receipt_sha256
+            or accepted.runtime_launch_authorization_request_sha256
+            != request.request_sha256
+            or accepted.external_launch_authorization_sha256
+            != authorization.authorization_sha256
+            or accepted.external_runtime_termination_receipt_sha256
+            != termination_receipt.termination_receipt_sha256
+            or accepted.executor_identity_sha256 != attempt.runtime_identity_sha256
+            or accepted.fencing_epoch != attempt.fencing_epoch
+            or accepted.lease_token_sha256 != attempt.lease_token_sha256
+            or expiration.accepted_external_runtime_termination_sha256
+            != accepted.accepted_termination_sha256
+            or expiration.artifact_submission_deadline
+            != accepted.artifact_submission_deadline
+            or record.conditional_terminal_expiration_sha256
+            != expiration.expiration_sha256
+            or record.conditional_terminal_expiration_payload_sha256
+            != expiration.expiration_sha256
+            or record.runtime_control_pin_sha256 != canonical_sha256(runtime_pin)
+            or record.runtime_control_pin_json != _model_json(runtime_pin)
+        ):
+            raise LeaseAuthorityError("external termination acceptance is rebound")
+        return (
+            preparation,
+            request,
+            authorization,
+            launch_receipt,
+            challenge,
+            termination_receipt,
+            accepted,
+            record,
+        )
+
+    @staticmethod
+    def _external_resource_lease_sha256(
+        session: Session, attempt: _ExecutionAttemptRecord
+    ) -> str:
+        return session.execute(
+            select(_ExecutionResourceLeaseRecord.lease_sha256).where(
+                _ExecutionResourceLeaseRecord.attempt_id == attempt.attempt_id
+            )
+        ).scalar_one()
+
+    @staticmethod
+    def _validate_external_terminal_artifacts(
+        *,
+        attempt: _ExecutionAttemptRecord,
+        accepted: AcceptedExternalRuntimeTermination,
+        submission: ExternalQualificationTerminalSubmission,
+        manifest: ArtifactManifest,
+        receipts: tuple[ArtifactVerifiedReceipt, ...],
+    ) -> None:
+        intent_json = attempt.intent_json if isinstance(attempt.intent_json, dict) else {}
+        intent_pointer = intent_json.get("infrastructure_attempt")
+        slot_pointer = (
+            intent_pointer.get("replicate_slot_id")
+            if isinstance(intent_pointer, dict)
+            else None
+        )
+        if (
+            submission.attempt_id != attempt.attempt_id
+            or submission.accepted_external_runtime_termination_sha256
+            != accepted.accepted_termination_sha256
+            or submission.disposition == "timeout"
+            or manifest.intent_sha256 != attempt.intent_sha256
+            or manifest.execution_id != attempt.execution_id
+            or manifest.infrastructure_attempt_id != attempt.attempt_id
+            or manifest.replicate_slot_id != slot_pointer
+            or manifest.produced_at != accepted.runtime_ended_at
+            or manifest.manifest_sha256 != submission.artifact_manifest_sha256
+        ):
+            raise LeaseAuthorityError(
+                "external terminal artifacts differ from the accepted termination"
+            )
+        if len(receipts) != len(manifest.entries):
+            raise LeaseAuthorityError(
+                "external artifact receipts differ from the manifest entries"
+            )
+        for receipt, entry in zip(receipts, manifest.entries, strict=True):
+            if (
+                receipt.artifact != entry
+                or receipt.artifact_manifest_sha256 != manifest.manifest_sha256
+                or receipt.producer_attempt_id != attempt.attempt_id
+            ):
+                raise LeaseAuthorityError(
+                    "external artifact receipt differs from its manifest entry"
+                )
+        receipt_shas = [receipt.verified_receipt_sha256 for receipt in receipts]
+        if (
+            receipt_shas != sorted(receipt_shas)
+            or list(submission.artifact_verified_receipt_sha256s) != receipt_shas
+        ):
+            raise LeaseAuthorityError(
+                "external terminal receipt shas differ from their receipts"
+            )
+        expected_disposition = recompute_external_disposition(
+            exit_code=accepted.exit_code,
+            deadline_exceeded=False,
+            required_artifacts_present=bool(manifest.entries),
+        )
+        if submission.disposition != expected_disposition:
+            raise LeaseAuthorityError(
+                "external terminal disposition differs from recomputed outcome"
+            )
 
     def _release_terminated_holds(
         self,

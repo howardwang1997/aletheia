@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.exceptions import InvalidSignature
@@ -37,6 +37,15 @@ from aletheia.execution.schemas import (
     canonical_json_bytes,
     canonical_sha256,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - typing only; runtime import would be circular
+    from aletheia.execution.external_bridge_contracts import (
+        AcceptedExternalQualificationTerminalSubmission,
+        AcceptedExternalRuntimeTermination,
+        ExternalLaunchAuthorization,
+        ExternalQualificationTerminalDeadlineExpiration,
+        ExternalTerminationAcceptanceChallenge,
+    )
 
 RUNTIME_V2_CONTRACT_SCHEMA_VERSION = 2
 
@@ -3717,6 +3726,26 @@ class RuntimeControlIssuancePort(RuntimeControlVerificationPort, Protocol):
         issued_at: datetime,
         recovery_expires_at: datetime,
     ) -> HistoricalRuntimeRecoveryGrant: ...
+
+    def issue_external_launch_authorization(
+        self, **scope: object
+    ) -> "ExternalLaunchAuthorization": ...
+
+    def issue_external_termination_challenge(
+        self, **scope: object
+    ) -> "ExternalTerminationAcceptanceChallenge": ...
+
+    def issue_accepted_external_termination(
+        self, **scope: object
+    ) -> "AcceptedExternalRuntimeTermination": ...
+
+    def issue_external_terminal_submission_acceptance(
+        self, **scope: object
+    ) -> "AcceptedExternalQualificationTerminalSubmission": ...
+
+    def issue_external_terminal_deadline_expiration(
+        self, **scope: object
+    ) -> "ExternalQualificationTerminalDeadlineExpiration": ...
 
 
 __all__ = [
