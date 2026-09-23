@@ -32,6 +32,12 @@ Two verbs:
       from the stored outcome; a crash between the two loses the exit facts
       with the dead process, and the driver refuses to invent them -- the
       runbook answer there is --adjudicate after the artifact deadline.
+      A re-run against an already-settled attempt attaches read-only: stage
+      replays are only accepted inside their live status window (launch
+      acceptance while running, artifact acceptance while verifying), so the
+      settled re-attach skips those calls, re-verifies the reader tail, and
+      prints the same evidence document with the terminal source pinning the
+      acceptance sha.
 
   --adjudicate
       one deadline sweep for the deployment's bridge manifest: activate the
@@ -439,6 +445,12 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
             f"attempt {snapshot.attempt_id} is not an external bridge attempt "
             "(the commissioned bundle resolved to node custody)"
         )
+    attach_status = snapshot.status
+    if attach_status not in {"reserved", "starting", "running", "verifying", "succeeded"}:
+        _fail(
+            f"attempt {snapshot.attempt_id} is in non-drivable state {attach_status}; "
+            "adjudicated and reconciled attempts are terminal -- dispatch a fresh pair"
+        )
     ladder = _Ladder(
         Path(args.deployment_state).resolve().parent.parent
         / "dispatch"
@@ -531,14 +543,20 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
             requested_monotonic_ns=time.monotonic_ns(),
         ),
     )
-    _clock_note("authorizing", snapshot.attempt_id)
-    start = allocator.authorize_external_runtime_start(
-        attempt_id=snapshot.attempt_id,
-        lease_token=lease_token,
-        fencing_epoch=snapshot.fencing_epoch,
-        runtime_preparation=preparation,
-        launch_authorization_request=request,
-    )
+    # Stage replays are only accepted inside their live status window (launch
+    # acceptance replays while running, terminal-artifact acceptance while
+    # verifying), so a dispatch attaching past a stage skips its call and
+    # finishes from the persisted ladder plus the readers.
+    start = None
+    if attach_status in ("reserved", "starting", "running"):
+        _clock_note("authorizing", snapshot.attempt_id)
+        start = allocator.authorize_external_runtime_start(
+            attempt_id=snapshot.attempt_id,
+            lease_token=lease_token,
+            fencing_epoch=snapshot.fencing_epoch,
+            runtime_preparation=preparation,
+            launch_authorization_request=request,
+        )
 
     # ---- workload + launch receipt (observed; persisted before accept) ---
     outcome_path = ladder.root / "workload-outcome.json"
@@ -638,15 +656,16 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
         )
     else:
         launch_receipt = receipt
-    _clock_note("accepting launch", snapshot.attempt_id)
-    launch = allocator.accept_external_runtime_launch(
-        attempt_id=snapshot.attempt_id,
-        lease_token=lease_token,
-        fencing_epoch=snapshot.fencing_epoch,
-        launch_receipt=launch_receipt,
-    )
-    if not launch.replayed and launch.snapshot.status != "running":
-        _fail(f"launch acceptance left the attempt in {launch.snapshot.status}")
+    if attach_status in ("reserved", "starting", "running"):
+        _clock_note("accepting launch", snapshot.attempt_id)
+        launch = allocator.accept_external_runtime_launch(
+            attempt_id=snapshot.attempt_id,
+            lease_token=lease_token,
+            fencing_epoch=snapshot.fencing_epoch,
+            launch_receipt=launch_receipt,
+        )
+        if not launch.replayed and launch.snapshot.status != "running":
+            _fail(f"launch acceptance left the attempt in {launch.snapshot.status}")
 
     # ---- workload exit facts (observed once; persisted for resume) --------
     if process is not None:
@@ -707,7 +726,9 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
     termination_receipt = ladder.load_or_build(
         "termination-receipt",
         _termination_receipt_model(),
-        lambda: issue_external_runtime_termination_receipt(
+        _absent("termination-receipt")
+        if start is None
+        else lambda: issue_external_runtime_termination_receipt(
             bridge_pin=bridge_pin,
             private_key=bridge_key,
             bridge_manifest_sha256=manifest.manifest_sha256,
@@ -832,15 +853,17 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
             submitted_at=_utc_now(),
         ),
     )
-    _clock_note("accepting terminal artifacts", snapshot.attempt_id)
-    artifacts = allocator.accept_external_terminal_artifacts(
-        attempt_id=snapshot.attempt_id,
-        lease_token=lease_token,
-        fencing_epoch=snapshot.fencing_epoch,
-        terminal_submission=submission,
-        artifact_manifest=artifact_manifest,
-        artifact_verified_receipts=receipts,
-    )
+    artifacts = None
+    if attach_status != "succeeded":
+        _clock_note("accepting terminal artifacts", snapshot.attempt_id)
+        artifacts = allocator.accept_external_terminal_artifacts(
+            attempt_id=snapshot.attempt_id,
+            lease_token=lease_token,
+            fencing_epoch=snapshot.fencing_epoch,
+            terminal_submission=submission,
+            artifact_manifest=artifact_manifest,
+            artifact_verified_receipts=receipts,
+        )
     _clock_note("settling", snapshot.attempt_id)
     pending = allocator.pull_pending_external_qualification_terminal_settlement(
         bridge_manifest_sha256=manifest.manifest_sha256,
@@ -880,7 +903,14 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
     )
     if lineage is None or material is None:
         _fail("settled attempt is missing its verified reader export")
-    acceptance_sha = artifacts.terminal_acceptance.terminal_authority_sha256
+    # a settled re-attach cannot replay the artifact-acceptance call (its
+    # replay window closed at settlement), so the terminal source pins the
+    # acceptance the four readers must agree with
+    acceptance_sha = (
+        artifacts.terminal_acceptance.terminal_authority_sha256
+        if artifacts is not None
+        else source.terminal_authority_sha256
+    )
     if (
         source.terminal_authority_sha256 != acceptance_sha
         or lineage.terminal_acceptance_sha256 != acceptance_sha
@@ -905,7 +935,7 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
         "attempt_id": snapshot.attempt_id,
         "execution_id": snapshot.execution_id,
         "status": status,
-        "disposition": disposition,
+        "disposition": submission.disposition,
         "charged_microunits": termination.charged_microunits,
         "lease_seconds": int((ended_at - identity.started_at).total_seconds()),
         "terminal_authority_sha256": source.terminal_authority_sha256,
