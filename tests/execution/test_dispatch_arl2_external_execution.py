@@ -31,6 +31,7 @@ from sqlalchemy import text
 
 from aletheia.db import session_factory
 from aletheia.execution.runtime_contracts import ExternalBridgeAuthority
+from aletheia.execution.runtime_v2_contracts import MINIMUM_LOOP_OUTPUT_FILESYSTEM_BYTES
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
@@ -83,7 +84,12 @@ class _Harness:
     """One commissioned external window: fixture allocator behind the seam."""
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        prepared = _prepared(monkeypatch, external=True, runtime_control_issuer=_issuer())
+        prepared = _prepared(
+            monkeypatch,
+            external=True,
+            runtime_control_issuer=_issuer(),
+            artifact_quota_bytes=MINIMUM_LOOP_OUTPUT_FILESYSTEM_BYTES,
+        )
         self.prepared = prepared
         self.working_root = tmp_path / "working"
         self.working_root.mkdir()
