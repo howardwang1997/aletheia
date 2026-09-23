@@ -91,6 +91,7 @@ from aletheia.protocols.compiler import compile_protocol
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from postgres_test_safety import require_isolated_pr4_postgres  # noqa: E402
 from test_runtime_contracts import (  # noqa: E402
+    NOW,
     PRIVATE_KEY,
     TERMINAL_PRIVATE_KEY,
     _AuthorityResolver,
@@ -178,6 +179,7 @@ class _Prepared:
     terminal_pin: TerminalVerificationAuthorityPin
     transport_pin: NodeAssignmentTransportPin
     case: object
+    bridge_pin: QualificationAuthorityPin | None = None
 
 
 def _transport_pin(manifest, *, observed_at) -> NodeAssignmentTransportPin:
@@ -311,6 +313,7 @@ def _prepared(
     bridge_active: bool = True,
     bridge_container_runtime: str = "host-process",
     extra_bridge_authorities: tuple[ExternalBridgeAuthority, ...] = (),
+    runtime_control_issuer: object = None,
 ) -> _Prepared:
     case = (
         _external_qualification_case()
@@ -388,6 +391,12 @@ def _prepared(
             intent=intent,
             resolution=resolution,
             observed_at=case.observed_at,
+            external=external,
+            grant_expires_at=(
+                NOW + timedelta(minutes=15)
+                if external
+                else NOW + timedelta(minutes=10)
+            ),
         )
     request = case.bundle.intent.resource_request
     if external:
@@ -546,6 +555,7 @@ def _prepared(
     )
     transport_pin = _transport_pin(manifest, observed_at=case.observed_at)
     external_bridge_authorities: tuple[ExternalBridgeAuthority, ...] = ()
+    bridge_pin: QualificationAuthorityPin | None = None
     if external and bridge_registered:
         bridge_public_key = _public_key_hex(BRIDGE_PRIVATE_KEY)
         bridge_pin = QualificationAuthorityPin(
@@ -579,6 +589,7 @@ def _prepared(
         external_bridge_authorities=external_bridge_authorities + extra_bridge_authorities,
         terminal_verification_authority=TerminalVerificationAuthorityVerifier(terminal_pin),
         allocator_principal_id="principal:allocator",
+        runtime_control_issuer=runtime_control_issuer,
         max_inventory_ttl_seconds=30,
         heartbeat_extension_seconds=15,
         initial_assignment_lease_seconds=initial_assignment_lease_seconds,
@@ -595,6 +606,7 @@ def _prepared(
         terminal_pin=terminal_pin,
         transport_pin=transport_pin,
         case=case,
+        bridge_pin=bridge_pin,
     )
 
 
