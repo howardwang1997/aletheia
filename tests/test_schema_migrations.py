@@ -22,7 +22,33 @@ from aletheia.schema_migrations import require_schema_exact
 
 
 def test_repository_has_one_expected_alembic_head():
-    assert expected_schema_revision() == "20260923_0036"
+    assert expected_schema_revision() == "20260924_0037"
+
+
+def test_orm_constraint_names_fit_postgres_namedatalen():
+    """Contradiction #21: >63-char constraint names render unrepresentable.
+
+    PostgreSQL silently truncates identifiers past NAMEDATALEN (63) in DDL,
+    but SQLAlchemy raises IdentifierError client-side when the preparer
+    formats such a name during Alembic comparison, so ``require_schema_exact``
+    can never pass. Convention-generated names (``conv`` objects, including
+    every over-long index name in current metadata) are exempt: the dialect
+    truncates those deterministically with a hash suffix on both sides of
+    the comparison. Explicit string names — constraints and indexes alike —
+    get no such treatment and must stay within 63 characters.
+    """
+
+    from sqlalchemy.sql.elements import conv
+
+    from aletheia.db import Base
+
+    explicit_names = [
+        (table.name, named.name)
+        for table in Base.metadata.tables.values()
+        for named in (*table.constraints, *table.indexes)
+        if not isinstance(named.name, conv) and named.name and len(named.name) > 63
+    ]
+    assert explicit_names == []
 
 
 def test_qualification_deployment_pins_the_repository_alembic_head():
