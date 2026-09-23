@@ -459,7 +459,12 @@ class QualificationTerminalOutboxItem(ExecutionModel):
     terminal_authority_sha256: str = Field(pattern=_SHA256_PATTERN)
     execution_id: str = Field(pattern=_EXECUTION_ID_PATTERN)
     attempt_id: str = Field(pattern=_ATTEMPT_ID_PATTERN)
-    payload: AcceptedQualificationTerminalSubmission | QualificationTerminalDeadlineExpiration
+    payload: (
+        AcceptedQualificationTerminalSubmission
+        | QualificationTerminalDeadlineExpiration
+        | AcceptedExternalQualificationTerminalSubmission
+        | ExternalQualificationTerminalDeadlineExpiration
+    )
     payload_sha256: str = Field(pattern=_SHA256_PATTERN)
     created_at: AwareDatetime
 
@@ -473,20 +478,40 @@ class QualificationTerminalOutboxItem(ExecutionModel):
         ):
             raise ValueError("qualification terminal outbox identity differs from its payload")
         if self.terminal_authority_kind == "accepted_terminal_submission":
-            if (
-                not isinstance(self.payload, AcceptedQualificationTerminalSubmission)
-                or self.payload.accepted_terminal_submission_sha256
-                != self.terminal_authority_sha256
-                or self.payload.accepted_at > self.created_at
-            ):
+            if isinstance(self.payload, AcceptedQualificationTerminalSubmission):
+                consistent = (
+                    self.payload.accepted_terminal_submission_sha256
+                    == self.terminal_authority_sha256
+                    and self.payload.accepted_at <= self.created_at
+                )
+            elif isinstance(self.payload, AcceptedExternalQualificationTerminalSubmission):
+                consistent = (
+                    self.payload.terminal_authority_sha256
+                    == self.terminal_authority_sha256
+                    and self.payload.accepted_at <= self.created_at
+                )
+            else:
+                consistent = False
+            if not consistent:
                 raise ValueError("accepted terminal outbox authority is inconsistent")
-        elif (
-            not isinstance(self.payload, QualificationTerminalDeadlineExpiration)
-            or self.payload.terminal_deadline_expiration_sha256 != self.terminal_authority_sha256
-            or self.payload.execution_id != self.execution_id
-            or self.payload.expired_at > self.created_at
-        ):
-            raise ValueError("terminal deadline outbox authority is inconsistent")
+        else:
+            if isinstance(self.payload, QualificationTerminalDeadlineExpiration):
+                consistent = (
+                    self.payload.terminal_deadline_expiration_sha256
+                    == self.terminal_authority_sha256
+                    and self.payload.execution_id == self.execution_id
+                    and self.payload.expired_at <= self.created_at
+                )
+            elif isinstance(self.payload, ExternalQualificationTerminalDeadlineExpiration):
+                consistent = (
+                    self.payload.expiration_sha256 == self.terminal_authority_sha256
+                    and self.payload.execution_id == self.execution_id
+                    and self.payload.expired_at <= self.created_at
+                )
+            else:
+                consistent = False
+            if not consistent:
+                raise ValueError("terminal deadline outbox authority is inconsistent")
         return self
 
 
@@ -776,6 +801,204 @@ class VerifiedQualificationTerminalDeadlineLineage(ExecutionModel):
         return canonical_sha256(self)
 
 
+class VerifiedExternalQualificationRunLineage(ExecutionModel):
+    """Frozen public proof of one fully verified external bridge terminal lineage.
+
+    The nodeless twin of the run-lineage projection: the custody root is the
+    registered bridge authority, so no worker-node enrollment or inventory exists
+    in the chain, and the reservation is the external placement lease.
+    """
+
+    schema_name: Literal["aletheia.verified_external_qualification_run_lineage"] = (
+        "aletheia.verified_external_qualification_run_lineage"
+    )
+    schema_version: Literal[1] = 1
+    execution_id: str = Field(pattern=_EXECUTION_ID_PATTERN)
+    attempt_id: str = Field(pattern=_ATTEMPT_ID_PATTERN)
+    intent_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_bundle_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_grant_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_admission_sha256: str = Field(pattern=_SHA256_PATTERN)
+    verified_engineering_qualification: VerifiedEngineeringQualification
+    qualification_admitted_at: AwareDatetime
+    resource_reservation_sha256: str = Field(pattern=_SHA256_PATTERN)
+    resource_reserved_at: AwareDatetime
+    runtime_launch_sha256: str = Field(pattern=_SHA256_PATTERN)
+    runtime_launched_at: AwareDatetime
+    accepted_runtime_termination_sha256: str = Field(pattern=_SHA256_PATTERN)
+    terminal_submission_sha256: str = Field(pattern=_SHA256_PATTERN)
+    terminal_acceptance_sha256: str = Field(pattern=_SHA256_PATTERN)
+    terminal_accepted_at: AwareDatetime
+    cost_quote_sha256: str = Field(pattern=_SHA256_PATTERN)
+    bridge_manifest_sha256: str = Field(pattern=_SHA256_PATTERN)
+    bridge_manifest: WorkerNodeManifest
+    allocator_principal_id: str
+    allocator_policy_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_principal_id: str
+    qualification_key_id: str = Field(pattern=_SHA256_PATTERN)
+    qualification_policy_sha256: str = Field(pattern=_SHA256_PATTERN)
+    bridge_authority_principal_id: str
+    bridge_authority_key_id: str = Field(pattern=_SHA256_PATTERN)
+    bridge_authority_policy_sha256: str = Field(pattern=_SHA256_PATTERN)
+    runtime_control_principal_id: str
+    runtime_control_key_id: str = Field(pattern=_SHA256_PATTERN)
+    runtime_control_policy_sha256: str = Field(pattern=_SHA256_PATTERN)
+    terminal_submission_principal_id: str
+    terminal_submission_key_id: str = Field(pattern=_SHA256_PATTERN)
+    terminal_submission_policy_sha256: str = Field(pattern=_SHA256_PATTERN)
+    terminal_acceptance_principal_id: str
+    terminal_acceptance_key_id: str = Field(pattern=_SHA256_PATTERN)
+    terminal_acceptance_policy_sha256: str = Field(pattern=_SHA256_PATTERN)
+    artifact_manifest_sha256: str = Field(pattern=_SHA256_PATTERN)
+    output_tree_sha256: str = Field(pattern=_SHA256_PATTERN)
+    artifact_verified_receipt_sha256s: tuple[str, ...]
+    artifact_manifest: ArtifactManifest
+    artifact_verified_receipts: tuple[ArtifactVerifiedReceipt, ...]
+    verified_at: AwareDatetime
+    qualification_only: Literal[True] = True
+    scientific_admission_allowed: Literal[False] = False
+
+    @model_validator(mode="after")
+    def _external_lineage_is_exact_and_ordered(
+        self,
+    ) -> "VerifiedExternalQualificationRunLineage":
+        receipt_hashes = tuple(
+            sorted(item.verified_receipt_sha256 for item in self.artifact_verified_receipts)
+        )
+        if (
+            self.verified_engineering_qualification.execution_id != self.execution_id
+            or self.verified_engineering_qualification.infrastructure_attempt_id
+            != self.attempt_id
+            or self.verified_engineering_qualification.intent_sha256 != self.intent_sha256
+            or self.verified_engineering_qualification.bundle_sha256
+            != self.qualification_bundle_sha256
+            or self.verified_engineering_qualification.grant_sha256
+            != self.qualification_grant_sha256
+            or _stable_admission_sha256(self.verified_engineering_qualification)
+            != self.qualification_admission_sha256
+            or self.verified_engineering_qualification.verified_at
+            != self.qualification_admitted_at
+            or self.bridge_manifest.manifest_sha256 != self.bridge_manifest_sha256
+            or self.artifact_manifest_sha256 != self.artifact_manifest.manifest_sha256
+            or self.artifact_verified_receipt_sha256s != receipt_hashes
+            or tuple(item.artifact for item in self.artifact_verified_receipts)
+            != self.artifact_manifest.entries
+        ):
+            raise ValueError("verified external qualification run projection is rebound")
+        if not (
+            self.qualification_admitted_at
+            <= self.resource_reserved_at
+            <= self.runtime_launched_at
+            <= self.terminal_accepted_at
+            <= self.verified_at
+        ):
+            raise ValueError(
+                "verified external qualification run projection is not historically ordered"
+            )
+        if (
+            self.terminal_submission_principal_id != self.bridge_authority_principal_id
+            or self.terminal_submission_key_id != self.bridge_authority_key_id
+            or self.terminal_submission_policy_sha256 != self.bridge_authority_policy_sha256
+            or self.runtime_control_principal_id != self.terminal_acceptance_principal_id
+            or self.runtime_control_key_id != self.terminal_acceptance_key_id
+            or self.runtime_control_policy_sha256 != self.terminal_acceptance_policy_sha256
+        ):
+            raise ValueError(
+                "verified external qualification run authority projection is rebound"
+            )
+        return self
+
+    @property
+    def lineage_sha256(self) -> str:
+        return canonical_sha256(self)
+
+
+class VerifiedExternalQualificationRawRunMaterial(ExecutionModel):
+    """Public typed external terminal material returned only after full lineage verification.
+
+    The nodeless twin of the raw-run export: the bridge-signed contracts replace
+    the node contracts, and the observation boundary still must bind an independent
+    scientific admission before constructing a ``RawRunEnvelope``.
+    """
+
+    schema_name: Literal["aletheia.verified_external_qualification_raw_run_material"] = (
+        "aletheia.verified_external_qualification_raw_run_material"
+    )
+    schema_version: Literal[1] = 1
+    execution_id: str = Field(pattern=_EXECUTION_ID_PATTERN)
+    attempt_id: str = Field(pattern=_ATTEMPT_ID_PATTERN)
+    intent_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_bundle_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_grant_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_admission_sha256: str = Field(pattern=_SHA256_PATTERN)
+    qualification_admitted_at: AwareDatetime
+    resource_reserved_at: AwareDatetime
+    runtime_launched_at: AwareDatetime
+    accepted_runtime_termination: AcceptedExternalRuntimeTermination
+    terminal_submission: ExternalQualificationTerminalSubmission
+    accepted_terminal_submission: AcceptedExternalQualificationTerminalSubmission
+    artifact_manifest: ArtifactManifest
+    artifact_verified_receipts: tuple[ArtifactVerifiedReceipt, ...]
+    verified_at: AwareDatetime
+    qualification_only: Literal[True] = True
+    scientific_admission_allowed: Literal[False] = False
+
+    @model_validator(mode="after")
+    def _external_material_is_exact(
+        self,
+    ) -> "VerifiedExternalQualificationRawRunMaterial":
+        accepted = self.accepted_runtime_termination
+        submission = self.terminal_submission
+        terminal = self.accepted_terminal_submission
+        manifest = self.artifact_manifest
+        receipt_hashes = tuple(
+            sorted(item.verified_receipt_sha256 for item in self.artifact_verified_receipts)
+        )
+        if (
+            accepted.attempt_id != self.attempt_id
+            or submission.execution_id != self.execution_id
+            or submission.attempt_id != self.attempt_id
+            or submission.intent_sha256 != self.intent_sha256
+            or submission.accepted_external_runtime_termination_sha256
+            != accepted.accepted_termination_sha256
+            or terminal.attempt_id != self.attempt_id
+            or terminal.terminal_submission_sha256 != submission.terminal_submission_sha256
+            or terminal.accepted_external_runtime_termination_sha256
+            != accepted.accepted_termination_sha256
+            or manifest.execution_id != self.execution_id
+            or manifest.infrastructure_attempt_id != self.attempt_id
+            or manifest.intent_sha256 != self.intent_sha256
+            or submission.artifact_manifest_sha256 != manifest.manifest_sha256
+            or terminal.artifact_manifest_sha256 != manifest.manifest_sha256
+            or submission.artifact_verified_receipt_sha256s != receipt_hashes
+            or terminal.artifact_verified_receipt_sha256s != receipt_hashes
+            or tuple(item.artifact for item in self.artifact_verified_receipts)
+            != manifest.entries
+            or submission.disposition != terminal.disposition
+            or submission.submitted_at != terminal.bridge_submitted_at
+            or terminal.accepted_at > self.verified_at
+        ):
+            raise ValueError("verified external qualification raw-run material is rebound")
+        if not (
+            self.qualification_admitted_at
+            <= self.resource_reserved_at
+            <= self.runtime_launched_at
+            <= accepted.runtime_ended_at
+            <= accepted.accepted_at
+            <= submission.submitted_at
+            <= terminal.accepted_at
+            <= self.verified_at
+        ):
+            raise ValueError(
+                "verified external qualification raw-run material is not historically ordered"
+            )
+        return self
+
+    @property
+    def material_sha256(self) -> str:
+        return canonical_sha256(self)
+
+
 @dataclass(frozen=True)
 class AttemptTransitionReceipt:
     snapshot: ReservationSnapshot
@@ -1023,17 +1246,31 @@ def _qualification_terminal_outbox_item(
     record: _ExecutionQualificationTerminalOutboxRecord,
     attempt: _ExecutionAttemptRecord,
 ) -> QualificationTerminalOutboxItem:
+    external = attempt.node_id is None and attempt.external_resource_class_id is not None
+    accepted_model = (
+        AcceptedExternalQualificationTerminalSubmission
+        if external
+        else AcceptedQualificationTerminalSubmission
+    )
+    deadline_model = (
+        ExternalQualificationTerminalDeadlineExpiration
+        if external
+        else QualificationTerminalDeadlineExpiration
+    )
     try:
         if record.terminal_authority_kind == "accepted_terminal_submission":
             payload: (
-                AcceptedQualificationTerminalSubmission | QualificationTerminalDeadlineExpiration
-            ) = AcceptedQualificationTerminalSubmission.model_validate(record.payload_json)
+                AcceptedQualificationTerminalSubmission
+                | QualificationTerminalDeadlineExpiration
+                | AcceptedExternalQualificationTerminalSubmission
+                | ExternalQualificationTerminalDeadlineExpiration
+            ) = accepted_model.model_validate(record.payload_json)
             variants_are_exact = (
                 record.accepted_terminal_submission_sha256 == record.terminal_authority_sha256
                 and record.terminal_deadline_expiration_sha256 is None
             )
         elif record.terminal_authority_kind == "terminal_deadline_expiration":
-            payload = QualificationTerminalDeadlineExpiration.model_validate(record.payload_json)
+            payload = deadline_model.model_validate(record.payload_json)
             variants_are_exact = (
                 record.terminal_deadline_expiration_sha256 == record.terminal_authority_sha256
                 and record.accepted_terminal_submission_sha256 is None
@@ -3287,6 +3524,227 @@ class PostgreSQLExecutionAllocator:
                 verified_at=observed_at,
             )
 
+    def load_verified_external_qualification_run_lineage(
+        self,
+        *,
+        execution_id: str,
+        attempt_id: str,
+        observed_at: datetime,
+    ) -> VerifiedExternalQualificationRunLineage | None:
+        """Reload and historically verify one complete external terminal lineage.
+
+        The nodeless twin of the run-lineage verifier: every private row, persisted
+        canonical JSON, deployment pin, and signature is rechecked before the frozen
+        projection escapes, with the registered bridge authority as custody root.
+        """
+
+        _canonical_identity_allowlist(
+            (execution_id,), pattern=_EXECUTION_ID_PATTERN, label="execution id"
+        )
+        _canonical_identity_allowlist(
+            (attempt_id,), pattern=_ATTEMPT_ID_PATTERN, label="attempt id"
+        )
+        if observed_at.tzinfo is None or observed_at.utcoffset() != timedelta(0):
+            raise ValueError("qualification run lineage observation time must be UTC")
+        with self._sessions() as session:
+            attempt = session.get(_ExecutionAttemptRecord, attempt_id)
+            if attempt is None:
+                return None
+            if attempt.execution_id != execution_id:
+                raise AdmissionConflict("qualification run attempt belongs to another execution")
+            if attempt.node_id is not None or attempt.external_resource_class_id is None:
+                raise AdmissionConflict(
+                    "qualification run attempt is not an external bridge attempt"
+                )
+            admission = session.get(
+                _ExecutionQualificationAdmissionRecord,
+                attempt.admission_sha256,
+            )
+            terminal_record = session.execute(
+                select(_ExecutionExternalQualificationTerminalAcceptanceRecord).where(
+                    _ExecutionExternalQualificationTerminalAcceptanceRecord.attempt_id
+                    == attempt_id
+                )
+            ).scalar_one_or_none()
+            if admission is None:
+                raise AdmissionConflict("qualification run durable lineage is incomplete")
+            if terminal_record is None:
+                # The same typed-pending rule as the node twin: a live attempt can
+                # still produce terminal material, while a terminal state without
+                # its acceptance row is corruption.
+                if attempt.status in ACTIVE_ATTEMPT_STATES:
+                    return None
+                raise AdmissionConflict("qualification run durable lineage is incomplete")
+            try:
+                bundle = EngineeringQualificationBundle.model_validate(admission.bundle_json)
+                grant = EngineeringQualificationGrant.model_validate(admission.grant_json)
+                verified = VerifiedEngineeringQualification.model_validate(
+                    admission.verified_receipt_json
+                )
+                preliminary_terminal = (
+                    AcceptedExternalQualificationTerminalSubmission.model_validate(
+                        terminal_record.accepted_terminal_submission_json
+                    )
+                )
+            except (TypeError, ValueError) as exc:
+                raise AdmissionConflict("qualification run durable contracts are invalid") from exc
+            self._validate_idempotent_attempt(
+                session,
+                attempt,
+                bundle,
+                expected_grant_sha256=grant.grant_sha256,
+            )
+            try:
+                bridge = self._require_external_bridge_authority(
+                    attempt, observed_at=preliminary_terminal.accepted_at
+                )
+                (
+                    _preparation,
+                    _request,
+                    _authorization,
+                    launch_receipt,
+                    _challenge,
+                    _termination_receipt,
+                    accepted_termination,
+                    _termination_acceptance_record,
+                    submission,
+                    manifest,
+                    receipts,
+                    terminal_acceptance,
+                ) = self._load_verified_external_terminal_lineage(
+                    session, attempt, bridge=bridge
+                )
+            except LeaseAuthorityError as exc:
+                raise AdmissionConflict(
+                    "qualification external run contracts failed historical verification"
+                ) from exc
+            resource = session.execute(
+                select(_ExecutionResourceLeaseRecord).where(
+                    _ExecutionResourceLeaseRecord.attempt_id == attempt_id
+                )
+            ).scalar_one()
+            reservation = session.execute(
+                select(_ExecutionBudgetReservationRecord).where(
+                    _ExecutionBudgetReservationRecord.attempt_id == attempt_id
+                )
+            ).scalar_one()
+            launch_record = session.get(
+                _ExecutionExternalRuntimeLaunchReceiptRecord,
+                launch_receipt.launch_receipt_sha256,
+            )
+            quote = bundle.cost_quote
+            expected_lease_json = {
+                "schema_name": "aletheia.external_resource_lease",
+                "schema_version": 1,
+                "execution_id": execution_id,
+                "attempt_id": attempt_id,
+                "intent_sha256": bundle.intent.intent_sha256,
+                "external_resource_class_id": attempt.external_resource_class_id,
+                "external_resource_class_key": attempt.external_resource_class_key,
+                "bridge_authority_principal_id": bridge.bridge_authority_pin.principal_id,
+                "bridge_node_manifest_sha256": bridge.manifest.manifest_sha256,
+                "selected_resource_ids": [],
+                "fencing_epoch_at_acquisition": resource.fencing_epoch,
+                "cpu_cores": resource.cpu_cores,
+                "memory_bytes": resource.memory_bytes,
+                "scratch_bytes": resource.scratch_bytes,
+                "accelerator_count": resource.accelerator_count,
+                "exclusive": resource.exclusive,
+                "acquired_at": resource.acquired_at.isoformat(),
+                "hard_deadline": attempt.hard_deadline.isoformat(),
+            }
+            qualification_pin = self._authority.pin
+            runtime_authority = self._require_runtime_control_authority()
+            runtime_pin = runtime_authority.authority_pin
+            runtime_launched_at = launch_receipt.launch_evidence.executor_identity.started_at
+            if (
+                admission.execution_id != execution_id
+                or admission.infrastructure_attempt_id != attempt_id
+                or admission.admission_sha256 != attempt.admission_sha256
+                or admission.admission_sha256 != _stable_admission_sha256(verified)
+                or admission.grant_sha256 != grant.grant_sha256
+                or admission.bundle_sha256 != bundle.bundle_sha256
+                or admission.intent_sha256 != bundle.intent.intent_sha256
+                or admission.authority_policy_sha256 != qualification_pin.policy_sha256
+                or admission.authority_key_id != qualification_pin.key_id
+                or admission.budget_authorization_sha256
+                != bundle.budget_authorization.authorization_sha256
+                or admission.cost_quote_sha256 != quote.quote_sha256
+                or admission.verified_at != verified.verified_at
+                or admission.admitted_at != verified.verified_at
+                or admission.admitted_at != attempt.reserved_at
+                or resource.attempt_id != attempt_id
+                or resource.node_id is not None
+                or resource.external_resource_class_id != attempt.external_resource_class_id
+                or resource.external_resource_class_key != attempt.external_resource_class_key
+                or resource.lease_sha256 != canonical_sha256(resource.lease_json)
+                or resource.lease_json != expected_lease_json
+                or resource.acquired_at != attempt.reserved_at
+                or reservation.attempt_id != attempt_id
+                or reservation.execution_id != execution_id
+                or reservation.cost_quote_sha256 != quote.quote_sha256
+                or reservation.reserved_at != attempt.reserved_at
+                or launch_record is None
+                or launch_record.attempt_id != attempt_id
+                or launch_record.signed_at != launch_receipt.signed_at
+                or launch_record.accepted_at < launch_receipt.signed_at
+                or launch_record.accepted_at > accepted_termination.accepted_at
+                or runtime_launched_at < resource.acquired_at
+                or terminal_acceptance != preliminary_terminal
+                or terminal_acceptance.accepted_at > observed_at
+            ):
+                raise AdmissionConflict("qualification run durable lineage is rebound")
+            return VerifiedExternalQualificationRunLineage(
+                execution_id=execution_id,
+                attempt_id=attempt_id,
+                intent_sha256=bundle.intent.intent_sha256,
+                qualification_bundle_sha256=bundle.bundle_sha256,
+                qualification_grant_sha256=grant.grant_sha256,
+                qualification_admission_sha256=admission.admission_sha256,
+                verified_engineering_qualification=verified,
+                qualification_admitted_at=admission.admitted_at,
+                resource_reservation_sha256=resource.lease_sha256,
+                resource_reserved_at=resource.acquired_at,
+                runtime_launch_sha256=launch_receipt.launch_receipt_sha256,
+                runtime_launched_at=runtime_launched_at,
+                accepted_runtime_termination_sha256=(
+                    accepted_termination.accepted_termination_sha256
+                ),
+                terminal_submission_sha256=submission.terminal_submission_sha256,
+                terminal_acceptance_sha256=terminal_acceptance.terminal_authority_sha256,
+                terminal_accepted_at=terminal_acceptance.accepted_at,
+                cost_quote_sha256=quote.quote_sha256,
+                bridge_manifest_sha256=bridge.manifest.manifest_sha256,
+                bridge_manifest=bridge.manifest,
+                allocator_principal_id=quote.quoted_by_principal_id,
+                allocator_policy_sha256=quote.pricing_policy_sha256,
+                qualification_principal_id=grant.message.authorized_by_principal_id,
+                qualification_key_id=grant.message.authorization_key_id,
+                qualification_policy_sha256=grant.message.qualification_authority_policy_sha256,
+                bridge_authority_principal_id=bridge.bridge_authority_pin.principal_id,
+                bridge_authority_key_id=bridge.bridge_authority_pin.key_id,
+                bridge_authority_policy_sha256=bridge.bridge_authority_pin.policy_sha256,
+                runtime_control_principal_id=runtime_pin.principal_id,
+                runtime_control_key_id=runtime_pin.key_id,
+                runtime_control_policy_sha256=runtime_pin.policy_sha256,
+                terminal_submission_principal_id=bridge.bridge_authority_pin.principal_id,
+                terminal_submission_key_id=submission.signing_key_id,
+                terminal_submission_policy_sha256=bridge.bridge_authority_pin.policy_sha256,
+                terminal_acceptance_principal_id=terminal_acceptance.accepted_by_principal_id,
+                terminal_acceptance_key_id=terminal_acceptance.acceptance_key_id,
+                terminal_acceptance_policy_sha256=(
+                    terminal_acceptance.runtime_control_policy_sha256
+                ),
+                artifact_manifest_sha256=manifest.manifest_sha256,
+                output_tree_sha256=terminal_acceptance.output_tree_sha256,
+                artifact_verified_receipt_sha256s=(
+                    terminal_acceptance.artifact_verified_receipt_sha256s
+                ),
+                artifact_manifest=manifest,
+                artifact_verified_receipts=receipts,
+                verified_at=observed_at,
+            )
+
     def load_verified_qualification_raw_run_material(
         self,
         *,
@@ -3391,6 +3849,92 @@ class PostgreSQLExecutionAllocator:
                 verified_at=observed_at,
             )
 
+    def load_verified_external_qualification_raw_run_material(
+        self,
+        *,
+        execution_id: str,
+        attempt_id: str,
+        observed_at: datetime,
+    ) -> VerifiedExternalQualificationRawRunMaterial | None:
+        """Return exact public external terminal contracts after replaying the run lineage.
+
+        The nodeless twin of the raw-run export: the lineage verifier owns the
+        security decision, and this second append-only read exports the already
+        verified typed contracts while rechecking every exported identity.
+        """
+
+        lineage = self.load_verified_external_qualification_run_lineage(
+            execution_id=execution_id,
+            attempt_id=attempt_id,
+            observed_at=observed_at,
+        )
+        if lineage is None:
+            return None
+        with self._sessions() as session:
+            attempt = session.get(_ExecutionAttemptRecord, attempt_id)
+            terminal_record = session.execute(
+                select(_ExecutionExternalQualificationTerminalAcceptanceRecord).where(
+                    _ExecutionExternalQualificationTerminalAcceptanceRecord.attempt_id
+                    == attempt_id
+                )
+            ).scalar_one_or_none()
+            if attempt is None or terminal_record is None:
+                raise AdmissionConflict("qualification raw-run material became incomplete")
+            try:
+                bridge = self._require_external_bridge_authority(
+                    attempt, observed_at=lineage.terminal_accepted_at
+                )
+                (
+                    _preparation,
+                    _request,
+                    _authorization,
+                    _launch_receipt,
+                    _challenge,
+                    _termination_receipt,
+                    accepted_termination,
+                    _termination_acceptance_record,
+                    submission,
+                    manifest,
+                    receipts,
+                    terminal_acceptance,
+                ) = self._load_verified_external_terminal_lineage(
+                    session, attempt, bridge=bridge
+                )
+            except LeaseAuthorityError as exc:
+                raise AdmissionConflict(
+                    "qualification external run contracts failed historical verification"
+                ) from exc
+            if (
+                attempt.execution_id != execution_id
+                or terminal_acceptance.terminal_authority_sha256
+                != lineage.terminal_acceptance_sha256
+                or submission.terminal_submission_sha256 != lineage.terminal_submission_sha256
+                or accepted_termination.accepted_termination_sha256
+                != lineage.accepted_runtime_termination_sha256
+                or manifest != lineage.artifact_manifest
+                or receipts != lineage.artifact_verified_receipts
+            ):
+                raise AdmissionConflict(
+                    "qualification external raw-run export differs from verified lineage"
+                )
+            return VerifiedExternalQualificationRawRunMaterial(
+                execution_id=execution_id,
+                attempt_id=attempt_id,
+                intent_sha256=lineage.intent_sha256,
+                qualification_bundle_sha256=lineage.qualification_bundle_sha256,
+                qualification_grant_sha256=lineage.qualification_grant_sha256,
+                qualification_admission_sha256=lineage.qualification_admission_sha256,
+                qualification_admitted_at=lineage.qualification_admitted_at,
+                resource_reserved_at=lineage.resource_reserved_at,
+                runtime_launched_at=lineage.runtime_launched_at,
+                accepted_runtime_termination=accepted_termination,
+                terminal_submission=submission,
+                accepted_terminal_submission=terminal_acceptance,
+                artifact_manifest=manifest,
+                artifact_verified_receipts=receipts,
+                verified_at=observed_at,
+            )
+
     def load_qualification_terminal_outbox(
         self,
         *,
@@ -3430,6 +3974,21 @@ class PostgreSQLExecutionAllocator:
             if item is None:
                 return None
             observed_at = _database_time(session)
+            dispatch = session.get(_ExecutionAttemptRecord, attempt_id)
+            if dispatch is None:
+                raise AdmissionConflict(
+                    "terminal source has incomplete qualification history"
+                )
+            if dispatch.node_id is None:
+                return self._verified_external_terminal_source_in_session(
+                    session,
+                    item,
+                    attempt=dispatch,
+                    execution_id=execution_id,
+                    attempt_id=attempt_id,
+                    observed_at=observed_at,
+                    accepted=item.terminal_authority_kind == "accepted_terminal_submission",
+                )
             if item.terminal_authority_kind == "accepted_terminal_submission":
                 # The accepted-run verifier uses its own read transaction.  Every source row is
                 # append-only, and the exact outbox is rechecked below by the caller-owned
@@ -3612,6 +4171,181 @@ class PostgreSQLExecutionAllocator:
             payload_sha256=item.payload_sha256,
             outbox_created_at=item.created_at,
             lineage_evidence_sha256=lineage.lineage_sha256,
+            verified_at=observed_at,
+        )
+
+    def _verified_external_terminal_source_in_session(
+        self,
+        session: Session,
+        item: QualificationTerminalOutboxItem,
+        *,
+        attempt: _ExecutionAttemptRecord,
+        execution_id: str,
+        attempt_id: str,
+        observed_at: datetime,
+        accepted: bool,
+    ) -> VerifiedQualificationTerminalSource:
+        """Verify one external terminal outbox source against its bridge lineage."""
+
+        if accepted:
+            lineage = self.load_verified_external_qualification_run_lineage(
+                execution_id=execution_id,
+                attempt_id=attempt_id,
+                observed_at=observed_at,
+            )
+            if lineage is None:
+                raise AdmissionConflict("accepted terminal source lacks verified run lineage")
+            if lineage.terminal_acceptance_sha256 != item.terminal_authority_sha256:
+                raise AdmissionConflict(
+                    "accepted terminal source differs from verified terminal acceptance"
+                )
+            return VerifiedQualificationTerminalSource(
+                execution_id=execution_id,
+                attempt_id=attempt_id,
+                intent_sha256=lineage.intent_sha256,
+                qualification_bundle_sha256=lineage.qualification_bundle_sha256,
+                qualification_grant_sha256=lineage.qualification_grant_sha256,
+                qualification_admission_sha256=lineage.qualification_admission_sha256,
+                qualification_admitted_at=lineage.qualification_admitted_at,
+                resource_reservation_sha256=lineage.resource_reservation_sha256,
+                resource_reserved_at=lineage.resource_reserved_at,
+                runtime_launch_sha256=lineage.runtime_launch_sha256,
+                runtime_launched_at=lineage.runtime_launched_at,
+                accepted_runtime_termination_sha256=(
+                    lineage.accepted_runtime_termination_sha256
+                ),
+                outbox_id=item.outbox_id,
+                terminal_authority_kind=item.terminal_authority_kind,
+                terminal_authority_sha256=item.terminal_authority_sha256,
+                payload_sha256=item.payload_sha256,
+                outbox_created_at=item.created_at,
+                lineage_evidence_sha256=lineage.lineage_sha256,
+                verified_at=observed_at,
+            )
+        admission = session.get(
+            _ExecutionQualificationAdmissionRecord, attempt.admission_sha256
+        )
+        head = session.get(_ExecutionHeadRecord, execution_id)
+        if (
+            admission is None
+            or head is None
+            or attempt.accepted_runtime_termination_sha256 is None
+        ):
+            raise AdmissionConflict(
+                "terminal deadline source has incomplete qualification history"
+            )
+        try:
+            bundle = EngineeringQualificationBundle.model_validate(admission.bundle_json)
+            grant = EngineeringQualificationGrant.model_validate(admission.grant_json)
+        except (TypeError, ValueError) as exc:
+            raise AdmissionConflict(
+                "terminal deadline source has invalid qualification contracts"
+            ) from exc
+        self._validate_idempotent_attempt(
+            session,
+            attempt,
+            bundle,
+            expected_grant_sha256=grant.grant_sha256,
+        )
+        termination_record = session.get(
+            _ExecutionExternalRuntimeTerminationAcceptanceRecord,
+            attempt.accepted_runtime_termination_sha256,
+        )
+        if termination_record is None:
+            raise AdmissionConflict(
+                "terminal deadline source lacks accepted runtime termination"
+            )
+        _bridge = self._require_external_bridge_authority(
+            attempt, observed_at=termination_record.accepted_at
+        )
+        try:
+            (
+                _preparation,
+                _request,
+                _authorization,
+                launch_receipt,
+                _challenge,
+                _receipt,
+                accepted_termination,
+                verified_termination_record,
+            ) = self._load_external_termination_lineage(session, attempt)
+            expiration = ExternalQualificationTerminalDeadlineExpiration.model_validate(
+                verified_termination_record.conditional_terminal_expiration_json
+            )
+        except (LeaseAuthorityError, TypeError, ValueError) as exc:
+            raise AdmissionConflict("terminal deadline source runtime history is invalid") from exc
+        activation = session.get(
+            _ExecutionExternalQualificationTerminalDeadlineExpirationRecord,
+            expiration.expiration_sha256,
+        )
+        resource = session.execute(
+            select(_ExecutionResourceLeaseRecord).where(
+                _ExecutionResourceLeaseRecord.attempt_id == attempt_id
+            )
+        ).scalar_one_or_none()
+        runtime_pin = self._require_runtime_control_authority().authority_pin
+        if (
+            activation is None
+            or resource is None
+            or item.payload != expiration
+            or attempt.execution_id != execution_id
+            or attempt.terminal_deadline_expiration_sha256
+            != expiration.expiration_sha256
+            or attempt.accepted_terminal_submission_sha256 is not None
+            or attempt.status != "failed"
+            or head.active_attempt_id is not None
+            or admission.execution_id != execution_id
+            or admission.infrastructure_attempt_id != attempt_id
+            or activation.attempt_id != attempt_id
+            or activation.accepted_runtime_termination_sha256
+            != accepted_termination.accepted_termination_sha256
+            or activation.payload_sha256 != expiration.expiration_sha256
+            or activation.payload_json != _model_json(expiration)
+            or activation.runtime_control_pin_sha256 != canonical_sha256(runtime_pin)
+            or activation.runtime_control_pin_json != _model_json(runtime_pin)
+            or activation.authorized_at != expiration.authorized_at
+            or activation.expired_at != expiration.expired_at
+            or activation.activated_at != item.created_at
+            or activation.activated_at < expiration.expired_at
+            or item.created_at > observed_at
+        ):
+            raise AdmissionConflict(
+                "terminal deadline source differs from its activated authority"
+            )
+        return VerifiedQualificationTerminalSource(
+            execution_id=execution_id,
+            attempt_id=attempt_id,
+            intent_sha256=bundle.intent.intent_sha256,
+            qualification_bundle_sha256=bundle.bundle_sha256,
+            qualification_grant_sha256=grant.grant_sha256,
+            qualification_admission_sha256=admission.admission_sha256,
+            qualification_admitted_at=admission.admitted_at,
+            resource_reservation_sha256=resource.lease_sha256,
+            resource_reserved_at=resource.acquired_at,
+            runtime_launch_sha256=launch_receipt.launch_receipt_sha256,
+            runtime_launched_at=launch_receipt.launch_evidence.executor_identity.started_at,
+            accepted_runtime_termination_sha256=(
+                accepted_termination.accepted_termination_sha256
+            ),
+            outbox_id=item.outbox_id,
+            terminal_authority_kind=item.terminal_authority_kind,
+            terminal_authority_sha256=item.terminal_authority_sha256,
+            payload_sha256=item.payload_sha256,
+            outbox_created_at=item.created_at,
+            lineage_evidence_sha256=VerifiedQualificationTerminalDeadlineLineage(
+                execution_id=execution_id,
+                attempt_id=attempt_id,
+                qualification_admission_sha256=admission.admission_sha256,
+                resource_reservation_sha256=resource.lease_sha256,
+                runtime_launch_sha256=launch_receipt.launch_receipt_sha256,
+                accepted_runtime_termination_sha256=(
+                    accepted_termination.accepted_termination_sha256
+                ),
+                terminal_deadline_expiration_sha256=expiration.expiration_sha256,
+                terminal_deadline_expired_at=expiration.expired_at,
+                activated_at=activation.activated_at,
+                verified_at=observed_at,
+            ).lineage_sha256,
             verified_at=observed_at,
         )
 
@@ -9964,7 +10698,7 @@ class PostgreSQLExecutionAllocator:
             )
         except (TypeError, ValueError) as exc:
             raise LeaseAuthorityError("stored external launch authority is invalid") from exc
-        runtime_pin = self._require_runtime_control_issuer().authority_pin
+        runtime_pin = self._require_runtime_control_authority().authority_pin
         if (
             authorization_record.sequence != attempt.runtime_launch_authorization_count
             or authorization_record.preparation_sha256 != preparation.preparation_sha256
@@ -10083,27 +10817,27 @@ class PostgreSQLExecutionAllocator:
             )
         except (TypeError, ValueError) as exc:
             raise LeaseAuthorityError("stored external termination acceptance is invalid") from exc
-        issuer = self._require_runtime_control_issuer()
-        runtime_pin = issuer.authority_pin
+        runtime_authority = self._require_runtime_control_authority()
+        runtime_pin = runtime_authority.authority_pin
         try:
             verify_external_termination_acceptance_challenge(
                 challenge=challenge,
                 preparation=preparation,
                 launch_receipt=launch_receipt,
                 termination_evidence=evidence,
-                authority=issuer.authority_verifier,
+                authority=runtime_authority.authority_verifier,
                 observed_at=challenge.challenged_at,
             )
             verify_accepted_external_runtime_termination(
                 accepted=accepted,
                 receipt=termination_receipt,
                 challenge=challenge,
-                authority=issuer.authority_verifier,
+                authority=runtime_authority.authority_verifier,
             )
             verify_external_qualification_terminal_deadline_expiration(
                 expiration=expiration,
                 accepted_termination=accepted,
-                authority=issuer.authority_verifier,
+                authority=runtime_authority.authority_verifier,
             )
         except (TypeError, ValueError, QualificationVerificationError) as exc:
             raise LeaseAuthorityError("stored external termination authority is invalid") from exc
@@ -10151,6 +10885,132 @@ class PostgreSQLExecutionAllocator:
             termination_receipt,
             accepted,
             record,
+        )
+
+    def _load_verified_external_terminal_lineage(
+        self,
+        session: Session,
+        attempt: _ExecutionAttemptRecord,
+        *,
+        bridge: ExternalBridgeAuthority,
+    ) -> tuple[
+        ExternalRuntimePreparation,
+        RuntimeLaunchAuthorizationRequest,
+        ExternalLaunchAuthorization,
+        ExternalRuntimeLaunchReceipt,
+        ExternalTerminationAcceptanceChallenge,
+        ExternalRuntimeTerminationReceipt,
+        AcceptedExternalRuntimeTermination,
+        _ExecutionExternalRuntimeTerminationAcceptanceRecord,
+        ExternalQualificationTerminalSubmission,
+        ArtifactManifest,
+        tuple[ArtifactVerifiedReceipt, ...],
+        AcceptedExternalQualificationTerminalSubmission,
+    ]:
+        """Replay the complete accepted external terminal chain from durable rows."""
+
+        (
+            preparation,
+            request,
+            authorization,
+            launch_receipt,
+            challenge,
+            termination_receipt,
+            accepted,
+            termination_record,
+        ) = self._load_external_termination_lineage(session, attempt)
+        record = session.execute(
+            select(_ExecutionExternalQualificationTerminalAcceptanceRecord).where(
+                _ExecutionExternalQualificationTerminalAcceptanceRecord.attempt_id
+                == attempt.attempt_id
+            )
+        ).scalar_one_or_none()
+        if record is None:
+            raise LeaseAuthorityError(
+                "external attempt lacks its terminal artifact acceptance"
+            )
+        runtime_authority = self._require_runtime_control_authority()
+        runtime_pin = runtime_authority.authority_pin
+        try:
+            submission = ExternalQualificationTerminalSubmission.model_validate(
+                record.terminal_submission_json
+            )
+            manifest = ArtifactManifest.model_validate(record.artifact_manifest_json)
+            receipts = tuple(
+                ArtifactVerifiedReceipt.model_validate(item)
+                for item in record.artifact_verified_receipts_json
+            )
+            terminal_acceptance = AcceptedExternalQualificationTerminalSubmission.model_validate(
+                record.accepted_terminal_submission_json
+            )
+            verify_external_qualification_terminal_submission(
+                submission=submission,
+                accepted_termination=accepted,
+                bridge_authority=bridge,
+                observed_at=record.accepted_at,
+            )
+            verify_accepted_external_qualification_terminal_submission(
+                accepted=terminal_acceptance,
+                submission=submission,
+                authority=runtime_authority.authority_verifier,
+            )
+        except (TypeError, ValueError, QualificationVerificationError) as exc:
+            raise LeaseAuthorityError(
+                "stored external terminal acceptance is invalid"
+            ) from exc
+        self._validate_external_terminal_artifacts(
+            attempt=attempt,
+            accepted=accepted,
+            submission=submission,
+            manifest=manifest,
+            receipts=receipts,
+        )
+        receipt_hashes = list(terminal_acceptance.artifact_verified_receipt_sha256s)
+        if (
+            record.attempt_id != attempt.attempt_id
+            or record.accepted_runtime_termination_sha256
+            != accepted.accepted_termination_sha256
+            or record.bridge_manifest_sha256 != bridge.manifest.manifest_sha256
+            or record.terminal_submission_sha256 != submission.terminal_submission_sha256
+            or record.submission_payload_sha256 != submission.terminal_submission_sha256
+            or record.terminal_submission_json != _model_json(submission)
+            or record.artifact_manifest_sha256 != manifest.manifest_sha256
+            or record.manifest_payload_sha256 != manifest.manifest_sha256
+            or record.artifact_manifest_json != _model_json(manifest)
+            or record.output_tree_sha256 != terminal_acceptance.output_tree_sha256
+            or record.output_tree_sha256 != submission.output_tree_sha256
+            or record.disposition != terminal_acceptance.disposition
+            or record.disposition != submission.disposition
+            or record.artifact_verified_receipt_sha256s_json != receipt_hashes
+            or list(submission.artifact_verified_receipt_sha256s) != receipt_hashes
+            or record.artifact_verified_receipts_json
+            != [_model_json(item) for item in receipts]
+            or record.acceptance_payload_sha256
+            != terminal_acceptance.terminal_authority_sha256
+            or record.accepted_terminal_submission_sha256
+            != terminal_acceptance.terminal_authority_sha256
+            or record.accepted_terminal_submission_json
+            != _model_json(terminal_acceptance)
+            or record.accepted_at != terminal_acceptance.accepted_at
+            or record.runtime_control_pin_sha256 != canonical_sha256(runtime_pin)
+            or record.runtime_control_pin_json != _model_json(runtime_pin)
+            or attempt.accepted_terminal_submission_sha256
+            != terminal_acceptance.terminal_authority_sha256
+        ):
+            raise LeaseAuthorityError("external terminal acceptance is rebound")
+        return (
+            preparation,
+            request,
+            authorization,
+            launch_receipt,
+            challenge,
+            termination_receipt,
+            accepted,
+            termination_record,
+            submission,
+            manifest,
+            receipts,
+            terminal_acceptance,
         )
 
     @staticmethod

@@ -28,8 +28,10 @@ from aletheia.execution.allocator import (
     RuntimeProofReplayRejectionCode,
 )
 from aletheia.execution.external_bridge_contracts import (
+    AcceptedExternalQualificationTerminalSubmission,
     ExternalExecutorIdentity,
     ExternalLaunchEvidence,
+    ExternalQualificationTerminalDeadlineExpiration,
     ExternalRuntimePreparation,
     ExternalTerminationEvidence,
     issue_external_qualification_terminal_submission,
@@ -638,6 +640,178 @@ def test_external_ladder_commits_and_replays_exactly(monkeypatch) -> None:
         )
         is None
     )
+
+
+def test_external_verified_readers_replay_the_settled_lineage(monkeypatch) -> None:
+    (
+        prepared,
+        claim,
+        _preparation,
+        _challenged,
+        _evidence,
+        termination,
+        t0,
+    ) = _drive_to_verifying(monkeypatch)
+
+    # a live attempt without terminal artifacts is typed-pending, never a
+    # partial export
+    assert (
+        prepared.allocator.load_verified_external_qualification_run_lineage(
+            execution_id=claim.snapshot.execution_id,
+            attempt_id=claim.snapshot.attempt_id,
+            observed_at=t0 + timedelta(seconds=45),
+        )
+        is None
+    )
+    assert (
+        prepared.allocator.load_verified_qualification_terminal_source(
+            execution_id=claim.snapshot.execution_id,
+            attempt_id=claim.snapshot.attempt_id,
+        )
+        is None
+    )
+
+    submission, manifest, receipts = _terminal_artifacts(
+        prepared,
+        claim,
+        termination.accepted_termination,
+        produced_at=t0 + timedelta(seconds=20),
+        verified_at=t0 + timedelta(seconds=35),
+    )
+    _clock(monkeypatch, t0 + timedelta(seconds=41))
+    prepared.allocator.accept_external_terminal_artifacts(
+        attempt_id=claim.snapshot.attempt_id,
+        lease_token=claim.lease_token,
+        fencing_epoch=claim.snapshot.fencing_epoch,
+        terminal_submission=submission,
+        artifact_manifest=manifest,
+        artifact_verified_receipts=receipts,
+    )
+    _clock(monkeypatch, t0 + timedelta(seconds=42))
+    pending = prepared.allocator.pull_pending_external_qualification_terminal_settlement(
+        bridge_manifest_sha256=prepared.manifest.manifest_sha256,
+    )
+    assert pending is not None
+    settled = prepared.allocator.settle_external_qualification_terminal(
+        terminal_acceptance=pending,
+    )
+    assert settled.snapshot.status == "succeeded"
+
+    observed = t0 + timedelta(seconds=60)
+    lineage = prepared.allocator.load_verified_external_qualification_run_lineage(
+        execution_id=claim.snapshot.execution_id,
+        attempt_id=claim.snapshot.attempt_id,
+        observed_at=observed,
+    )
+    assert lineage is not None
+    assert lineage.intent_sha256 == claim.snapshot.intent_sha256
+    assert lineage.terminal_acceptance_sha256 == pending.terminal_authority_sha256
+    assert lineage.terminal_submission_sha256 == submission.terminal_submission_sha256
+    assert (
+        lineage.accepted_runtime_termination_sha256
+        == termination.accepted_termination.accepted_termination_sha256
+    )
+    assert lineage.bridge_manifest_sha256 == prepared.manifest.manifest_sha256
+    assert lineage.artifact_manifest == manifest
+    assert lineage.artifact_verified_receipts == receipts
+    again = prepared.allocator.load_verified_external_qualification_run_lineage(
+        execution_id=claim.snapshot.execution_id,
+        attempt_id=claim.snapshot.attempt_id,
+        observed_at=observed,
+    )
+    assert again is not None and again.lineage_sha256 == lineage.lineage_sha256
+
+    material = prepared.allocator.load_verified_external_qualification_raw_run_material(
+        execution_id=claim.snapshot.execution_id,
+        attempt_id=claim.snapshot.attempt_id,
+        observed_at=observed,
+    )
+    assert material is not None
+    assert material.accepted_terminal_submission == pending
+    assert material.terminal_submission == submission
+    assert material.verified_at == observed
+
+    source = prepared.allocator.load_verified_qualification_terminal_source(
+        execution_id=claim.snapshot.execution_id,
+        attempt_id=claim.snapshot.attempt_id,
+    )
+    assert source is not None
+    assert source.terminal_authority_kind == "accepted_terminal_submission"
+    assert source.terminal_authority_sha256 == pending.terminal_authority_sha256
+    replayed_lineage = prepared.allocator.load_verified_external_qualification_run_lineage(
+        execution_id=claim.snapshot.execution_id,
+        attempt_id=claim.snapshot.attempt_id,
+        observed_at=source.verified_at,
+    )
+    assert replayed_lineage is not None
+    assert source.lineage_evidence_sha256 == replayed_lineage.lineage_sha256
+
+    items = prepared.allocator.list_qualification_terminal_outbox(
+        attempt_id_allowlist=(claim.snapshot.attempt_id,)
+    )
+    assert len(items) == 1
+    assert isinstance(items[0].payload, AcceptedExternalQualificationTerminalSubmission)
+    assert items[0].payload == pending
+
+
+def test_external_terminal_source_covers_the_deadline_path(monkeypatch) -> None:
+    (
+        prepared,
+        claim,
+        _preparation,
+        challenged,
+        _evidence,
+        termination,
+        _t0,
+    ) = _drive_to_verifying(monkeypatch)
+    deadline = challenged.challenge.artifact_submission_deadline
+    _clock(monkeypatch, deadline + timedelta(seconds=10))
+    adjudicated = prepared.allocator.adjudicate_expired_external_qualification_terminal(
+        bridge_manifest_sha256=prepared.manifest.manifest_sha256,
+    )
+    assert adjudicated is not None and adjudicated.replayed is False
+
+    source = prepared.allocator.load_verified_qualification_terminal_source(
+        execution_id=claim.snapshot.execution_id,
+        attempt_id=claim.snapshot.attempt_id,
+    )
+    assert source is not None
+    assert source.terminal_authority_kind == "terminal_deadline_expiration"
+    assert (
+        source.terminal_authority_sha256
+        == adjudicated.terminal_expiration.expiration_sha256
+    )
+    assert (
+        source.accepted_runtime_termination_sha256
+        == termination.accepted_termination.accepted_termination_sha256
+    )
+    assert source.outbox_id == adjudicated.outbox_id
+
+    items = prepared.allocator.list_qualification_terminal_outbox(
+        attempt_id_allowlist=(claim.snapshot.attempt_id,)
+    )
+    assert len(items) == 1
+    assert isinstance(items[0].payload, ExternalQualificationTerminalDeadlineExpiration)
+    assert (
+        items[0].payload.expiration_sha256
+        == adjudicated.terminal_expiration.expiration_sha256
+    )
+
+    # a deadline-failed attempt has no terminal acceptance row: run lineage and
+    # raw-run material fail closed instead of exporting partial custody
+    after = deadline + timedelta(seconds=11)
+    with pytest.raises(AdmissionConflict, match="durable lineage is incomplete"):
+        prepared.allocator.load_verified_external_qualification_run_lineage(
+            execution_id=claim.snapshot.execution_id,
+            attempt_id=claim.snapshot.attempt_id,
+            observed_at=after,
+        )
+    with pytest.raises(AdmissionConflict, match="durable lineage is incomplete"):
+        prepared.allocator.load_verified_external_qualification_raw_run_material(
+            execution_id=claim.snapshot.execution_id,
+            attempt_id=claim.snapshot.attempt_id,
+            observed_at=after,
+        )
 
 
 def test_external_authorize_rejects_foreign_authority_and_reauthorization(
