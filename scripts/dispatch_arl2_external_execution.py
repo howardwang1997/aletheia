@@ -886,7 +886,15 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
         or len(outbox) != 1
         or outbox[0].terminal_authority_sha256 != acceptance_sha
     ):
-        _fail("verified reader exports disagree with the settled terminal acceptance")
+        _fail(
+            "verified reader exports disagree with the settled terminal acceptance: "
+            f"source={source.terminal_authority_sha256} "
+            f"acceptance={acceptance_sha} "
+            f"lineage={lineage.terminal_acceptance_sha256} "
+            f"material={material.accepted_terminal_submission.terminal_authority_sha256} "
+            f"lineage-evidence={source.lineage_evidence_sha256}/{lineage.lineage_sha256} "
+            f"outbox={[item.terminal_authority_sha256 for item in outbox]}"
+        )
     evidence = {
         "schema_name": EVIDENCE_SCHEMA,
         "schema_version": 1,
