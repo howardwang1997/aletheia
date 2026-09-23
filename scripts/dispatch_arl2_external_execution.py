@@ -512,7 +512,7 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
             lease_token_sha256=snapshot.lease_token_sha256,
             prepared_dispatch_locator_sha256=_sha256_bytes(str(ladder.root).encode("utf-8")),
             prepared_at=reserved_at,
-            prepared_monotonic_ns=1,
+            prepared_monotonic_ns=time.monotonic_ns(),
         ),
     )
     request = ladder.load_or_build(
@@ -529,7 +529,7 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
             pre_runtime_absence_epoch=0,
             pre_runtime_absence_receipt_sha256=None,
             requested_at=reserved_at,
-            requested_monotonic_ns=2,
+            requested_monotonic_ns=time.monotonic_ns(),
         ),
     )
     _clock_note("authorizing", snapshot.attempt_id)
