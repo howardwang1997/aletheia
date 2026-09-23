@@ -416,7 +416,9 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
         issue_external_runtime_termination_receipt,
         recompute_external_disposition,
     )
-    from aletheia.execution.runtime_contracts import RuntimeLaunchAuthorizationRequest
+    from aletheia.execution.runtime_v2_contracts import (
+        RuntimeLaunchAuthorizationRequest,
+    )
     from aletheia.execution.schemas import (
         ArtifactManifest,
         ArtifactManifestEntry,
