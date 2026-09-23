@@ -112,7 +112,12 @@ def _parser() -> argparse.ArgumentParser:
         "--bridge-key",
         help="external-bridge private key (default <working-root>/keys/qualification/external-bridge.key)",
     )
-    parser.add_argument("--workload-command", nargs="+", help="executor argv (dispatch verb)")
+    parser.add_argument(
+        "--workload-command",
+        nargs=argparse.REMAINDER,
+        help="executor argv (dispatch verb); pass LAST -- it consumes the rest of "
+        "the command line, flags included",
+    )
     parser.add_argument(
         "--workload-output",
         help="existing directory the workload writes its artifacts into (dispatch verb)",

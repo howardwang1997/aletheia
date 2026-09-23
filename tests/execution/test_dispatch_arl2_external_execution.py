@@ -146,11 +146,11 @@ class _Harness:
         argv += ["--deployment-state", values["deployment_state"]]
         argv += ["--database-url", values["database_url"]]
         argv += ["--bundle", values["bundle"], "--grant", values["grant"]]
-        argv += ["--workload-command", *values["workload_command"]]
         argv += ["--workload-output", values["workload_output"]]
         if values["evidence"] is not None:
             argv += ["--evidence", values["evidence"]]
         argv += ["--acknowledge", "DISPATCH_ARL2_EXTERNAL_EXECUTION"]
+        argv += ["--workload-command", *values["workload_command"]]
         return argv
 
 
