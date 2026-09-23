@@ -65,12 +65,12 @@ Inputs, all commissioned material -- nothing is hand-typed:
   --acknowledge       DISPATCH_ARL2_EXTERNAL_EXECUTION
 
 Timing honesty: the ladder runs on real database time (no clock control).
-Deterministic stage contracts are anchored to the attempt's reserved_at, and
-observed contracts (launch receipt, termination receipt, submission) record
-the wall/monotonic facts of this run, persisted before the allocator call
-they accompany.  The authorization window between authorize and
-launch-accept is thirty seconds by default; a resumed run must reach
-accept_external_runtime_launch promptly after the authorize replay.
+Every stage contract records the wall/monotonic facts observed when it was
+first built and is persisted before the allocator call it accompanies;
+replays reload those bytes, so a re-run never re-signs divergent times.  The
+authorization window between authorize and launch-accept is thirty seconds
+by default; a resumed run must reach accept_external_runtime_launch
+promptly after the authorize replay.
 """
 
 from __future__ import annotations
@@ -457,7 +457,6 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
     manifest = bridge_authority.manifest
     bridge_pin = bridge_authority.bridge_authority_pin
     intent = bundle.intent
-    reserved_at = snapshot.reserved_at
 
     # ---- deterministic preparation and request (replay-stable) ----------
     executable = args.workload_command[0]
@@ -511,7 +510,7 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
             fencing_epoch=snapshot.fencing_epoch,
             lease_token_sha256=snapshot.lease_token_sha256,
             prepared_dispatch_locator_sha256=_sha256_bytes(str(ladder.root).encode("utf-8")),
-            prepared_at=reserved_at,
+            prepared_at=_utc_now(),
             prepared_monotonic_ns=time.monotonic_ns(),
         ),
     )
@@ -528,7 +527,7 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
             lease_token_sha256=snapshot.lease_token_sha256,
             pre_runtime_absence_epoch=0,
             pre_runtime_absence_receipt_sha256=None,
-            requested_at=reserved_at,
+            requested_at=_utc_now(),
             requested_monotonic_ns=time.monotonic_ns(),
         ),
     )

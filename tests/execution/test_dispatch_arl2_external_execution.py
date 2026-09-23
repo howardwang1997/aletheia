@@ -29,6 +29,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import text
 
+import aletheia.execution.allocator as allocator_module
 from aletheia.db import session_factory
 from aletheia.execution.runtime_contracts import ExternalBridgeAuthority
 from aletheia.execution.runtime_v2_contracts import MINIMUM_LOOP_OUTPUT_FILESYSTEM_BYTES
@@ -69,20 +70,24 @@ def _clean_execution_tables() -> Iterator[None]:
 
 
 class _WallClock:
-    """Driver-side wall clock lagging the ledger's fixed NOW.
+    """Driver-side virtual wall clock; the ledger follows it.
 
-    The ledger freezes database time at NOW; every signed contract must land
-    inside its freshness window (signed_at <= NOW) while ordering after the
-    previous stage, so the driver's virtual wall clock starts behind NOW and
-    advances one second per use.
+    Every signed contract must order after the request that precedes it and
+    land inside its freshness window against database time, so the test lets
+    database time read the driver's current virtual moment: each contract
+    timestamp is fresh (age >= 0) and each stage sees a clock at or past the
+    contracts it verifies.
     """
 
     def __init__(self, base) -> None:
-        self._moment = base - timedelta(seconds=8)
+        self._moment = base
         self._step = timedelta(seconds=1)
 
     def __call__(self):
         self._moment += self._step
+        return self._moment
+
+    def peek(self):
         return self._moment
 
 
@@ -142,6 +147,9 @@ class _Harness:
         )
         self._clock = _WallClock(prepared.observed_at)
         monkeypatch.setattr(driver, "_utc_now", self._clock)
+        monkeypatch.setattr(
+            allocator_module, "_database_time", lambda _session: self._clock.peek()
+        )
 
     def argv(self, **overrides) -> list[str]:
         values = {
