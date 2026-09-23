@@ -486,8 +486,7 @@ class QualificationTerminalOutboxItem(ExecutionModel):
                 )
             elif isinstance(self.payload, AcceptedExternalQualificationTerminalSubmission):
                 consistent = (
-                    self.payload.terminal_authority_sha256
-                    == self.terminal_authority_sha256
+                    self.payload.terminal_authority_sha256 == self.terminal_authority_sha256
                     and self.payload.accepted_at <= self.created_at
                 )
             else:
@@ -867,8 +866,7 @@ class VerifiedExternalQualificationRunLineage(ExecutionModel):
         )
         if (
             self.verified_engineering_qualification.execution_id != self.execution_id
-            or self.verified_engineering_qualification.infrastructure_attempt_id
-            != self.attempt_id
+            or self.verified_engineering_qualification.infrastructure_attempt_id != self.attempt_id
             or self.verified_engineering_qualification.intent_sha256 != self.intent_sha256
             or self.verified_engineering_qualification.bundle_sha256
             != self.qualification_bundle_sha256
@@ -876,8 +874,7 @@ class VerifiedExternalQualificationRunLineage(ExecutionModel):
             != self.qualification_grant_sha256
             or _stable_admission_sha256(self.verified_engineering_qualification)
             != self.qualification_admission_sha256
-            or self.verified_engineering_qualification.verified_at
-            != self.qualification_admitted_at
+            or self.verified_engineering_qualification.verified_at != self.qualification_admitted_at
             or self.bridge_manifest.manifest_sha256 != self.bridge_manifest_sha256
             or self.artifact_manifest_sha256 != self.artifact_manifest.manifest_sha256
             or self.artifact_verified_receipt_sha256s != receipt_hashes
@@ -903,9 +900,7 @@ class VerifiedExternalQualificationRunLineage(ExecutionModel):
             or self.runtime_control_key_id != self.terminal_acceptance_key_id
             or self.runtime_control_policy_sha256 != self.terminal_acceptance_policy_sha256
         ):
-            raise ValueError(
-                "verified external qualification run authority projection is rebound"
-            )
+            raise ValueError("verified external qualification run authority projection is rebound")
         return self
 
     @property
@@ -972,8 +967,7 @@ class VerifiedExternalQualificationRawRunMaterial(ExecutionModel):
             or terminal.artifact_manifest_sha256 != manifest.manifest_sha256
             or submission.artifact_verified_receipt_sha256s != receipt_hashes
             or terminal.artifact_verified_receipt_sha256s != receipt_hashes
-            or tuple(item.artifact for item in self.artifact_verified_receipts)
-            != manifest.entries
+            or tuple(item.artifact for item in self.artifact_verified_receipts) != manifest.entries
             or submission.disposition != terminal.disposition
             or submission.submitted_at != terminal.bridge_submitted_at
             or terminal.accepted_at > self.verified_at
@@ -1246,7 +1240,10 @@ def _qualification_terminal_outbox_item(
     record: _ExecutionQualificationTerminalOutboxRecord,
     attempt: _ExecutionAttemptRecord,
 ) -> QualificationTerminalOutboxItem:
-    external = attempt.node_id is None and attempt.external_resource_class_id is not None
+    # the payload itself carries the placement mode (external kinds bind the
+    # bridge manifest, local kinds forbid the field), so the projection never
+    # depends on attempt-row columns the caller may not carry
+    external = "bridge_manifest_sha256" in record.payload_json
     accepted_model = (
         AcceptedExternalQualificationTerminalSubmission
         if external
@@ -3562,8 +3559,7 @@ class PostgreSQLExecutionAllocator:
             )
             terminal_record = session.execute(
                 select(_ExecutionExternalQualificationTerminalAcceptanceRecord).where(
-                    _ExecutionExternalQualificationTerminalAcceptanceRecord.attempt_id
-                    == attempt_id
+                    _ExecutionExternalQualificationTerminalAcceptanceRecord.attempt_id == attempt_id
                 )
             ).scalar_one_or_none()
             if admission is None:
@@ -3611,9 +3607,7 @@ class PostgreSQLExecutionAllocator:
                     manifest,
                     receipts,
                     terminal_acceptance,
-                ) = self._load_verified_external_terminal_lineage(
-                    session, attempt, bridge=bridge
-                )
+                ) = self._load_verified_external_terminal_lineage(session, attempt, bridge=bridge)
             except LeaseAuthorityError as exc:
                 raise AdmissionConflict(
                     "qualification external run contracts failed historical verification"
@@ -3874,8 +3868,7 @@ class PostgreSQLExecutionAllocator:
             attempt = session.get(_ExecutionAttemptRecord, attempt_id)
             terminal_record = session.execute(
                 select(_ExecutionExternalQualificationTerminalAcceptanceRecord).where(
-                    _ExecutionExternalQualificationTerminalAcceptanceRecord.attempt_id
-                    == attempt_id
+                    _ExecutionExternalQualificationTerminalAcceptanceRecord.attempt_id == attempt_id
                 )
             ).scalar_one_or_none()
             if attempt is None or terminal_record is None:
@@ -3897,9 +3890,7 @@ class PostgreSQLExecutionAllocator:
                     manifest,
                     receipts,
                     terminal_acceptance,
-                ) = self._load_verified_external_terminal_lineage(
-                    session, attempt, bridge=bridge
-                )
+                ) = self._load_verified_external_terminal_lineage(session, attempt, bridge=bridge)
             except LeaseAuthorityError as exc:
                 raise AdmissionConflict(
                     "qualification external run contracts failed historical verification"
@@ -3976,9 +3967,7 @@ class PostgreSQLExecutionAllocator:
             observed_at = _database_time(session)
             dispatch = session.get(_ExecutionAttemptRecord, attempt_id)
             if dispatch is None:
-                raise AdmissionConflict(
-                    "terminal source has incomplete qualification history"
-                )
+                raise AdmissionConflict("terminal source has incomplete qualification history")
             if dispatch.node_id is None:
                 return self._verified_external_terminal_source_in_session(
                     session,
@@ -4211,9 +4200,7 @@ class PostgreSQLExecutionAllocator:
                 resource_reserved_at=lineage.resource_reserved_at,
                 runtime_launch_sha256=lineage.runtime_launch_sha256,
                 runtime_launched_at=lineage.runtime_launched_at,
-                accepted_runtime_termination_sha256=(
-                    lineage.accepted_runtime_termination_sha256
-                ),
+                accepted_runtime_termination_sha256=(lineage.accepted_runtime_termination_sha256),
                 outbox_id=item.outbox_id,
                 terminal_authority_kind=item.terminal_authority_kind,
                 terminal_authority_sha256=item.terminal_authority_sha256,
@@ -4222,18 +4209,10 @@ class PostgreSQLExecutionAllocator:
                 lineage_evidence_sha256=lineage.lineage_sha256,
                 verified_at=observed_at,
             )
-        admission = session.get(
-            _ExecutionQualificationAdmissionRecord, attempt.admission_sha256
-        )
+        admission = session.get(_ExecutionQualificationAdmissionRecord, attempt.admission_sha256)
         head = session.get(_ExecutionHeadRecord, execution_id)
-        if (
-            admission is None
-            or head is None
-            or attempt.accepted_runtime_termination_sha256 is None
-        ):
-            raise AdmissionConflict(
-                "terminal deadline source has incomplete qualification history"
-            )
+        if admission is None or head is None or attempt.accepted_runtime_termination_sha256 is None:
+            raise AdmissionConflict("terminal deadline source has incomplete qualification history")
         try:
             bundle = EngineeringQualificationBundle.model_validate(admission.bundle_json)
             grant = EngineeringQualificationGrant.model_validate(admission.grant_json)
@@ -4252,9 +4231,7 @@ class PostgreSQLExecutionAllocator:
             attempt.accepted_runtime_termination_sha256,
         )
         if termination_record is None:
-            raise AdmissionConflict(
-                "terminal deadline source lacks accepted runtime termination"
-            )
+            raise AdmissionConflict("terminal deadline source lacks accepted runtime termination")
         _bridge = self._require_external_bridge_authority(
             attempt, observed_at=termination_record.accepted_at
         )
@@ -4289,8 +4266,7 @@ class PostgreSQLExecutionAllocator:
             or resource is None
             or item.payload != expiration
             or attempt.execution_id != execution_id
-            or attempt.terminal_deadline_expiration_sha256
-            != expiration.expiration_sha256
+            or attempt.terminal_deadline_expiration_sha256 != expiration.expiration_sha256
             or attempt.accepted_terminal_submission_sha256 is not None
             or attempt.status != "failed"
             or head.active_attempt_id is not None
@@ -4309,9 +4285,7 @@ class PostgreSQLExecutionAllocator:
             or activation.activated_at < expiration.expired_at
             or item.created_at > observed_at
         ):
-            raise AdmissionConflict(
-                "terminal deadline source differs from its activated authority"
-            )
+            raise AdmissionConflict("terminal deadline source differs from its activated authority")
         return VerifiedQualificationTerminalSource(
             execution_id=execution_id,
             attempt_id=attempt_id,
@@ -4324,9 +4298,7 @@ class PostgreSQLExecutionAllocator:
             resource_reserved_at=resource.acquired_at,
             runtime_launch_sha256=launch_receipt.launch_receipt_sha256,
             runtime_launched_at=launch_receipt.launch_evidence.executor_identity.started_at,
-            accepted_runtime_termination_sha256=(
-                accepted_termination.accepted_termination_sha256
-            ),
+            accepted_runtime_termination_sha256=(accepted_termination.accepted_termination_sha256),
             outbox_id=item.outbox_id,
             terminal_authority_kind=item.terminal_authority_kind,
             terminal_authority_sha256=item.terminal_authority_sha256,
@@ -7643,8 +7615,7 @@ class PostgreSQLExecutionAllocator:
                 or authorization_request.pre_runtime_absence_epoch != 0
                 or authorization_request.pre_runtime_absence_receipt_sha256 is not None
                 or not preparation.prepared_at <= authorization_request.requested_at <= now
-                or authorization_request.requested_monotonic_ns
-                < preparation.prepared_monotonic_ns
+                or authorization_request.requested_monotonic_ns < preparation.prepared_monotonic_ns
             ):
                 raise LeaseAuthorityError(
                     "external runtime preparation/request differs from locked attempt authority"
@@ -7697,7 +7668,9 @@ class PostgreSQLExecutionAllocator:
                         replay_record.authorization_json
                     )
                 except (TypeError, ValueError) as exc:
-                    raise LeaseAuthorityError("stored external launch authority is invalid") from exc
+                    raise LeaseAuthorityError(
+                        "stored external launch authority is invalid"
+                    ) from exc
                 if (
                     replay_request != authorization_request
                     or replay_record.attempt_id != attempt.attempt_id
@@ -7716,14 +7689,18 @@ class PostgreSQLExecutionAllocator:
             if now >= attempt.lease_expires_at or now >= attempt.hard_deadline:
                 raise LeaseAuthorityError("expired lease cannot receive external launch authority")
             if attempt.status not in {"reserved", "starting"}:
-                raise LeaseAuthorityError("attempt cannot receive another external launch authorization")
+                raise LeaseAuthorityError(
+                    "attempt cannot receive another external launch authorization"
+                )
             existing_receipt = session.execute(
                 select(_ExecutionExternalRuntimeLaunchReceiptRecord.launch_receipt_sha256).where(
                     _ExecutionExternalRuntimeLaunchReceiptRecord.attempt_id == attempt.attempt_id
                 )
             ).scalar_one_or_none()
             if existing_receipt is not None:
-                raise LeaseAuthorityError("already-launched external attempt cannot be reauthorized")
+                raise LeaseAuthorityError(
+                    "already-launched external attempt cannot be reauthorized"
+                )
 
             # The launch ticket must fit inside the retained lease (the frozen guard pins
             # authorization.lease_expires_at <= attempt.lease_expires_at <= hard_deadline),
@@ -7832,9 +7809,7 @@ class PostgreSQLExecutionAllocator:
             attempt.lease_expires_at = runtime_lease_expires_at
             attempt.runtime_preparation_sha256 = preparation.preparation_sha256
             attempt.runtime_launch_authorization_count = sequence
-            attempt.latest_runtime_launch_authorization_sha256 = (
-                authorization.authorization_sha256
-            )
+            attempt.latest_runtime_launch_authorization_sha256 = authorization.authorization_sha256
             attempt.status = "starting"
             attempt.state_version += 1
             attempt.updated_at = now
@@ -8083,9 +8058,7 @@ class PostgreSQLExecutionAllocator:
             latest_challenge = session.execute(
                 select(_ExecutionExternalTerminationChallengeRecord)
                 .where(_ExecutionExternalTerminationChallengeRecord.attempt_id == attempt_id)
-                .order_by(
-                    _ExecutionExternalTerminationChallengeRecord.challenge_sequence.desc()
-                )
+                .order_by(_ExecutionExternalTerminationChallengeRecord.challenge_sequence.desc())
                 .limit(1)
             ).scalar_one_or_none()
             if latest_challenge is not None:
@@ -8129,8 +8102,7 @@ class PostgreSQLExecutionAllocator:
                 if (
                     prior_acceptance is not None
                     or now < previous_challenge.expires_at
-                    or latest_challenge.runtime_control_pin_sha256
-                    != canonical_sha256(runtime_pin)
+                    or latest_challenge.runtime_control_pin_sha256 != canonical_sha256(runtime_pin)
                     or latest_challenge.runtime_control_pin_json != _model_json(runtime_pin)
                 ):
                     raise LeaseAuthorityError(
@@ -8201,8 +8173,7 @@ class PostgreSQLExecutionAllocator:
                 or challenge.external_runtime_launch_receipt_sha256
                 != launch_receipt.launch_receipt_sha256
                 or challenge.executor_identity_sha256 != attempt.runtime_identity_sha256
-                or challenge.termination_evidence_sha256
-                != evidence.termination_evidence_sha256
+                or challenge.termination_evidence_sha256 != evidence.termination_evidence_sha256
                 or challenge.result_content_sha256 != evidence.result_content_sha256
                 or challenge.resource_lease_sha256 != resource.lease_sha256
                 or challenge.fencing_epoch != attempt.fencing_epoch
@@ -8212,7 +8183,9 @@ class PostgreSQLExecutionAllocator:
                 or challenge.challenged_at != now
                 or challenge.expires_at != expires_at
             ):
-                raise LeaseAuthorityError("issued external termination challenge differs from DB scope")
+                raise LeaseAuthorityError(
+                    "issued external termination challenge differs from DB scope"
+                )
             session.add(
                 _ExecutionExternalTerminationChallengeRecord(
                     challenge_sha256=challenge.challenge_sha256,
@@ -8268,9 +8241,7 @@ class PostgreSQLExecutionAllocator:
             self._verify_lease_authority(
                 attempt, lease_token=lease_token, fencing_epoch=fencing_epoch
             )
-            budget_head, resource, reservation = self._lock_external_runtime_holds(
-                session, attempt
-            )
+            budget_head, resource, reservation = self._lock_external_runtime_holds(session, attempt)
             now = _database_time(session)
             bridge = self._require_external_bridge_authority(attempt, observed_at=now)
             preparation, authorization_request, authorization = self._load_external_launch_lineage(
@@ -8284,7 +8255,9 @@ class PostgreSQLExecutionAllocator:
                 attempt.runtime_termination_challenge_sha256,
             )
             if challenge_record is None or challenge_record.attempt_id != attempt.attempt_id:
-                raise LeaseAuthorityError("external termination acceptance lacks its exact challenge")
+                raise LeaseAuthorityError(
+                    "external termination acceptance lacks its exact challenge"
+                )
             try:
                 challenge = ExternalTerminationAcceptanceChallenge.model_validate(
                     challenge_record.challenge_json
@@ -8293,7 +8266,9 @@ class PostgreSQLExecutionAllocator:
                     challenge_record.termination_evidence_json
                 )
             except (TypeError, ValueError) as exc:
-                raise LeaseAuthorityError("stored external termination challenge is invalid") from exc
+                raise LeaseAuthorityError(
+                    "stored external termination challenge is invalid"
+                ) from exc
             existing = session.execute(
                 select(_ExecutionExternalRuntimeTerminationAcceptanceRecord).where(
                     _ExecutionExternalRuntimeTerminationAcceptanceRecord.attempt_id == attempt_id
@@ -8329,12 +8304,13 @@ class PostgreSQLExecutionAllocator:
                         authority=issuer.authority_verifier,
                     )
                 except (TypeError, ValueError, QualificationVerificationError) as exc:
-                    raise LeaseAuthorityError("stored external termination acceptance is invalid") from exc
+                    raise LeaseAuthorityError(
+                        "stored external termination acceptance is invalid"
+                    ) from exc
                 runtime_pin = issuer.authority_pin
                 if (
                     stored_receipt != node_receipt
-                    or existing.accepted_termination_sha256
-                    != accepted.accepted_termination_sha256
+                    or existing.accepted_termination_sha256 != accepted.accepted_termination_sha256
                     or attempt.accepted_runtime_termination_sha256
                     != accepted.accepted_termination_sha256
                     or existing.challenge_sha256 != challenge.challenge_sha256
@@ -8342,12 +8318,10 @@ class PostgreSQLExecutionAllocator:
                     != expiration.expiration_sha256
                     or existing.conditional_terminal_expiration_payload_sha256
                     != expiration.expiration_sha256
-                    or existing.conditional_terminal_expiration_json
-                    != _model_json(expiration)
+                    or existing.conditional_terminal_expiration_json != _model_json(expiration)
                     or existing.conditional_terminal_expiration_authorized_at
                     != expiration.authorized_at
-                    or existing.conditional_terminal_expiration_expires_at
-                    != expiration.expired_at
+                    or existing.conditional_terminal_expiration_expires_at != expiration.expired_at
                     or existing.runtime_control_pin_sha256 != canonical_sha256(runtime_pin)
                     or existing.runtime_control_pin_json != _model_json(runtime_pin)
                 ):
@@ -8396,7 +8370,9 @@ class PostgreSQLExecutionAllocator:
                     observed_at=now,
                 )
             except QualificationVerificationError as exc:
-                raise LeaseAuthorityError("external termination receipt is stale or invalid") from exc
+                raise LeaseAuthorityError(
+                    "external termination receipt is stale or invalid"
+                ) from exc
             receipt_evidence = node_receipt.termination_evidence
             if (
                 receipt_evidence != evidence
@@ -8404,13 +8380,14 @@ class PostgreSQLExecutionAllocator:
                 != authorization_request.request_sha256
                 or node_receipt.external_launch_authorization_sha256
                 != authorization.authorization_sha256
-                or receipt_evidence.executor_identity_sha256
-                != attempt.runtime_identity_sha256
+                or receipt_evidence.executor_identity_sha256 != attempt.runtime_identity_sha256
                 or verified.fencing_epoch != attempt.fencing_epoch
                 or verified.lease_token_sha256 != attempt.lease_token_sha256
                 or verified.infrastructure_attempt_id != attempt.attempt_id
             ):
-                raise LeaseAuthorityError("external termination receipt differs from its DB lineage")
+                raise LeaseAuthorityError(
+                    "external termination receipt differs from its DB lineage"
+                )
 
             runtime_pin = issuer.authority_pin
             try:
@@ -8609,7 +8586,9 @@ class PostgreSQLExecutionAllocator:
                     observed_at=now,
                 )
             except QualificationVerificationError as exc:
-                raise LeaseAuthorityError("external terminal submission is stale or invalid") from exc
+                raise LeaseAuthorityError(
+                    "external terminal submission is stale or invalid"
+                ) from exc
             if (
                 submission.execution_id != attempt.execution_id
                 or submission.intent_sha256 != attempt.intent_sha256
@@ -8627,8 +8606,7 @@ class PostgreSQLExecutionAllocator:
             )
             existing = session.execute(
                 select(_ExecutionExternalQualificationTerminalAcceptanceRecord).where(
-                    _ExecutionExternalQualificationTerminalAcceptanceRecord.attempt_id
-                    == attempt_id
+                    _ExecutionExternalQualificationTerminalAcceptanceRecord.attempt_id == attempt_id
                 )
             ).scalar_one_or_none()
             if existing is not None:
@@ -8642,14 +8620,17 @@ class PostgreSQLExecutionAllocator:
                         )
                     )
                 except (TypeError, ValueError) as exc:
-                    raise LeaseAuthorityError("stored external terminal acceptance is invalid") from exc
+                    raise LeaseAuthorityError(
+                        "stored external terminal acceptance is invalid"
+                    ) from exc
                 runtime_pin = issuer.authority_pin
                 if (
                     stored_submission != submission
                     or existing.terminal_submission_sha256 != submission.terminal_submission_sha256
                     or existing.manifest_payload_sha256 != manifest.manifest_sha256
                     or existing.artifact_manifest_json != _model_json(manifest)
-                    or existing.artifact_verified_receipts_json != [_model_json(r) for r in receipts]
+                    or existing.artifact_verified_receipts_json
+                    != [_model_json(r) for r in receipts]
                     or existing.runtime_control_pin_sha256 != canonical_sha256(runtime_pin)
                     or existing.runtime_control_pin_json != _model_json(runtime_pin)
                     or attempt.accepted_terminal_submission_sha256
@@ -8809,13 +8790,11 @@ class PostgreSQLExecutionAllocator:
             runtime_pin = issuer.authority_pin
             if (
                 stored_acceptance != supplied
-                or record.accepted_terminal_submission_sha256
-                != supplied.terminal_authority_sha256
+                or record.accepted_terminal_submission_sha256 != supplied.terminal_authority_sha256
                 or record.acceptance_payload_sha256 != supplied.terminal_authority_sha256
                 or record.runtime_control_pin_sha256 != canonical_sha256(runtime_pin)
                 or record.runtime_control_pin_json != _model_json(runtime_pin)
-                or attempt.accepted_terminal_submission_sha256
-                != supplied.terminal_authority_sha256
+                or attempt.accepted_terminal_submission_sha256 != supplied.terminal_authority_sha256
             ):
                 raise LeaseAuthorityError("external terminal settlement is rebound")
             outbox_id = f"qto_{supplied.terminal_authority_sha256}"
@@ -8948,7 +8927,9 @@ class PostgreSQLExecutionAllocator:
                     authority=issuer.authority_verifier,
                 )
             except (TypeError, ValueError, QualificationVerificationError) as exc:
-                raise AdmissionConflict("external terminal adjudication authority is invalid") from exc
+                raise AdmissionConflict(
+                    "external terminal adjudication authority is invalid"
+                ) from exc
             expiration_sha256 = expiration.expiration_sha256
             outbox_id = f"qto_{expiration_sha256}"
             existing_activation = session.get(
@@ -10501,9 +10482,7 @@ class PostgreSQLExecutionAllocator:
             raise LeaseAuthorityError("attempt is not an external bridge attempt")
         bridge = self._external_bridge_authorities.get(attempt.external_resource_class_id)
         if bridge is None:
-            raise AdmissionConflict(
-                "attempt resource class has no registered bridge authority"
-            )
+            raise AdmissionConflict("attempt resource class has no registered bridge authority")
         if not bridge.bridge_authority_pin.active_at(observed_at):
             raise LeaseAuthorityError("bridge authority pin is outside its active window")
         return bridge
@@ -10549,9 +10528,7 @@ class PostgreSQLExecutionAllocator:
         _ExecutionBudgetReservationRecord,
     ]:
         if attempt.node_id is not None or attempt.external_resource_class_id is None:
-            raise LeaseAuthorityError(
-                "node attempts do not enter external runtime custody paths"
-            )
+            raise LeaseAuthorityError("node attempts do not enter external runtime custody paths")
         reservation_identity = session.execute(
             select(_ExecutionBudgetReservationRecord).where(
                 _ExecutionBudgetReservationRecord.attempt_id == attempt.attempt_id
@@ -10598,18 +10575,12 @@ class PostgreSQLExecutionAllocator:
             or accepted.lease_token_sha256 != attempt.lease_token_sha256
             or budget_head.reserved_microunits < reservation.held_microunits
         ):
-            raise LeaseAuthorityError(
-                "accepted external termination differs from retained holds"
-            )
+            raise LeaseAuthorityError("accepted external termination differs from retained holds")
         duration = accepted.billable_ended_at - resource.acquired_at
         if duration < timedelta(0):
-            raise BudgetUnavailable(
-                "external runtime ended before its durable lease acquisition"
-            )
+            raise BudgetUnavailable("external runtime ended before its durable lease acquisition")
         duration_microseconds = (
-            duration.days * 86_400_000_000
-            + duration.seconds * 1_000_000
-            + duration.microseconds
+            duration.days * 86_400_000_000 + duration.seconds * 1_000_000 + duration.microseconds
         )
         actual_lease_seconds = min(
             (duration_microseconds + 999_999) // 1_000_000,
@@ -10619,9 +10590,7 @@ class PostgreSQLExecutionAllocator:
             reservation.charge_per_second_microunits * actual_lease_seconds
         )
         if charged > reservation.held_microunits:
-            raise BudgetUnavailable(
-                "external runtime settlement exceeds its exact quote hold"
-            )
+            raise BudgetUnavailable("external runtime settlement exceeds its exact quote hold")
         reservation.state = "settled"
         reservation.actual_lease_seconds = actual_lease_seconds
         reservation.settled_microunits = charged
@@ -10665,9 +10634,7 @@ class PostgreSQLExecutionAllocator:
         if preparation_record is None or preparation_record.attempt_id != attempt.attempt_id:
             raise LeaseAuthorityError("external runtime preparation head is orphaned")
         try:
-            preparation = ExternalRuntimePreparation.model_validate(
-                preparation_record.payload_json
-            )
+            preparation = ExternalRuntimePreparation.model_validate(preparation_record.payload_json)
         except (TypeError, ValueError) as exc:
             raise LeaseAuthorityError("stored external runtime preparation is invalid") from exc
         if (
@@ -10713,8 +10680,7 @@ class PostgreSQLExecutionAllocator:
             or authorization.authorization_request_sha256 != request.request_sha256
             or authorization.infrastructure_attempt_id != attempt.attempt_id
             or authorization.hard_deadline != attempt.hard_deadline
-            or authorization_record.runtime_control_pin_sha256
-            != canonical_sha256(runtime_pin)
+            or authorization_record.runtime_control_pin_sha256 != canonical_sha256(runtime_pin)
             or authorization_record.runtime_control_pin_json != _model_json(runtime_pin)
         ):
             raise LeaseAuthorityError("external launch authority lineage is rebound")
@@ -10759,9 +10725,7 @@ class PostgreSQLExecutionAllocator:
         AcceptedExternalRuntimeTermination,
         _ExecutionExternalRuntimeTerminationAcceptanceRecord,
     ]:
-        preparation, request, authorization = self._load_external_launch_lineage(
-            session, attempt
-        )
+        preparation, request, authorization = self._load_external_launch_lineage(session, attempt)
         launch_receipt = self._stored_external_launch_receipt(session, attempt)
         if attempt.runtime_termination_challenge_sha256 is None:
             raise LeaseAuthorityError("external attempt lacks its termination challenge head")
@@ -10855,10 +10819,8 @@ class PostgreSQLExecutionAllocator:
             or accepted.runtime_preparation_sha256 != preparation.preparation_sha256
             or accepted.external_runtime_launch_receipt_sha256
             != launch_receipt.launch_receipt_sha256
-            or accepted.runtime_launch_authorization_request_sha256
-            != request.request_sha256
-            or accepted.external_launch_authorization_sha256
-            != authorization.authorization_sha256
+            or accepted.runtime_launch_authorization_request_sha256 != request.request_sha256
+            or accepted.external_launch_authorization_sha256 != authorization.authorization_sha256
             or accepted.external_runtime_termination_receipt_sha256
             != termination_receipt.termination_receipt_sha256
             or accepted.executor_identity_sha256 != attempt.runtime_identity_sha256
@@ -10866,12 +10828,9 @@ class PostgreSQLExecutionAllocator:
             or accepted.lease_token_sha256 != attempt.lease_token_sha256
             or expiration.accepted_external_runtime_termination_sha256
             != accepted.accepted_termination_sha256
-            or expiration.artifact_submission_deadline
-            != accepted.artifact_submission_deadline
-            or record.conditional_terminal_expiration_sha256
-            != expiration.expiration_sha256
-            or record.conditional_terminal_expiration_payload_sha256
-            != expiration.expiration_sha256
+            or expiration.artifact_submission_deadline != accepted.artifact_submission_deadline
+            or record.conditional_terminal_expiration_sha256 != expiration.expiration_sha256
+            or record.conditional_terminal_expiration_payload_sha256 != expiration.expiration_sha256
             or record.runtime_control_pin_sha256 != canonical_sha256(runtime_pin)
             or record.runtime_control_pin_json != _model_json(runtime_pin)
         ):
@@ -10926,9 +10885,7 @@ class PostgreSQLExecutionAllocator:
             )
         ).scalar_one_or_none()
         if record is None:
-            raise LeaseAuthorityError(
-                "external attempt lacks its terminal artifact acceptance"
-            )
+            raise LeaseAuthorityError("external attempt lacks its terminal artifact acceptance")
         runtime_authority = self._require_runtime_control_authority()
         runtime_pin = runtime_authority.authority_pin
         try:
@@ -10955,9 +10912,7 @@ class PostgreSQLExecutionAllocator:
                 authority=runtime_authority.authority_verifier,
             )
         except (TypeError, ValueError, QualificationVerificationError) as exc:
-            raise LeaseAuthorityError(
-                "stored external terminal acceptance is invalid"
-            ) from exc
+            raise LeaseAuthorityError("stored external terminal acceptance is invalid") from exc
         self._validate_external_terminal_artifacts(
             attempt=attempt,
             accepted=accepted,
@@ -10968,8 +10923,7 @@ class PostgreSQLExecutionAllocator:
         receipt_hashes = list(terminal_acceptance.artifact_verified_receipt_sha256s)
         if (
             record.attempt_id != attempt.attempt_id
-            or record.accepted_runtime_termination_sha256
-            != accepted.accepted_termination_sha256
+            or record.accepted_runtime_termination_sha256 != accepted.accepted_termination_sha256
             or record.bridge_manifest_sha256 != bridge.manifest.manifest_sha256
             or record.terminal_submission_sha256 != submission.terminal_submission_sha256
             or record.submission_payload_sha256 != submission.terminal_submission_sha256
@@ -10983,14 +10937,11 @@ class PostgreSQLExecutionAllocator:
             or record.disposition != submission.disposition
             or record.artifact_verified_receipt_sha256s_json != receipt_hashes
             or list(submission.artifact_verified_receipt_sha256s) != receipt_hashes
-            or record.artifact_verified_receipts_json
-            != [_model_json(item) for item in receipts]
-            or record.acceptance_payload_sha256
-            != terminal_acceptance.terminal_authority_sha256
+            or record.artifact_verified_receipts_json != [_model_json(item) for item in receipts]
+            or record.acceptance_payload_sha256 != terminal_acceptance.terminal_authority_sha256
             or record.accepted_terminal_submission_sha256
             != terminal_acceptance.terminal_authority_sha256
-            or record.accepted_terminal_submission_json
-            != _model_json(terminal_acceptance)
+            or record.accepted_terminal_submission_json != _model_json(terminal_acceptance)
             or record.accepted_at != terminal_acceptance.accepted_at
             or record.runtime_control_pin_sha256 != canonical_sha256(runtime_pin)
             or record.runtime_control_pin_json != _model_json(runtime_pin)
@@ -11014,9 +10965,7 @@ class PostgreSQLExecutionAllocator:
         )
 
     @staticmethod
-    def _external_resource_lease_sha256(
-        session: Session, attempt: _ExecutionAttemptRecord
-    ) -> str:
+    def _external_resource_lease_sha256(session: Session, attempt: _ExecutionAttemptRecord) -> str:
         return session.execute(
             select(_ExecutionResourceLeaseRecord.lease_sha256).where(
                 _ExecutionResourceLeaseRecord.attempt_id == attempt.attempt_id
@@ -11035,9 +10984,7 @@ class PostgreSQLExecutionAllocator:
         intent_json = attempt.intent_json if isinstance(attempt.intent_json, dict) else {}
         intent_pointer = intent_json.get("infrastructure_attempt")
         slot_pointer = (
-            intent_pointer.get("replicate_slot_id")
-            if isinstance(intent_pointer, dict)
-            else None
+            intent_pointer.get("replicate_slot_id") if isinstance(intent_pointer, dict) else None
         )
         if (
             submission.attempt_id != attempt.attempt_id
@@ -11055,9 +11002,7 @@ class PostgreSQLExecutionAllocator:
                 "external terminal artifacts differ from the accepted termination"
             )
         if len(receipts) != len(manifest.entries):
-            raise LeaseAuthorityError(
-                "external artifact receipts differ from the manifest entries"
-            )
+            raise LeaseAuthorityError("external artifact receipts differ from the manifest entries")
         for receipt, entry in zip(receipts, manifest.entries, strict=True):
             if (
                 receipt.artifact != entry
@@ -11072,9 +11017,7 @@ class PostgreSQLExecutionAllocator:
             receipt_shas != sorted(receipt_shas)
             or list(submission.artifact_verified_receipt_sha256s) != receipt_shas
         ):
-            raise LeaseAuthorityError(
-                "external terminal receipt shas differ from their receipts"
-            )
+            raise LeaseAuthorityError("external terminal receipt shas differ from their receipts")
         expected_disposition = recompute_external_disposition(
             exit_code=accepted.exit_code,
             deadline_exceeded=False,

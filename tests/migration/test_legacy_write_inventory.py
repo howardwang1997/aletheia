@@ -51,6 +51,7 @@ LEGACY_SOURCE_AST_EXCLUDED_ROOTS = {
     "scripts/recommission_arl2_catalog_service.py": "new_qualification_entrypoint",
     "scripts/author_arl2_sea_and_provider_templates.py": "new_qualification_entrypoint",
     "scripts/arl2-driver-control.py": "new_qualification_entrypoint",
+    "scripts/dispatch_arl2_external_execution.py": "new_qualification_entrypoint",
 }
 MIGRATION_SOURCE_AST_ROOTS = ("aletheia/migration", "migrations")
 FRONTEND_HTTP_MUTATION_METHODS = ("DELETE", "PATCH", "POST", "PUT")
@@ -1980,22 +1981,29 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
         "PostgreSQLExecutionAllocator._record_qualification_admission",
         "PostgreSQLExecutionAllocator._reconcile_expired_attempt",
         "PostgreSQLExecutionAllocator._reconcile_locked",
+        "PostgreSQLExecutionAllocator._release_external_terminated_holds",
         "PostgreSQLExecutionAllocator._release_never_started_holds",
         "PostgreSQLExecutionAllocator._release_terminated_holds",
         "PostgreSQLExecutionAllocator._reserve_budget_hold",
         "PostgreSQLExecutionAllocator._transition_attempt",
+        "PostgreSQLExecutionAllocator.accept_external_runtime_launch",
+        "PostgreSQLExecutionAllocator.accept_external_runtime_termination",
+        "PostgreSQLExecutionAllocator.accept_external_terminal_artifacts",
         "PostgreSQLExecutionAllocator.accept_runtime_launch",
         "PostgreSQLExecutionAllocator.accept_runtime_termination",
         "PostgreSQLExecutionAllocator.accept_terminal_artifacts",
+        "PostgreSQLExecutionAllocator.adjudicate_expired_external_qualification_terminal",
         "PostgreSQLExecutionAllocator.adjudicate_expired_qualification_terminal",
         "PostgreSQLExecutionAllocator.admit_and_reserve",
         "PostgreSQLExecutionAllocator.admit_and_reserve_in_session",
         "PostgreSQLExecutionAllocator.adopt_attempt",
         "PostgreSQLExecutionAllocator.adopt_runtime_attempt",
         "PostgreSQLExecutionAllocator.append_inventory",
+        "PostgreSQLExecutionAllocator.authorize_external_runtime_start",
         "PostgreSQLExecutionAllocator.authorize_runtime_start",
         "PostgreSQLExecutionAllocator.commit_terminal_receipt",
         "PostgreSQLExecutionAllocator.heartbeat",
+        "PostgreSQLExecutionAllocator.issue_external_termination_challenge",
         "PostgreSQLExecutionAllocator.issue_runtime_termination_challenge",
         "PostgreSQLExecutionAllocator.mark_running",
         "PostgreSQLExecutionAllocator.mark_terminated",
@@ -2004,6 +2012,7 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
         "PostgreSQLExecutionAllocator.register_node",
         "PostgreSQLExecutionAllocator.resolve_runtime_absence",
         "PostgreSQLExecutionAllocator.retain_runtime_reconciliation",
+        "PostgreSQLExecutionAllocator.settle_external_qualification_terminal",
         "PostgreSQLExecutionAllocator.settle_qualification_terminal",
         "PostgreSQLExecutionAllocator.start_attempt",
     }
@@ -2013,25 +2022,33 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
         "PostgreSQLExecutionAllocator._reconcile_expired_attempt",
         "PostgreSQLExecutionAllocator._reconcile_locked",
         "PostgreSQLExecutionAllocator._record_qualification_admission",
+        "PostgreSQLExecutionAllocator._release_external_terminated_holds",
         "PostgreSQLExecutionAllocator._release_never_started_holds",
         "PostgreSQLExecutionAllocator._release_terminated_holds",
         "PostgreSQLExecutionAllocator._reserve_budget_hold",
         "PostgreSQLExecutionAllocator._transition_attempt",
+        "PostgreSQLExecutionAllocator.accept_external_runtime_launch",
+        "PostgreSQLExecutionAllocator.accept_external_runtime_termination",
+        "PostgreSQLExecutionAllocator.accept_external_terminal_artifacts",
         "PostgreSQLExecutionAllocator.accept_runtime_launch",
         "PostgreSQLExecutionAllocator.accept_runtime_termination",
+        "PostgreSQLExecutionAllocator.adjudicate_expired_external_qualification_terminal",
         "PostgreSQLExecutionAllocator.admit_and_reserve",
         "PostgreSQLExecutionAllocator.admit_and_reserve_in_session",
         "PostgreSQLExecutionAllocator.adopt_attempt",
         "PostgreSQLExecutionAllocator.adopt_runtime_attempt",
         "PostgreSQLExecutionAllocator.append_inventory",
+        "PostgreSQLExecutionAllocator.authorize_external_runtime_start",
         "PostgreSQLExecutionAllocator.commit_terminal_receipt",
         "PostgreSQLExecutionAllocator.heartbeat",
+        "PostgreSQLExecutionAllocator.issue_external_termination_challenge",
         "PostgreSQLExecutionAllocator.mark_running",
         "PostgreSQLExecutionAllocator.mark_terminated",
         "PostgreSQLExecutionAllocator.mark_verifying",
         "PostgreSQLExecutionAllocator.reconcile_expired",
         "PostgreSQLExecutionAllocator.resolve_runtime_absence",
         "PostgreSQLExecutionAllocator.retain_runtime_reconciliation",
+        "PostgreSQLExecutionAllocator.settle_external_qualification_terminal",
         "PostgreSQLExecutionAllocator.start_attempt",
     }
     expected_adapter_callers = {
@@ -2065,9 +2082,13 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
             ),
         }
     )
+    expected_dispatch_callers = {
+        ("scripts.dispatch_arl2_external_execution", "_dispatch"),
+        ("scripts.dispatch_arl2_external_execution", "_adjudicate"),
+    }
     assert {
         (item["module"], item["symbol"]) for item in authority["call_sites"]
-    } == expected_callers
+    } == expected_callers | expected_dispatch_callers
     assert {
         (item["module"], item["symbol"]) for item in authority["allowed_legacy_callers"]
     } == expected_callers
@@ -2102,6 +2123,13 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
         "postgres.execution_persistence.execution_budget_reservations",
         "postgres.execution_persistence.execution_budget_events",
         "postgres.execution_persistence.execution_terminal_receipts",
+        "postgres.execution_persistence.execution_external_runtime_preparations",
+        "postgres.execution_persistence.execution_external_launch_authorizations",
+        "postgres.execution_persistence.execution_external_runtime_launch_receipts",
+        "postgres.execution_persistence.execution_external_termination_challenges",
+        "postgres.execution_persistence.execution_external_runtime_termination_acceptances",
+        "postgres.execution_persistence.execution_external_qualification_terminal_acceptances",
+        "postgres.execution_persistence.execution_external_qualification_deadline_expirations",
     }
     assert set(_storage_targets(outbox)) == {
         "postgres.execution_persistence.execution_outbox",
@@ -2113,7 +2141,9 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
     } == {
         "PostgreSQLExecutionAllocator.commit_terminal_receipt",
         "PostgreSQLExecutionAllocator.adjudicate_expired_qualification_terminal",
+        "PostgreSQLExecutionAllocator.adjudicate_expired_external_qualification_terminal",
         "PostgreSQLExecutionAllocator.settle_qualification_terminal",
+        "PostgreSQLExecutionAllocator.settle_external_qualification_terminal",
         "QualificationTerminalOutboxService.tick",
     }
     expected_outbox_callers = {
@@ -2132,7 +2162,7 @@ def test_execution_foundation_tables_have_one_qualification_only_writer() -> Non
     }
     assert {
         (item["module"], item["symbol"]) for item in outbox["call_sites"]
-    } == expected_outbox_callers
+    } == expected_outbox_callers | expected_dispatch_callers
     assert {
         (item["module"], item["symbol"]) for item in outbox["allowed_legacy_callers"]
     } == expected_outbox_callers
