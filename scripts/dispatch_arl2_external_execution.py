@@ -861,20 +861,24 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
         execution_id=snapshot.execution_id,
         attempt_id=snapshot.attempt_id,
     )
+    if source is None:
+        _fail("settled attempt is missing its verified terminal source")
+    # the source's lineage evidence binds the lineage derived at its own
+    # verification instant, so replay the readers at exactly that moment
     lineage = allocator.load_verified_external_qualification_run_lineage(
         execution_id=snapshot.execution_id,
         attempt_id=snapshot.attempt_id,
-        observed_at=_utc_now(),
+        observed_at=source.verified_at,
     )
     material = allocator.load_verified_external_qualification_raw_run_material(
         execution_id=snapshot.execution_id,
         attempt_id=snapshot.attempt_id,
-        observed_at=_utc_now(),
+        observed_at=source.verified_at,
     )
     outbox = allocator.list_qualification_terminal_outbox(
         attempt_id_allowlist=(snapshot.attempt_id,)
     )
-    if source is None or lineage is None or material is None:
+    if lineage is None or material is None:
         _fail("settled attempt is missing its verified reader export")
     acceptance_sha = artifacts.terminal_acceptance.terminal_authority_sha256
     if (
