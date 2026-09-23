@@ -833,7 +833,7 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
         ),
     )
     _clock_note("accepting terminal artifacts", snapshot.attempt_id)
-    allocator.accept_external_terminal_artifacts(
+    artifacts = allocator.accept_external_terminal_artifacts(
         attempt_id=snapshot.attempt_id,
         lease_token=lease_token,
         fencing_epoch=snapshot.fencing_epoch,
@@ -876,14 +876,15 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
     )
     if source is None or lineage is None or material is None:
         _fail("settled attempt is missing its verified reader export")
+    acceptance_sha = artifacts.terminal_acceptance.terminal_authority_sha256
     if (
-        source.terminal_authority_sha256 != submission.terminal_submission_sha256
-        or lineage.terminal_acceptance_sha256 != source.terminal_authority_sha256
+        source.terminal_authority_sha256 != acceptance_sha
+        or lineage.terminal_acceptance_sha256 != acceptance_sha
         or material.accepted_terminal_submission.terminal_authority_sha256
-        != source.terminal_authority_sha256
+        != acceptance_sha
         or source.lineage_evidence_sha256 != lineage.lineage_sha256
         or len(outbox) != 1
-        or outbox[0].terminal_authority_sha256 != source.terminal_authority_sha256
+        or outbox[0].terminal_authority_sha256 != acceptance_sha
     ):
         _fail("verified reader exports disagree with the settled terminal acceptance")
     evidence = {
