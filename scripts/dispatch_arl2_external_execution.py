@@ -946,7 +946,8 @@ def _submission_model():
 
 
 def _clock_note(stage: str, attempt_id: str) -> None:
-    print(f"[{_utc_now().isoformat()}] {stage} ({attempt_id})", file=sys.stderr)
+    moment = datetime.now(timezone.utc)
+    print(f"[{moment.isoformat()}] {stage} ({attempt_id})", file=sys.stderr)
 
 
 # --------------------------------------------------------------------------

@@ -69,10 +69,16 @@ def _clean_execution_tables() -> Iterator[None]:
 
 
 class _WallClock:
-    """Driver-side wall clock frozen relative to the ledger's fixed NOW."""
+    """Driver-side wall clock lagging the ledger's fixed NOW.
+
+    The ledger freezes database time at NOW; every signed contract must land
+    inside its freshness window (signed_at <= NOW) while ordering after the
+    previous stage, so the driver's virtual wall clock starts behind NOW and
+    advances one second per use.
+    """
 
     def __init__(self, base) -> None:
-        self._moment = base + timedelta(seconds=3)
+        self._moment = base - timedelta(seconds=8)
         self._step = timedelta(seconds=1)
 
     def __call__(self):
