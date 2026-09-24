@@ -216,21 +216,19 @@ def _compose_allocator(state: dict, state_path: Path, args):
     from aletheia.execution.input_resolver import LocalVerifiedInputArtifactResolver
     from aletheia.execution.runtime_contracts import (
         ExternalBridgeAuthority,
+        NodeEnrollmentAuthorityVerifier,
         QualificationAuthorityPin,
         QualificationAuthorityVerifier,
+        TerminalVerificationAuthorityVerifier,
         WorkerNodeAuthorityVerifier,
     )
     from aletheia.execution.runtime_control_issuance import (
         PinnedRuntimeControlIssuanceAuthority,
     )
     from aletheia.execution.runtime_v2_contracts import (
-        NodeEnrollmentAuthorityVerifier,
         PinnedRuntimeControlVerificationAuthority,
     )
     from aletheia.execution.terminal_runtime import QualificationTerminalReaderConfig
-    from aletheia.execution.terminal_verification import (
-        TerminalVerificationAuthorityVerifier,
-    )
 
     reader = QualificationTerminalReaderConfig.model_validate(
         state["qualification"]["reader"]
