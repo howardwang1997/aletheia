@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
-from sqlalchemy import inspect
+from sqlalchemy import Column, MetaData, inspect
 from sqlalchemy.engine import Connection
 
 import aletheia.memory.ledger  # noqa: F401  (register every ORM table)
@@ -76,6 +76,13 @@ POST_BASELINE_TABLES = frozenset(
         "execution_qualification_terminal_acceptances",
         "execution_qualification_terminal_outbox",
         "execution_attempt_adoptions",
+        "execution_external_runtime_preparations",
+        "execution_external_launch_authorizations",
+        "execution_external_runtime_launch_receipts",
+        "execution_external_termination_challenges",
+        "execution_external_runtime_termination_acceptances",
+        "execution_external_qualification_terminal_acceptances",
+        "execution_external_qualification_deadline_expirations",
         "execution_resource_leases",
         "execution_device_leases",
         "execution_budget_reservations",
@@ -170,25 +177,121 @@ class BaselineAdoptionReceipt:
     schema_diff_count: int
 
 
+def _plain_column_names(index: object) -> list[str] | None:
+    """Ordered column names when every index term is a plain column, else None.
+
+    Sort-order and function wrappers (``col.desc()``, ``func.lower(col)``)
+    keep the column in ``Index.columns`` while changing the compiled text
+    the PostgreSQL comparator diffs, so agreement between two shapes is
+    provable through names only when every term is a plain column.
+    """
+    terms = list(getattr(index, "expressions", ()) or ())
+    if not terms or not all(isinstance(term, Column) for term in terms):
+        return None
+    names = [getattr(term, "name", None) for term in terms]
+    if None in names or len(set(names)) != len(names):
+        return None
+    return names
+
+
+def _index_rides_excluded_columns(
+    index: object, compare_to: object, exclude_columns: frozenset[tuple[str, str]]
+) -> bool:
+    """True only when an index diff is post-baseline drift the column exclusion covers.
+
+    An ORM index declared over post-baseline columns rides along with those
+    columns: the legacy database has neither.  Without a same-named database
+    index (alembic's added path) the index is wholesale post-baseline drift
+    and rides whenever ``Index.columns`` resolves fully to excluded plain
+    columns -- ``Index.columns`` silently drops ``text()`` expression terms,
+    so those keep their diff.  With a same-named database index (the changed
+    path, where alembic passes only the metadata side) the shapes must agree
+    on every axis the comparators diff: ordered column names, the unique
+    flag, per-expression compiled text, and set dialect options such as
+    ``postgresql_nulls_not_distinct``.  Name-based agreement cannot prove
+    compiled text or options, so any wrapper term or set option on either
+    side keeps the diff and adoption refuses.
+    """
+    table_name = getattr(getattr(index, "table", None), "name", None)
+    columns = list(getattr(index, "columns", ()) or ())
+    names = [getattr(column, "name", None) for column in columns]
+    if not columns or None in names or len(set(names)) != len(names):
+        return False
+    expressions = getattr(index, "expressions", None)
+    if expressions is not None and len(expressions) != len(columns):
+        return False
+    if not all((table_name, column) in exclude_columns for column in names):
+        return False
+    if compare_to is None:
+        return True
+    compared = _plain_column_names(compare_to)
+    index_options = dict(getattr(index, "dialect_kwargs", None) or {})
+    compared_options = dict(getattr(compare_to, "dialect_kwargs", None) or {})
+    return (
+        compared is not None
+        and compared == _plain_column_names(index)
+        and bool(getattr(compare_to, "unique", False)) == bool(getattr(index, "unique", False))
+        and not any(value is not None for value in index_options.values())
+        and not any(value is not None for value in compared_options.values())
+    )
+
+
 def schema_diffs(
     connection: Connection,
     *,
     exclude_tables: frozenset[str] = frozenset(),
     exclude_columns: frozenset[tuple[str, str]] = frozenset(),
     exclude_constraints: frozenset[str] = frozenset(),
+    metadata: MetaData | None = None,
 ) -> list[object]:
-    """Return Alembic's structural diff between the connected schema and ORM metadata."""
+    """Return Alembic's structural diff between the connected schema and ORM metadata.
 
-    def include_object(
-        object_, name: str | None, type_: str, _reflected: bool, _compare_to
-    ) -> bool:
-        if type_ == "table" and name in exclude_tables:
+    ``metadata`` defaults to the ORM Base; tests pass a small controlled
+    MetaData to exercise the include_object channels directly.
+    """
+
+    def include_object(object_, name: str | None, type_: str, reflected: bool, compare_to) -> bool:
+        # The name-matched table, column, and constraint exclusions ride
+        # the metadata side only -- no database counterpart (compare_to is
+        # None, not the reflected object); a database table, column, or
+        # constraint wearing an excluded name is drift and keeps its diff,
+        # whatever its shape.  The column-driven channels differ: the
+        # index branch also rides a changed pair that agrees on every
+        # compared axis, and the foreign-key branch never reads
+        # compare_to, so a changed pair keeps its reflected remove_fk
+        # half.
+        if type_ == "table" and name in exclude_tables and compare_to is None and not reflected:
             return False
-        if type_ == "column":
+        if type_ == "column" and compare_to is None and not reflected:
             table_name = getattr(getattr(object_, "table", None), "name", None)
             if (table_name, name) in exclude_columns:
                 return False
-        if type_ in {"unique_constraint", "check_constraint"} and name in exclude_constraints:
+        if (
+            type_ == "index"
+            and not reflected
+            and _index_rides_excluded_columns(object_, compare_to, exclude_columns)
+        ):
+            return False
+        # A metadata foreign key over post-baseline columns rides with those
+        # columns (the legacy database has neither); a database-only foreign
+        # key is extra drift and keeps its diff (reflected side).
+        if type_ == "foreign_key_constraint" and not reflected:
+            table_name = getattr(getattr(object_, "table", None), "name", None)
+            constrained = [
+                getattr(column, "name", None) for column in getattr(object_, "columns", ()) or ()
+            ]
+            if (
+                constrained
+                and None not in constrained
+                and all((table_name, column) in exclude_columns for column in constrained)
+            ):
+                return False
+        if (
+            type_ in {"unique_constraint", "check_constraint"}
+            and name in exclude_constraints
+            and compare_to is None
+            and not reflected
+        ):
             return False
         return True
 
@@ -200,7 +303,7 @@ def schema_diffs(
             "include_object": include_object,
         },
     )
-    return list(compare_metadata(context, Base.metadata))
+    return list(compare_metadata(context, Base.metadata if metadata is None else metadata))
 
 
 def require_schema_exact(connection: Connection | None = None) -> SchemaStatus:

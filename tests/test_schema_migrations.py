@@ -219,6 +219,716 @@ def test_runtime_v2_tables_are_excluded_from_legacy_baseline_parity():
     } <= POST_BASELINE_TABLES
 
 
+def test_0036_external_acceptance_tables_are_excluded_from_legacy_baseline_parity():
+    from aletheia.schema_migrations import POST_BASELINE_TABLES
+
+    assert {
+        "execution_external_runtime_preparations",
+        "execution_external_launch_authorizations",
+        "execution_external_runtime_launch_receipts",
+        "execution_external_termination_challenges",
+        "execution_external_runtime_termination_acceptances",
+        "execution_external_qualification_terminal_acceptances",
+        "execution_external_qualification_deadline_expirations",
+    } <= POST_BASELINE_TABLES
+
+
+def _migration_drift(source):
+    """One migration source's (created tables, added (table, column) pairs,
+    unresolvable tracked-DDL descriptions) for the parity drift guard.
+
+    Consumed by the corpus walk below and by the synthetic fail-closed
+    test, so both exercise the same extraction code.
+    """
+    import ast
+    import re
+
+    ddl_keywords = {"CONSTRAINT", "PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "EXCLUDE"}
+
+    def added_columns_in(statement):
+        return [
+            name
+            for name in re.findall(
+                r"\bADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_]\w*)",
+                statement,
+                re.IGNORECASE,
+            )
+            if name.upper() not in ddl_keywords
+        ]
+
+    def tracked_ddl(sql):
+        return bool(re.search(r"\bCREATE\b[\s\w]*\bTABLE\b", sql, re.IGNORECASE)) or bool(
+            added_columns_in(sql)
+        )
+
+    def string_tuples(tree):
+        flat = {}
+        nested = {}
+        scalars = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+                if isinstance(node.value.value, str):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            scalars[target.id] = node.value.value
+                continue
+            if not (isinstance(node, ast.Assign) and isinstance(node.value, (ast.Tuple, ast.List))):
+                continue
+            elements = node.value.elts
+            strings = [
+                element.value
+                for element in elements
+                if isinstance(element, ast.Constant) and isinstance(element.value, str)
+            ]
+            rows = None
+            if elements and all(isinstance(element, (ast.Tuple, ast.List)) for element in elements):
+                rows = []
+                for element in elements:
+                    inner = [
+                        part.value
+                        for part in element.elts
+                        if isinstance(part, ast.Constant) and isinstance(part.value, str)
+                    ]
+                    if len(inner) != len(element.elts):
+                        rows = None
+                        break
+                    rows.append(inner)
+            for target in node.targets:
+                if not isinstance(target, ast.Name):
+                    continue
+                if len(strings) == len(elements):
+                    flat.setdefault(target.id, set()).update(strings)
+                if rows is not None:
+                    nested[target.id] = rows
+        resolved = dict(flat)
+        for node in ast.walk(tree):
+            # for a, b, ... in nested_tuple_of_string_tuples: position-wise
+            # resolution -- 0003 builds its six membership tables this way.
+            if not (isinstance(node, ast.For) and isinstance(node.iter, ast.Name)):
+                continue
+            rows = nested.get(node.iter.id)
+            if rows is None or not isinstance(node.target, ast.Tuple):
+                continue
+            for position, target in enumerate(node.target.elts):
+                if not (isinstance(target, ast.Name) and all(len(row) > position for row in rows)):
+                    continue
+                resolved.setdefault(target.id, set()).update(row[position] for row in rows)
+        return resolved, scalars
+
+    tree = ast.parse(source)
+    tuples, scalars = string_tuples(tree)
+    created = set()
+    added = set()
+    unresolvable = []
+    execute_sql = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if not (isinstance(node.func.value, ast.Name) and node.func.value.id == "op"):
+            continue
+        if node.func.attr == "create_table":
+            argument = node.args[0] if node.args else None
+            if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+                created.add(argument.value)
+            elif isinstance(argument, ast.Name) and argument.id in tuples:
+                created |= tuples[argument.id]
+            else:
+                unresolvable.append("op.create_table argument")
+        if node.func.attr == "add_column":
+            keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+            table_argument = node.args[0] if node.args else keywords.get("table_name")
+            column_argument = node.args[1] if len(node.args) > 1 else keywords.get("column")
+            table = (
+                table_argument.value
+                if isinstance(table_argument, ast.Constant)
+                and isinstance(table_argument.value, str)
+                else None
+            )
+            column = None
+            if (
+                isinstance(column_argument, ast.Call)
+                and isinstance(column_argument.func, ast.Attribute)
+                and column_argument.func.attr == "Column"
+                and column_argument.args
+                and isinstance(column_argument.args[0], ast.Constant)
+                and isinstance(column_argument.args[0].value, str)
+            ):
+                column = column_argument.args[0].value
+            if table is not None and column is not None:
+                added.add((table, column))
+            else:
+                unresolvable.append("op.add_column argument")
+        if node.func.attr == "execute":
+            keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+            argument = node.args[0] if node.args else keywords.get("sqltext")
+            if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+                execute_sql.append(argument.value)
+            elif isinstance(argument, ast.Name) and argument.id in scalars:
+                execute_sql.append(scalars[argument.id])
+            elif isinstance(argument, ast.JoinedStr):
+                literal = " ".join(
+                    part.value
+                    for part in argument.values
+                    if isinstance(part, ast.Constant) and isinstance(part.value, str)
+                )
+                if not literal.strip():
+                    # a pure interpolation (f"{ddl}") hides everything the
+                    # guard tracks: same verdict as an unseen variable
+                    unresolvable.append("op.execute f-string argument")
+                elif tracked_ddl(literal):
+                    unresolvable.append("op.execute f-string DDL")
+            elif argument is not None:
+                unresolvable.append("op.execute argument")
+    for sql in execute_sql:
+        for statement in re.sub(r"\s+", " ", sql).split(";"):
+            if re.search(r"\bCREATE\b[\s\w]*\bTABLE\b", statement, re.IGNORECASE):
+                match = re.search(
+                    r"CREATE\s+(?:(?:GLOBAL\s+|LOCAL\s+)?(?:TEMPORARY|TEMP)\s+|UNLOGGED\s+)*TABLE\s+"
+                    r"(?:IF\s+NOT\s+EXISTS\s+)?((?:[A-Za-z_]\w*\.)?[A-Za-z_]\w*)",
+                    statement,
+                    re.IGNORECASE,
+                )
+                if match and "." not in match.group(1):
+                    created.add(match.group(1))
+                else:
+                    unresolvable.append("CREATE TABLE statement")
+            table_match = re.search(
+                r"ALTER TABLE (?:IF EXISTS )?((?:[A-Za-z_]\w*\.)?[A-Za-z_]\w*)",
+                statement,
+                re.IGNORECASE,
+            )
+            statement_columns = added_columns_in(statement)
+            if statement_columns:
+                if table_match and "." not in table_match.group(1):
+                    for column in statement_columns:
+                        added.add((table_match.group(1), column))
+                else:
+                    unresolvable.append("ALTER TABLE ADD statement")
+            elif re.search(
+                r"\bADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?[\"'`(\d]",
+                statement,
+                re.IGNORECASE,
+            ):
+                # a tracked ADD whose name is quoted or otherwise not a
+                # bare identifier: unresolvable, never a silent pass
+                unresolvable.append("ALTER TABLE ADD statement")
+    return created, added, unresolvable
+
+
+def test_every_table_created_after_the_legacy_baseline_is_excluded_from_parity():
+    """Guard the legacy-baseline parity exclusions against silent drift.
+
+    0036 wrote its CREATE TABLE statements as raw SQL and 0003 built six
+    tables from a loop variable, so the frozenset drifted silently and
+    adopt_existing_baseline would refuse to stamp any legacy database.
+    Every table a non-baseline migration creates -- op.create_table with
+    a literal or loop-variable name resolved against module tuples, or
+    CREATE TABLE in a string op.execute -- must already be excluded, and
+    every column a migration adds to a compared table (op.add_column or
+    ALTER TABLE ... ADD, with or without the COLUMN keyword) must be
+    column-excluded.  Tracked DDL the guard cannot resolve -- f-string or
+    variable-built names, pure-interpolation f-strings, quoted or
+    schema-qualified identifiers -- fails the guard instead of passing
+    silently (pinned synthetically in
+    test_walking_guard_fails_closed_on_unresolvable_ddl).  Escapes remain
+    and the list is not exhaustive: DDL kinds the guard does not track at
+    all (CREATE INDEX, ADD CONSTRAINT, table-level RENAME TO), a mixed
+    f-string whose literal parts show no tracked DDL, execute calls on
+    receivers other than a literal ``op`` (``op.get_bind().execute(...)``,
+    a saved ``bind.execute(...)``), and strings built by ``+=``
+    concatenation.
+    """
+    import re
+
+    from aletheia.schema_migrations import (
+        LEGACY_BASELINE_REVISION,
+        POST_BASELINE_COLUMNS,
+        POST_BASELINE_TABLES,
+    )
+
+    versions = sorted((Path(__file__).parents[1] / "migrations" / "versions").glob("*.py"))
+    assert versions, "migration versions directory is empty"
+
+    for path in versions:
+        source = path.read_text()
+        revision = re.search(r"^revision(?::\s*str)?\s*=\s*['\"]([^'\"]+)", source, re.M).group(1)
+        if revision == LEGACY_BASELINE_REVISION:
+            continue
+        created, added, unresolvable = _migration_drift(source)
+        assert not unresolvable, [f"{path.name}: {entry}" for entry in unresolvable]
+        assert created <= POST_BASELINE_TABLES, (
+            f"{path.name} creates tables missing from POST_BASELINE_TABLES: "
+            f"{sorted(created - POST_BASELINE_TABLES)}"
+        )
+        uncovered = {
+            (table, column) for table, column in added if table not in POST_BASELINE_TABLES
+        } - set(POST_BASELINE_COLUMNS)
+        assert not uncovered, (
+            f"{path.name} adds columns to compared tables without a "
+            f"POST_BASELINE_COLUMNS entry: {sorted(uncovered)}"
+        )
+
+
+def test_schema_diffs_excludes_indexes_over_excluded_columns():
+    """The index channel of the parity diff: an ORM index declared over a
+    post-baseline column rides with that column's exclusion.  Without the
+    index branch, adopt_existing_baseline has refused every real legacy
+    database since the first indexed post-baseline column (0010)."""
+    from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine, text
+
+    from aletheia.schema_migrations import schema_diffs
+
+    metadata = MetaData()
+    Table(
+        "zz_baseline_probe",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("probe_extra", String(64), index=True),
+    )
+    engine = create_engine("sqlite://")
+    with engine.connect() as connection:
+        connection.execute(text("CREATE TABLE zz_baseline_probe (id INTEGER NOT NULL PRIMARY KEY)"))
+        connection.commit()
+        excluded = schema_diffs(
+            connection,
+            exclude_columns=frozenset({("zz_baseline_probe", "probe_extra")}),
+            metadata=metadata,
+        )
+        kept = schema_diffs(connection, exclude_columns=frozenset(), metadata=metadata)
+    assert excluded == []
+    assert kept  # the same index still diffs without the column exclusion
+
+    # Round 2: a same-named database index with a different shape must keep
+    # its diff even though the metadata side is all-excluded -- alembic's
+    # changed-index path passes only the metadata side to include_object.
+    drifted = MetaData()
+    Table(
+        "zz_baseline_probe",
+        drifted,
+        Column("id", Integer, primary_key=True),
+        Column("probe_extra", String(64), index=True),
+    )
+    engine = create_engine("sqlite://")
+    with engine.connect() as connection:
+        connection.execute(text("CREATE TABLE zz_baseline_probe (id INTEGER NOT NULL PRIMARY KEY)"))
+        connection.execute(
+            text("CREATE INDEX ix_zz_baseline_probe_probe_extra ON zz_baseline_probe (id)")
+        )
+        connection.commit()
+        changed = schema_diffs(
+            connection,
+            exclude_columns=frozenset({("zz_baseline_probe", "probe_extra")}),
+            metadata=drifted,
+        )
+    assert any(diff[0] in {"add_index", "remove_index"} for diff in changed)
+
+
+def test_index_exclusion_requires_resolvable_shape_and_matching_database_index():
+    """Round-2/3/4 pins for the index ride-along decision: expression terms,
+    compared columns, a same-named differently-shaped database index, and
+    wrapper terms or set dialect options on the changed path all keep the
+    diff -- adoption must refuse, not stamp over drift."""
+    from sqlalchemy import Column, Index, Integer, MetaData, String, Table, func, text
+
+    from aletheia.schema_migrations import _index_rides_excluded_columns
+
+    metadata = MetaData()
+    probe = Table(
+        "zz_baseline_probe",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("probe_extra", String(64)),
+        Column("probe_extra2", String(64)),
+    )
+    excluded = frozenset(
+        {("zz_baseline_probe", "probe_extra"), ("zz_baseline_probe", "probe_extra2")}
+    )
+
+    assert _index_rides_excluded_columns(Index("ix_plain", probe.c.probe_extra), None, excluded)
+    assert not _index_rides_excluded_columns(
+        Index("ix_mixed", probe.c.probe_extra, probe.c.id), None, excluded
+    )
+    # Index.columns drops text() expression terms: the shape is unresolvable.
+    assert not _index_rides_excluded_columns(
+        Index("ix_expression", probe.c.probe_extra, text("lower(id)")), None, excluded
+    )
+    # Round 4: wrappers keep the column in Index.columns, so with no
+    # database counterpart the index is wholesale post-baseline drift and
+    # rides -- only the changed path below must refuse it.
+    assert _index_rides_excluded_columns(
+        Index("ix_added_wrap", probe.c.probe_extra.desc()), None, excluded
+    )
+    assert _index_rides_excluded_columns(
+        Index("ix_added_func", func.lower(probe.c.probe_extra)), None, excluded
+    )
+
+    database_side = MetaData()
+    database_probe = Table(
+        "zz_baseline_probe",
+        database_side,
+        Column("id", Integer, primary_key=True),
+        Column("probe_extra", String(64)),
+        Column("probe_extra2", String(64)),
+    )
+    drifted = Index("ix_db_drifted", database_probe.c.id)
+    assert not _index_rides_excluded_columns(
+        Index("ix_db_drifted", probe.c.probe_extra), drifted, excluded
+    )
+    matching = Index("ix_db_matching", database_probe.c.probe_extra)
+    assert _index_rides_excluded_columns(
+        Index("ix_db_matching", probe.c.probe_extra), matching, excluded
+    )
+    # Round 3: the comparators diff the unique flag and db-side expression
+    # terms too, so identical column names alone must not ride.
+    assert not _index_rides_excluded_columns(
+        Index("ix_db_unique", probe.c.probe_extra),
+        Index("ix_db_unique", database_probe.c.probe_extra, unique=True),
+        excluded,
+    )
+    assert _index_rides_excluded_columns(
+        Index("ix_db_unique_match", probe.c.probe_extra, unique=True),
+        Index("ix_db_unique_match", database_probe.c.probe_extra, unique=True),
+        excluded,
+    )
+    db_expression = Index("ix_db_expression", database_probe.c.probe_extra)
+    db_expression.expressions = [
+        database_probe.c.probe_extra,
+        text("lower(id)"),
+    ]
+    assert not _index_rides_excluded_columns(
+        Index("ix_db_expression", database_probe.c.probe_extra), db_expression, excluded
+    )
+    # Round 4: DefaultImpl compares ordered column-name tuples, so a
+    # same-set-different-order database index keeps its diff; and the
+    # PostgreSQL comparator diffs per-expression compiled text, which
+    # name agreement cannot prove for wrapper terms.
+    assert not _index_rides_excluded_columns(
+        Index("ix_db_order", probe.c.probe_extra, probe.c.probe_extra2),
+        Index("ix_db_order", database_probe.c.probe_extra2, database_probe.c.probe_extra),
+        excluded,
+    )
+    assert _index_rides_excluded_columns(
+        Index("ix_db_order_match", probe.c.probe_extra, probe.c.probe_extra2),
+        Index("ix_db_order_match", database_probe.c.probe_extra, database_probe.c.probe_extra2),
+        excluded,
+    )
+    assert not _index_rides_excluded_columns(
+        Index("ix_wrap_meta", probe.c.probe_extra.desc()),
+        Index("ix_wrap_meta", database_probe.c.probe_extra),
+        excluded,
+    )
+    assert not _index_rides_excluded_columns(
+        Index("ix_wrap_db", probe.c.probe_extra),
+        Index("ix_wrap_db", database_probe.c.probe_extra.desc()),
+        excluded,
+    )
+    assert not _index_rides_excluded_columns(
+        Index("ix_func", func.lower(probe.c.probe_extra)),
+        Index("ix_func", database_probe.c.probe_extra),
+        excluded,
+    )
+    # A set dialect option keeps the diff without weighing which options the
+    # installed alembic happens to compare: NULLS NOT DISTINCT is a real
+    # comparator axis, while a partial-index predicate is invisible to the
+    # comparator entirely -- either way name agreement proves nothing.
+    assert not _index_rides_excluded_columns(
+        Index("ix_partial_meta", probe.c.probe_extra, postgresql_where=text("id > 0")),
+        Index("ix_partial_meta", database_probe.c.probe_extra),
+        excluded,
+    )
+    assert not _index_rides_excluded_columns(
+        Index("ix_partial_db", probe.c.probe_extra),
+        Index("ix_partial_db", database_probe.c.probe_extra, postgresql_where=text("id > 0")),
+        excluded,
+    )
+
+
+def test_schema_diffs_excludes_foreign_keys_over_excluded_columns():
+    """The foreign-key channel of the parity diff: an ORM foreign key whose
+    constrained columns are all post-baseline rides with those columns.
+    Without the FK branch, adopt_existing_baseline refused every real legacy
+    database through add_fk diffs -- the ORM carries eight such foreign keys
+    over POST_BASELINE_COLUMNS today (artifacts, decisions, budget_events,
+    campaign_split_ledgers x2, external_validation_ledgers x2,
+    hypothesis_attempts)."""
+    from sqlalchemy import (
+        Column,
+        ForeignKey,
+        Integer,
+        MetaData,
+        Table,
+        create_engine,
+        text,
+    )
+
+    from aletheia.schema_migrations import schema_diffs
+
+    metadata = MetaData()
+    Table(
+        "zz_baseline_parent",
+        metadata,
+        Column("id", Integer, primary_key=True),
+    )
+    Table(
+        "zz_baseline_probe",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("probe_extra", Integer, ForeignKey("zz_baseline_parent.id")),
+    )
+    engine = create_engine("sqlite://")
+    with engine.connect() as connection:
+        connection.execute(
+            text("CREATE TABLE zz_baseline_parent (id INTEGER NOT NULL PRIMARY KEY)")
+        )
+        connection.execute(text("CREATE TABLE zz_baseline_probe (id INTEGER NOT NULL PRIMARY KEY)"))
+        connection.commit()
+        excluded = schema_diffs(
+            connection,
+            exclude_columns=frozenset({("zz_baseline_probe", "probe_extra")}),
+            metadata=metadata,
+        )
+        kept = schema_diffs(connection, exclude_columns=frozenset(), metadata=metadata)
+    assert excluded == []
+    assert any(diff[0] == "add_fk" for diff in kept)
+
+
+def test_database_side_drift_over_excluded_columns_keeps_its_diffs():
+    """Round-5 pin for the reflected gate: a database-only index or foreign
+    key over an excluded column is extra drift, not post-baseline shape the
+    exclusion covers -- the ride-along is for the metadata side only, so
+    remove_index/remove_fk keep their diffs and adoption refuses.  Without
+    the ``not reflected`` gates a stray database index or foreign key rides
+    the exclusion and the stamp covers it (round-4 defect, unpinned then)."""
+    from sqlalchemy import Column, Integer, MetaData, Table, create_engine, text
+
+    from aletheia.schema_migrations import schema_diffs
+
+    metadata = MetaData()
+    Table(
+        "zz_baseline_parent",
+        metadata,
+        Column("id", Integer, primary_key=True),
+    )
+    Table(
+        "zz_baseline_probe",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("probe_extra", Integer),
+    )
+    engine = create_engine("sqlite://")
+    with engine.connect() as connection:
+        connection.execute(
+            text("CREATE TABLE zz_baseline_parent (id INTEGER NOT NULL PRIMARY KEY)")
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE zz_baseline_probe (id INTEGER NOT NULL PRIMARY KEY, "
+                "probe_extra INTEGER, FOREIGN KEY (probe_extra) REFERENCES "
+                "zz_baseline_parent (id))"
+            )
+        )
+        connection.execute(text("CREATE INDEX ix_stray ON zz_baseline_probe (probe_extra)"))
+        connection.commit()
+        drift = schema_diffs(
+            connection,
+            exclude_columns=frozenset({("zz_baseline_probe", "probe_extra")}),
+            metadata=metadata,
+        )
+    assert any(diff[0] == "remove_index" for diff in drift)
+    assert any(diff[0] == "remove_fk" for diff in drift)
+
+
+def test_exclusion_channels_cover_only_the_metadata_side():
+    """Pins (rounds 7-10): every exclusion channel rides the metadata side
+    only, and only for names the exclusion sets actually carry.  A
+    database table, column, or named constraint wearing an excluded name
+    is drift -- stray or reshaped -- and keeps its diff; a metadata-side
+    object rides only on the added path, and a non-excluded one keeps its
+    add diff.  Before these gates the table/column/constraint branches
+    matched by name alone, so a drifted database stamped clean."""
+    from sqlalchemy import (
+        Column,
+        Integer,
+        MetaData,
+        String,
+        Table,
+        UniqueConstraint,
+        create_engine,
+        text,
+    )
+
+    from aletheia.schema_migrations import schema_diffs
+
+    metadata = MetaData()
+    Table(
+        "zz_kept",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("wanted_col", String(32)),
+        UniqueConstraint("id", name="uq_meta_only"),
+        UniqueConstraint("wanted_col", name="uq_wanted"),
+    )
+    # not in any exclusion set: a blanket-exclusion revert (name-match
+    # conjunct dropped) would suppress these diffs, and with only excluded
+    # names in the fixture that revert is observationally identical
+    Table("zz_wanted", metadata, Column("id", Integer, primary_key=True))
+    Table(
+        "zz_probe_column",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("probe_extra", String(64), nullable=False),
+    )
+    Table(
+        "zz_probe_unique",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("probe_extra", String(64)),
+        UniqueConstraint("probe_extra", name="uq_changed"),
+    )
+    Table("zz_meta_only", metadata, Column("id", Integer, primary_key=True))
+    Table(
+        "zz_both_exist",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("drift_col", String(64)),
+    )
+    engine = create_engine("sqlite://")
+    with engine.connect() as connection:
+        connection.execute(text("CREATE TABLE zz_kept (id INTEGER NOT NULL PRIMARY KEY)"))
+        connection.execute(text("CREATE TABLE zz_stray (id INTEGER NOT NULL PRIMARY KEY)"))
+        connection.execute(
+            text(
+                "CREATE TABLE zz_probe_column (id INTEGER NOT NULL PRIMARY KEY, "
+                "probe_extra INTEGER)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE zz_probe_unique (id INTEGER NOT NULL PRIMARY KEY, "
+                "probe_extra VARCHAR(64), probe_gone INTEGER, "
+                "CONSTRAINT uq_changed UNIQUE (id), "
+                "CONSTRAINT uq_stray UNIQUE (probe_extra))"
+            )
+        )
+        connection.execute(
+            text("CREATE TABLE zz_both_exist (id INTEGER NOT NULL PRIMARY KEY, drift_col INTEGER)")
+        )
+        connection.commit()
+        drift = schema_diffs(
+            connection,
+            exclude_tables=frozenset({"zz_stray", "zz_meta_only", "zz_both_exist"}),
+            exclude_columns=frozenset(
+                {("zz_probe_column", "probe_extra"), ("zz_probe_unique", "probe_gone")}
+            ),
+            exclude_constraints=frozenset({"uq_changed", "uq_stray", "uq_meta_only"}),
+            metadata=metadata,
+        )
+    # alembic wraps the modify diffs in a nested tuple; unwrap either shape.
+    kinds = [diff[0] if isinstance(diff[0], str) else diff[0][0] for diff in drift]
+    assert "remove_table" in kinds  # stray database table with an excluded name
+    # a both-exist column wearing an excluded (table, name) keeps its shape
+    # comparison -- pinned on probe_extra itself, because another
+    # modify_type source (zz_both_exist.drift_col) masks a column-gate
+    # revert if the assert only checks kind membership
+    assert any(
+        isinstance(diff[0], tuple)
+        and diff[0][0] == "modify_type"
+        and "zz_probe_column" in diff[0]
+        and "probe_extra" in diff[0]
+        for diff in drift
+    )
+    # constraint diffs pin on the constraint object's name: the repr
+    # renders no names, and remove_constraint kind membership alone rides
+    # the changed uq_changed pair's drop half instead of the stray
+    removed_names = {
+        getattr(diff[1], "name", None)
+        for diff in drift
+        if isinstance(diff[0], str) and diff[0] == "remove_constraint"
+    }
+    added_names = {
+        getattr(diff[1], "name", None)
+        for diff in drift
+        if isinstance(diff[0], str) and diff[0] == "add_constraint"
+    }
+    assert "uq_stray" in removed_names  # database-only constraint with an excluded name
+    # Round 8-10: the added path still rides for excluded names only, and
+    # every gate conjunct (name match included) has an assertion naming
+    # its target -- kind membership keeps passing whenever a second source
+    # or a blanket exclusion replaces the named one.
+    assert not any("zz_meta_only" in repr(diff) for diff in drift)  # metadata-only
+    # excluded table rides
+    assert any("zz_wanted" in repr(diff) for diff in drift)  # non-excluded
+    # metadata-only table keeps add_table (table name match)
+    assert "uq_meta_only" not in added_names  # metadata-only excluded constraint rides
+    assert "uq_wanted" in added_names  # non-excluded metadata-only constraint keeps
+    # add_constraint (constraint name match)
+    assert "uq_changed" in added_names  # changed pair over different columns keeps
+    # its add half (constraint compare_to is None)
+    assert any(
+        diff[0] == "add_column" and "zz_kept" in diff and "wanted_col" in repr(diff)
+        for diff in drift
+    )  # non-excluded metadata-only column keeps add_column (column name match)
+    assert "remove_column" in kinds  # database-only column with an excluded (table, name)
+    assert any("zz_both_exist" in repr(diff) for diff in drift)  # both-exist excluded table
+    # keeps its comparison (shape drift surfaces), unlike a stray-table skip
+
+
+def test_walking_guard_fails_closed_on_unresolvable_ddl():
+    """Round-2/3 pins for the drift-guard extraction: tracked DDL whose names
+    the guard cannot resolve fails it instead of passing silently, and
+    consecutive semicolon-free op.execute statements attribute their ADD
+    COLUMNs to their own tables (0035's chunk-merge failure mode)."""
+    source = (
+        "def upgrade():\n"
+        "    op.execute(f'CREATE TABLE {name} (id int)')\n"
+        "    op.execute(f'CREATE UNLOGGED TABLE {unlogged} (id int)')\n"
+        "    op.execute('CREATE TABLE \"Quoted\" (id int)')\n"
+        "    op.execute('CREATE TABLE public.qualified (id int)')\n"
+        "    op.execute('CREATE TEMP TABLE temp_probe (id int)')\n"
+        "    op.execute('CREATE UNLOGGED TABLE unlogged_probe (id int)')\n"
+        "    op.execute(sqltext='CREATE TABLE kw_form_table (id int)')\n"
+        "    op.execute(f'ALTER TABLE {t} ADD COLUMN c int')\n"
+        '    op.execute(\'ALTER TABLE "q" ADD COLUMN "c" int\')\n'
+        "    op.execute('ALTER TABLE events ADD pg_short_form text')\n"
+        "    op.execute('ALTER TABLE execution_attempts ADD COLUMN a text')\n"
+        "    op.execute('ALTER TABLE execution_resource_leases ADD COLUMN a text')\n"
+        "    op.execute('ALTER TABLE public.leases ADD COLUMN a text')\n"
+        "    op.execute(f'{ddl}')\n"
+        "    built_ddl = 'CREATE TABLE ' + name\n"
+        "    op.execute(built_ddl)\n"
+        "    op.create_table(unseen_name)\n"
+        "    op.add_column('events', column_value)\n"
+        "    op.execute('CREATE TABLE fused_a (id int); CREATE TABLE fused_b (id int); "
+        "ALTER TABLE events ADD COLUMN fused_e text; "
+        "ALTER TABLE decisions ADD COLUMN fused_d text')\n"
+        "    op.add_column('events', column=sa.Column('kw_form', sa.Text()))\n"
+    )
+    created, added, unresolvable = _migration_drift(source)
+    assert created == {"temp_probe", "unlogged_probe", "kw_form_table", "fused_a", "fused_b"}
+    assert added == {
+        ("events", "pg_short_form"),  # PostgreSQL ADD without the COLUMN keyword
+        ("execution_attempts", "a"),
+        ("execution_resource_leases", "a"),  # own table, not the chunk's first
+        ("events", "kw_form"),  # keyword-form op.add_column resolves
+        ("events", "fused_e"),  # intra-string ';' split resolves each statement
+        ("decisions", "fused_d"),  # (0026/0027/0036 fuse CREATE TABLEs this way)
+    }
+    assert sorted(unresolvable) == [
+        "ALTER TABLE ADD statement",  # quoted table and column names
+        "ALTER TABLE ADD statement",  # schema-qualified table
+        "CREATE TABLE statement",  # quoted identifier
+        "CREATE TABLE statement",  # schema-qualified
+        "op.add_column argument",  # non-literal column argument
+        "op.create_table argument",  # unseen variable table name
+        "op.execute argument",  # variable-built SQL: unseen local name
+        "op.execute f-string DDL",  # f-string CREATE TABLE
+        "op.execute f-string DDL",  # f-string CREATE UNLOGGED TABLE (tripwire
+        # tracks every CREATE ... TABLE spelling the statement branch tracks)
+        "op.execute f-string DDL",  # f-string ALTER TABLE ADD COLUMN
+        "op.execute f-string argument",  # pure interpolation hides everything
+    ]
+
+
 def test_pr5_exact_source_constraints_match_migration_and_orm_metadata():
     from aletheia.execution.persistence import (
         _ExecutionQualificationTerminalOutboxRecord,
