@@ -1071,12 +1071,8 @@ class _ExecutionQualificationTerminalOutboxRecord(Base):
     outbox_id: Mapped[str] = mapped_column(String(96), primary_key=True)
     terminal_authority_kind: Mapped[str] = mapped_column(String(48))
     terminal_authority_sha256: Mapped[str] = mapped_column(String(64), index=True)
-    accepted_terminal_submission_sha256: Mapped[str | None] = mapped_column(
-        String(64), index=True
-    )
-    terminal_deadline_expiration_sha256: Mapped[str | None] = mapped_column(
-        String(64), index=True
-    )
+    accepted_terminal_submission_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
+    terminal_deadline_expiration_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
     execution_id: Mapped[str] = mapped_column(String(36), index=True)
     attempt_id: Mapped[str] = mapped_column(ForeignKey("execution_attempts.attempt_id"), index=True)
     topic: Mapped[str] = mapped_column(String(96))
@@ -1111,9 +1107,7 @@ class _ExecutionExternalRuntimePreparationRecord(Base):
             ["execution_attempts.attempt_id", "execution_attempts.execution_id"],
             name="fk_execution_external_runtime_preparations_attempt",
         ),
-        UniqueConstraint(
-            "attempt_id", name="uq_execution_external_runtime_preparations_attempt"
-        ),
+        UniqueConstraint("attempt_id", name="uq_execution_external_runtime_preparations_attempt"),
     )
 
     preparation_sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -1353,7 +1347,7 @@ class _ExecutionExternalQualificationTerminalAcceptanceRecord(Base):
     __table_args__ = (
         CheckConstraint(
             "disposition IN ('process_succeeded','process_failed','invalid_output','timeout')",
-            name="ck_execution_external_qualification_terminal_acceptances_disposition",
+            name="ck_execution_external_qual_term_acceptances_disposition",
         ),
         CheckConstraint(
             f"accepted_terminal_submission_sha256 {_SHA256_SQL} "
@@ -1379,9 +1373,7 @@ class _ExecutionExternalQualificationTerminalAcceptanceRecord(Base):
     accepted_terminal_submission_sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
     attempt_id: Mapped[str] = mapped_column(ForeignKey("execution_attempts.attempt_id"))
     accepted_runtime_termination_sha256: Mapped[str] = mapped_column(
-        ForeignKey(
-            "execution_external_runtime_termination_acceptances.accepted_termination_sha256"
-        )
+        ForeignKey("execution_external_runtime_termination_acceptances.accepted_termination_sha256")
     )
     bridge_manifest_sha256: Mapped[str] = mapped_column(String(64))
     terminal_submission_sha256: Mapped[str] = mapped_column(String(64))
@@ -1408,14 +1400,14 @@ class _ExecutionExternalQualificationTerminalDeadlineExpirationRecord(Base):
     __table_args__ = (
         CheckConstraint(
             "authorized_at < expired_at AND expired_at <= activated_at",
-            name="ck_execution_external_qualification_deadline_expirations_order",
+            name="ck_execution_external_qualification_deadline_order",
         ),
         CheckConstraint(
             f"terminal_deadline_expiration_sha256 {_SHA256_SQL} "
             f"AND accepted_runtime_termination_sha256 {_SHA256_SQL} "
             f"AND payload_sha256 {_SHA256_SQL} "
             f"AND runtime_control_pin_sha256 {_SHA256_SQL}",
-            name="ck_execution_external_qualification_deadline_expirations_hashes",
+            name="ck_execution_external_qualification_deadline_hashes",
         ),
         UniqueConstraint(
             "attempt_id",
@@ -1437,9 +1429,7 @@ class _ExecutionExternalQualificationTerminalDeadlineExpirationRecord(Base):
     )
     attempt_id: Mapped[str] = mapped_column(ForeignKey("execution_attempts.attempt_id"))
     accepted_runtime_termination_sha256: Mapped[str] = mapped_column(
-        ForeignKey(
-            "execution_external_runtime_termination_acceptances.accepted_termination_sha256"
-        )
+        ForeignKey("execution_external_runtime_termination_acceptances.accepted_termination_sha256")
     )
     payload_sha256: Mapped[str] = mapped_column(String(64))
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
