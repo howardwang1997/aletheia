@@ -70,6 +70,7 @@ def build_execution_registration_rpc_service(*, deployment, configuration_bytes)
         qualification_registration: QualificationExecutionRegistrationConfig
         registrar_implementation_source_path: str
         registrar_implementation_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+        lease_token_custody_root: str | None = None
         prepared_at: AwareDatetime
         private_domain_signing_key_loaded: Literal[False] = False
         runtime_control_signing_key_loaded: Literal[False] = False
@@ -104,6 +105,11 @@ def build_execution_registration_rpc_service(*, deployment, configuration_bytes)
             kernel_keys = tuple(
                 key.key_id for key in self.kernel_reader.trust_root.commissioning_keys
             )
+            custody_root = (
+                Path(self.lease_token_custody_root)
+                if self.lease_token_custody_root is not None
+                else None
+            )
             if (
                 binding.role is not ControllerStepAuthorityRole.EXECUTION_AUTHORIZATION
                 or not binding.externally_deployed
@@ -134,6 +140,11 @@ def build_execution_registration_rpc_service(*, deployment, configuration_bytes)
                 )
                 or not source.is_absolute()
                 or self.registrar_implementation_source_path != os.path.normpath(source)
+                or custody_root is not None
+                and (
+                    not custody_root.is_absolute()
+                    or self.lease_token_custody_root != os.path.normpath(custody_root)
+                )
             ):
                 raise ValueError("execution registration RPC authority is not closed")
             return self
@@ -293,6 +304,7 @@ def build_execution_registration_rpc_service(*, deployment, configuration_bytes)
         Path(deployment.socket_parent_path),
         Path(deployment.composition_config_path).parent,
         Path(deployment.receipt_private_key_path).parent,
+        *(() if config.lease_token_custody_root is None else (Path(config.lease_token_custody_root),)),
     )
     for index, first in enumerate(custody_roots):
         for second in custody_roots[index + 1 :]:
@@ -330,6 +342,43 @@ def build_execution_registration_rpc_service(*, deployment, configuration_bytes)
     )
     action_authority = PostgreSQLResearchActionAuthorityAdapter(kernel_store)
     qualification = compose_qualification_execution_registration(registration)
+
+    class _FilesystemLeaseTokenCustody:
+        """0400 token custody under the service identity.
+
+        The dispatch driver runs as the driver identity, so the operator hands
+        the file over explicitly (--lease-token-file) instead of the service
+        loosening the mode.  The sink only fires on a fresh admission, so any
+        file already at a path belongs to a rolled-back attempt and the
+        rewrite keeps the live token.
+        """
+
+        def __init__(self, root: Path) -> None:
+            self._root = root
+
+        def custody_lease_token(self, attempt_id: str, lease_token: str) -> None:
+            attempt_dir = self._root / attempt_id
+            attempt_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            path = attempt_dir / "lease-token"
+            # 0400 blocks reopening in place; replace the incarnation.  The
+            # sink only fires on a fresh admission, so an existing file is a
+            # rolled-back attempt's dead token.
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
+            try:
+                os.write(descriptor, (lease_token + "\n").encode("utf-8"))
+            finally:
+                os.close(descriptor)
+
+    lease_token_custody = (
+        None
+        if config.lease_token_custody_root is None
+        else _FilesystemLeaseTokenCustody(Path(config.lease_token_custody_root))
+    )
+
     registrar = PostgreSQLAtomicScientificExecutionRegistrar(
         verification=ScientificExecutionRegistrationVerificationContext(
             qualification_authority=qualification.qualification_authority,
@@ -340,6 +389,7 @@ def build_execution_registration_rpc_service(*, deployment, configuration_bytes)
             admission_authority_pin=config.admission_authority_pin,
         ),
         allocator=qualification.allocator,
+        lease_token_custody=lease_token_custody,
     )
 
     def register_execution(payload):

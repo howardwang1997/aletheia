@@ -757,6 +757,20 @@ def _build_layout(
         gid=driver_gid,
     )
 
+    # Contradiction #23: the execution-registration service is the admitting
+    # process for external bridge attempts, so it custodies each admission's
+    # one-time lease token here (0400, service-owned) before commit; the
+    # operator hands the file to the dispatch driver explicitly.
+    layout["execution_registration_custody_root"] = (
+        working / "spool" / "execution-registration-custody"
+    )
+    _mkdir_pinned(
+        layout["execution_registration_custody_root"],
+        mode=0o700,
+        uid=service_uid["execution_registration"],
+        gid=driver_gid,
+    )
+
     # Driver-side custody: bundle output and the qualification
     # commissioning keys live under the working root, disjoint from the
     # CAS root (which the authorities script created outside it).
@@ -2457,6 +2471,7 @@ def _build_service_deployments(
         "qualification_registration": registration.model_dump(mode="json"),
         "registrar_implementation_source_path": registrar_path,
         "registrar_implementation_source_sha256": registrar_sha,
+        "lease_token_custody_root": str(layout["execution_registration_custody_root"]),
         "prepared_at": _iso(prepared_at),
         "private_domain_signing_key_loaded": False,
         "runtime_control_signing_key_loaded": False,
