@@ -234,37 +234,175 @@ def test_0036_external_acceptance_tables_are_excluded_from_legacy_baseline_parit
 
 
 def test_every_table_created_after_the_legacy_baseline_is_excluded_from_parity():
-    """0036 wrote its CREATE TABLE statements as raw SQL, so the frozenset
-    drifted silently: adopt_existing_baseline would refuse to stamp any
-    legacy database.  Every table any migration creates after the baseline
-    revision must be excluded, whatever DDL spelling the migration uses."""
+    """Guard the legacy-baseline parity exclusions against silent drift.
+
+    0036 wrote its CREATE TABLE statements as raw SQL and 0003 built six
+    tables from a loop variable, so the frozenset drifted silently and
+    adopt_existing_baseline would refuse to stamp any legacy database.
+    Every table a non-baseline migration creates -- op.create_table with a
+    literal or loop-variable name resolved against module tuples, or raw
+    CREATE TABLE SQL -- must already be excluded, and every column added
+    to a compared table must be column-excluded.  Construction the guard
+    cannot statically resolve fails the guard rather than passing it.
+    Table-level RENAME TO is out of scope: no migration uses it today and
+    the exclusion list would need the new name added by hand.
+    """
+    import ast
     import re
 
     from aletheia.schema_migrations import (
         LEGACY_BASELINE_REVISION,
+        POST_BASELINE_COLUMNS,
         POST_BASELINE_TABLES,
     )
 
-    for path in sorted(Path("migrations/versions").glob("*.py")):
+    versions = sorted((Path(__file__).parents[1] / "migrations" / "versions").glob("*.py"))
+    assert versions, "migration versions directory is empty"
+
+    def string_tuples(tree):
+        flat = {}
+        nested = {}
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Assign) and isinstance(node.value, (ast.Tuple, ast.List))):
+                continue
+            elements = node.value.elts
+            strings = [
+                element.value
+                for element in elements
+                if isinstance(element, ast.Constant) and isinstance(element.value, str)
+            ]
+            rows = None
+            if elements and all(isinstance(element, (ast.Tuple, ast.List)) for element in elements):
+                rows = []
+                for element in elements:
+                    inner = [
+                        part.value
+                        for part in element.elts
+                        if isinstance(part, ast.Constant) and isinstance(part.value, str)
+                    ]
+                    if len(inner) != len(element.elts):
+                        rows = None
+                        break
+                    rows.append(inner)
+            for target in node.targets:
+                if not isinstance(target, ast.Name):
+                    continue
+                if len(strings) == len(elements):
+                    flat.setdefault(target.id, set()).update(strings)
+                if rows is not None:
+                    nested[target.id] = rows
+        resolved = dict(flat)
+        for node in ast.walk(tree):
+            # for a, b, ... in nested_tuple_of_string_tuples: position-wise
+            # resolution -- 0003 builds its six membership tables this way.
+            if not (isinstance(node, ast.For) and isinstance(node.iter, ast.Name)):
+                continue
+            rows = nested.get(node.iter.id)
+            if rows is None or not isinstance(node.target, ast.Tuple):
+                continue
+            for position, target in enumerate(node.target.elts):
+                if not (isinstance(target, ast.Name) and all(len(row) > position for row in rows)):
+                    continue
+                resolved.setdefault(target.id, set()).update(row[position] for row in rows)
+        return resolved
+
+    for path in versions:
         source = path.read_text()
-        revision = re.search(
-            r"^revision(?::\s*str)?\s*=\s*['\"]([^'\"]+)", source, re.M
-        ).group(1)
+        revision = re.search(r"^revision(?::\s*str)?\s*=\s*['\"]([^'\"]+)", source, re.M).group(1)
         if revision == LEGACY_BASELINE_REVISION:
             continue
-        created = set(
-            re.findall(r"op\.create_table\(\s*['\"]([^'\"]+)", source)
-        )
-        created |= set(
-            re.findall(
-                r"CREATE TABLE (?:IF NOT EXISTS )?(\w+)",
-                re.sub(r"\s+", " ", source),
-            )
-        )
+        tree = ast.parse(source)
+        tuples = string_tuples(tree)
+        created = set()
+        added = set()
+        unresolvable = []
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+                continue
+            if not (isinstance(node.func.value, ast.Name) and node.func.value.id == "op"):
+                continue
+            if node.func.attr == "create_table":
+                argument = node.args[0] if node.args else None
+                if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+                    created.add(argument.value)
+                elif isinstance(argument, ast.Name) and argument.id in tuples:
+                    created |= tuples[argument.id]
+                else:
+                    unresolvable.append(f"op.create_table argument in {path.name}")
+            if node.func.attr == "add_column" and len(node.args) >= 2:
+                table_argument, column_argument = node.args[0], node.args[1]
+                table = (
+                    table_argument.value
+                    if isinstance(table_argument, ast.Constant)
+                    and isinstance(table_argument.value, str)
+                    else None
+                )
+                column = None
+                if (
+                    isinstance(column_argument, ast.Call)
+                    and isinstance(column_argument.func, ast.Attribute)
+                    and column_argument.func.attr == "Column"
+                    and column_argument.args
+                    and isinstance(column_argument.args[0], ast.Constant)
+                    and isinstance(column_argument.args[0].value, str)
+                ):
+                    column = column_argument.args[0].value
+                if table is not None and column is not None:
+                    added.add((table, column))
+                else:
+                    unresolvable.append(f"op.add_column argument in {path.name}")
+        raw = re.sub(r"\s+", " ", source)
+        created |= set(re.findall(r"CREATE TABLE (?:IF NOT EXISTS )?(\w+)", raw, re.IGNORECASE))
+        for statement in raw.split(";"):
+            table_match = re.search(r"ALTER TABLE (\w+)", statement, re.IGNORECASE)
+            if not table_match:
+                continue
+            for column in re.findall(
+                r"ADD COLUMN (?:IF NOT EXISTS )?(\w+)", statement, re.IGNORECASE
+            ):
+                added.add((table_match.group(1), column))
+        assert not unresolvable, unresolvable
         assert created <= POST_BASELINE_TABLES, (
             f"{path.name} creates tables missing from POST_BASELINE_TABLES: "
             f"{sorted(created - POST_BASELINE_TABLES)}"
         )
+        uncovered = {
+            (table, column) for table, column in added if table not in POST_BASELINE_TABLES
+        } - set(POST_BASELINE_COLUMNS)
+        assert not uncovered, (
+            f"{path.name} adds columns to compared tables without a "
+            f"POST_BASELINE_COLUMNS entry: {sorted(uncovered)}"
+        )
+
+
+def test_schema_diffs_excludes_indexes_over_excluded_columns():
+    """The index channel of the parity diff: an ORM index declared over a
+    post-baseline column rides with that column's exclusion.  Without the
+    index branch, adopt_existing_baseline has refused every real legacy
+    database since the first indexed post-baseline column (0010)."""
+    from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine, text
+
+    from aletheia.schema_migrations import schema_diffs
+
+    metadata = MetaData()
+    Table(
+        "zz_baseline_probe",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("probe_extra", String(64), index=True),
+    )
+    engine = create_engine("sqlite://")
+    with engine.connect() as connection:
+        connection.execute(text("CREATE TABLE zz_baseline_probe (id INTEGER NOT NULL PRIMARY KEY)"))
+        connection.commit()
+        excluded = schema_diffs(
+            connection,
+            exclude_columns=frozenset({("zz_baseline_probe", "probe_extra")}),
+            metadata=metadata,
+        )
+        kept = schema_diffs(connection, exclude_columns=frozenset(), metadata=metadata)
+    assert excluded == []
+    assert kept  # the same index still diffs without the column exclusion
 
 
 def test_pr5_exact_source_constraints_match_migration_and_orm_metadata():

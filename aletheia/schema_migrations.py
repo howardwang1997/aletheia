@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
-from sqlalchemy import inspect
+from sqlalchemy import MetaData, inspect
 from sqlalchemy.engine import Connection
 
 import aletheia.memory.ledger  # noqa: F401  (register every ORM table)
@@ -183,8 +183,13 @@ def schema_diffs(
     exclude_tables: frozenset[str] = frozenset(),
     exclude_columns: frozenset[tuple[str, str]] = frozenset(),
     exclude_constraints: frozenset[str] = frozenset(),
+    metadata: MetaData | None = None,
 ) -> list[object]:
-    """Return Alembic's structural diff between the connected schema and ORM metadata."""
+    """Return Alembic's structural diff between the connected schema and ORM metadata.
+
+    ``metadata`` defaults to the ORM Base; tests pass a small controlled
+    MetaData to exercise the include_object channels directly.
+    """
 
     def include_object(
         object_, name: str | None, type_: str, _reflected: bool, _compare_to
@@ -194,6 +199,26 @@ def schema_diffs(
         if type_ == "column":
             table_name = getattr(getattr(object_, "table", None), "name", None)
             if (table_name, name) in exclude_columns:
+                return False
+        if type_ == "index":
+            # An ORM index declared over post-baseline columns rides along
+            # with those columns: the legacy database has neither, so the
+            # index diff is the same post-baseline drift the column
+            # exclusion already covers.  Only exclude when every column is
+            # positively excluded; an index over compared columns (or an
+            # unresolvable expression) keeps its diff and the stamp refuses.
+            table_name = getattr(getattr(object_, "table", None), "name", None)
+            columns = set(getattr(object_, "columns", ()) or ())
+            column_names = {
+                getattr(column, "name", None)
+                for column in columns
+                if getattr(column, "name", None) is not None
+            }
+            if (
+                columns
+                and column_names
+                and all((table_name, column) in exclude_columns for column in column_names)
+            ):
                 return False
         if type_ in {"unique_constraint", "check_constraint"} and name in exclude_constraints:
             return False
@@ -207,7 +232,7 @@ def schema_diffs(
             "include_object": include_object,
         },
     )
-    return list(compare_metadata(context, Base.metadata))
+    return list(compare_metadata(context, Base.metadata if metadata is None else metadata))
 
 
 def require_schema_exact(connection: Connection | None = None) -> SchemaStatus:
