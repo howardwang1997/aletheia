@@ -24,9 +24,10 @@ establish scientific validity, independent replication or autonomous research de
 
 The bounded ARL-2 campaign integration is built: the question loop's control plane, external
 bridge and dispatch executor, and acceptance chain are merged on main. The immediate work is
-completing its qualification dry run, which has not yet finished end-to-end. F9 world-model and
-F10 capability components feed that loop through typed contracts, and F8 knowledge does not
-enter it yet; none of this establishes a qualified autonomous scientist.
+completing its qualification dry run, which has not yet finished end-to-end. F9 world-model
+components feed that loop through typed contracts and the F11 durable task queue carries its
+execution; F8 knowledge and the F10 capability registry do not enter it yet. None of this
+establishes a qualified autonomous scientist.
 
 - [Current roadmap](docs/LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md)
 - [ARL-1 qualification contract](docs/ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md)
@@ -78,8 +79,8 @@ cd frontend && npm install && npm run dev    # http://localhost:3000
 Open http://localhost:3000 and log in (the owner credentials seed from `ALETHEIA_OWNER_EMAIL` /
 `ALETHEIA_OWNER_PASSWORD` in `.env`). Type in the conversation input until the agent finalizes
 a plan, connect and ready the data in the data panel, then click **Launch experiment** — the
-button enables only once the plan is finalized, every connected dataset is ready, the run is
-not already launched, and you hold a control-role account.
+button enables only once the plan is finalized, every declared dataset (uploaded or connected)
+is ready, the run is not already launched, and you hold a control-role account.
 
 The default provider is Claude. Both Claude and OpenAI support subscription login or API-key
 authentication. To use GPT with the ChatGPT subscription already logged into Codex CLI, run
