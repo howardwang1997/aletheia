@@ -759,7 +759,12 @@ def test_exclusion_channels_cover_only_the_metadata_side():
     from aletheia.schema_migrations import schema_diffs
 
     metadata = MetaData()
-    Table("zz_kept", metadata, Column("id", Integer, primary_key=True))
+    Table(
+        "zz_kept",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        UniqueConstraint("id", name="uq_meta_only"),
+    )
     Table(
         "zz_probe_column",
         metadata,
@@ -772,6 +777,13 @@ def test_exclusion_channels_cover_only_the_metadata_side():
         Column("id", Integer, primary_key=True),
         Column("probe_extra", String(64)),
         UniqueConstraint("probe_extra", name="uq_changed"),
+    )
+    Table("zz_meta_only", metadata, Column("id", Integer, primary_key=True))
+    Table(
+        "zz_both_exist",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("drift_col", String(64)),
     )
     engine = create_engine("sqlite://")
     with engine.connect() as connection:
@@ -786,16 +798,22 @@ def test_exclusion_channels_cover_only_the_metadata_side():
         connection.execute(
             text(
                 "CREATE TABLE zz_probe_unique (id INTEGER NOT NULL PRIMARY KEY, "
-                "probe_extra VARCHAR(64), CONSTRAINT uq_changed UNIQUE (id), "
+                "probe_extra VARCHAR(64), probe_gone INTEGER, "
+                "CONSTRAINT uq_changed UNIQUE (id), "
                 "CONSTRAINT uq_stray UNIQUE (probe_extra))"
             )
+        )
+        connection.execute(
+            text("CREATE TABLE zz_both_exist (id INTEGER NOT NULL PRIMARY KEY, drift_col INTEGER)")
         )
         connection.commit()
         drift = schema_diffs(
             connection,
-            exclude_tables=frozenset({"zz_stray"}),
-            exclude_columns=frozenset({("zz_probe_column", "probe_extra")}),
-            exclude_constraints=frozenset({"uq_changed", "uq_stray"}),
+            exclude_tables=frozenset({"zz_stray", "zz_meta_only", "zz_both_exist"}),
+            exclude_columns=frozenset(
+                {("zz_probe_column", "probe_extra"), ("zz_probe_unique", "probe_gone")}
+            ),
+            exclude_constraints=frozenset({"uq_changed", "uq_stray", "uq_meta_only"}),
             metadata=metadata,
         )
     # alembic wraps the modify diffs in a nested tuple; unwrap either shape.
@@ -804,6 +822,13 @@ def test_exclusion_channels_cover_only_the_metadata_side():
     assert "modify_type" in kinds  # database column wearing an excluded (table, name)
     assert "remove_constraint" in kinds  # database-only constraint with an excluded name
     assert "add_constraint" in kinds  # same-named constraint over different columns
+    # Round 8: the added path still rides, and each gate's second conjunct
+    # holds -- one assertion per axis a single-conjunct revert would break.
+    assert "add_table" not in kinds  # metadata-only table with an excluded name rides
+    assert not any("uq_meta_only" in repr(diff) for diff in drift)  # ditto constraint
+    assert "remove_column" in kinds  # database-only column with an excluded (table, name)
+    assert any("zz_both_exist" in repr(diff) for diff in drift)  # both-exist excluded table
+    # keeps its comparison (shape drift surfaces), unlike a stray-table skip
 
 
 def test_walking_guard_fails_closed_on_unresolvable_ddl():
