@@ -233,36 +233,45 @@ def test_0036_external_acceptance_tables_are_excluded_from_legacy_baseline_parit
     } <= POST_BASELINE_TABLES
 
 
-def test_every_table_created_after_the_legacy_baseline_is_excluded_from_parity():
-    """Guard the legacy-baseline parity exclusions against silent drift.
+def _migration_drift(source):
+    """One migration source's (created tables, added (table, column) pairs,
+    unresolvable tracked-DDL descriptions) for the parity drift guard.
 
-    0036 wrote its CREATE TABLE statements as raw SQL and 0003 built six
-    tables from a loop variable, so the frozenset drifted silently and
-    adopt_existing_baseline would refuse to stamp any legacy database.
-    Every table a non-baseline migration creates -- op.create_table with a
-    literal or loop-variable name resolved against module tuples, or raw
-    CREATE TABLE SQL -- must already be excluded, and every column added
-    to a compared table must be column-excluded.  Construction the guard
-    cannot statically resolve fails the guard rather than passing it.
-    Table-level RENAME TO is out of scope: no migration uses it today and
-    the exclusion list would need the new name added by hand.
+    Consumed by the corpus walk below and by the synthetic fail-closed
+    test, so both exercise the same extraction code.
     """
     import ast
     import re
 
-    from aletheia.schema_migrations import (
-        LEGACY_BASELINE_REVISION,
-        POST_BASELINE_COLUMNS,
-        POST_BASELINE_TABLES,
-    )
+    ddl_keywords = {"CONSTRAINT", "PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "EXCLUDE"}
 
-    versions = sorted((Path(__file__).parents[1] / "migrations" / "versions").glob("*.py"))
-    assert versions, "migration versions directory is empty"
+    def added_columns_in(statement):
+        return [
+            name
+            for name in re.findall(
+                r"\bADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_]\w*)",
+                statement,
+                re.IGNORECASE,
+            )
+            if name.upper() not in ddl_keywords
+        ]
+
+    def tracked_ddl(sql):
+        return bool(re.search(r"\bCREATE\s+TABLE\b", sql, re.IGNORECASE)) or bool(
+            added_columns_in(sql)
+        )
 
     def string_tuples(tree):
         flat = {}
         nested = {}
+        scalars = {}
         for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+                if isinstance(node.value.value, str):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            scalars[target.id] = node.value.value
+                continue
             if not (isinstance(node, ast.Assign) and isinstance(node.value, (ast.Tuple, ast.List))):
                 continue
             elements = node.value.elts
@@ -304,64 +313,137 @@ def test_every_table_created_after_the_legacy_baseline_is_excluded_from_parity()
                 if not (isinstance(target, ast.Name) and all(len(row) > position for row in rows)):
                     continue
                 resolved.setdefault(target.id, set()).update(row[position] for row in rows)
-        return resolved
+        return resolved, scalars
+
+    tree = ast.parse(source)
+    tuples, scalars = string_tuples(tree)
+    created = set()
+    added = set()
+    unresolvable = []
+    execute_sql = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if not (isinstance(node.func.value, ast.Name) and node.func.value.id == "op"):
+            continue
+        if node.func.attr == "create_table":
+            argument = node.args[0] if node.args else None
+            if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+                created.add(argument.value)
+            elif isinstance(argument, ast.Name) and argument.id in tuples:
+                created |= tuples[argument.id]
+            else:
+                unresolvable.append("op.create_table argument")
+        if node.func.attr == "add_column":
+            keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+            table_argument = node.args[0] if node.args else keywords.get("table_name")
+            column_argument = node.args[1] if len(node.args) > 1 else keywords.get("column")
+            table = (
+                table_argument.value
+                if isinstance(table_argument, ast.Constant)
+                and isinstance(table_argument.value, str)
+                else None
+            )
+            column = None
+            if (
+                isinstance(column_argument, ast.Call)
+                and isinstance(column_argument.func, ast.Attribute)
+                and column_argument.func.attr == "Column"
+                and column_argument.args
+                and isinstance(column_argument.args[0], ast.Constant)
+                and isinstance(column_argument.args[0].value, str)
+            ):
+                column = column_argument.args[0].value
+            if table is not None and column is not None:
+                added.add((table, column))
+            else:
+                unresolvable.append("op.add_column argument")
+        if node.func.attr == "execute" and node.args:
+            argument = node.args[0]
+            if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+                execute_sql.append(argument.value)
+            elif isinstance(argument, ast.Name) and argument.id in scalars:
+                execute_sql.append(scalars[argument.id])
+            elif isinstance(argument, ast.JoinedStr):
+                literal = " ".join(
+                    part.value
+                    for part in argument.values
+                    if isinstance(part, ast.Constant) and isinstance(part.value, str)
+                )
+                if tracked_ddl(literal):
+                    unresolvable.append("op.execute f-string DDL")
+            else:
+                unresolvable.append("op.execute argument")
+    for sql in execute_sql:
+        for statement in re.sub(r"\s+", " ", sql).split(";"):
+            if "CREATE TABLE" in statement.upper():
+                match = re.search(
+                    r"CREATE TABLE (?:IF NOT EXISTS )?((?:[A-Za-z_]\w*\.)?[A-Za-z_]\w*)",
+                    statement,
+                    re.IGNORECASE,
+                )
+                if match and "." not in match.group(1):
+                    created.add(match.group(1))
+                else:
+                    unresolvable.append("CREATE TABLE statement")
+            table_match = re.search(
+                r"ALTER TABLE (?:IF EXISTS )?([A-Za-z_]\w*)", statement, re.IGNORECASE
+            )
+            statement_columns = added_columns_in(statement)
+            if statement_columns:
+                if table_match:
+                    for column in statement_columns:
+                        added.add((table_match.group(1), column))
+                else:
+                    unresolvable.append("ALTER TABLE ADD statement")
+            elif re.search(
+                r"\bADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?[\"'`(\d]",
+                statement,
+                re.IGNORECASE,
+            ):
+                # a tracked ADD whose name is quoted or otherwise not a
+                # bare identifier: unresolvable, never a silent pass
+                unresolvable.append("ALTER TABLE ADD statement")
+    return created, added, unresolvable
+
+
+def test_every_table_created_after_the_legacy_baseline_is_excluded_from_parity():
+    """Guard the legacy-baseline parity exclusions against silent drift.
+
+    0036 wrote its CREATE TABLE statements as raw SQL and 0003 built six
+    tables from a loop variable, so the frozenset drifted silently and
+    adopt_existing_baseline would refuse to stamp any legacy database.
+    Every table a non-baseline migration creates -- op.create_table with
+    a literal or loop-variable name resolved against module tuples, or
+    CREATE TABLE in a string op.execute -- must already be excluded, and
+    every column a migration adds to a compared table (op.add_column or
+    ALTER TABLE ... ADD, with or without the COLUMN keyword) must be
+    column-excluded.  Tracked DDL the guard cannot resolve -- f-string or
+    variable-built names, quoted or schema-qualified identifiers -- fails
+    the guard instead of passing silently (pinned synthetically in
+    test_walking_guard_fails_closed_on_unresolvable_ddl).  DDL the guard
+    does not track at all (CREATE INDEX, ADD CONSTRAINT, table-level
+    RENAME TO) escapes it; no migration uses RENAME TO today and its
+    exclusion entry would be added by hand.
+    """
+    import re
+
+    from aletheia.schema_migrations import (
+        LEGACY_BASELINE_REVISION,
+        POST_BASELINE_COLUMNS,
+        POST_BASELINE_TABLES,
+    )
+
+    versions = sorted((Path(__file__).parents[1] / "migrations" / "versions").glob("*.py"))
+    assert versions, "migration versions directory is empty"
 
     for path in versions:
         source = path.read_text()
         revision = re.search(r"^revision(?::\s*str)?\s*=\s*['\"]([^'\"]+)", source, re.M).group(1)
         if revision == LEGACY_BASELINE_REVISION:
             continue
-        tree = ast.parse(source)
-        tuples = string_tuples(tree)
-        created = set()
-        added = set()
-        unresolvable = []
-        for node in ast.walk(tree):
-            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
-                continue
-            if not (isinstance(node.func.value, ast.Name) and node.func.value.id == "op"):
-                continue
-            if node.func.attr == "create_table":
-                argument = node.args[0] if node.args else None
-                if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
-                    created.add(argument.value)
-                elif isinstance(argument, ast.Name) and argument.id in tuples:
-                    created |= tuples[argument.id]
-                else:
-                    unresolvable.append(f"op.create_table argument in {path.name}")
-            if node.func.attr == "add_column" and len(node.args) >= 2:
-                table_argument, column_argument = node.args[0], node.args[1]
-                table = (
-                    table_argument.value
-                    if isinstance(table_argument, ast.Constant)
-                    and isinstance(table_argument.value, str)
-                    else None
-                )
-                column = None
-                if (
-                    isinstance(column_argument, ast.Call)
-                    and isinstance(column_argument.func, ast.Attribute)
-                    and column_argument.func.attr == "Column"
-                    and column_argument.args
-                    and isinstance(column_argument.args[0], ast.Constant)
-                    and isinstance(column_argument.args[0].value, str)
-                ):
-                    column = column_argument.args[0].value
-                if table is not None and column is not None:
-                    added.add((table, column))
-                else:
-                    unresolvable.append(f"op.add_column argument in {path.name}")
-        raw = re.sub(r"\s+", " ", source)
-        created |= set(re.findall(r"CREATE TABLE (?:IF NOT EXISTS )?(\w+)", raw, re.IGNORECASE))
-        for statement in raw.split(";"):
-            table_match = re.search(r"ALTER TABLE (\w+)", statement, re.IGNORECASE)
-            if not table_match:
-                continue
-            for column in re.findall(
-                r"ADD COLUMN (?:IF NOT EXISTS )?(\w+)", statement, re.IGNORECASE
-            ):
-                added.add((table_match.group(1), column))
-        assert not unresolvable, unresolvable
+        created, added, unresolvable = _migration_drift(source)
+        assert not unresolvable, [f"{path.name}: {entry}" for entry in unresolvable]
         assert created <= POST_BASELINE_TABLES, (
             f"{path.name} creates tables missing from POST_BASELINE_TABLES: "
             f"{sorted(created - POST_BASELINE_TABLES)}"
@@ -403,6 +485,107 @@ def test_schema_diffs_excludes_indexes_over_excluded_columns():
         kept = schema_diffs(connection, exclude_columns=frozenset(), metadata=metadata)
     assert excluded == []
     assert kept  # the same index still diffs without the column exclusion
+
+    # Round 2: a same-named database index with a different shape must keep
+    # its diff even though the metadata side is all-excluded -- alembic's
+    # changed-index path passes only the metadata side to include_object.
+    drifted = MetaData()
+    Table(
+        "zz_baseline_probe",
+        drifted,
+        Column("id", Integer, primary_key=True),
+        Column("probe_extra", String(64), index=True),
+    )
+    engine = create_engine("sqlite://")
+    with engine.connect() as connection:
+        connection.execute(text("CREATE TABLE zz_baseline_probe (id INTEGER NOT NULL PRIMARY KEY)"))
+        connection.execute(
+            text("CREATE INDEX ix_zz_baseline_probe_probe_extra ON zz_baseline_probe (id)")
+        )
+        connection.commit()
+        changed = schema_diffs(
+            connection,
+            exclude_columns=frozenset({("zz_baseline_probe", "probe_extra")}),
+            metadata=drifted,
+        )
+    assert any(diff[0] in {"add_index", "remove_index"} for diff in changed)
+
+
+def test_index_exclusion_requires_resolvable_shape_and_matching_database_index():
+    """Round-2 pins for the index ride-along decision: expression terms,
+    compared columns, and a same-named differently-shaped database index
+    all keep the diff -- adoption must refuse, not stamp over drift."""
+    from sqlalchemy import Column, Index, Integer, MetaData, String, Table, text
+
+    from aletheia.schema_migrations import _index_rides_excluded_columns
+
+    metadata = MetaData()
+    probe = Table(
+        "zz_baseline_probe",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("probe_extra", String(64)),
+    )
+    excluded = frozenset({("zz_baseline_probe", "probe_extra")})
+
+    assert _index_rides_excluded_columns(Index("ix_plain", probe.c.probe_extra), None, excluded)
+    assert not _index_rides_excluded_columns(
+        Index("ix_mixed", probe.c.probe_extra, probe.c.id), None, excluded
+    )
+    # Index.columns drops expression terms: the shape is unresolvable.
+    assert not _index_rides_excluded_columns(
+        Index("ix_expression", probe.c.probe_extra, text("lower(id)")), None, excluded
+    )
+
+    database_side = MetaData()
+    database_probe = Table(
+        "zz_baseline_probe",
+        database_side,
+        Column("id", Integer, primary_key=True),
+        Column("probe_extra", String(64)),
+    )
+    drifted = Index("ix_db_drifted", database_probe.c.id)
+    assert not _index_rides_excluded_columns(
+        Index("ix_db_drifted", probe.c.probe_extra), drifted, excluded
+    )
+    matching = Index("ix_db_matching", database_probe.c.probe_extra)
+    assert _index_rides_excluded_columns(
+        Index("ix_db_matching", probe.c.probe_extra), matching, excluded
+    )
+
+
+def test_walking_guard_fails_closed_on_unresolvable_ddl():
+    """Round-2 pins for the drift-guard extraction: tracked DDL whose names
+    the guard cannot resolve fails it instead of passing silently, and
+    consecutive semicolon-free op.execute statements attribute their ADD
+    COLUMNs to their own tables (0035's chunk-merge failure mode)."""
+    source = (
+        "def upgrade():\n"
+        "    op.execute(f'CREATE TABLE {name} (id int)')\n"
+        "    op.execute('CREATE TABLE \"Quoted\" (id int)')\n"
+        "    op.execute('CREATE TABLE public.qualified (id int)')\n"
+        "    op.execute(f'ALTER TABLE {t} ADD COLUMN c int')\n"
+        '    op.execute(\'ALTER TABLE "q" ADD COLUMN "c" int\')\n'
+        "    op.execute('ALTER TABLE events ADD pg_short_form text')\n"
+        "    op.execute('ALTER TABLE execution_attempts ADD COLUMN a text')\n"
+        "    op.execute('ALTER TABLE execution_resource_leases ADD COLUMN a text')\n"
+        "    op.add_column('events', column=sa.Column('kw_form', sa.Text()))\n"
+    )
+    created, added, unresolvable = _migration_drift(source)
+    assert created == set()
+    assert added == {
+        ("events", "pg_short_form"),  # PostgreSQL ADD without the COLUMN keyword
+        ("execution_attempts", "a"),
+        ("execution_resource_leases", "a"),  # own table, not the chunk's first
+        ("events", "kw_form"),  # keyword-form op.add_column resolves
+    }
+    assert sorted(unresolvable) == [
+        "ALTER TABLE ADD statement",  # quoted table and column names
+        "CREATE TABLE statement",  # quoted identifier
+        "CREATE TABLE statement",  # schema-qualified
+        "op.execute f-string DDL",  # f-string CREATE TABLE
+        "op.execute f-string DDL",  # f-string ALTER TABLE ADD COLUMN
+    ]
 
 
 def test_pr5_exact_source_constraints_match_migration_and_orm_metadata():

@@ -177,6 +177,40 @@ class BaselineAdoptionReceipt:
     schema_diff_count: int
 
 
+def _index_rides_excluded_columns(
+    index: object, compare_to: object, exclude_columns: frozenset[tuple[str, str]]
+) -> bool:
+    """True only when an index diff is post-baseline drift the column exclusion covers.
+
+    An ORM index declared over post-baseline columns rides along with those
+    columns: the legacy database has neither.  The ride-along requires the
+    index shape to be fully resolvable through plain column names --
+    ``Index.columns`` silently drops expression terms, so any expression
+    makes the shape unresolvable and the diff must stay -- every column
+    positively excluded, and any same-named database index (alembic passes
+    only the metadata side on the changed path) to have the identical
+    column names.  Anything else keeps its diff and adoption refuses.
+    """
+    table_name = getattr(getattr(index, "table", None), "name", None)
+    columns = list(getattr(index, "columns", ()) or ())
+    expressions = getattr(index, "expressions", None)
+    names = [getattr(column, "name", None) for column in columns]
+    if not columns or None in names or len(set(names)) != len(names):
+        return False
+    if expressions is not None and len(expressions) != len(columns):
+        return False
+    if not all((table_name, column) in exclude_columns for column in names):
+        return False
+    compared = (
+        None
+        if compare_to is None
+        else [
+            getattr(column, "name", None) for column in (getattr(compare_to, "columns", ()) or ())
+        ]
+    )
+    return compared is None or set(compared) == set(names)
+
+
 def schema_diffs(
     connection: Connection,
     *,
@@ -191,35 +225,15 @@ def schema_diffs(
     MetaData to exercise the include_object channels directly.
     """
 
-    def include_object(
-        object_, name: str | None, type_: str, _reflected: bool, _compare_to
-    ) -> bool:
+    def include_object(object_, name: str | None, type_: str, _reflected: bool, compare_to) -> bool:
         if type_ == "table" and name in exclude_tables:
             return False
         if type_ == "column":
             table_name = getattr(getattr(object_, "table", None), "name", None)
             if (table_name, name) in exclude_columns:
                 return False
-        if type_ == "index":
-            # An ORM index declared over post-baseline columns rides along
-            # with those columns: the legacy database has neither, so the
-            # index diff is the same post-baseline drift the column
-            # exclusion already covers.  Only exclude when every column is
-            # positively excluded; an index over compared columns (or an
-            # unresolvable expression) keeps its diff and the stamp refuses.
-            table_name = getattr(getattr(object_, "table", None), "name", None)
-            columns = set(getattr(object_, "columns", ()) or ())
-            column_names = {
-                getattr(column, "name", None)
-                for column in columns
-                if getattr(column, "name", None) is not None
-            }
-            if (
-                columns
-                and column_names
-                and all((table_name, column) in exclude_columns for column in column_names)
-            ):
-                return False
+        if type_ == "index" and _index_rides_excluded_columns(object_, compare_to, exclude_columns):
+            return False
         if type_ in {"unique_constraint", "check_constraint"} and name in exclude_constraints:
             return False
         return True
