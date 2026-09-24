@@ -757,6 +757,20 @@ def _build_layout(
         gid=driver_gid,
     )
 
+    # Contradiction #23: the execution-registration service is the admitting
+    # process for external bridge attempts, so it custodies each admission's
+    # one-time lease token here (0400, service-owned) before commit; the
+    # operator hands the file to the dispatch driver explicitly.
+    layout["execution_registration_custody_root"] = (
+        working / "spool" / "execution-registration-custody"
+    )
+    _mkdir_pinned(
+        layout["execution_registration_custody_root"],
+        mode=0o700,
+        uid=service_uid["execution_registration"],
+        gid=driver_gid,
+    )
+
     # Driver-side custody: bundle output and the qualification
     # commissioning keys live under the working root, disjoint from the
     # CAS root (which the authorities script created outside it).
@@ -2363,6 +2377,7 @@ def _build_service_deployments(
 
     spool_metadata = _stat_directory(layout["action_proposal_spool_root"])
     ca_artifact_metadata = _stat_directory(layout["continuation_artifact_root"])
+    lease_custody_metadata = _stat_directory(layout["execution_registration_custody_root"])
 
     registration = QualificationExecutionRegistrationConfig(
         qualification_custody=qualification["custody"],
@@ -2457,6 +2472,14 @@ def _build_service_deployments(
         "qualification_registration": registration.model_dump(mode="json"),
         "registrar_implementation_source_path": registrar_path,
         "registrar_implementation_source_sha256": registrar_sha,
+        "lease_token_custody_root": {
+            "path": str(layout["execution_registration_custody_root"]),
+            "owner_uid": lease_custody_metadata["uid"],
+            "owner_gid": lease_custody_metadata["gid"],
+            "device_id": lease_custody_metadata["device_id"],
+            "inode": lease_custody_metadata["inode"],
+            "directory_mode": lease_custody_metadata["mode"],
+        },
         "prepared_at": _iso(prepared_at),
         "private_domain_signing_key_loaded": False,
         "runtime_control_signing_key_loaded": False,

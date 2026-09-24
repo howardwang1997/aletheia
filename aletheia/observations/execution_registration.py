@@ -67,6 +67,20 @@ class CurrentResearchActionRegistrationAuthorityPort(Protocol):
     ) -> str: ...
 
 
+class LeaseTokenCustody(Protocol):
+    """Persist one admission's raw lease token before its transaction commits.
+
+    Contradiction #23: the registrar is the admitting process for external
+    bridge attempts, and the allocator hands the one-time lease token only to
+    that process.  Without a custody sink the token dies with the RPC response
+    and the reserved attempt can never be driven.  A custody failure raises,
+    so the registration rolls back instead of committing an undrivable
+    attempt.
+    """
+
+    def custody_lease_token(self, attempt_id: str, lease_token: str) -> None: ...
+
+
 @dataclass(frozen=True)
 class _LockedCurrentActionAuthorityProof:
     """Reuse the stronger caller-transaction audit without taking a second Quest lock."""
@@ -318,6 +332,7 @@ class PostgreSQLAtomicScientificExecutionRegistrar:
         allocator: PostgreSQLExecutionAllocator,
         session_scope_factory: SessionScopeFactory = session_scope,
         database_clock: DatabaseClock = _database_time,
+        lease_token_custody: LeaseTokenCustody | None = None,
     ) -> None:
         if not isinstance(allocator, PostgreSQLExecutionAllocator):
             raise TypeError("scientific execution registration requires the PR-4 allocator")
@@ -327,10 +342,15 @@ class PostgreSQLAtomicScientificExecutionRegistrar:
             raise ValueError("execution registration requires public-key runtime verification")
         if not callable(session_scope_factory) or not callable(database_clock):
             raise TypeError("execution registration requires callable PostgreSQL seams")
+        if lease_token_custody is not None and not callable(
+            getattr(lease_token_custody, "custody_lease_token", None)
+        ):
+            raise TypeError("execution registration lease token custody must be callable")
         self._verification = verification
         self._allocator = allocator
         self._session_scope_factory = session_scope_factory
         self._database_clock = database_clock
+        self._lease_token_custody = lease_token_custody
 
     def _verify_current_authorization(
         self,
@@ -558,7 +578,7 @@ class PostgreSQLAtomicScientificExecutionRegistrar:
                             binding_sha256=binding_sha256,
                             observed_at=final_observed_at,
                         )
-                return tuple(
+                receipts = tuple(
                     self._receipt(
                         authorization=authorization,
                         registered_at=registered_at,
@@ -571,6 +591,18 @@ class PostgreSQLAtomicScientificExecutionRegistrar:
                         strict=True,
                     )
                 )
+                # Custody runs inside the transaction: a sink failure rolls the
+                # registration back rather than committing an external attempt
+                # whose one-time token no live process can still produce.  An
+                # attach (exact retry) carries no token and never re-custodies.
+                if self._lease_token_custody is not None:
+                    for claim in claims:
+                        if claim.lease_token is not None:
+                            self._lease_token_custody.custody_lease_token(
+                                claim.snapshot.attempt_id,
+                                claim.lease_token,
+                            )
+                return receipts
         except ScientificExecutionRegistrationError:
             raise
         except Exception as exc:  # noqa: BLE001 - rollback and fail closed across both authorities
@@ -621,6 +653,7 @@ __all__ = [
     "AtomicScientificExecutionCampaignRegistrationReceipt",
     "AtomicScientificExecutionRegistrationReceipt",
     "CurrentResearchActionRegistrationAuthorityPort",
+    "LeaseTokenCustody",
     "PostgreSQLAtomicScientificExecutionRegistrar",
     "ScientificExecutionRegistrationError",
     "ScientificExecutionRegistrationVerificationContext",

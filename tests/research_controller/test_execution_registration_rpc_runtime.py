@@ -69,6 +69,10 @@ def _fixture(
     registration_root = tmp_path / "registration"
     for root in (authorization_root, terminal_root, registration_root):
         root.mkdir()
+    lease_token_custody_root = (tmp_path / "token-custody").resolve()
+    lease_token_custody_root.mkdir(mode=0o700)
+    lease_token_custody_root.chmod(0o700)
+    lease_custody_metadata = lease_token_custody_root.stat()
     _authorization_deployment, authorization_config, _config_path, _domain_key = (
         _authorization_fixture(authorization_root)
     )
@@ -172,6 +176,14 @@ def _fixture(
         "registrar_implementation_source_sha256": hashlib.sha256(
             implementation.read_bytes()
         ).hexdigest(),
+        "lease_token_custody_root": {
+            "path": str(lease_token_custody_root),
+            "owner_uid": lease_custody_metadata.st_uid,
+            "owner_gid": lease_custody_metadata.st_gid,
+            "device_id": lease_custody_metadata.st_dev,
+            "inode": lease_custody_metadata.st_ino,
+            "directory_mode": stat.S_IMODE(lease_custody_metadata.st_mode),
+        },
         "prepared_at": prepared_at.isoformat().replace("+00:00", "Z"),
         "private_domain_signing_key_loaded": False,
         "runtime_control_signing_key_loaded": False,
@@ -377,3 +389,86 @@ def test_execution_registration_runtime_rejects_factory_source_drift(
     )
     with pytest.raises(ControllerWorkerRPCProcessError, match="byte pin"):
         build_controller_worker_rpc_server_runtime(drifted)
+
+
+def test_execution_registration_factory_wires_the_lease_token_custody_writer(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Contradiction #23: the service is the admitting process for external
+    attempts, so the factory must hand the registrar a 0400 custody writer."""
+    deployment, config, config_path, _authorization = _fixture(monkeypatch, tmp_path)
+    custody_roots = {}
+
+    class _Registrar:
+        def __init__(self, **kwargs) -> None:
+            custody_roots["sink"] = kwargs.get("lease_token_custody")
+
+        def register_and_reserve(self, _candidate):
+            raise AssertionError("custody wiring test never registers")
+
+    monkeypatch.setattr(
+        registration_module,
+        "PostgreSQLAtomicScientificExecutionRegistrar",
+        _Registrar,
+    )
+    build_execution_registration_rpc_service(
+        deployment=deployment,
+        configuration_bytes=config_path.read_bytes(),
+    )
+
+    sink = custody_roots["sink"]
+    assert sink is not None
+    sink.custody_lease_token("iat_" + "a" * 32, "one-time-token")
+    token_path = (
+        Path(config["lease_token_custody_root"]["path"]) / ("iat_" + "a" * 32) / "lease-token"
+    )
+    assert token_path.read_bytes() == b"one-time-token\n"
+    assert stat.S_IMODE(token_path.stat().st_mode) == 0o400
+    # custody only fires on a fresh admission; a second write replaces the
+    # file a rolled-back attempt left behind, keeping the newest token live
+    sink.custody_lease_token("iat_" + "a" * 32, "replacement-token")
+    assert token_path.read_bytes() == b"replacement-token\n"
+    assert stat.S_IMODE(token_path.stat().st_mode) == 0o400
+
+
+def test_execution_registration_runtime_rejects_relative_lease_token_custody_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    deployment, config, _config_path, _authorization = _fixture(monkeypatch, tmp_path)
+    config["lease_token_custody_root"] = "relative/custody"
+    with pytest.raises(ValueError, match="config is invalid"):
+        build_execution_registration_rpc_service(
+            deployment=deployment,
+            configuration_bytes=canonical_json_bytes(config),
+        )
+
+
+def test_execution_registration_runtime_rejects_a_custody_root_overlapping_the_kernel_cas(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    deployment, config, _config_path, _authorization = _fixture(monkeypatch, tmp_path)
+    config["lease_token_custody_root"]["path"] = (
+        config["kernel_reader"]["cas_root"] + "/nested-custody"
+    )
+    with pytest.raises(ValueError, match="custody roots overlap"):
+        build_execution_registration_rpc_service(
+            deployment=deployment,
+            configuration_bytes=canonical_json_bytes(config),
+        )
+
+
+def test_execution_registration_runtime_rejects_a_custody_root_that_left_its_pin(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    deployment, config, _config_path, _authorization = _fixture(monkeypatch, tmp_path)
+    custody_root = Path(config["lease_token_custody_root"]["path"])
+    custody_root.chmod(0o750)
+    with pytest.raises(ValueError, match="differs from its custody pin"):
+        build_execution_registration_rpc_service(
+            deployment=deployment,
+            configuration_bytes=canonical_json_bytes(config),
+        )

@@ -368,6 +368,90 @@ def test_atomic_registrar_exact_retry_is_byte_stable_and_skips_current_head_rech
     assert len(allocator.calls) == 2
 
 
+class _RecordingCustody:
+    def __init__(self, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[tuple[str, str]] = []
+
+    def custody_lease_token(self, attempt_id: str, lease_token: str) -> None:
+        if self.fail:
+            raise RuntimeError("injected custody failure")
+        self.calls.append((attempt_id, lease_token))
+
+
+def test_atomic_registrar_custodies_the_admission_lease_token_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Contradiction #23: the registrar is the admitting process, so the raw
+    one-time lease token must reach a custody sink before commit -- an exact
+    retry attaches without a token and must not re-custody."""
+    case = _bridge_case()
+    engine = sqlite_observation_engine()
+    with Session(engine) as session, session.begin():
+        _seed_authorization_parents(session, case)
+    registered_at = case.authorization.message.authorized_at + timedelta(seconds=1)
+    allocator = _Allocator(reserved_at=registered_at + timedelta(seconds=1))
+    current_action_authority = _CurrentActionAuthority()
+    monkeypatch.setattr(registration_module, "_lock_scientific_slot", lambda *_args: None)
+    custody = _RecordingCustody()
+    registrar = PostgreSQLAtomicScientificExecutionRegistrar(
+        verification=_verification(
+            case,
+            current_action_authority=current_action_authority,
+        ),
+        allocator=allocator,
+        session_scope_factory=_scope(engine),
+        database_clock=_Clock(
+            registered_at,
+            allocator.reserved_at,
+            allocator.reserved_at + timedelta(seconds=1),
+        ),
+        lease_token_custody=custody,
+    )
+
+    receipt = registrar.register_and_reserve(case.authorization)
+    retried = registrar.register_and_reserve(case.authorization)
+
+    assert custody.calls == [(receipt.attempt_id, "never-exposed")]
+    assert retried.attempt_id == receipt.attempt_id
+
+
+def test_atomic_registrar_custody_failure_rolls_the_registration_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bridge_case()
+    engine = sqlite_observation_engine()
+    with Session(engine) as session, session.begin():
+        _seed_authorization_parents(session, case)
+    registered_at = case.authorization.message.authorized_at + timedelta(seconds=1)
+    allocator = _Allocator(reserved_at=registered_at + timedelta(seconds=1))
+    current_action_authority = _CurrentActionAuthority()
+    monkeypatch.setattr(registration_module, "_lock_scientific_slot", lambda *_args: None)
+    registrar = PostgreSQLAtomicScientificExecutionRegistrar(
+        verification=_verification(
+            case,
+            current_action_authority=current_action_authority,
+        ),
+        allocator=allocator,
+        session_scope_factory=_scope(engine),
+        database_clock=_Clock(registered_at, allocator.reserved_at),
+        lease_token_custody=_RecordingCustody(fail=True),
+    )
+
+    with pytest.raises(
+        ScientificExecutionRegistrationError,
+        match="failed atomic registration",
+    ):
+        registrar.register_and_reserve(case.authorization)
+    with Session(engine) as session:
+        assert (
+            session.scalar(
+                select(func.count()).select_from(ResearchScientificExecutionAuthorizationRecord)
+            )
+            == 0
+        )
+
+
 def test_replicate_campaign_preregisters_every_slot_before_any_reservation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
