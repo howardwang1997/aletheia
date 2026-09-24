@@ -5,8 +5,9 @@
 > ([`END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md`](END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md))
 > and the ARL qualification ladder. Current status lives in the root `README.md` and
 > [`LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md`](LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md).
-> The weaknesses it lists (claim calibration, structured literature, fail-closed execution) were
-> carried into the new architecture's invariants rather than left as open legacy gaps.
+> Several weaknesses it lists were carried into the new architecture rather than left as open
+> legacy gaps — claim calibration into the claim-ceiling invariant, fail-closed execution into
+> the fail-closed control plane, and weak literature grounding into the F8 knowledge substrate.
 
 ## Purpose
 

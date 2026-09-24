@@ -381,14 +381,22 @@ After the target-architecture RFC above, use this order for the current implemen
 132. `PR4B_LOCAL_EXECUTION_COMPOSITION.md` — operator/developer status guide for the exact schema,
     component boundaries, crash semantics, TCB, external dependencies, and target-host deployment
     campaign.
-133. `PR5_DURABLE_SCIENTIFIC_CONTROLLER.md` and `architecture/0050` — the durable scientific
-    controller and observation admission.
-134. `PR6_LEGACY_EVALUATION_COMPATIBILITY.md` and `architecture/0051` — the legacy evaluation
+133. `PR5_DURABLE_SCIENTIFIC_CONTROLLER.md` and
+    `architecture/0050-durable-scientific-controller-and-observation-admission.md` — the durable
+    scientific controller and observation admission.
+134. `PR6_LEGACY_EVALUATION_COMPATIBILITY.md` and
+    `architecture/0051-legacy-evaluation-compatibility-leaf.md` — the legacy evaluation
     compatibility leaf.
-135. `PR7_CONTROLLER_PRODUCTION_RUNTIME.md` with `PR7B`–`PR7P`, and `architecture/0052`–`0073` —
+135. `PR7_CONTROLLER_PRODUCTION_RUNTIME.md` with `PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md`
+    through `PR7P_ATOMIC_ADMISSION_SERVICE.md`, and
+    `architecture/0052-controller-production-runtime-process-boundary.md` through
+    `architecture/0073-atomic-admission-rpc-service.md` —
     the controller production runtime, its step-authority and worker composition, and the
     operation-closed external RPC service fleet.
 136. `PR8A_QUALIFICATION_SERVICE_RUNNERS.md` through `PR8J_ATTEMPT_SCOPED_PRE_RUNTIME_CLEANUP.md`,
-    and `architecture/0074`–`0083` — qualification commissioning through the PR-8h target campaign.
+    and `architecture/0074-guarded-qualification-service-runners.md` through
+    `architecture/0083-qualification-python-runtime-preparation.md` — qualification
+    commissioning, the PR-8h target campaign, Python runtime preparation, and attempt-scoped
+    pre-runtime cleanup.
 137. `ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md` — the ARL-1 qualification contract and its
     receipt record.

@@ -891,9 +891,9 @@ entrypoint；它要求完整 ARL-0 gates、canonical compiler replay、同一 ac
 target campaign。运行中的 exact reexecution 只通过 signed typed terminal-pending 状态有界等待，最迟在
 SEA admission deadline 停止；资格签发和 audit 时间则在 fresh replay 后取自 pinned PostgreSQL clock，
 deployment JSON 只能给出 24 小时以内的 operation window 与 receipt duration，不能回填或复活 receipt。
-真实 Linux target 已运行多个冻结 candidate，但每个都在不同的 fail-closed 工程边界停止，尚无一份
-完整 PR-8h campaign receipt；production source verifier 也尚未产生 retained receipt，**当前仍没有一份可签发的 ARL-1
-资格 receipt，系统没有晋级 ARL-1**（2026-08-28 时点）。它也拥有若干 `ARL-2` 所需但未由主控制面贯通的 F8–F11
+（2026-08-28 时点）真实 Linux target 已运行多个冻结 candidate，但每个都在不同的 fail-closed 工程边界停止，尚无一份
+完整 PR-8h campaign receipt；production source verifier 也尚未产生 retained receipt，**当时仍没有一份可签发的 ARL-1
+资格 receipt，系统没有晋级 ARL-1**。它也拥有若干 `ARL-2` 所需但未由主控制面贯通的 F8–F11
 原语。没有 `ARL-3` 或 `ARL-4` 证据。
 
 > 2026-09-25 更新：production ARL-1 receipts 已于 2026-09-09 至 2026-09-14 陆续签发；

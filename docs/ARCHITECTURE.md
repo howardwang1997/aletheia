@@ -62,7 +62,7 @@ Legacy state (2026-06): the EXPERIMENT_DESIGN → ARCHIVE spine is built and mer
 peer-review gates, pgvector semantic recall, GitHub-App + platform IAM/RBAC, and a coder behind an AST
 gate + Docker hard sandbox. The transformation toward the lifecycle above is tracked in the approved plan
 (`SURVEY` + literature grounding was the then-running iteration; ideation, scientific analysis, cited papers,
-campaigns, and multi-domain generalization follow).
+campaigns, and multi-domain generalization were to follow).
 
 ## Components
 
