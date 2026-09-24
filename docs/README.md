@@ -61,17 +61,22 @@ Current implementation slice:
   `architecture/0051-legacy-evaluation-compatibility-leaf.md` — the legacy evaluation
   compatibility leaf.
 - `PR7_CONTROLLER_PRODUCTION_RUNTIME.md` with `PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md`
-  through `PR7P_ATOMIC_ADMISSION_SERVICE.md`, and `architecture/0052` through `architecture/0073` —
+  through `PR7P_ATOMIC_ADMISSION_SERVICE.md`, and
+  `architecture/0052-controller-production-runtime-process-boundary.md` through
+  `architecture/0073-atomic-admission-rpc-service.md` —
   the controller production runtime: process boundary, step authority, verified terminal
   dispatcher, keyless worker composition, and the operation-closed external RPC service fleet
   (deterministic continuation and action proposal, frozen protocol compilation, execution
   authorization, atomic execution registration, raw-run source, database observation, F9 v2
   validation, committed validation source, and admission).
-- `PR8A_QUALIFICATION_SERVICE_RUNNERS.md` through `PR8J_ATTEMPT_SCOPED_PRE_RUNTIME_CLEANUP.md`,
-  and `architecture/0074` through `architecture/0083` — qualification commissioning: guarded
-  service runners, the disabled file installer, privileged factories, node and terminal-outbox
-  factories, host bootstrap, authority commissioning, the PR-8h target campaign, Python runtime
-  preparation, and attempt-scoped pre-runtime cleanup.
+- `PR8A_QUALIFICATION_SERVICE_RUNNERS.md` through
+  `PR8I_QUALIFICATION_PYTHON_RUNTIME_PREPARATION.md`, and
+  `architecture/0074-guarded-qualification-service-runners.md` through
+  `architecture/0083-qualification-python-runtime-preparation.md` — qualification commissioning:
+  guarded service runners, the disabled file installer, privileged factories, node and
+  terminal-outbox factories, host bootstrap, authority commissioning, the PR-8h target campaign,
+  and Python runtime preparation. `PR8J_ATTEMPT_SCOPED_PRE_RUNTIME_CLEANUP.md` was closed as
+  superseded; its record is retained.
 - `ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md` — the ARL-1 qualification contract and its
   receipt record.
 
@@ -393,10 +398,11 @@ After the target-architecture RFC above, use this order for the current implemen
     `architecture/0073-atomic-admission-rpc-service.md` —
     the controller production runtime, its step-authority and worker composition, and the
     operation-closed external RPC service fleet.
-136. `PR8A_QUALIFICATION_SERVICE_RUNNERS.md` through `PR8J_ATTEMPT_SCOPED_PRE_RUNTIME_CLEANUP.md`,
-    and `architecture/0074-guarded-qualification-service-runners.md` through
+136. `PR8A_QUALIFICATION_SERVICE_RUNNERS.md` through
+    `PR8I_QUALIFICATION_PYTHON_RUNTIME_PREPARATION.md`, and
+    `architecture/0074-guarded-qualification-service-runners.md` through
     `architecture/0083-qualification-python-runtime-preparation.md` — qualification
-    commissioning, the PR-8h target campaign, Python runtime preparation, and attempt-scoped
-    pre-runtime cleanup.
+    commissioning, the PR-8h target campaign, and Python runtime preparation
+    (`PR8J_ATTEMPT_SCOPED_PRE_RUNTIME_CLEANUP.md` was closed as superseded).
 137. `ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md` — the ARL-1 qualification contract and its
     receipt record.

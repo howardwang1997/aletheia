@@ -24,9 +24,9 @@ establish scientific validity, independent replication or autonomous research de
 
 The bounded ARL-2 campaign integration is built: the question loop's control plane, external
 bridge and dispatch executor, and acceptance chain are merged on main. The immediate work is
-completing its qualification dry run, which has not yet finished end-to-end. F8 knowledge,
-F9 world-model and F10 capability components feed that loop, but their presence does not
-establish a qualified autonomous scientist.
+completing its qualification dry run, which has not yet finished end-to-end. F9 world-model and
+F10 capability components feed that loop through typed contracts, and F8 knowledge does not
+enter it yet; none of this establishes a qualified autonomous scientist.
 
 - [Current roadmap](docs/LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md)
 - [ARL-1 qualification contract](docs/ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md)
