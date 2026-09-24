@@ -251,9 +251,13 @@ def schema_diffs(
     """
 
     def include_object(object_, name: str | None, type_: str, reflected: bool, compare_to) -> bool:
-        if type_ == "table" and name in exclude_tables:
+        # Every exclusion below rides the metadata side only -- no database
+        # counterpart (compare_to is None, not the reflected object).  A
+        # database table, column, index, or constraint wearing an excluded
+        # name is drift and keeps its diff, whatever its shape.
+        if type_ == "table" and name in exclude_tables and compare_to is None and not reflected:
             return False
-        if type_ == "column":
+        if type_ == "column" and compare_to is None and not reflected:
             table_name = getattr(getattr(object_, "table", None), "name", None)
             if (table_name, name) in exclude_columns:
                 return False
@@ -277,7 +281,12 @@ def schema_diffs(
                 and all((table_name, column) in exclude_columns for column in constrained)
             ):
                 return False
-        if type_ in {"unique_constraint", "check_constraint"} and name in exclude_constraints:
+        if (
+            type_ in {"unique_constraint", "check_constraint"}
+            and name in exclude_constraints
+            and compare_to is None
+            and not reflected
+        ):
             return False
         return True
 

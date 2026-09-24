@@ -738,6 +738,74 @@ def test_database_side_drift_over_excluded_columns_keeps_its_diffs():
     assert any(diff[0] == "remove_fk" for diff in drift)
 
 
+def test_exclusion_channels_cover_only_the_metadata_side():
+    """Round-7 pins: every exclusion channel rides the metadata side only.
+    A database table, column, or named constraint wearing an excluded name
+    is drift -- stray or reshaped -- and keeps its diff; only the added
+    path (no database counterpart) rides.  Before these gates the
+    table/column/constraint branches matched by name alone, so a drifted
+    database stamped clean."""
+    from sqlalchemy import (
+        Column,
+        Integer,
+        MetaData,
+        String,
+        Table,
+        UniqueConstraint,
+        create_engine,
+        text,
+    )
+
+    from aletheia.schema_migrations import schema_diffs
+
+    metadata = MetaData()
+    Table("zz_kept", metadata, Column("id", Integer, primary_key=True))
+    Table(
+        "zz_probe_column",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("probe_extra", String(64), nullable=False),
+    )
+    Table(
+        "zz_probe_unique",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("probe_extra", String(64)),
+        UniqueConstraint("probe_extra", name="uq_changed"),
+    )
+    engine = create_engine("sqlite://")
+    with engine.connect() as connection:
+        connection.execute(text("CREATE TABLE zz_kept (id INTEGER NOT NULL PRIMARY KEY)"))
+        connection.execute(text("CREATE TABLE zz_stray (id INTEGER NOT NULL PRIMARY KEY)"))
+        connection.execute(
+            text(
+                "CREATE TABLE zz_probe_column (id INTEGER NOT NULL PRIMARY KEY, "
+                "probe_extra INTEGER)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE zz_probe_unique (id INTEGER NOT NULL PRIMARY KEY, "
+                "probe_extra VARCHAR(64), CONSTRAINT uq_changed UNIQUE (id), "
+                "CONSTRAINT uq_stray UNIQUE (probe_extra))"
+            )
+        )
+        connection.commit()
+        drift = schema_diffs(
+            connection,
+            exclude_tables=frozenset({"zz_stray"}),
+            exclude_columns=frozenset({("zz_probe_column", "probe_extra")}),
+            exclude_constraints=frozenset({"uq_changed", "uq_stray"}),
+            metadata=metadata,
+        )
+    # alembic wraps the modify diffs in a nested tuple; unwrap either shape.
+    kinds = [diff[0] if isinstance(diff[0], str) else diff[0][0] for diff in drift]
+    assert "remove_table" in kinds  # stray database table with an excluded name
+    assert "modify_type" in kinds  # database column wearing an excluded (table, name)
+    assert "remove_constraint" in kinds  # database-only constraint with an excluded name
+    assert "add_constraint" in kinds  # same-named constraint over different columns
+
+
 def test_walking_guard_fails_closed_on_unresolvable_ddl():
     """Round-2/3 pins for the drift-guard extraction: tracked DDL whose names
     the guard cannot resolve fails it instead of passing silently, and
@@ -761,6 +829,8 @@ def test_walking_guard_fails_closed_on_unresolvable_ddl():
         "    op.execute(f'{ddl}')\n"
         "    built_ddl = 'CREATE TABLE ' + name\n"
         "    op.execute(built_ddl)\n"
+        "    op.create_table(unseen_name)\n"
+        "    op.add_column('events', column_value)\n"
         "    op.execute('CREATE TABLE fused_a (id int); CREATE TABLE fused_b (id int); "
         "ALTER TABLE events ADD COLUMN fused_e text; "
         "ALTER TABLE decisions ADD COLUMN fused_d text')\n"
@@ -781,6 +851,8 @@ def test_walking_guard_fails_closed_on_unresolvable_ddl():
         "ALTER TABLE ADD statement",  # schema-qualified table
         "CREATE TABLE statement",  # quoted identifier
         "CREATE TABLE statement",  # schema-qualified
+        "op.add_column argument",  # non-literal column argument
+        "op.create_table argument",  # unseen variable table name
         "op.execute argument",  # variable-built SQL: unseen local name
         "op.execute f-string DDL",  # f-string CREATE TABLE
         "op.execute f-string DDL",  # f-string CREATE UNLOGGED TABLE (tripwire
