@@ -285,3 +285,4 @@ def test_custody_failures_close_exactly(monkeypatch, tmp_path) -> None:
             SimpleNamespace(attempt_id="attempt-x", lease_token_sha256="0" * 64),
             SimpleNamespace(lease_token_file=None),
         )
+
