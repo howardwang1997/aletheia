@@ -2377,6 +2377,7 @@ def _build_service_deployments(
 
     spool_metadata = _stat_directory(layout["action_proposal_spool_root"])
     ca_artifact_metadata = _stat_directory(layout["continuation_artifact_root"])
+    lease_custody_metadata = _stat_directory(layout["execution_registration_custody_root"])
 
     registration = QualificationExecutionRegistrationConfig(
         qualification_custody=qualification["custody"],
@@ -2471,7 +2472,14 @@ def _build_service_deployments(
         "qualification_registration": registration.model_dump(mode="json"),
         "registrar_implementation_source_path": registrar_path,
         "registrar_implementation_source_sha256": registrar_sha,
-        "lease_token_custody_root": str(layout["execution_registration_custody_root"]),
+        "lease_token_custody_root": {
+            "path": str(layout["execution_registration_custody_root"]),
+            "owner_uid": lease_custody_metadata["uid"],
+            "owner_gid": lease_custody_metadata["gid"],
+            "device_id": lease_custody_metadata["device_id"],
+            "inode": lease_custody_metadata["inode"],
+            "directory_mode": lease_custody_metadata["mode"],
+        },
         "prepared_at": _iso(prepared_at),
         "private_domain_signing_key_loaded": False,
         "runtime_control_signing_key_loaded": False,

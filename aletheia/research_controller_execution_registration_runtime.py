@@ -48,6 +48,33 @@ def build_execution_registration_rpc_service(*, deployment, configuration_bytes)
     from aletheia.research_store.cas import FilesystemResearchArchive
     from aletheia.research_store.store import ResearchKernelStore
 
+    class LeaseTokenCustodyRootPin(BaseModel):
+        model_config = ConfigDict(extra="forbid", frozen=True)
+
+        path: str
+        owner_uid: int = Field(ge=1, le=2**31 - 1)
+        owner_gid: int = Field(ge=1, le=2**31 - 1)
+        device_id: int = Field(ge=0)
+        inode: int = Field(ge=1)
+        directory_mode: Literal[0o700] = 0o700
+
+        @model_validator(mode="after")
+        def _path_is_canonical(self):
+            candidate = Path(self.path)
+            if (
+                not self.path
+                or "\x00" in self.path
+                or "\n" in self.path
+                or "\r" in self.path
+                or not candidate.is_absolute()
+                or self.path != os.path.normpath(self.path)
+                or self.path == "/"
+            ):
+                raise ValueError(
+                    "execution registration lease token custody root must be canonical and absolute"
+                )
+            return self
+
     class ExecutionRegistrationRPCConfig(BaseModel):
         model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -70,7 +97,7 @@ def build_execution_registration_rpc_service(*, deployment, configuration_bytes)
         qualification_registration: QualificationExecutionRegistrationConfig
         registrar_implementation_source_path: str
         registrar_implementation_source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-        lease_token_custody_root: str | None = None
+        lease_token_custody_root: LeaseTokenCustodyRootPin
         prepared_at: AwareDatetime
         private_domain_signing_key_loaded: Literal[False] = False
         runtime_control_signing_key_loaded: Literal[False] = False
@@ -105,11 +132,6 @@ def build_execution_registration_rpc_service(*, deployment, configuration_bytes)
             kernel_keys = tuple(
                 key.key_id for key in self.kernel_reader.trust_root.commissioning_keys
             )
-            custody_root = (
-                Path(self.lease_token_custody_root)
-                if self.lease_token_custody_root is not None
-                else None
-            )
             if (
                 binding.role is not ControllerStepAuthorityRole.EXECUTION_AUTHORIZATION
                 or not binding.externally_deployed
@@ -140,11 +162,6 @@ def build_execution_registration_rpc_service(*, deployment, configuration_bytes)
                 )
                 or not source.is_absolute()
                 or self.registrar_implementation_source_path != os.path.normpath(source)
-                or custody_root is not None
-                and (
-                    not custody_root.is_absolute()
-                    or self.lease_token_custody_root != os.path.normpath(custody_root)
-                )
             ):
                 raise ValueError("execution registration RPC authority is not closed")
             return self
@@ -283,12 +300,15 @@ def build_execution_registration_rpc_service(*, deployment, configuration_bytes)
             *registration.authority_policy_sha256s,
         }
         or pin.receipt_public_key_ed25519_hex in signed_public_keys | transport_public_keys
+        or config.lease_token_custody_root.owner_uid != deployment.process_uid
+        or config.lease_token_custody_root.owner_gid != deployment.process_gid
     ):
         raise ValueError("execution registration RPC config differs from deployment or authority")
 
     reviewed_root = Path(deployment.reviewed_code_root)
     implementation_path = Path(config.registrar_implementation_source_path)
     cas_path = Path(config.kernel_reader.cas_root)
+    custody_path = Path(config.lease_token_custody_root.path)
     expected_module_path = Path(registration_module.__file__).resolve(strict=True)
     try:
         implementation_path.relative_to(reviewed_root)
@@ -304,7 +324,7 @@ def build_execution_registration_rpc_service(*, deployment, configuration_bytes)
         Path(deployment.socket_parent_path),
         Path(deployment.composition_config_path).parent,
         Path(deployment.receipt_private_key_path).parent,
-        *(() if config.lease_token_custody_root is None else (Path(config.lease_token_custody_root),)),
+        custody_path,
     )
     for index, first in enumerate(custody_roots):
         for second in custody_roots[index + 1 :]:
@@ -331,6 +351,35 @@ def build_execution_registration_rpc_service(*, deployment, configuration_bytes)
         or stat.S_IMODE(cas_metadata.st_mode) != config.kernel_reader.cas_directory_mode
     ):
         raise ValueError("execution registration Kernel CAS differs from its custody pin")
+    try:
+        custody_metadata = custody_path.lstat()
+        resolved_custody = custody_path.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(
+            "execution registration lease token custody root is unavailable"
+        ) from exc
+    if (
+        resolved_custody != custody_path
+        or custody_path.is_symlink()
+        or not stat.S_ISDIR(custody_metadata.st_mode)
+        or (
+            custody_metadata.st_uid,
+            custody_metadata.st_gid,
+            custody_metadata.st_dev,
+            custody_metadata.st_ino,
+            stat.S_IMODE(custody_metadata.st_mode),
+        )
+        != (
+            config.lease_token_custody_root.owner_uid,
+            config.lease_token_custody_root.owner_gid,
+            config.lease_token_custody_root.device_id,
+            config.lease_token_custody_root.inode,
+            config.lease_token_custody_root.directory_mode,
+        )
+    ):
+        raise ValueError(
+            "execution registration lease token custody root differs from its custody pin"
+        )
     archive = FilesystemResearchArchive(
         cas_path,
         max_object_bytes=config.kernel_reader.max_object_bytes,
@@ -358,7 +407,7 @@ def build_execution_registration_rpc_service(*, deployment, configuration_bytes)
 
         def custody_lease_token(self, attempt_id: str, lease_token: str) -> None:
             attempt_dir = self._root / attempt_id
-            attempt_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            attempt_dir.mkdir(mode=0o700, exist_ok=True)
             path = attempt_dir / "lease-token"
             # 0400 blocks reopening in place; replace the incarnation.  The
             # sink only fires on a fresh admission, so an existing file is a
@@ -367,17 +416,42 @@ def build_execution_registration_rpc_service(*, deployment, configuration_bytes)
                 path.unlink()
             except FileNotFoundError:
                 pass
-            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
+            payload = (lease_token + "\n").encode("utf-8")
+            descriptor = os.open(
+                path,
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_NOFOLLOW", 0),
+                0o400,
+            )
+            complete = False
             try:
-                os.write(descriptor, (lease_token + "\n").encode("utf-8"))
+                view = memoryview(payload)
+                while view:
+                    written = os.write(descriptor, view)
+                    if written <= 0:
+                        raise OSError("lease token custody write made no progress")
+                    view = view[written:]
+                os.fsync(descriptor)
+                os.fchmod(descriptor, 0o400)
+                complete = True
             finally:
                 os.close(descriptor)
+                if not complete:
+                    try:
+                        path.unlink()
+                    except FileNotFoundError:
+                        pass
+            directory = os.open(
+                attempt_dir, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            )
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
 
-    lease_token_custody = (
-        None
-        if config.lease_token_custody_root is None
-        else _FilesystemLeaseTokenCustody(Path(config.lease_token_custody_root))
-    )
+    lease_token_custody = _FilesystemLeaseTokenCustody(custody_path)
 
     registrar = PostgreSQLAtomicScientificExecutionRegistrar(
         verification=ScientificExecutionRegistrationVerificationContext(
