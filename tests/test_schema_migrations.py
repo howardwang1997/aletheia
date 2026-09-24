@@ -257,7 +257,7 @@ def _migration_drift(source):
         ]
 
     def tracked_ddl(sql):
-        return bool(re.search(r"\bCREATE\s+TABLE\b", sql, re.IGNORECASE)) or bool(
+        return bool(re.search(r"\bCREATE\b[\s\w]*\bTABLE\b", sql, re.IGNORECASE)) or bool(
             added_columns_in(sql)
         )
 
@@ -627,8 +627,10 @@ def test_index_exclusion_requires_resolvable_shape_and_matching_database_index()
         Index("ix_func", database_probe.c.probe_extra),
         excluded,
     )
-    # A set dialect option (partial-index predicate, NULLS NOT DISTINCT) is
-    # a comparator axis of its own; name agreement cannot cover it.
+    # A set dialect option keeps the diff without weighing which options the
+    # installed alembic happens to compare: NULLS NOT DISTINCT is a real
+    # comparator axis, while a partial-index predicate is invisible to the
+    # comparator entirely -- either way name agreement proves nothing.
     assert not _index_rides_excluded_columns(
         Index("ix_partial_meta", probe.c.probe_extra, postgresql_where=text("id > 0")),
         Index("ix_partial_meta", database_probe.c.probe_extra),
@@ -690,6 +692,52 @@ def test_schema_diffs_excludes_foreign_keys_over_excluded_columns():
     assert any(diff[0] == "add_fk" for diff in kept)
 
 
+def test_database_side_drift_over_excluded_columns_keeps_its_diffs():
+    """Round-5 pin for the reflected gate: a database-only index or foreign
+    key over an excluded column is extra drift, not post-baseline shape the
+    exclusion covers -- the ride-along is for the metadata side only, so
+    remove_index/remove_fk keep their diffs and adoption refuses.  Without
+    the ``not reflected`` gates a stray database index or foreign key rides
+    the exclusion and the stamp covers it (round-4 defect, unpinned then)."""
+    from sqlalchemy import Column, Integer, MetaData, Table, create_engine, text
+
+    from aletheia.schema_migrations import schema_diffs
+
+    metadata = MetaData()
+    Table(
+        "zz_baseline_parent",
+        metadata,
+        Column("id", Integer, primary_key=True),
+    )
+    Table(
+        "zz_baseline_probe",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("probe_extra", Integer),
+    )
+    engine = create_engine("sqlite://")
+    with engine.connect() as connection:
+        connection.execute(
+            text("CREATE TABLE zz_baseline_parent (id INTEGER NOT NULL PRIMARY KEY)")
+        )
+        connection.execute(
+            text(
+                "CREATE TABLE zz_baseline_probe (id INTEGER NOT NULL PRIMARY KEY, "
+                "probe_extra INTEGER, FOREIGN KEY (probe_extra) REFERENCES "
+                "zz_baseline_parent (id))"
+            )
+        )
+        connection.execute(text("CREATE INDEX ix_stray ON zz_baseline_probe (probe_extra)"))
+        connection.commit()
+        drift = schema_diffs(
+            connection,
+            exclude_columns=frozenset({("zz_baseline_probe", "probe_extra")}),
+            metadata=metadata,
+        )
+    assert any(diff[0] == "remove_index" for diff in drift)
+    assert any(diff[0] == "remove_fk" for diff in drift)
+
+
 def test_walking_guard_fails_closed_on_unresolvable_ddl():
     """Round-2/3 pins for the drift-guard extraction: tracked DDL whose names
     the guard cannot resolve fails it instead of passing silently, and
@@ -698,6 +746,7 @@ def test_walking_guard_fails_closed_on_unresolvable_ddl():
     source = (
         "def upgrade():\n"
         "    op.execute(f'CREATE TABLE {name} (id int)')\n"
+        "    op.execute(f'CREATE UNLOGGED TABLE {unlogged} (id int)')\n"
         "    op.execute('CREATE TABLE \"Quoted\" (id int)')\n"
         "    op.execute('CREATE TABLE public.qualified (id int)')\n"
         "    op.execute('CREATE TEMP TABLE temp_probe (id int)')\n"
@@ -726,6 +775,8 @@ def test_walking_guard_fails_closed_on_unresolvable_ddl():
         "CREATE TABLE statement",  # quoted identifier
         "CREATE TABLE statement",  # schema-qualified
         "op.execute f-string DDL",  # f-string CREATE TABLE
+        "op.execute f-string DDL",  # f-string CREATE UNLOGGED TABLE (tripwire
+        # tracks every CREATE ... TABLE spelling the statement branch tracks)
         "op.execute f-string DDL",  # f-string ALTER TABLE ADD COLUMN
         "op.execute f-string argument",  # pure interpolation hides everything
     ]
