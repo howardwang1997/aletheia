@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
-from sqlalchemy import MetaData, inspect
+from sqlalchemy import Column, MetaData, inspect
 from sqlalchemy.engine import Connection
 
 import aletheia.memory.ledger  # noqa: F401  (register every ORM table)
@@ -177,44 +177,62 @@ class BaselineAdoptionReceipt:
     schema_diff_count: int
 
 
+def _plain_column_names(index: object) -> list[str] | None:
+    """Ordered column names when every index term is a plain column, else None.
+
+    Sort-order and function wrappers (``col.desc()``, ``func.lower(col)``)
+    keep the column in ``Index.columns`` while changing the compiled text
+    the PostgreSQL comparator diffs, so agreement between two shapes is
+    provable through names only when every term is a plain column.
+    """
+    terms = list(getattr(index, "expressions", ()) or ())
+    if not terms or not all(isinstance(term, Column) for term in terms):
+        return None
+    names = [getattr(term, "name", None) for term in terms]
+    if None in names or len(set(names)) != len(names):
+        return None
+    return names
+
+
 def _index_rides_excluded_columns(
     index: object, compare_to: object, exclude_columns: frozenset[tuple[str, str]]
 ) -> bool:
     """True only when an index diff is post-baseline drift the column exclusion covers.
 
     An ORM index declared over post-baseline columns rides along with those
-    columns: the legacy database has neither.  The ride-along requires the
-    index shape to be fully resolvable through plain column names --
-    ``Index.columns`` silently drops expression terms, so any expression
-    makes the shape unresolvable and the diff must stay -- every column
-    positively excluded, and a same-named database index (alembic passes
-    only the metadata side on the changed path) to agree on every axis the
-    comparators diff: identical ordered column names, no extra expression
-    terms, and the same unique flag.  Anything else keeps its diff and
-    adoption refuses.
+    columns: the legacy database has neither.  Without a same-named database
+    index (alembic's added path) the index is wholesale post-baseline drift
+    and rides whenever ``Index.columns`` resolves fully to excluded plain
+    columns -- ``Index.columns`` silently drops ``text()`` expression terms,
+    so those keep their diff.  With a same-named database index (the changed
+    path, where alembic passes only the metadata side) the shapes must agree
+    on every axis the comparators diff: ordered column names, the unique
+    flag, per-expression compiled text, and set dialect options such as
+    ``postgresql_nulls_not_distinct``.  Name-based agreement cannot prove
+    compiled text or options, so any wrapper term or set option on either
+    side keeps the diff and adoption refuses.
     """
     table_name = getattr(getattr(index, "table", None), "name", None)
     columns = list(getattr(index, "columns", ()) or ())
-    expressions = getattr(index, "expressions", None)
     names = [getattr(column, "name", None) for column in columns]
     if not columns or None in names or len(set(names)) != len(names):
         return False
+    expressions = getattr(index, "expressions", None)
     if expressions is not None and len(expressions) != len(columns):
         return False
     if not all((table_name, column) in exclude_columns for column in names):
         return False
     if compare_to is None:
         return True
-    compared_columns = list(getattr(compare_to, "columns", ()) or ())
-    compared_names = [getattr(column, "name", None) for column in compared_columns]
-    compared_expressions = getattr(compare_to, "expressions", None)
+    compared = _plain_column_names(compare_to)
+    index_options = dict(getattr(index, "dialect_kwargs", None) or {})
+    compared_options = dict(getattr(compare_to, "dialect_kwargs", None) or {})
     return (
-        compared_names == names
+        compared is not None
+        and compared == _plain_column_names(index)
         and bool(getattr(compare_to, "unique", False)) == bool(getattr(index, "unique", False))
-        and (
-            compared_expressions is None
-            or len(compared_expressions) == len(compared_columns) == len(columns)
-        )
+        and not any(value is not None for value in index_options.values())
+        and not any(value is not None for value in compared_options.values())
     )
 
 
@@ -232,15 +250,33 @@ def schema_diffs(
     MetaData to exercise the include_object channels directly.
     """
 
-    def include_object(object_, name: str | None, type_: str, _reflected: bool, compare_to) -> bool:
+    def include_object(object_, name: str | None, type_: str, reflected: bool, compare_to) -> bool:
         if type_ == "table" and name in exclude_tables:
             return False
         if type_ == "column":
             table_name = getattr(getattr(object_, "table", None), "name", None)
             if (table_name, name) in exclude_columns:
                 return False
-        if type_ == "index" and _index_rides_excluded_columns(object_, compare_to, exclude_columns):
+        if (
+            type_ == "index"
+            and not reflected
+            and _index_rides_excluded_columns(object_, compare_to, exclude_columns)
+        ):
             return False
+        # A metadata foreign key over post-baseline columns rides with those
+        # columns (the legacy database has neither); a database-only foreign
+        # key is extra drift and keeps its diff (reflected side).
+        if type_ == "foreign_key_constraint" and not reflected:
+            table_name = getattr(getattr(object_, "table", None), "name", None)
+            constrained = [
+                getattr(column, "name", None) for column in getattr(object_, "columns", ()) or ()
+            ]
+            if (
+                constrained
+                and None not in constrained
+                and all((table_name, column) in exclude_columns for column in constrained)
+            ):
+                return False
         if type_ in {"unique_constraint", "check_constraint"} and name in exclude_constraints:
             return False
         return True
