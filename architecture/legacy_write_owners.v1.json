@@ -47,7 +47,7 @@
       "scripts/arl2-driver-control.py": "new_qualification_entrypoint"
     },
     "legacy_source_ast_file_count": 328,
-    "legacy_source_ast_graph_sha256": "c519a2ea51b99464f1a7e98be87b578fd0abeea2041051d1ce9f22ae8ae702fc",
+    "legacy_source_ast_graph_sha256": "decb6ef9270b2630d7f807846166a34ffc460a967930a919c550feb6eb7f1c3e",
     "legacy_source_ast_review_limit": "This normalized-AST backstop freezes every parseable Python file in the declared legacy production roots after explicitly removing new-authority and migration-tooling roots. It catches added, removed or semantically changed legacy Python source even when a specialized sink scanner does not recognize the syntax; comments, formatting, generated runtime code, non-Python launchers and the explicitly excluded roots are outside this digest.",
     "migration_source_ast_scheme": "python_ast_dump_no_attributes_type_comments_v1",
     "migration_source_ast_roots": ["aletheia/migration", "migrations"],

@@ -187,9 +187,11 @@ def _index_rides_excluded_columns(
     index shape to be fully resolvable through plain column names --
     ``Index.columns`` silently drops expression terms, so any expression
     makes the shape unresolvable and the diff must stay -- every column
-    positively excluded, and any same-named database index (alembic passes
-    only the metadata side on the changed path) to have the identical
-    column names.  Anything else keeps its diff and adoption refuses.
+    positively excluded, and a same-named database index (alembic passes
+    only the metadata side on the changed path) to agree on every axis the
+    comparators diff: identical ordered column names, no extra expression
+    terms, and the same unique flag.  Anything else keeps its diff and
+    adoption refuses.
     """
     table_name = getattr(getattr(index, "table", None), "name", None)
     columns = list(getattr(index, "columns", ()) or ())
@@ -201,14 +203,19 @@ def _index_rides_excluded_columns(
         return False
     if not all((table_name, column) in exclude_columns for column in names):
         return False
-    compared = (
-        None
-        if compare_to is None
-        else [
-            getattr(column, "name", None) for column in (getattr(compare_to, "columns", ()) or ())
-        ]
+    if compare_to is None:
+        return True
+    compared_columns = list(getattr(compare_to, "columns", ()) or ())
+    compared_names = [getattr(column, "name", None) for column in compared_columns]
+    compared_expressions = getattr(compare_to, "expressions", None)
+    return (
+        compared_names == names
+        and bool(getattr(compare_to, "unique", False)) == bool(getattr(index, "unique", False))
+        and (
+            compared_expressions is None
+            or len(compared_expressions) == len(compared_columns) == len(columns)
+        )
     )
-    return compared is None or set(compared) == set(names)
 
 
 def schema_diffs(

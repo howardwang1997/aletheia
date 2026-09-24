@@ -370,7 +370,11 @@ def _migration_drift(source):
                     for part in argument.values
                     if isinstance(part, ast.Constant) and isinstance(part.value, str)
                 )
-                if tracked_ddl(literal):
+                if not literal.strip():
+                    # a pure interpolation (f"{ddl}") hides everything the
+                    # guard tracks: same verdict as an unseen variable
+                    unresolvable.append("op.execute f-string argument")
+                elif tracked_ddl(literal):
                     unresolvable.append("op.execute f-string DDL")
             else:
                 unresolvable.append("op.execute argument")
@@ -387,11 +391,13 @@ def _migration_drift(source):
                 else:
                     unresolvable.append("CREATE TABLE statement")
             table_match = re.search(
-                r"ALTER TABLE (?:IF EXISTS )?([A-Za-z_]\w*)", statement, re.IGNORECASE
+                r"ALTER TABLE (?:IF EXISTS )?((?:[A-Za-z_]\w*\.)?[A-Za-z_]\w*)",
+                statement,
+                re.IGNORECASE,
             )
             statement_columns = added_columns_in(statement)
             if statement_columns:
-                if table_match:
+                if table_match and "." not in table_match.group(1):
                     for column in statement_columns:
                         added.add((table_match.group(1), column))
                 else:
@@ -419,12 +425,14 @@ def test_every_table_created_after_the_legacy_baseline_is_excluded_from_parity()
     every column a migration adds to a compared table (op.add_column or
     ALTER TABLE ... ADD, with or without the COLUMN keyword) must be
     column-excluded.  Tracked DDL the guard cannot resolve -- f-string or
-    variable-built names, quoted or schema-qualified identifiers -- fails
-    the guard instead of passing silently (pinned synthetically in
-    test_walking_guard_fails_closed_on_unresolvable_ddl).  DDL the guard
-    does not track at all (CREATE INDEX, ADD CONSTRAINT, table-level
-    RENAME TO) escapes it; no migration uses RENAME TO today and its
-    exclusion entry would be added by hand.
+    variable-built names, pure-interpolation f-strings, quoted or
+    schema-qualified identifiers -- fails the guard instead of passing
+    silently (pinned synthetically in
+    test_walking_guard_fails_closed_on_unresolvable_ddl).  Two escapes
+    remain by design: DDL the guard does not track at all (CREATE INDEX,
+    ADD CONSTRAINT, table-level RENAME TO), and a mixed f-string whose
+    literal parts show no tracked DDL -- an interpolated name inside
+    otherwise-untracked literal SQL is invisible to it.
     """
     import re
 
@@ -552,10 +560,30 @@ def test_index_exclusion_requires_resolvable_shape_and_matching_database_index()
     assert _index_rides_excluded_columns(
         Index("ix_db_matching", probe.c.probe_extra), matching, excluded
     )
+    # Round 3: the comparators diff the unique flag and db-side expression
+    # terms too, so identical column names alone must not ride.
+    assert not _index_rides_excluded_columns(
+        Index("ix_db_unique", probe.c.probe_extra),
+        Index("ix_db_unique", database_probe.c.probe_extra, unique=True),
+        excluded,
+    )
+    assert _index_rides_excluded_columns(
+        Index("ix_db_unique_match", probe.c.probe_extra, unique=True),
+        Index("ix_db_unique_match", database_probe.c.probe_extra, unique=True),
+        excluded,
+    )
+    db_expression = Index("ix_db_expression", database_probe.c.probe_extra)
+    db_expression.expressions = [
+        database_probe.c.probe_extra,
+        text("lower(id)"),
+    ]
+    assert not _index_rides_excluded_columns(
+        Index("ix_db_expression", probe.c.probe_extra), db_expression, excluded
+    )
 
 
 def test_walking_guard_fails_closed_on_unresolvable_ddl():
-    """Round-2 pins for the drift-guard extraction: tracked DDL whose names
+    """Round-2/3 pins for the drift-guard extraction: tracked DDL whose names
     the guard cannot resolve fails it instead of passing silently, and
     consecutive semicolon-free op.execute statements attribute their ADD
     COLUMNs to their own tables (0035's chunk-merge failure mode)."""
@@ -569,6 +597,8 @@ def test_walking_guard_fails_closed_on_unresolvable_ddl():
         "    op.execute('ALTER TABLE events ADD pg_short_form text')\n"
         "    op.execute('ALTER TABLE execution_attempts ADD COLUMN a text')\n"
         "    op.execute('ALTER TABLE execution_resource_leases ADD COLUMN a text')\n"
+        "    op.execute('ALTER TABLE public.leases ADD COLUMN a text')\n"
+        "    op.execute(f'{ddl}')\n"
         "    op.add_column('events', column=sa.Column('kw_form', sa.Text()))\n"
     )
     created, added, unresolvable = _migration_drift(source)
@@ -581,10 +611,12 @@ def test_walking_guard_fails_closed_on_unresolvable_ddl():
     }
     assert sorted(unresolvable) == [
         "ALTER TABLE ADD statement",  # quoted table and column names
+        "ALTER TABLE ADD statement",  # schema-qualified table
         "CREATE TABLE statement",  # quoted identifier
         "CREATE TABLE statement",  # schema-qualified
         "op.execute f-string DDL",  # f-string CREATE TABLE
         "op.execute f-string DDL",  # f-string ALTER TABLE ADD COLUMN
+        "op.execute f-string argument",  # pure interpolation hides everything
     ]
 
 
