@@ -8,7 +8,7 @@ ARL 定义沿用控制面架构 RFC；资格由对应的冻结协议和签名 re
 | 等级 | 当前状态 | 出口 |
 |---|---|---|
 | ARL-0 Integrity | 已实现相应完整性原语；系统资格仍须累积验证 | Ledger、隔离、all-attempt、claim ceiling、schema、依赖审计 |
-| ARL-1 Protocol Executor | 软件合同与生产入口已实现；生产资格 receipt 已于 2026-09-14 取得（generation 20260914v，87/87 篡改拒绝矩阵首次全过；2026-09-15 重启演练通过） | 给定协议的完整运行、独立验证、admission、Kernel incorporation、prepare/issue/verify |
+| ARL-1 Protocol Executor | 软件合同与生产入口已实现；生产资格 receipts 已于 2026-09-09 至 09-14 陆续签发，最新 2026-09-14（generation 20260914v，87/87 篡改拒绝矩阵首次全过；2026-09-15 重启演练通过） | 给定协议的完整运行、独立验证、admission、Kernel incorporation、prepare/issue/verify |
 | ARL-2 Question-bound Scientist | 新控制面已实现并在 main 合并：问题循环、外部 bridge 与 dispatch executor、acceptance chain；资格 dry run 尚未端到端完成 | 自主竞争解释、判别实验、负结果处理与回退 |
 | ARL-3 Mission-bound Researcher | 尚未取得资格证据 | 从 mission 自主形成问题和测量／方法设计 |
 | ARL-4 Independently Confirmed Autonomous Discovery | 尚未取得资格证据 | 前瞻性新颖性审核及与 claim type 匹配的独立确认 |

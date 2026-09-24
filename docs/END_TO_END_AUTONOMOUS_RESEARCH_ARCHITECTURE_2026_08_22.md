@@ -883,7 +883,7 @@ ARL 是累积等级：晋升必须同时满足所有较低等级的冻结证据�
 | `ARL-3 Mission-bound Researcher` | 仅给 mission/charter，自主形成问题、演化方法/measurement/design space，并获取该 modality 所需的新 evidence | 不能声称领域通用或已独立发现 |
 | `ARL-4 Independently Confirmed Autonomous Discovery` | 新主张通过时间冻结的 prior-art 审核、外部专家裁决和与 claim type 匹配的独立确认 | 仍不自动获得无限现实权限 |
 
-（2026-08-28 时点）当时 Aletheia 在若干受限计算任务上部分满足 `ARL-1`。2026-08-28 已实现冻结的系统级 ARL-1
+（2026-08-28 时点）Aletheia 在若干受限计算任务上部分满足 `ARL-1`。2026-08-28 已实现冻结的系统级 ARL-1
 evidence bundle、具体 PostgreSQL/CAS/Kernel/F9-v2 source verifier、确定性报告、Ed25519 资格 receipt、
 离线重验合同，以及分离的 given-protocol campaign、prepare、issue、keyless audit Linux one-shot
 entrypoint；它要求完整 ARL-0 gates、canonical compiler replay、同一 action 在首个 reservation 前原子预注册
@@ -2065,7 +2065,7 @@ absent。**PR-8h** 已补齐 concrete independent Linux observer 与 opt-in targ
 绑定 exact loaded unit、live `/proc` process identity/argv/capability、rootful Docker、shared mount、
 AppArmor/image 与 PostgreSQL ACL；campaign 对一份已原子注册的 execution 顺序执行 node、outbox、quota、
 watchdog 与 PostgreSQL backend kill/recovery，并只从 exact v2 terminal row、durable spool 和 final
-reobservation 导出 `deployment_qualified=true`。（2026-08-28 时点）当时只有 source 与 synthetic replay evidence，尚未在真实
+reobservation 导出 `deployment_qualified=true`。（2026-08-28 时点）只有 source 与 synthetic replay evidence，尚未在真实
 Linux target 执行，因此下一项顺序工作是完成 PR-8f→PR-8g→PR-8b target preparation 并运行/复核 PR-8h
 campaign receipt，而不是扩张 controller authority（2026-09-25 更新：PR-8f/8g/8b
 target preparation 与 PR-8h campaign 已在合并 freeze 上完成，generation 20260914v 于 2026-09-14
