@@ -819,13 +819,36 @@ def test_exclusion_channels_cover_only_the_metadata_side():
     # alembic wraps the modify diffs in a nested tuple; unwrap either shape.
     kinds = [diff[0] if isinstance(diff[0], str) else diff[0][0] for diff in drift]
     assert "remove_table" in kinds  # stray database table with an excluded name
-    assert "modify_type" in kinds  # database column wearing an excluded (table, name)
-    assert "remove_constraint" in kinds  # database-only constraint with an excluded name
+    # a both-exist column wearing an excluded (table, name) keeps its shape
+    # comparison -- pinned on probe_extra itself, because another
+    # modify_type source (zz_both_exist.drift_col) masks a column-gate
+    # revert if the assert only checks kind membership
+    assert any(
+        isinstance(diff[0], tuple)
+        and diff[0][0] == "modify_type"
+        and "zz_probe_column" in diff[0]
+        and "probe_extra" in diff[0]
+        for diff in drift
+    )
+    # constraint diffs pin on the constraint object's name: the repr
+    # renders no names, and remove_constraint kind membership alone rides
+    # the changed uq_changed pair's drop half instead of the stray
+    removed_names = {
+        getattr(diff[1], "name", None)
+        for diff in drift
+        if isinstance(diff[0], str) and diff[0] == "remove_constraint"
+    }
+    added_names = {
+        getattr(diff[1], "name", None)
+        for diff in drift
+        if isinstance(diff[0], str) and diff[0] == "add_constraint"
+    }
+    assert "uq_stray" in removed_names  # database-only constraint with an excluded name
     assert "add_constraint" in kinds  # same-named constraint over different columns
-    # Round 8: the added path still rides, and each gate's second conjunct
-    # holds -- one assertion per axis a single-conjunct revert would break.
+    # Round 8/9: the added path still rides; every gate conjunct now has
+    # an assertion that fails under its single-conjunct revert.
     assert "add_table" not in kinds  # metadata-only table with an excluded name rides
-    assert not any("uq_meta_only" in repr(diff) for diff in drift)  # ditto constraint
+    assert "uq_meta_only" not in added_names  # ditto constraint
     assert "remove_column" in kinds  # database-only column with an excluded (table, name)
     assert any("zz_both_exist" in repr(diff) for diff in drift)  # both-exist excluded table
     # keeps its comparison (shape drift surfaces), unlike a stray-table skip

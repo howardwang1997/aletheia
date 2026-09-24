@@ -251,10 +251,15 @@ def schema_diffs(
     """
 
     def include_object(object_, name: str | None, type_: str, reflected: bool, compare_to) -> bool:
-        # Every exclusion below rides the metadata side only -- no database
-        # counterpart (compare_to is None, not the reflected object).  A
-        # database table, column, index, or constraint wearing an excluded
-        # name is drift and keeps its diff, whatever its shape.
+        # The name-matched table, column, and constraint exclusions ride
+        # the metadata side only -- no database counterpart (compare_to is
+        # None, not the reflected object); a database table, column, or
+        # constraint wearing an excluded name is drift and keeps its diff,
+        # whatever its shape.  The column-driven channels differ: the
+        # index branch also rides a changed pair that agrees on every
+        # compared axis, and the foreign-key branch never reads
+        # compare_to, so a changed pair keeps its reflected remove_fk
+        # half.
         if type_ == "table" and name in exclude_tables and compare_to is None and not reflected:
             return False
         if type_ == "column" and compare_to is None and not reflected:
