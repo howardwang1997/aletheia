@@ -219,6 +219,54 @@ def test_runtime_v2_tables_are_excluded_from_legacy_baseline_parity():
     } <= POST_BASELINE_TABLES
 
 
+def test_0036_external_acceptance_tables_are_excluded_from_legacy_baseline_parity():
+    from aletheia.schema_migrations import POST_BASELINE_TABLES
+
+    assert {
+        "execution_external_runtime_preparations",
+        "execution_external_launch_authorizations",
+        "execution_external_runtime_launch_receipts",
+        "execution_external_termination_challenges",
+        "execution_external_runtime_termination_acceptances",
+        "execution_external_qualification_terminal_acceptances",
+        "execution_external_qualification_deadline_expirations",
+    } <= POST_BASELINE_TABLES
+
+
+def test_every_table_created_after_the_legacy_baseline_is_excluded_from_parity():
+    """0036 wrote its CREATE TABLE statements as raw SQL, so the frozenset
+    drifted silently: adopt_existing_baseline would refuse to stamp any
+    legacy database.  Every table any migration creates after the baseline
+    revision must be excluded, whatever DDL spelling the migration uses."""
+    import re
+
+    from aletheia.schema_migrations import (
+        LEGACY_BASELINE_REVISION,
+        POST_BASELINE_TABLES,
+    )
+
+    for path in sorted(Path("migrations/versions").glob("*.py")):
+        source = path.read_text()
+        revision = re.search(
+            r"^revision(?::\s*str)?\s*=\s*['\"]([^'\"]+)", source, re.M
+        ).group(1)
+        if revision == LEGACY_BASELINE_REVISION:
+            continue
+        created = set(
+            re.findall(r"op\.create_table\(\s*['\"]([^'\"]+)", source)
+        )
+        created |= set(
+            re.findall(
+                r"CREATE TABLE (?:IF NOT EXISTS )?(\w+)",
+                re.sub(r"\s+", " ", source),
+            )
+        )
+        assert created <= POST_BASELINE_TABLES, (
+            f"{path.name} creates tables missing from POST_BASELINE_TABLES: "
+            f"{sorted(created - POST_BASELINE_TABLES)}"
+        )
+
+
 def test_pr5_exact_source_constraints_match_migration_and_orm_metadata():
     from aletheia.execution.persistence import (
         _ExecutionQualificationTerminalOutboxRecord,
