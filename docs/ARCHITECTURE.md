@@ -1,13 +1,18 @@
 # Aletheia — Architecture
 
-> **Status note (2026-08-24):** the body of this file describes the legacy execution architecture.
-> The current target and PR-0→PR-4b migration state are maintained in
+> **Status note (2026-09-25):** the body of this file describes the legacy execution architecture.
+> The current target and migration state are maintained in
 > [`END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md`](END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md).
-> PR-0→PR-3 now provide the legacy freeze, authoritative Research Kernel event store, and pure
-> Protocol IR/compiler. PR-4a/PR-4b add a qualification-only local CPU execution substrate, but its
-> exact target-host Linux/root/systemd/loop/Docker deployment gate and the PR-5 scientific bridge
-> remain open. The fixed global FSM and regression-shaped `DomainPlugin` below are compatibility
-> paths; new scientific functionality must target the RFC boundaries rather than extend them.
+> The migration has advanced through PR-8i: PR-0→PR-3 provide the legacy freeze, authoritative
+> Research Kernel event store, and pure Protocol IR/compiler; PR-4a/PR-4b the qualification-only
+> local CPU execution substrate; PR-5→PR-8i the durable scientific controller, external RPC
+> service runtime, and qualification commissioning. The target-host Linux deployment gate has been
+> qualified live — the deployed system has produced ARL-1 qualification receipts, most recently on
+> 2026-09-14 (generation 20260914v) — and the scientific bridge family is merged. The open frontier
+> is the bounded ARL-2 campaign: its control plane is merged on main and its qualification dry run
+> has not completed end-to-end. The fixed global FSM and regression-shaped `DomainPlugin` below are
+> compatibility paths; new scientific functionality must target the RFC boundaries rather than
+> extend them.
 
 ## Ultimate goal
 
@@ -53,10 +58,10 @@ gates are cross-model peer reviews:
   → WRITE PAPER         structured + cited          → SUBMIT (per-experiment PR)
 ```
 
-Current state: the EXPERIMENT_DESIGN → ARCHIVE spine is built and merged (Phase 1–2), with cross-model
+Legacy state (2026-06): the EXPERIMENT_DESIGN → ARCHIVE spine is built and merged (Phase 1–2), with cross-model
 peer-review gates, pgvector semantic recall, GitHub-App + platform IAM/RBAC, and a coder behind an AST
 gate + Docker hard sandbox. The transformation toward the lifecycle above is tracked in the approved plan
-(`SURVEY` + literature grounding is the running iteration; ideation, scientific analysis, cited papers,
+(`SURVEY` + literature grounding was the then-running iteration; ideation, scientific analysis, cited papers,
 campaigns, and multi-domain generalization follow).
 
 ## Components

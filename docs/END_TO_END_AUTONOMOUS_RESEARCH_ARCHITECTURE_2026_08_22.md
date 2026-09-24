@@ -893,8 +893,14 @@ SEA admission deadline 停止；资格签发和 audit 时间则在 fresh replay 
 deployment JSON 只能给出 24 小时以内的 operation window 与 receipt duration，不能回填或复活 receipt。
 真实 Linux target 已运行多个冻结 candidate，但每个都在不同的 fail-closed 工程边界停止，尚无一份
 完整 PR-8h campaign receipt；production source verifier 也尚未产生 retained receipt，**当前仍没有一份可签发的 ARL-1
-资格 receipt，系统没有晋级 ARL-1**。它也拥有若干 `ARL-2` 所需但未由主控制面贯通的 F8–F11
+资格 receipt，系统没有晋级 ARL-1**（2026-08-28 时点）。它也拥有若干 `ARL-2` 所需但未由主控制面贯通的 F8–F11
 原语。没有 `ARL-3` 或 `ARL-4` 证据。
+
+> 2026-09-25 更新：production ARL-1 receipts 已于 2026-09-09 至 2026-09-14 陆续签发；
+> generation 20260914v 关闭全部出口阶段并首次完成 87 案 per-source-class 篡改拒绝矩阵。
+> 系统已在 bounded protocol execution engineering claim ceiling 下通过 ARL-1；任何新部署
+> 仍需新的 freeze 与 commissioning window。ARL-2 所需的 F8–F11 原语已由新控制面贯通，
+> 其资格 dry run 尚未端到端完成。
 
 ARL-4 的独立确认按主张类型定义：
 
@@ -2059,7 +2065,10 @@ AppArmor/image 与 PostgreSQL ACL；campaign 对一份已原子注册的 executi
 watchdog 与 PostgreSQL backend kill/recovery，并只从 exact v2 terminal row、durable spool 和 final
 reobservation 导出 `deployment_qualified=true`。当前只有 source 与 synthetic replay evidence，尚未在真实
 Linux target 执行，因此下一项顺序工作是完成 PR-8f→PR-8g→PR-8b target preparation 并运行/复核 PR-8h
-campaign receipt，而不是扩张 controller authority。checkpoint 与 external reconciliation
+campaign receipt，而不是扩张 controller authority（2026-08-28 时点；2026-09-25 更新：PR-8f/8g/8b
+target preparation 与 PR-8h campaign 已在合并 freeze 上完成，generation 20260914v 于 2026-09-14
+关闭全部出口阶段并保留 receipts；当前的扩张前沿是有界 ARL-2 问题闭环，其控制面已合并）。
+checkpoint 与 external reconciliation
 仍需独立 typed contracts，不能由 generic retry 猜测。
 
 **ARL-1 qualification source slice** 已补系统级累积资格合同：API 与 durable entrypoint 现在除

@@ -1,5 +1,11 @@
 # Autonomous Research Roadmap
 
+> **Status note (2026-09-25):** historical plan (June 2026 era), kept as record. It is superseded
+> by [`END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md`](END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md)
+> and [`LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md`](LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md).
+> Several workstreams below (evidence ledger, structured literature, reproduction) were later
+> rebuilt inside the F7–F12/ARL substrate.
+
 ## Objective
 
 Aletheia's long-term goal is to conduct frontier AI research end to end. Humans should provide high
