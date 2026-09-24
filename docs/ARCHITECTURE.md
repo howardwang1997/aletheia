@@ -5,8 +5,9 @@
 > [`END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md`](END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md).
 > The migration has advanced through PR-8i: PR-0→PR-3 provide the legacy freeze, authoritative
 > Research Kernel event store, and pure Protocol IR/compiler; PR-4a/PR-4b the qualification-only
-> local CPU execution substrate; PR-5→PR-8i the durable scientific controller, external RPC
-> service runtime, and qualification commissioning. The target-host Linux deployment gate has been
+> local CPU execution substrate; PR-5→PR-8i the durable scientific controller, legacy
+> evaluation compatibility, external RPC service runtime, and qualification commissioning. The
+> target-host Linux deployment gate has been
 > qualified live — the deployed system has produced ARL-1 qualification receipts, most recently on
 > 2026-09-14 (generation 20260914v) — and the scientific bridge family is merged. The open frontier
 > is the bounded ARL-2 campaign: its control plane is merged on main and its qualification dry run
