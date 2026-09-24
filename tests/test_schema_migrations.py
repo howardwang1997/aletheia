@@ -759,21 +759,29 @@ def test_walking_guard_fails_closed_on_unresolvable_ddl():
         "    op.execute('ALTER TABLE execution_resource_leases ADD COLUMN a text')\n"
         "    op.execute('ALTER TABLE public.leases ADD COLUMN a text')\n"
         "    op.execute(f'{ddl}')\n"
+        "    built_ddl = 'CREATE TABLE ' + name\n"
+        "    op.execute(built_ddl)\n"
+        "    op.execute('CREATE TABLE fused_a (id int); CREATE TABLE fused_b (id int); "
+        "ALTER TABLE events ADD COLUMN fused_e text; "
+        "ALTER TABLE decisions ADD COLUMN fused_d text')\n"
         "    op.add_column('events', column=sa.Column('kw_form', sa.Text()))\n"
     )
     created, added, unresolvable = _migration_drift(source)
-    assert created == {"temp_probe", "unlogged_probe", "kw_form_table"}
+    assert created == {"temp_probe", "unlogged_probe", "kw_form_table", "fused_a", "fused_b"}
     assert added == {
         ("events", "pg_short_form"),  # PostgreSQL ADD without the COLUMN keyword
         ("execution_attempts", "a"),
         ("execution_resource_leases", "a"),  # own table, not the chunk's first
         ("events", "kw_form"),  # keyword-form op.add_column resolves
+        ("events", "fused_e"),  # intra-string ';' split resolves each statement
+        ("decisions", "fused_d"),  # (0026/0027/0036 fuse CREATE TABLEs this way)
     }
     assert sorted(unresolvable) == [
         "ALTER TABLE ADD statement",  # quoted table and column names
         "ALTER TABLE ADD statement",  # schema-qualified table
         "CREATE TABLE statement",  # quoted identifier
         "CREATE TABLE statement",  # schema-qualified
+        "op.execute argument",  # variable-built SQL: unseen local name
         "op.execute f-string DDL",  # f-string CREATE TABLE
         "op.execute f-string DDL",  # f-string CREATE UNLOGGED TABLE (tripwire
         # tracks every CREATE ... TABLE spelling the statement branch tracks)
