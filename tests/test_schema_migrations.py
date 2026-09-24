@@ -739,12 +739,13 @@ def test_database_side_drift_over_excluded_columns_keeps_its_diffs():
 
 
 def test_exclusion_channels_cover_only_the_metadata_side():
-    """Round-7 pins: every exclusion channel rides the metadata side only.
-    A database table, column, or named constraint wearing an excluded name
-    is drift -- stray or reshaped -- and keeps its diff; only the added
-    path (no database counterpart) rides.  Before these gates the
-    table/column/constraint branches matched by name alone, so a drifted
-    database stamped clean."""
+    """Pins (rounds 7-10): every exclusion channel rides the metadata side
+    only, and only for names the exclusion sets actually carry.  A
+    database table, column, or named constraint wearing an excluded name
+    is drift -- stray or reshaped -- and keeps its diff; a metadata-side
+    object rides only on the added path, and a non-excluded one keeps its
+    add diff.  Before these gates the table/column/constraint branches
+    matched by name alone, so a drifted database stamped clean."""
     from sqlalchemy import (
         Column,
         Integer,
@@ -763,8 +764,14 @@ def test_exclusion_channels_cover_only_the_metadata_side():
         "zz_kept",
         metadata,
         Column("id", Integer, primary_key=True),
+        Column("wanted_col", String(32)),
         UniqueConstraint("id", name="uq_meta_only"),
+        UniqueConstraint("wanted_col", name="uq_wanted"),
     )
+    # not in any exclusion set: a blanket-exclusion revert (name-match
+    # conjunct dropped) would suppress these diffs, and with only excluded
+    # names in the fixture that revert is observationally identical
+    Table("zz_wanted", metadata, Column("id", Integer, primary_key=True))
     Table(
         "zz_probe_column",
         metadata,
@@ -844,11 +851,23 @@ def test_exclusion_channels_cover_only_the_metadata_side():
         if isinstance(diff[0], str) and diff[0] == "add_constraint"
     }
     assert "uq_stray" in removed_names  # database-only constraint with an excluded name
-    assert "add_constraint" in kinds  # same-named constraint over different columns
-    # Round 8/9: the added path still rides; every gate conjunct now has
-    # an assertion that fails under its single-conjunct revert.
-    assert "add_table" not in kinds  # metadata-only table with an excluded name rides
-    assert "uq_meta_only" not in added_names  # ditto constraint
+    # Round 8-10: the added path still rides for excluded names only, and
+    # every gate conjunct (name match included) has an assertion naming
+    # its target -- kind membership keeps passing whenever a second source
+    # or a blanket exclusion replaces the named one.
+    assert not any("zz_meta_only" in repr(diff) for diff in drift)  # metadata-only
+    # excluded table rides
+    assert any("zz_wanted" in repr(diff) for diff in drift)  # non-excluded
+    # metadata-only table keeps add_table (table name match)
+    assert "uq_meta_only" not in added_names  # metadata-only excluded constraint rides
+    assert "uq_wanted" in added_names  # non-excluded metadata-only constraint keeps
+    # add_constraint (constraint name match)
+    assert "uq_changed" in added_names  # changed pair over different columns keeps
+    # its add half (constraint compare_to is None)
+    assert any(
+        diff[0] == "add_column" and "zz_kept" in diff and "wanted_col" in repr(diff)
+        for diff in drift
+    )  # non-excluded metadata-only column keeps add_column (column name match)
     assert "remove_column" in kinds  # database-only column with an excluded (table, name)
     assert any("zz_both_exist" in repr(diff) for diff in drift)  # both-exist excluded table
     # keeps its comparison (shape drift surfaces), unlike a stray-table skip
