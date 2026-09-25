@@ -32,6 +32,7 @@ from aletheia.execution.authority_registry import (
 )
 from aletheia.execution.input_resolver import LocalVerifiedInputArtifactResolver
 from aletheia.execution.runtime_contracts import (
+    ExternalBridgeAuthority,
     NodeEnrollmentAuthorityPin,
     NodeEnrollmentAuthorityVerifier,
     QualificationAuthorityPin,
@@ -118,6 +119,7 @@ class QualificationTerminalReaderConfig(BaseModel):
     terminal_verification_authority_pin: TerminalVerificationAuthorityPin
     runtime_control_authority_pin: RuntimeControlAuthorityPin
     node_authorities: tuple[TerminalNodeAuthorityConfig, ...] = Field(min_length=1)
+    external_bridge_authorities: tuple[ExternalBridgeAuthority, ...] = ()
     allowed_rate_card_sha256s: tuple[str, ...] = Field(min_length=1)
     allowed_currency_codes: tuple[str, ...] = Field(min_length=1)
     allocator_principal_id: str = Field(pattern=_IDENTITY_PATTERN)
@@ -375,6 +377,10 @@ def _compose_qualification_verification_allocator(
             currency_codes=frozenset(config.allowed_currency_codes),
         ),
         node_authorities=node_authorities,
+        external_bridge_authorities=tuple(
+            ExternalBridgeAuthority.model_validate(item.model_dump(mode="python"))
+            for item in config.external_bridge_authorities
+        ),
         node_assignment_transport_pins=tuple(
             item.assignment_transport_pin for item in config.node_authorities
         ),

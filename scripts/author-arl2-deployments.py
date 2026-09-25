@@ -1501,6 +1501,9 @@ def _build_qualification(
         terminal_verification_authority_pin=terminal_pin,
         runtime_control_authority_pin=runtime_pin,
         node_authorities=(node_authority,),
+        external_bridge_authorities=(
+            (external_bridge_authority,) if external_bridge_authority is not None else ()
+        ),
         allowed_rate_card_sha256s=(card_sha,),
         allowed_currency_codes=(CURRENCY_CODE,),
         allocator_principal_id=QUALIFICATION_PRINCIPALS["allocator"],
