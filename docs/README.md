@@ -406,3 +406,6 @@ After the target-architecture RFC above, use this order for the current implemen
     (`PR8J_ATTEMPT_SCOPED_PRE_RUNTIME_CLEANUP.md` was closed as superseded).
 137. `ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md` — the ARL-1 qualification contract and its
     receipt record.
+138. `K2_CUPRATE_CAMPAIGN_PLAN_2026_06_16.md` — the June 2026 plan for the K2 cuprate-Tc campaign
+    on UCI superconductivity: data wiring, campaign framing, the reference probe numbers, and what
+    a FULL run would and would not demonstrate. Historical record of the pre-migration campaign.
