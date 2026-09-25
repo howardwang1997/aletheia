@@ -1,5 +1,14 @@
 # Aletheia Project Review
 
+> **Status note (2026-09-25):** this review dates to 2026-06-01 and describes the legacy
+> experiment-loop system only. It predates the control-plane migration
+> ([`END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md`](END_TO_END_AUTONOMOUS_RESEARCH_ARCHITECTURE_2026_08_22.md))
+> and the ARL qualification ladder. Current status lives in the root `README.md` and
+> [`LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md`](LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md).
+> Several weaknesses it lists were carried into the new architecture rather than left as open
+> legacy gaps — claim calibration into the claim-ceiling invariant, fail-closed execution into
+> the fail-closed control plane, and weak literature grounding into the F8 knowledge substrate.
+
 ## Purpose
 
 This document is a neutral technical review of Aletheia as an autonomous AI scientist system. It is

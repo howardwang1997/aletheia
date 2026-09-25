@@ -3,7 +3,7 @@
 This directory contains the architecture, project review, roadmap, and implementation RFCs for
 Aletheia.
 
-Current status (2026-09-15): generation 20260914v closed every exit stage on the merged
+Current status (2026-09-25): generation 20260914v closed every exit stage on the merged
 freeze, issued a fresh ARL-1 qualification receipt, and completed the per-source-class
 tamper-rejection audit with all 87 cases passed, the first full matrix in any generation.
 The runbook rule of sizing the verification window from the measured matrix budget at
@@ -12,7 +12,9 @@ in 9 h 19 min inside the composed window with no enforcement trip. The deploymen
 reboot-recovery drill passed across three reboots, including the mandatory negative path:
 with the tmpfiles configuration removed, all six scientific units failed closed and the
 runtime tree stayed absent; restoring the configuration byte-identical returned every check
-to green. Use `LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md` and
+to green. The bounded ARL-2 campaign's control plane, external bridge and dispatch executor,
+and acceptance chain are merged on main; its qualification dry run has not completed
+end-to-end. Use `LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md` and
 `GENERATION_I_REQUALIFICATION_AND_ARL1_EXIT_RUNBOOK_2026_09_06.md` for the fresh-generation
 sequence.
 Public outputs follow `PUBLICATION_BOUNDARY.md`; private/internal audit records remain outside
@@ -52,6 +54,31 @@ Current implementation slice:
 - `PR4B_LOCAL_EXECUTION_COMPOSITION.md` — current implementation map, exact 27-table schema,
   lifecycle/crash semantics, portable deployment-evidence/preflight contracts, deployment TCB,
   external-service requirements, and the honest Linux/root/systemd/loop/Docker validation boundary.
+- `PR5_DURABLE_SCIENTIFIC_CONTROLLER.md` and
+  `architecture/0050-durable-scientific-controller-and-observation-admission.md` — the durable
+  scientific controller and observation admission.
+- `PR6_LEGACY_EVALUATION_COMPATIBILITY.md` and
+  `architecture/0051-legacy-evaluation-compatibility-leaf.md` — the legacy evaluation
+  compatibility leaf.
+- `PR7_CONTROLLER_PRODUCTION_RUNTIME.md` with `PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md`
+  through `PR7P_ATOMIC_ADMISSION_SERVICE.md`, and
+  `architecture/0052-controller-production-runtime-process-boundary.md` through
+  `architecture/0073-atomic-admission-rpc-service.md` —
+  the controller production runtime: process boundary, step authority, verified terminal
+  dispatcher, keyless worker composition, and the operation-closed external RPC service fleet
+  (deterministic continuation and action proposal, frozen protocol compilation, execution
+  authorization, atomic execution registration, raw-run source, database observation, F9 v2
+  validation, committed validation source, and admission).
+- `PR8A_QUALIFICATION_SERVICE_RUNNERS.md` through
+  `PR8I_QUALIFICATION_PYTHON_RUNTIME_PREPARATION.md`, and
+  `architecture/0074-guarded-qualification-service-runners.md` through
+  `architecture/0083-qualification-python-runtime-preparation.md` — qualification commissioning:
+  guarded service runners, the disabled file installer, privileged factories, node and
+  terminal-outbox factories, host bootstrap, authority commissioning, the PR-8h target campaign,
+  and Python runtime preparation. `PR8J_ATTEMPT_SCOPED_PRE_RUNTIME_CLEANUP.md` was closed as
+  superseded; its record is retained.
+- `ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md` — the ARL-1 qualification contract and its
+  receipt record.
 
 Supporting technology research (not the system architecture):
 
@@ -359,3 +386,23 @@ After the target-architecture RFC above, use this order for the current implemen
 132. `PR4B_LOCAL_EXECUTION_COMPOSITION.md` — operator/developer status guide for the exact schema,
     component boundaries, crash semantics, TCB, external dependencies, and target-host deployment
     campaign.
+133. `PR5_DURABLE_SCIENTIFIC_CONTROLLER.md` and
+    `architecture/0050-durable-scientific-controller-and-observation-admission.md` — the durable
+    scientific controller and observation admission.
+134. `PR6_LEGACY_EVALUATION_COMPATIBILITY.md` and
+    `architecture/0051-legacy-evaluation-compatibility-leaf.md` — the legacy evaluation
+    compatibility leaf.
+135. `PR7_CONTROLLER_PRODUCTION_RUNTIME.md` with `PR7B_CONTROLLER_STEP_AUTHORITY_BOUNDARY.md`
+    through `PR7P_ATOMIC_ADMISSION_SERVICE.md`, and
+    `architecture/0052-controller-production-runtime-process-boundary.md` through
+    `architecture/0073-atomic-admission-rpc-service.md` —
+    the controller production runtime, its step-authority and worker composition, and the
+    operation-closed external RPC service fleet.
+136. `PR8A_QUALIFICATION_SERVICE_RUNNERS.md` through
+    `PR8I_QUALIFICATION_PYTHON_RUNTIME_PREPARATION.md`, and
+    `architecture/0074-guarded-qualification-service-runners.md` through
+    `architecture/0083-qualification-python-runtime-preparation.md` — qualification
+    commissioning, the PR-8h target campaign, and Python runtime preparation
+    (`PR8J_ATTEMPT_SCOPED_PRE_RUNTIME_CLEANUP.md` was closed as superseded).
+137. `ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md` — the ARL-1 qualification contract and its
+    receipt record.

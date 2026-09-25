@@ -1,6 +1,6 @@
 # Aletheia 长期路线图：ARL-1 到独立确认的自主发现
 
-状态更新：2026-09-09。本文是能力规划，不是研究结果或科学证据。
+状态更新：2026-09-25。本文是能力规划，不是研究结果或科学证据。
 ARL 定义沿用控制面架构 RFC；资格由对应的冻结协议和签名 receipt 决定。
 
 ## 当前状态
@@ -8,8 +8,8 @@ ARL 定义沿用控制面架构 RFC；资格由对应的冻结协议和签名 re
 | 等级 | 当前状态 | 出口 |
 |---|---|---|
 | ARL-0 Integrity | 已实现相应完整性原语；系统资格仍须累积验证 | Ledger、隔离、all-attempt、claim ceiling、schema、依赖审计 |
-| ARL-1 Protocol Executor | 软件合同与生产入口已实现；尚无生产资格 receipt | 给定协议的完整运行、独立验证、admission、Kernel incorporation、prepare/issue/verify |
-| ARL-2 Question-bound Scientist | F8/F9/F10 原语已有；真实问题的完整新控制面闭环尚未通过资格验收 | 自主竞争解释、判别实验、负结果处理与回退 |
+| ARL-1 Protocol Executor | 软件合同与生产入口已实现；生产资格 receipts 已于 2026-09-09 至 09-14 陆续签发，最新 2026-09-14（generation 20260914v，87/87 篡改拒绝矩阵首次全过；2026-09-15 重启演练通过） | 给定协议的完整运行、独立验证、admission、Kernel incorporation、prepare/issue/verify |
+| ARL-2 Question-bound Scientist | 新控制面已实现并在 main 合并：问题循环、外部 bridge 与 dispatch executor、acceptance chain；资格 dry run 尚未端到端完成 | 自主竞争解释、判别实验、负结果处理与回退 |
 | ARL-3 Mission-bound Researcher | 尚未取得资格证据 | 从 mission 自主形成问题和测量／方法设计 |
 | ARL-4 Independently Confirmed Autonomous Discovery | 尚未取得资格证据 | 前瞻性新颖性审核及与 claim type 匹配的独立确认 |
 
@@ -18,6 +18,11 @@ ARL 定义沿用控制面架构 RFC；资格由对应的冻结协议和签名 re
 部署资格和 ARL-1 receipt 都不能作为科学有效性或独立复现主张。
 
 ## 顺序一：完成 ARL-1 恢复和验收
+
+已于 2026-09-14 关闭：generation 20260914v 在新的隔离 Linux deployment 上关闭全部出口
+阶段，完成 87/87 篡改拒绝矩阵（任何代际中的首次全矩阵），取得生产 ARL-1 资格 receipt；
+2026-09-15 三次重启恢复演练通过（含强制负路径）。下列冻结前条件与执行清单保留为
+每次新 freeze 的纪律。
 
 冻结前必须满足：
 
@@ -42,6 +47,9 @@ ARL 定义沿用控制面架构 RFC；资格由对应的冻结协议和签名 re
 操作步骤见 [ARL-1 出口 runbook](GENERATION_I_REQUALIFICATION_AND_ARL1_EXIT_RUNBOOK_2026_09_06.md)。
 
 ## 顺序二：最小 ARL-2 问题闭环
+
+当前前沿：控制面与外部 acceptance chain 已在 main 合并，qualification dry run 尚未完成，
+这是当前活跃工作。
 
 先固定一个研究问题，接通新 Kernel 的一条完整路径：
 

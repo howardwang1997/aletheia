@@ -1,7 +1,9 @@
 # Fresh-generation re-qualification and ARL-1 exit runbook
 
-Updated 2026-09-10. The historical filename is retained for links. This procedure applies to a
-fresh deployment of the reviewed current source, with Alembic head `20260909_0033`.
+Updated 2026-09-25. The historical filename is retained for links. This procedure applies to a
+fresh deployment of the reviewed current source, with the reviewed commit's Alembic head
+(currently `20260924_0037` — re-derive per generation from
+`tests/test_schema_migrations.py::test_repository_has_one_expected_alembic_head`).
 No historical generation's receipt or expired commissioning window authorizes this deployment.
 
 ## Freeze prerequisites
@@ -25,7 +27,8 @@ No historical generation's receipt or expired commissioning window authorizes th
    the prepared Conda runtime against this release before using it in the new installation.
 2. Inspect existing target units and resources. Retire only the explicitly identified predecessor
    deployment after confirming no live workload relies on it. Preserve audit records. Create the
-   fresh isolated database, migrate to `20260909_0033`, run `alembic check` and require exact schema.
+   fresh isolated database, migrate to the reviewed commit's Alembic head (currently
+   `20260924_0037`), run `alembic check` and require exact schema.
 3. Execute PR-8f bootstrap, PR-8g commissioning, PR-8b installation and the complete PR-8h target
    campaign. Retain canonical request, signed observations, journal and qualified target receipt;
    require exact replay of that receipt.

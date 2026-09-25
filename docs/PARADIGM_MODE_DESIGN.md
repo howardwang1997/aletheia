@@ -1,15 +1,16 @@
 # Paradigm Mode — design sketch
 
-**Status:** design only (not implemented). Aligns the results gate with the refined north
+**Status:** implemented (P1–P5: PRs #32–#35, #59–#61); design sections retained as rationale.
+Aligns the results gate with the refined north
 star: *frontier research ≠ beating SOTA; it can be creating a new paradigm.*
 
 ## Problem
 
-Aletheia today only does Kuhnian **normal science**. Every `DomainProfile`
+When this sketch was written, Aletheia only did Kuhnian **normal science**. Every `DomainProfile`
 (`aletheia/domains/base.py`) is built around `headline_metric` + `sota_reference` +
 `sota_rows`, and the results-gate critics are instructed to reject results that trail the
 benchmark. A genuine new paradigm (a new question / formulation / representation / metric)
-**always trails the incumbent benchmark at birth** — so the current gate rejects it every
+**always trails the incumbent benchmark at birth** — so the then-current gate rejected it every
 time. Observed live: the molecules e2e's attempted contribution was uncertainty / prediction-
 interval calibration (a different *question* than RMSE), but the gate flattened it to
 "didn't beat RMSE SOTA → reject."

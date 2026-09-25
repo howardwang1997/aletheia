@@ -22,9 +22,12 @@ trip. The deployment reboot-recovery drill passed on 2026-09-15 across three reb
 including the mandatory negative path. ARL-1 qualifies bounded protocol execution; it does not
 establish scientific validity, independent replication or autonomous research design.
 
-The immediate sequence is: integrate a bounded ARL-2 campaign. F8 knowledge, F9 world-model
-and F10 capability components exist, but their presence does not establish a qualified
-autonomous scientist.
+The bounded ARL-2 campaign integration is built: the question loop's control plane, external
+bridge and dispatch executor, and acceptance chain are merged on main. The immediate work is
+completing its qualification dry run, which has not yet finished end-to-end. F9 world-model
+components feed that loop through typed contracts and the F11 durable task queue carries its
+execution; F8 knowledge and the F10 capability registry do not enter it yet. None of this
+establishes a qualified autonomous scientist.
 
 - [Current roadmap](docs/LONG_TERM_ROADMAP_TO_ARL4_2026_09_06.md)
 - [ARL-1 qualification contract](docs/ARL1_PROTOCOL_EXECUTOR_QUALIFICATION.md)
@@ -73,7 +76,11 @@ conda run -n aletheia python scripts/durable_worker.py \
 cd frontend && npm install && npm run dev    # http://localhost:3000
 ```
 
-Open http://localhost:3000, type a goal, click **Start run**.
+Open http://localhost:3000 and log in (the owner credentials seed from `ALETHEIA_OWNER_EMAIL` /
+`ALETHEIA_OWNER_PASSWORD` in `.env`). Type in the conversation input until the agent finalizes
+a plan, connect and ready the data in the data panel, then click **Launch experiment** — the
+button enables only once the plan is finalized, every declared dataset (uploaded or connected)
+is ready, the run is not already launched, and you hold a control-role account.
 
 The default provider is Claude. Both Claude and OpenAI support subscription login or API-key
 authentication. To use GPT with the ChatGPT subscription already logged into Codex CLI, run

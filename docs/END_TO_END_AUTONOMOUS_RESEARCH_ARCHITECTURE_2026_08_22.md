@@ -883,7 +883,7 @@ ARL 是累积等级：晋升必须同时满足所有较低等级的冻结证据�
 | `ARL-3 Mission-bound Researcher` | 仅给 mission/charter，自主形成问题、演化方法/measurement/design space，并获取该 modality 所需的新 evidence | 不能声称领域通用或已独立发现 |
 | `ARL-4 Independently Confirmed Autonomous Discovery` | 新主张通过时间冻结的 prior-art 审核、外部专家裁决和与 claim type 匹配的独立确认 | 仍不自动获得无限现实权限 |
 
-当前 Aletheia 在若干受限计算任务上部分满足 `ARL-1`。2026-08-28 已实现冻结的系统级 ARL-1
+（2026-08-28 时点）Aletheia 在若干受限计算任务上部分满足 `ARL-1`。2026-08-28 已实现冻结的系统级 ARL-1
 evidence bundle、具体 PostgreSQL/CAS/Kernel/F9-v2 source verifier、确定性报告、Ed25519 资格 receipt、
 离线重验合同，以及分离的 given-protocol campaign、prepare、issue、keyless audit Linux one-shot
 entrypoint；它要求完整 ARL-0 gates、canonical compiler replay、同一 action 在首个 reservation 前原子预注册
@@ -891,10 +891,18 @@ entrypoint；它要求完整 ARL-0 gates、canonical compiler replay、同一 ac
 target campaign。运行中的 exact reexecution 只通过 signed typed terminal-pending 状态有界等待，最迟在
 SEA admission deadline 停止；资格签发和 audit 时间则在 fresh replay 后取自 pinned PostgreSQL clock，
 deployment JSON 只能给出 24 小时以内的 operation window 与 receipt duration，不能回填或复活 receipt。
-真实 Linux target 已运行多个冻结 candidate，但每个都在不同的 fail-closed 工程边界停止，尚无一份
-完整 PR-8h campaign receipt；production source verifier 也尚未产生 retained receipt，**当前仍没有一份可签发的 ARL-1
-资格 receipt，系统没有晋级 ARL-1**。它也拥有若干 `ARL-2` 所需但未由主控制面贯通的 F8–F11
+（2026-09-03 时点）真实 Linux target 已运行多个冻结 candidate，但每个都在不同的 fail-closed 工程边界停止，尚无一份
+完整 PR-8h campaign receipt；production source verifier 也尚未产生 retained receipt，**当时仍没有一份可签发的 ARL-1
+资格 receipt，系统没有晋级 ARL-1**。当时它也拥有若干 `ARL-2` 所需但未由主控制面贯通的 F8–F11
 原语。没有 `ARL-3` 或 `ARL-4` 证据。
+
+> 2026-09-25 更新：production ARL-1 receipts 已于 2026-09-09 至 2026-09-14 陆续签发；
+> generation 20260914v 关闭全部出口阶段并首次完成 87 案 per-source-class 篡改拒绝矩阵。
+> 系统已在 bounded protocol execution engineering claim ceiling 下通过 ARL-1；任何新部署
+> 仍需新的 freeze 与 commissioning window。ARL-2 的新控制面（问题循环、外部 bridge 与
+> dispatch executor、acceptance chain）已在 main 合并：F9 经由 typed contracts 接入，循环
+> 运行在 F11 durable task 队列上；F8 知识基底与 F10 capability registry 尚未接入该控制面，
+> 其资格 dry run 尚未端到端完成。
 
 ARL-4 的独立确认按主张类型定义：
 
@@ -2035,7 +2043,7 @@ conservative action-proposal、frozen protocol-compilation、exact-template scie
 execution-authorization、atomic execution-registration、verified raw-run source 与 database-observation
 attestation、independent F9-v2 validation、committed-validation source 以及 independent-admission signer
 以及 atomic admission/Kernel incorporation concrete service factory；十一项 operation-family source
-composition 已闭合，ACL 与 target-host commissioning 仍待完成。
+composition 已闭合，（2026-08-28 时点）ACL 与 target-host commissioning 仍待完成。
 **PR-8a** 已补齐 PR-4b systemd 所引用的五个 guarded runner，并在导入 factory 前验证 canonical manifest、
 源码/配置 custody 和 live Linux UID/GID。**PR-8b** 已实现 opt-in、crash-replayable disabled-file
 installer，关闭 manifest/unit 的 partial-write 与意外 activation 风险，但不创建 principal、不应用
@@ -2049,17 +2057,20 @@ root daemon 也新增 exact live-verification operation。**PR-8e** 已补齐 no
 文件 fsync 后 CAS 更新 legacy v1 published 状态，并保持 v2 immutable。五项 service factory 源码现已
 闭合。**PR-8f** 已实现第一阶段 disabled-only host bootstrap：固定两项 locked Linux/PostgreSQL peer
 identity、Docker group、`/run/postgresql` socket 与十五项 empty custody roots，并以 append-only journal
-收敛 crash retry；该代码尚未在 target host 执行，也不发布 config/key、不创建 PostgreSQL role/ACL、
+收敛 crash retry；该代码当时尚未在 target host 执行，也不发布 config/key、不创建 PostgreSQL role/ACL、
 不安装或启动 unit。**PR-8g** 已完成下一阶段 source workflow：从 bootstrap receipt finalise 唯一 manifest，
 顺序发布三把 public-identity-verified key 与五份 canonical config，并在 exact local-peer HBA 下同事务创建/
-复核三项 PostgreSQL role、database owner 与 rendered ACL；当前同样未在 target host 执行，且 unit 必须始终
+复核三项 PostgreSQL role、database owner 与 rendered ACL；当时同样未在 target host 执行，且 unit 必须始终
 absent。**PR-8h** 已补齐 concrete independent Linux observer 与 opt-in target campaign runner：签名观察
 绑定 exact loaded unit、live `/proc` process identity/argv/capability、rootful Docker、shared mount、
 AppArmor/image 与 PostgreSQL ACL；campaign 对一份已原子注册的 execution 顺序执行 node、outbox、quota、
 watchdog 与 PostgreSQL backend kill/recovery，并只从 exact v2 terminal row、durable spool 和 final
-reobservation 导出 `deployment_qualified=true`。当前只有 source 与 synthetic replay evidence，尚未在真实
+reobservation 导出 `deployment_qualified=true`。（2026-08-28 时点）只有 source 与 synthetic replay evidence，尚未在真实
 Linux target 执行，因此下一项顺序工作是完成 PR-8f→PR-8g→PR-8b target preparation 并运行/复核 PR-8h
-campaign receipt，而不是扩张 controller authority。checkpoint 与 external reconciliation
+campaign receipt，而不是扩张 controller authority（2026-09-25 更新：PR-8f/8g/8b
+target preparation 与 PR-8h campaign 已在合并 freeze 上完成，generation 20260914v 于 2026-09-14
+关闭全部出口阶段并保留 receipts；当前的扩张前沿是有界 ARL-2 问题闭环，其控制面已合并）。
+checkpoint 与 external reconciliation
 仍需独立 typed contracts，不能由 generic retry 猜测。
 
 **ARL-1 qualification source slice** 已补系统级累积资格合同：API 与 durable entrypoint 现在除
