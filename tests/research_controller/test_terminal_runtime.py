@@ -24,6 +24,7 @@ from aletheia.execution.authority_contracts import (
 )
 from aletheia.execution.artifact_store import ArtifactStoreError, LocalArtifactStore
 from aletheia.execution.runtime_contracts import (
+    ExternalBridgeAuthority,
     QualificationAuthorityPin,
     qualification_key_id,
 )
@@ -225,6 +226,41 @@ def _guarded_deployment(
         composition_config_file_sha256=hashlib.sha256(config_path.read_bytes()).hexdigest(),
         process_principal_id=config.process_principal_id,
         prepared_at=config.prepared_at,
+    )
+
+
+def test_terminal_reader_registers_external_bridge_authorities(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Contradiction #24: the reader's verification allocator was composed
+    # without external bridge authorities, so the dispatcher's lineage read
+    # of any external attempt died on "no registered bridge authority".
+    config, _controller_manifest = _config(monkeypatch, tmp_path)
+    assert config.external_bridge_authorities == ()
+    assert compose_qualification_run_lineage_reader(
+        config
+    )._allocator._external_bridge_authorities == {}
+
+    external = _prepared(monkeypatch, external=True)
+    bridge = ExternalBridgeAuthority(
+        manifest=external.manifest,
+        bridge_authority_pin=external.bridge_pin,
+    )
+    payload = config.model_dump(mode="python")
+    payload["external_bridge_authorities"] = [bridge.model_dump(mode="python")]
+    config_with_bridge = type(config).model_validate(payload)
+
+    lineage_reader = compose_qualification_run_lineage_reader(config_with_bridge)
+
+    assert set(lineage_reader._allocator._external_bridge_authorities) == set(
+        bridge.served_resource_class_ids
+    )
+    assert (
+        lineage_reader._allocator._external_bridge_authorities[
+            bridge.served_resource_class_ids[0]
+        ].bridge_authority_pin.principal_id
+        == external.bridge_pin.principal_id
     )
 
 
