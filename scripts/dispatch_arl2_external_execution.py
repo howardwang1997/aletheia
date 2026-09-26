@@ -84,7 +84,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import mimetypes
 import os
 import stat
 import subprocess
@@ -764,13 +763,33 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
         ),
         key=lambda path: str(path.relative_to(workload_output)),
     )
-    tree = [
-        {
-            "path": str(path.relative_to(workload_output)),
-            "content_sha256": _sha256_bytes(_read_bytes(path)),
-        }
+    produced = {
+        str(path.relative_to(workload_output)): (_sha256_bytes(_read_bytes(path)), path.stat().st_size)
         for path in produced_files
+    }
+    tree = [
+        {"path": relative_path, "content_sha256": digest}
+        for relative_path, (digest, _size) in produced.items()
     ]
+    # The manifest must bind every produced file to its declared expectation:
+    # artifact key, role, media type, schema sha, and the derived
+    # expected-artifact id all come from the intent (the raw-run envelope's
+    # closure validator requires exact equality; the node custody path
+    # derives them the same way). The contract is filename == artifact key —
+    # the workload writes exactly the intent's declared artifact keys.
+    expectations = {item.artifact_key: item for item in intent.expected_artifacts}
+    undeclared = sorted(path for path in produced if path not in expectations)
+    if undeclared:
+        _fail(
+            "workload output contains files outside the intent's declared"
+            f" artifact keys {sorted(expectations)}: {undeclared}"
+        )
+    for artifact_key, requirement in expectations.items():
+        if artifact_key in produced and produced[artifact_key][1] > requirement.max_bytes:
+            _fail(
+                f"produced artifact {artifact_key} exceeds its declared"
+                f" {requirement.max_bytes}-byte quota"
+            )
     artifact_manifest = ladder.load_or_build(
         "artifact-manifest",
         ArtifactManifest,
@@ -781,17 +800,19 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
             infrastructure_attempt_id=snapshot.attempt_id,
             entries=tuple(
                 ArtifactManifestEntry(
-                    expected_artifact_id=f"art_{item['content_sha256'][:32]}",
-                    artifact_key=item["path"],
-                    role="raw_output",
-                    content_sha256=item["content_sha256"],
-                    bytes=produced_files[index].stat().st_size,
-                    media_type=mimetypes.guess_type(item["path"])[0]
-                    or "application/octet-stream",
-                    schema_sha256=None,
+                    expected_artifact_id=requirement.expected_artifact_id,
+                    artifact_key=requirement.artifact_key,
+                    role=requirement.role,
+                    content_sha256=produced[requirement.artifact_key][0],
+                    bytes=produced[requirement.artifact_key][1],
+                    media_type=requirement.media_type,
+                    schema_sha256=requirement.schema_sha256,
                     quarantine_ref="quarantine:none",
                 )
-                for index, item in enumerate(tree)
+                for requirement in sorted(
+                    intent.expected_artifacts, key=lambda item: item.artifact_key
+                )
+                if requirement.artifact_key in produced
             ),
             produced_at=ended_at,
         ),
@@ -823,7 +844,11 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
     disposition = recompute_external_disposition(
         exit_code=exit_code,
         deadline_exceeded=False,
-        required_artifacts_present=bool(artifact_manifest.entries),
+        required_artifacts_present=all(
+            requirement.artifact_key in produced
+            for requirement in intent.expected_artifacts
+            if requirement.required
+        ),
     )
     submission = ladder.load_or_build(
         "terminal-submission",
