@@ -24,7 +24,7 @@ from aletheia.execution.cuprate.exact_content import (
 )
 from aletheia.observations.scientific_bridge import (
     BridgeValidationDisposition,
-    RawRunEnvelope,
+    parse_raw_run_envelope,
 )
 from aletheia.research_controller.external_rpc import CuprateDiagnosticResult
 from aletheia.research_kernel.schemas import canonical_json_bytes
@@ -48,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     with open(args.raw_run, "rb") as handle:
-        raw_run = RawRunEnvelope.model_validate_json(handle.read())
+        raw_run = parse_raw_run_envelope(json.loads(handle.read()))
     with open(args.result, "rb") as handle:
         result = CuprateDiagnosticResult.model_validate_json(handle.read())
 
