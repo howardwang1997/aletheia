@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Callable, Literal, Protocol
+from typing import Annotated, Callable, Literal, Protocol
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
@@ -35,6 +35,11 @@ from aletheia.execution.runtime_contracts import (
     WorkerNodeEnrollment,
     WorkerNodeManifest,
     artifact_output_tree_sha256,
+)
+from aletheia.execution.external_bridge_contracts import (
+    AcceptedExternalQualificationTerminalSubmission,
+    AcceptedExternalRuntimeTermination,
+    ExternalQualificationTerminalSubmission,
 )
 from aletheia.execution.runtime_v2_contracts import (
     AcceptedQualificationTerminalSubmission,
@@ -885,6 +890,156 @@ class RawRunEnvelope(ScientificBridgeModel):
         return canonical_sha256(self)
 
 
+class ExternalRawRunEnvelope(ScientificBridgeModel):
+    """Exact external (nodeless) terminal material eligible for independent validation.
+
+    The nodeless twin of ``RawRunEnvelope``: the bridge-signed contracts replace the
+    node contracts, the closure validator binds the same attempt/manifest/receipt
+    triangle plus the bridge enrollment key, and full historical launch lineage and
+    CAS byte custody remain the responsibility of ``RawRunCustodyVerificationPort``.
+    """
+
+    schema_name: Literal["aletheia.external_raw_run_envelope"] = (
+        "aletheia.external_raw_run_envelope"
+    )
+    schema_version: Literal[1] = SCIENTIFIC_BRIDGE_SCHEMA_VERSION
+    scientific_authorization: ScientificExecutionAuthorization
+    qualification_admission_sha256: str = Field(pattern=_SHA256_PATTERN)
+    accepted_runtime_termination: AcceptedExternalRuntimeTermination
+    terminal_submission: ExternalQualificationTerminalSubmission
+    accepted_terminal_submission: AcceptedExternalQualificationTerminalSubmission
+    artifact_manifest: ArtifactManifest
+    artifact_verified_receipts: tuple[ArtifactVerifiedReceipt, ...]
+    assembled_at: AwareDatetime
+    source_qualification_only: Literal[True] = True
+    source_scientific_admission_allowed: Literal[False] = False
+    executor_reported_scientific_outcome_trusted: Literal[False] = False
+
+    @model_validator(mode="after")
+    def _external_raw_run_is_closed(self) -> "ExternalRawRunEnvelope":
+        authorization = self.scientific_authorization.message
+        intent = authorization.qualification_bundle.intent
+        accepted = self.accepted_runtime_termination
+        submission = self.terminal_submission
+        terminal = self.accepted_terminal_submission
+        manifest = self.artifact_manifest
+        receipt_hashes = _artifact_receipt_hashes(
+            manifest=manifest,
+            receipts=self.artifact_verified_receipts,
+        )
+        expected_disposition = _external_terminal_disposition(
+            intent=intent,
+            accepted=accepted,
+            manifest=manifest,
+        )
+        _validate_artifact_manifest_against_intent(
+            intent=intent,
+            manifest=manifest,
+            success=expected_disposition == "process_succeeded",
+        )
+        if (
+            accepted.attempt_id != intent.infrastructure_attempt.infrastructure_attempt_id
+            or manifest.intent_sha256 != intent.intent_sha256
+            or manifest.execution_id != intent.execution_id
+            or manifest.replicate_slot_id != intent.replicate_slot.replicate_slot_id
+            or manifest.infrastructure_attempt_id != accepted.attempt_id
+            or manifest.produced_at != accepted.runtime_ended_at
+        ):
+            raise ValueError("external raw run escaped its exact scientific execution attempt")
+        if (
+            submission.intent_sha256 != intent.intent_sha256
+            or submission.execution_id != intent.execution_id
+            or submission.attempt_id != accepted.attempt_id
+            or submission.fencing_epoch != accepted.fencing_epoch
+            or submission.lease_token_sha256 != accepted.lease_token_sha256
+            or submission.accepted_external_runtime_termination_sha256
+            != accepted.accepted_termination_sha256
+            or submission.artifact_manifest_sha256 != manifest.manifest_sha256
+            or submission.output_tree_sha256 != artifact_output_tree_sha256(manifest)
+            or submission.artifact_verified_receipt_sha256s != receipt_hashes
+        ):
+            raise ValueError("external terminal submission does not bind the exact raw run")
+        if (
+            terminal.attempt_id != accepted.attempt_id
+            or terminal.bridge_manifest_sha256 != submission.bridge_manifest_sha256
+            or terminal.terminal_submission_sha256 != submission.terminal_submission_sha256
+            or terminal.accepted_external_runtime_termination_sha256
+            != accepted.accepted_termination_sha256
+            or terminal.artifact_manifest_sha256 != manifest.manifest_sha256
+            or terminal.output_tree_sha256 != submission.output_tree_sha256
+            or terminal.artifact_verified_receipt_sha256s != receipt_hashes
+            or terminal.bridge_submitted_at != submission.submitted_at
+            or terminal.artifact_submission_deadline != accepted.artifact_submission_deadline
+        ):
+            raise ValueError(
+                "runtime-control acceptance does not bind the exact external terminal submission"
+            )
+        if (
+            submission.disposition != expected_disposition
+            or terminal.disposition != expected_disposition
+        ):
+            raise ValueError("external terminal disposition is not mechanically derived")
+        if (
+            accepted.runtime_control_policy_sha256 != terminal.runtime_control_policy_sha256
+            or accepted.accepted_by_principal_id != terminal.accepted_by_principal_id
+            or accepted.acceptance_key_id != terminal.acceptance_key_id
+        ):
+            raise ValueError("runtime-control external terminal acceptances changed authority")
+        runtime_authority = (
+            terminal.accepted_by_principal_id,
+            terminal.acceptance_key_id,
+            terminal.runtime_control_policy_sha256,
+        )
+        validator_authority = (
+            authorization.validator_principal_id,
+            authorization.validator_key_id,
+            authorization.validator_authority_policy_sha256,
+        )
+        admission_authority = (
+            authorization.admission_principal_id,
+            authorization.admission_key_id,
+            authorization.admission_authority_policy_sha256,
+        )
+        if any(
+            runtime_value in {validator_value, admission_value}
+            for runtime_value, validator_value, admission_value in zip(
+                runtime_authority,
+                validator_authority,
+                admission_authority,
+                strict=True,
+            )
+        ):
+            raise ValueError("validator/admitter authority reuses runtime-control authority")
+        if submission.signing_key_id in {
+            authorization.validator_key_id,
+            authorization.admission_key_id,
+        }:
+            raise ValueError("validator/admitter authority reuses the bridge submission key")
+        observed_entries = tuple(
+            item
+            for item in manifest.entries
+            if item.artifact_key == authorization.observation_artifact_key
+        )
+        if expected_disposition == "process_succeeded" and (
+            len(observed_entries) != 1 or observed_entries[0].role is not ArtifactRole.RAW_OUTPUT
+        ):
+            raise ValueError("successful external raw run lacks its authorized observation artifact")
+        if not (
+            authorization.authorized_at <= accepted.runtime_ended_at
+            and accepted.accepted_at <= submission.submitted_at
+            and submission.submitted_at <= terminal.accepted_at <= self.assembled_at
+            and self.assembled_at < authorization.observation_admission_deadline
+        ):
+            raise ValueError(
+                "scientific authorization and external raw-run custody times are out of order"
+            )
+        return self
+
+    @property
+    def raw_run_sha256(self) -> str:
+        return canonical_sha256(self)
+
+
 class VerifiedRawRunCustodyProjection(ScientificBridgeModel):
     """Closed output of the mandatory full historical raw-run custody adapter."""
 
@@ -994,6 +1149,92 @@ class VerifiedRawRunCustodyProjection(ScientificBridgeModel):
         return canonical_sha256(self)
 
 
+class VerifiedExternalRawRunCustodyProjection(ScientificBridgeModel):
+    """Closed output of the mandatory full historical external raw-run custody adapter."""
+
+    schema_name: Literal["aletheia.verified_external_raw_run_custody_projection"] = (
+        "aletheia.verified_external_raw_run_custody_projection"
+    )
+    schema_version: Literal[1] = SCIENTIFIC_BRIDGE_SCHEMA_VERSION
+    raw_run_sha256: str = Field(pattern=_SHA256_PATTERN)
+    scientific_execution_authorization_sha256: str = Field(pattern=_SHA256_PATTERN)
+    scientific_slot_id: str = Field(pattern=r"^sos_[0-9a-f]{32}$")
+    qualification_admission_sha256: str = Field(pattern=_SHA256_PATTERN)
+    sea_registration_sha256: str = Field(pattern=_SHA256_PATTERN)
+    sea_registered_at: AwareDatetime
+    qualification_admitted_at: AwareDatetime
+    resource_reservation_sha256: str = Field(pattern=_SHA256_PATTERN)
+    resource_reserved_at: AwareDatetime
+    runtime_launch_sha256: str = Field(pattern=_SHA256_PATTERN)
+    runtime_launched_at: AwareDatetime
+    terminal_submission_sha256: str = Field(pattern=_SHA256_PATTERN)
+    terminal_acceptance_sha256: str = Field(pattern=_SHA256_PATTERN)
+    terminal_accepted_at: AwareDatetime
+    cost_quote_sha256: str = Field(pattern=_SHA256_PATTERN)
+    bridge_manifest_sha256: str = Field(pattern=_SHA256_PATTERN)
+    bridge_manifest: WorkerNodeManifest
+    allocator_authority: VerifiedExecutionAuthorityProjection
+    qualification_authority: VerifiedExecutionAuthorityProjection
+    bridge_authority: VerifiedExecutionAuthorityProjection
+    runtime_control_authority: VerifiedExecutionAuthorityProjection
+    terminal_submission_authority: VerifiedExecutionAuthorityProjection
+    terminal_acceptance_authority: VerifiedExecutionAuthorityProjection
+    artifact_manifest_sha256: str = Field(pattern=_SHA256_PATTERN)
+    output_tree_sha256: str = Field(pattern=_SHA256_PATTERN)
+    artifact_verified_receipt_sha256s: tuple[str, ...]
+    fresh_artifacts: tuple[VerifiedArtifactCustodyProjection, ...]
+    verified_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def _external_projection_is_closed(self) -> "VerifiedExternalRawRunCustodyProjection":
+        manifest = self.bridge_manifest
+        if manifest.manifest_sha256 != self.bridge_manifest_sha256:
+            raise ValueError("bridge manifest does not match its pinned hash")
+        if (
+            self.terminal_submission_authority.principal_id != self.bridge_authority.principal_id
+            or self.terminal_submission_authority.key_id != self.bridge_authority.key_id
+            or self.terminal_submission_authority.policy_sha256
+            != self.bridge_authority.policy_sha256
+            or self.runtime_control_authority.principal_id
+            != self.terminal_acceptance_authority.principal_id
+            or self.runtime_control_authority.key_id
+            != self.terminal_acceptance_authority.key_id
+            or self.runtime_control_authority.policy_sha256
+            != self.terminal_acceptance_authority.policy_sha256
+        ):
+            raise ValueError(
+                "external custody authority projection differs from its bridge/runtime-control roots"
+            )
+        if not (
+            self.sea_registered_at
+            <= self.qualification_admitted_at
+            <= self.resource_reserved_at
+            <= self.runtime_launched_at
+            < self.terminal_accepted_at
+            <= self.verified_at
+        ):
+            raise ValueError("external raw-run custody lineage is not historically ordered")
+        artifact_keys = tuple(item.artifact_key for item in self.fresh_artifacts)
+        if artifact_keys != tuple(sorted(set(artifact_keys))):
+            raise ValueError("fresh artifact custody projections must be unique and canonical")
+        hashes = self.artifact_verified_receipt_sha256s
+        if hashes != tuple(sorted(set(hashes))) or {
+            item.artifact_verified_receipt_sha256 for item in self.fresh_artifacts
+        } != set(hashes):
+            raise ValueError("fresh artifact custody does not cover exact receipt hashes")
+        return self
+
+    @property
+    def projection_sha256(self) -> str:
+        return canonical_sha256(self)
+
+
+AnyRawRunCustodyProjection = (
+    VerifiedRawRunCustodyProjection | VerifiedExternalRawRunCustodyProjection
+)
+"""Either custody projection kind, keyed to the envelope kind it proves."""
+
+
 class ValidationIssuanceChallengeMessage(ScientificBridgeModel):
     schema_name: Literal["aletheia.validation_issuance_challenge_message"] = (
         "aletheia.validation_issuance_challenge_message"
@@ -1094,7 +1335,7 @@ class ObservationValidationReceiptMessage(ScientificBridgeModel):
     )
     schema_version: Literal[1] = SCIENTIFIC_BRIDGE_SCHEMA_VERSION
     scientific_slot_id: str = Field(pattern=r"^sos_[0-9a-f]{32}$")
-    raw_run: RawRunEnvelope
+    raw_run: RawRunEnvelope | ExternalRawRunEnvelope
     issuance_challenge: ValidationIssuanceChallenge
     validation_campaign_projection: VerifiedObservationValidationCampaignProjection | None = None
     disposition: BridgeValidationDisposition
@@ -1492,11 +1733,41 @@ class ScientificBridgeVerificationError(ValueError):
     """A bridge contract, external authority pin, or signature failed closed."""
 
 
-def validate_raw_run_structure(raw_run: RawRunEnvelope) -> RawRunEnvelope:
+AnyRawRunEnvelope = Annotated[
+    RawRunEnvelope | ExternalRawRunEnvelope,
+    Field(discriminator="schema_name"),
+]
+"""Either envelope kind; nodes emit ``RawRunEnvelope``, nodeless bridges the external twin."""
+
+
+def parse_raw_run_envelope(payload: object) -> RawRunEnvelope | ExternalRawRunEnvelope:
+    """Validate one envelope payload of either kind, discriminated by its schema name."""
+
+    if isinstance(payload, dict):
+        schema_name = payload.get("schema_name")
+    else:
+        schema_name = getattr(payload, "schema_name", None)
+    if schema_name == ExternalRawRunEnvelope.model_fields["schema_name"].default:
+        model: type[BaseModel] = ExternalRawRunEnvelope
+    else:
+        model = RawRunEnvelope
+    try:
+        return model.model_validate(payload)  # type: ignore[return-value,arg-type]
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ScientificBridgeVerificationError("raw run failed structural validation") from exc
+
+
+def validate_raw_run_structure(
+    raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
+) -> RawRunEnvelope | ExternalRawRunEnvelope:
     """Revalidate raw-run DTO structure only; this does not verify PR-4/CAS custody."""
 
     try:
-        return RawRunEnvelope.model_validate(raw_run.model_dump(mode="python"))
+        if isinstance(raw_run, ExternalRawRunEnvelope):
+            return ExternalRawRunEnvelope.model_validate(raw_run.model_dump(mode="python"))
+        if isinstance(raw_run, RawRunEnvelope):
+            return RawRunEnvelope.model_validate(raw_run.model_dump(mode="python"))
+        return parse_raw_run_envelope(raw_run)
     except (AttributeError, TypeError, ValueError) as exc:
         raise ScientificBridgeVerificationError("raw run failed structural validation") from exc
 
@@ -1602,7 +1873,7 @@ def _verify_action_and_qualification_custody(
 
 def _verify_raw_run_custody(
     *,
-    raw_run: RawRunEnvelope,
+    raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
     action_authority: ResearchActionAuthorityVerificationPort,
     qualification_custody: EngineeringQualificationCustodyVerificationPort,
     raw_run_custody: RawRunCustodyVerificationPort,
@@ -1631,17 +1902,24 @@ def _verify_raw_run_custody(
         raw_run=raw_run,
         observed_at=observed_at,
     )
-    _validate_verified_raw_run_custody_projection(
-        candidate=candidate_projection,
-        raw_run=raw_run,
-        observed_at=observed_at,
-    )
+    if isinstance(candidate_projection, VerifiedExternalRawRunCustodyProjection):
+        _validate_verified_external_raw_run_custody_projection(
+            candidate=candidate_projection,
+            raw_run=raw_run,
+            observed_at=observed_at,
+        )
+    else:
+        _validate_verified_raw_run_custody_projection(
+            candidate=candidate_projection,
+            raw_run=raw_run,
+            observed_at=observed_at,
+        )
 
 
 def _validate_verified_raw_run_custody_projection(
     *,
     candidate: VerifiedRawRunCustodyProjection,
-    raw_run: RawRunEnvelope,
+    raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
     observed_at: datetime,
 ) -> VerifiedRawRunCustodyProjection:
     try:
@@ -1758,9 +2036,128 @@ def _validate_verified_raw_run_custody_projection(
     return projection
 
 
+def _validate_verified_external_raw_run_custody_projection(
+    *,
+    candidate: VerifiedExternalRawRunCustodyProjection,
+    raw_run: ExternalRawRunEnvelope,
+    observed_at: datetime,
+) -> VerifiedExternalRawRunCustodyProjection:
+    try:
+        projection = VerifiedExternalRawRunCustodyProjection.model_validate(
+            candidate.model_dump(mode="python")
+        )
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ScientificBridgeVerificationError(
+            "external raw-run custody returned an invalid typed projection"
+        ) from exc
+
+    authorization = raw_run.scientific_authorization
+    authorization_message = authorization.message
+    bundle = authorization_message.qualification_bundle
+    grant_message = authorization_message.qualification_grant.message
+    accepted = raw_run.accepted_runtime_termination
+    submission = raw_run.terminal_submission
+    terminal = raw_run.accepted_terminal_submission
+    manifest = raw_run.artifact_manifest
+    receipt_hashes = _artifact_receipt_hashes(
+        manifest=manifest,
+        receipts=raw_run.artifact_verified_receipts,
+    )
+    expected: dict[str, object] = {
+        "raw_run_sha256": raw_run.raw_run_sha256,
+        "scientific_execution_authorization_sha256": authorization.authorization_sha256,
+        "scientific_slot_id": authorization_message.scientific_slot_id,
+        "qualification_admission_sha256": raw_run.qualification_admission_sha256,
+        "terminal_submission_sha256": submission.terminal_submission_sha256,
+        "terminal_acceptance_sha256": terminal.terminal_authority_sha256,
+        "terminal_accepted_at": terminal.accepted_at,
+        "cost_quote_sha256": bundle.cost_quote.quote_sha256,
+        "artifact_manifest_sha256": manifest.manifest_sha256,
+        "output_tree_sha256": submission.output_tree_sha256,
+        "artifact_verified_receipt_sha256s": receipt_hashes,
+        "verified_at": observed_at,
+    }
+    if any(getattr(projection, key) != value for key, value in expected.items()):
+        raise ScientificBridgeVerificationError(
+            "external raw-run custody returned a rebound lineage projection"
+        )
+    bridge_manifest = projection.bridge_manifest
+    if (
+        bridge_manifest.manifest_sha256 != submission.bridge_manifest_sha256
+        or projection.bridge_manifest_sha256 != submission.bridge_manifest_sha256
+        or projection.sea_registered_at < authorization_message.authorized_at
+        or projection.sea_registered_at >= authorization_message.expires_at
+        or projection.qualification_admitted_at < grant_message.authorized_at
+        or projection.qualification_admitted_at >= grant_message.expires_at
+        or projection.resource_reserved_at >= bundle.cost_quote.expires_at
+        or projection.runtime_launched_at > accepted.runtime_ended_at
+    ):
+        raise ScientificBridgeVerificationError(
+            "external raw-run custody escaped SEA registration, placement, or live admission"
+        )
+    expected_authorities = (
+        (
+            projection.allocator_authority,
+            bundle.cost_quote.quoted_by_principal_id,
+            bundle.cost_quote.pricing_policy_sha256,
+        ),
+        (
+            projection.qualification_authority,
+            grant_message.authorized_by_principal_id,
+            grant_message.qualification_authority_policy_sha256,
+        ),
+        (
+            projection.runtime_control_authority,
+            accepted.accepted_by_principal_id,
+            accepted.runtime_control_policy_sha256,
+        ),
+        (
+            projection.terminal_acceptance_authority,
+            terminal.accepted_by_principal_id,
+            terminal.runtime_control_policy_sha256,
+        ),
+    )
+    if any(
+        authority.principal_id != principal_id or authority.policy_sha256 != policy_sha256
+        for authority, principal_id, policy_sha256 in expected_authorities
+    ):
+        raise ScientificBridgeVerificationError(
+            "external raw-run custody authority projection differs from signed lineage"
+        )
+    if (
+        projection.qualification_authority.key_id != grant_message.authorization_key_id
+        or projection.runtime_control_authority.key_id != accepted.acceptance_key_id
+        or projection.terminal_acceptance_authority.key_id != terminal.acceptance_key_id
+        or projection.terminal_submission_authority.key_id != submission.signing_key_id
+    ):
+        raise ScientificBridgeVerificationError(
+            "external raw-run custody key projection differs from signed lineage"
+        )
+    receipt_by_key = {
+        receipt.artifact.artifact_key: receipt for receipt in raw_run.artifact_verified_receipts
+    }
+    if tuple(item.artifact_key for item in projection.fresh_artifacts) != tuple(
+        sorted(receipt_by_key)
+    ):
+        raise ScientificBridgeVerificationError(
+            "external raw-run custody does not cover the exact artifact set"
+        )
+    for artifact in projection.fresh_artifacts:
+        receipt = receipt_by_key[artifact.artifact_key]
+        if (
+            artifact.content_sha256 != receipt.artifact.content_sha256
+            or artifact.artifact_verified_receipt_sha256 != receipt.verified_receipt_sha256
+            or artifact.authority.principal_id != receipt.verifier_principal_id
+        ):
+            raise ScientificBridgeVerificationError(
+                "external raw-run custody returned rebound artifact bytes or authority"
+            )
+    return projection
+
+
 def _verify_raw_run_for_observation_validation(
     *,
-    raw_run: RawRunEnvelope,
+    raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
     qualification_authority: QualificationAuthorityVerifier,
     action_authority: ResearchActionAuthorityVerificationPort,
     qualification_custody: EngineeringQualificationCustodyVerificationPort,
@@ -1800,7 +2197,7 @@ def _verify_raw_run_for_observation_validation(
 
 def verify_raw_run_for_independent_validation(
     *,
-    raw_run: RawRunEnvelope,
+    raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
     qualification_authority: QualificationAuthorityVerifier,
     action_authority: ResearchActionAuthorityVerificationPort,
     qualification_custody: EngineeringQualificationCustodyVerificationPort,
@@ -1834,7 +2231,7 @@ def verify_raw_run_for_independent_validation(
 def _resolve_validation_campaign_projection(
     *,
     campaign_sha256: str,
-    raw_run: RawRunEnvelope,
+    raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
     validation_campaign_custody: ObservationValidationCampaignVerificationPort,
     observed_at: datetime,
 ) -> VerifiedObservationValidationCampaignProjection:
@@ -2094,7 +2491,7 @@ def verify_scientific_execution_authorization_historical(
 
 def issue_validation_issuance_challenge(
     *,
-    raw_run: RawRunEnvelope,
+    raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
     validation_campaign_sha256: str | None,
     nonce_sha256: str,
     database_authority_pin: ObservationDatabaseAuthorityPin,
@@ -2167,7 +2564,7 @@ def issue_validation_issuance_challenge(
 def verify_validation_issuance_challenge(
     *,
     challenge: ValidationIssuanceChallenge,
-    raw_run: RawRunEnvelope,
+    raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
     expected_validation_campaign_sha256: str | None,
     database_authority_pin: ObservationDatabaseAuthorityPin,
     observed_at: datetime,
@@ -2187,7 +2584,7 @@ def verify_validation_issuance_challenge(
 def _verify_validation_issuance_challenge(
     *,
     challenge: ValidationIssuanceChallenge,
-    raw_run: RawRunEnvelope,
+    raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
     expected_validation_campaign_sha256: str | None,
     database_authority_pin: ObservationDatabaseAuthorityPin,
     observed_at: datetime,
@@ -2259,7 +2656,7 @@ def _verify_validation_issuance_challenge(
 
 def issue_observation_validation_receipt(
     *,
-    raw_run: RawRunEnvelope,
+    raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
     validation_campaign_sha256: str | None,
     issuance_challenge: ValidationIssuanceChallenge,
     qualification_authority: QualificationAuthorityVerifier,
@@ -3237,7 +3634,7 @@ def _require_database_authority_separation(
     *,
     database: ObservationDatabaseAuthorityPin,
     authorization: ScientificExecutionAuthorizationMessage,
-    raw_run: RawRunEnvelope | None = None,
+    raw_run: RawRunEnvelope | ExternalRawRunEnvelope | None = None,
 ) -> None:
     database = ObservationDatabaseAuthorityPin.model_validate(database.model_dump(mode="python"))
     grant = authorization.qualification_grant.message
@@ -3410,6 +3807,25 @@ def _terminal_disposition(
     return "process_succeeded"
 
 
+def _external_terminal_disposition(
+    *,
+    intent: ExecutionIntent,
+    accepted: AcceptedExternalRuntimeTermination,
+    manifest: ArtifactManifest,
+) -> Literal["process_succeeded", "process_failed", "invalid_output", "timeout"]:
+    actual_keys = {item.artifact_key for item in manifest.entries}
+    missing_required = any(
+        item.required and item.artifact_key not in actual_keys for item in intent.expected_artifacts
+    )
+    if accepted.exit_code != 0:
+        return "process_failed"
+    if accepted.runtime_ended_at > min(intent.deadline, accepted.hard_deadline):
+        return "timeout"
+    if missing_required:
+        return "invalid_output"
+    return "process_succeeded"
+
+
 def _mapped_outcome(
     policy: ObservationAdmissionPolicy,
     outcome_bin_id: str,
@@ -3494,9 +3910,9 @@ class RawRunCustodyVerificationPort(Protocol):
     def verify_raw_run_custody(
         self,
         *,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
         observed_at: datetime,
-    ) -> VerifiedRawRunCustodyProjection: ...
+    ) -> VerifiedRawRunCustodyProjection | VerifiedExternalRawRunCustodyProjection: ...
 
 
 class ObservationValidationCampaignVerificationPort(Protocol):
@@ -3506,7 +3922,7 @@ class ObservationValidationCampaignVerificationPort(Protocol):
         self,
         *,
         campaign_sha256: str,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
         expected_validator_manifest_sha256: str,
         expected_observation_validation_policy_sha256: str,
         observed_at: datetime,
@@ -3530,6 +3946,8 @@ class ObservationAdmissionCommitPort(Protocol):
 
 __all__ = [
     "AdmissionIssuanceChallenge",
+    "AnyRawRunCustodyProjection",
+    "AnyRawRunEnvelope",
     "AdmissionIssuanceChallengeMessage",
     "BridgeValidationDisposition",
     "CommittedObservationAdmission",
@@ -3537,6 +3955,7 @@ __all__ = [
     "CommittedObservationValidationReceipt",
     "CommittedObservationValidationReceiptMessage",
     "EngineeringQualificationCustodyVerificationPort",
+    "ExternalRawRunEnvelope",
     "ObservationAdmissionCommitPort",
     "ObservationAdmissionDecision",
     "ObservationAdmissionDecisionMessage",
@@ -3544,6 +3963,7 @@ __all__ = [
     "ObservationAdmissionPolicy",
     "ObservationDatabaseAuthorityPin",
     "ObservationValidationCampaignVerificationPort",
+    "parse_raw_run_envelope",
     "ObservationValidationReceipt",
     "ObservationValidationReceiptMessage",
     "RawRunCustodyVerificationPort",
@@ -3564,6 +3984,7 @@ __all__ = [
     "VerifiedArtifactCustodyProjection",
     "VerifiedExecutionAuthorityProjection",
     "VerifiedObservationValidationCampaignProjection",
+    "VerifiedExternalRawRunCustodyProjection",
     "VerifiedRawRunCustodyProjection",
     "commit_observation_admission",
     "commit_observation_validation_receipt",

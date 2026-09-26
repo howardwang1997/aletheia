@@ -19,6 +19,8 @@ from aletheia.observations.scientific_bridge import (
     ObservationAdmissionDisposition,
     ObservationValidationReceipt,
     RawRunEnvelope,
+    ExternalRawRunEnvelope,
+    parse_raw_run_envelope,
     ValidationIssuanceChallenge,
 )
 from aletheia.observations.service import (
@@ -57,7 +59,7 @@ class RawRunEnvelopeSourcePort(Protocol):
         quest_id: str,
         action_sha256: str,
         scientific_slot_id: str,
-    ) -> RawRunEnvelope: ...
+    ) -> RawRunEnvelope | ExternalRawRunEnvelope: ...
 
 
 class CommittedValidationSourcePort(Protocol):
@@ -80,7 +82,7 @@ class DatabaseObservationBridgePort(Protocol):
     def issue_validation_challenge(
         self,
         *,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
         validation_campaign_sha256: str | None,
     ) -> ValidationChallengeRegistrationReceipt: ...
 
@@ -103,13 +105,13 @@ class IndependentObservationValidatorPort(Protocol):
     def prepare_validation_campaign(
         self,
         *,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
     ) -> str | None: ...
 
     def issue_validation_receipt(
         self,
         *,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
         validation_campaign_sha256: str | None,
         issuance_challenge: ValidationIssuanceChallenge,
     ) -> ObservationValidationReceipt: ...
@@ -212,7 +214,7 @@ def _validated_step_inputs(
 
 
 def _raw_run_matches_projection(
-    raw_run: RawRunEnvelope,
+    raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
     projection: ControllerRecoveryProjection,
 ) -> None:
     message = raw_run.scientific_authorization.message
@@ -286,7 +288,7 @@ class IndependentObservationValidationStepAdapter:
             )
             if projection.validation_committed:
                 raise ControllerStepExecutionError("validation is already durably committed")
-            raw_run = RawRunEnvelope.model_validate(
+            raw_run = parse_raw_run_envelope(
                 self._raw_runs.load_raw_run(
                     quest_id=projection.quest_id,
                     action_sha256=projection.action_sha256,

@@ -36,6 +36,8 @@ from aletheia.observations.scientific_bridge import (
     ObservationAdmissionDecision,
     ObservationValidationReceipt,
     RawRunEnvelope,
+    ExternalRawRunEnvelope,
+    AnyRawRunEnvelope,
     ScientificExecutionAuthorization,
     ValidationIssuanceChallenge,
 )
@@ -551,7 +553,9 @@ class RPCRawRunEnvelopeSource:
         self._client = client
         self.authority_binding = _binding(binding, pin=client.pin)
 
-    def load_raw_run(self, *, quest_id, action_sha256, scientific_slot_id) -> RawRunEnvelope:
+    def load_raw_run(
+        self, *, quest_id, action_sha256, scientific_slot_id
+    ) -> RawRunEnvelope | ExternalRawRunEnvelope:
         result = self._client.call(
             ControllerWorkerRPCOperation.LOAD_RAW_RUN,
             payload={
@@ -579,7 +583,7 @@ class RawRunLoadResult(ControllerModel):
     schema_name: Literal["aletheia.raw_run_load_result"] = "aletheia.raw_run_load_result"
     schema_version: Literal[1] = 1
     disposition: Literal["ready", "pending"]
-    raw_run: RawRunEnvelope | None = None
+    raw_run: AnyRawRunEnvelope | None = None
     pending_code: Literal["raw_run:terminal_material_pending"] | None = None
     retry_after_milliseconds: int | None = Field(default=None, ge=50, le=5_000)
 
@@ -688,7 +692,9 @@ class RPCIndependentObservationValidator:
         self._client = client
         self.authority_binding = _binding(binding, pin=client.pin)
 
-    def prepare_validation_campaign(self, *, raw_run: RawRunEnvelope) -> str | None:
+    def prepare_validation_campaign(
+        self, *, raw_run: RawRunEnvelope | ExternalRawRunEnvelope
+    ) -> str | None:
         result = self._client.call(
             ControllerWorkerRPCOperation.PREPARE_VALIDATION_CAMPAIGN,
             payload={"raw_run": _json(raw_run)},
@@ -699,7 +705,7 @@ class RPCIndependentObservationValidator:
     def issue_validation_receipt(
         self,
         *,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
         validation_campaign_sha256: str | None,
         issuance_challenge: ValidationIssuanceChallenge,
     ) -> ObservationValidationReceipt:
@@ -720,7 +726,10 @@ class RPCDatabaseObservationBridge:
         self.authority_binding = _binding(binding, pin=client.pin)
 
     def issue_validation_challenge(
-        self, *, raw_run: RawRunEnvelope, validation_campaign_sha256: str | None
+        self,
+        *,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
+        validation_campaign_sha256: str | None,
     ) -> ValidationChallengeRegistrationReceipt:
         return self._client.call(
             ControllerWorkerRPCOperation.ISSUE_VALIDATION_CHALLENGE,

@@ -21,6 +21,7 @@ from aletheia.observations.f9_v2_validation import (
 from aletheia.observations.scientific_bridge import (
     BridgeValidationDisposition,
     RawRunEnvelope,
+    ExternalRawRunEnvelope,
     ScientificBridgeModel,
     validate_raw_run_structure,
 )
@@ -111,7 +112,7 @@ class FrozenF9V2ExactContentAssessmentTemplate(ScientificBridgeModel):
     def from_raw_run(
         cls,
         *,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
         disposition: Literal[
             BridgeValidationDisposition.VALIDATED_CONFIRMATION,
             BridgeValidationDisposition.REJECTED_SCIENTIFIC,
@@ -202,7 +203,7 @@ class ExactContentF9V2ObservationAssessor:
         self,
         *,
         request: F9V2ValidationRequest,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
         assessed_at: datetime,
     ) -> F9V2IndependentValidationAssessment:
         request = F9V2ValidationRequest.model_validate(request.model_dump(mode="python"))
@@ -254,7 +255,9 @@ class ExactContentF9V2ObservationAssessor:
         )
 
 
-def _request_lookup_sha256(*, request: F9V2ValidationRequest, raw_run: RawRunEnvelope) -> str:
+def _request_lookup_sha256(
+    *, request: F9V2ValidationRequest, raw_run: RawRunEnvelope | ExternalRawRunEnvelope
+) -> str:
     authorization = raw_run.scientific_authorization.message
     artifact = authorization.scientific_observation_artifact_binding
     if raw_run.raw_run_sha256 != request.raw_run_sha256:

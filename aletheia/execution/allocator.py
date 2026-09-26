@@ -3276,12 +3276,14 @@ class PostgreSQLExecutionAllocator:
         execution_id: str,
         attempt_id: str,
         observed_at: datetime,
-    ) -> VerifiedQualificationRunLineage | None:
+    ) -> VerifiedQualificationRunLineage | VerifiedExternalQualificationRunLineage | None:
         """Reload and historically verify one complete runtime-v2 terminal lineage.
 
         This is the public read seam for scientific custody.  It intentionally returns only a
         frozen projection after all private PostgreSQL rows, persisted canonical JSON, deployment
-        pins, signatures, resource reservation, and terminal hashes have been checked.
+        pins, signatures, resource reservation, and terminal hashes have been checked.  Nodeless
+        attempts dispatch to the external twin; the attempt row's null node id is the kind
+        discriminator.
         """
 
         _canonical_identity_allowlist(
@@ -3292,6 +3294,14 @@ class PostgreSQLExecutionAllocator:
         )
         if observed_at.tzinfo is None or observed_at.utcoffset() != timedelta(0):
             raise ValueError("qualification run lineage observation time must be UTC")
+        with self._sessions() as session:
+            probe = session.get(_ExecutionAttemptRecord, attempt_id)
+        if probe is not None and probe.node_id is None:
+            return self.load_verified_external_qualification_run_lineage(
+                execution_id=execution_id,
+                attempt_id=attempt_id,
+                observed_at=observed_at,
+            )
         with self._sessions() as session:
             attempt = session.get(_ExecutionAttemptRecord, attempt_id)
             if attempt is None:
@@ -3745,14 +3755,23 @@ class PostgreSQLExecutionAllocator:
         execution_id: str,
         attempt_id: str,
         observed_at: datetime,
-    ) -> VerifiedQualificationRawRunMaterial | None:
+    ) -> VerifiedQualificationRawRunMaterial | VerifiedExternalQualificationRawRunMaterial | None:
         """Return exact public terminal contracts after replaying the complete run lineage.
 
         The lineage verifier owns the security decision.  This second append-only read exports the
         already verified typed contracts without exposing private ORM rows to the observation
-        boundary, and rechecks every exported identity against that lineage.
+        boundary, and rechecks every exported identity against that lineage.  Nodeless attempts
+        dispatch to the external twin; the attempt row's null node id is the kind discriminator.
         """
 
+        with self._sessions() as session:
+            attempt = session.get(_ExecutionAttemptRecord, attempt_id)
+        if attempt is not None and attempt.node_id is None:
+            return self.load_verified_external_qualification_raw_run_material(
+                execution_id=execution_id,
+                attempt_id=attempt_id,
+                observed_at=observed_at,
+            )
         lineage = self.load_verified_qualification_run_lineage(
             execution_id=execution_id,
             attempt_id=attempt_id,

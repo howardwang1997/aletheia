@@ -28,8 +28,11 @@ def local_service_capability_sources(
     """Derive the exact supported service contract from its actual models and source files."""
     import hashlib
 
+    from pydantic import TypeAdapter
+
     from aletheia.observations.f9_v2_validation import CommittedF9V2ValidationCampaign
-    from aletheia.observations.scientific_bridge import RawRunEnvelope
+    from aletheia.observations.scientific_bridge import AnyRawRunEnvelope
+    _raw_run_envelope_schemas = TypeAdapter(AnyRawRunEnvelope).json_schema()
     from aletheia.research_controller.external_rpc import (
         CuprateDiagnosticResult,
         RawRunLoadResult,
@@ -63,7 +66,7 @@ def local_service_capability_sources(
         sources = (*common, implementation, factory)
         schemas = {
             "input": ScientificSlotLookupRPCPayload.model_json_schema(),
-            "output": RawRunEnvelope.model_json_schema(),
+            "output": _raw_run_envelope_schemas,
             "wire_request": ScientificSlotLookupRPCPayload.model_json_schema(),
             "wire_response": RawRunLoadResult.model_json_schema(),
         }
@@ -96,7 +99,7 @@ def local_service_capability_sources(
         sources = (*common, implementation, factory, "observations/f9_v2_assessor.py")
         result_schema = ValidationCampaignResult.model_json_schema()
         schemas = {
-            "input": RawRunEnvelope.model_json_schema(),
+            "input": _raw_run_envelope_schemas,
             "output": result_schema["properties"]["validation_campaign_sha256"],
             "wire_request": RawRunRPCPayload.model_json_schema(),
             "wire_response": result_schema,

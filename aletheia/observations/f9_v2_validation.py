@@ -36,6 +36,7 @@ from aletheia.observations.scientific_bridge import (
     ObservationValidationReceipt,
     RawRunCustodyVerificationPort,
     RawRunEnvelope,
+    ExternalRawRunEnvelope,
     ResearchActionAuthorityVerificationPort,
     ScientificBridgeAuthorityPin,
     ScientificBridgeModel,
@@ -310,7 +311,7 @@ class F9V2ObservationAssessmentPort(Protocol):
         self,
         *,
         request: F9V2ValidationRequest,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
         assessed_at: datetime,
     ) -> F9V2IndependentValidationAssessment: ...
 
@@ -331,7 +332,7 @@ class F9V2BridgeVerificationContext:
 
 def build_f9_v2_validation_request(
     *,
-    raw_run: RawRunEnvelope,
+    raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
     requested_at: datetime,
 ) -> F9V2ValidationRequest:
     """Derive the exact graph/world-model/prediction scope from a successful raw run."""
@@ -467,7 +468,7 @@ def issue_f9_v2_validation_campaign(
 def verify_f9_v2_validation_campaign(
     *,
     campaign: SignedF9V2ValidationCampaign,
-    raw_run: RawRunEnvelope,
+    raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
     validator_manifest_sha256: str,
     validator_authority_pin: ScientificBridgeAuthorityPin,
     observed_at: datetime,
@@ -579,7 +580,7 @@ class WriteOnceF9V2ValidationCampaignArchive:
         self,
         *,
         campaign: SignedF9V2ValidationCampaign,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
         committed_at: datetime,
     ) -> CommittedF9V2ValidationCampaign:
         """Publish one campaign; a concurrent existing raw-run winner is returned exactly."""
@@ -616,7 +617,7 @@ class WriteOnceF9V2ValidationCampaignArchive:
     def load_committed_campaign(
         self,
         *,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
         observed_at: datetime,
     ) -> CommittedF9V2ValidationCampaign | None:
         """Fresh-read the write-once raw-run binding, if one has been published."""
@@ -656,7 +657,7 @@ class WriteOnceF9V2ValidationCampaignArchive:
         self,
         *,
         campaign_sha256: str,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
         expected_validator_manifest_sha256: str,
         expected_observation_validation_policy_sha256: str,
         observed_at: datetime,
@@ -1004,7 +1005,7 @@ class F9V2IndependentValidationService:
     def issue_validation_receipt(
         self,
         *,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
         validation_campaign_sha256: str | None,
         issuance_challenge: ValidationIssuanceChallenge,
     ) -> ObservationValidationReceipt:
