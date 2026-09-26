@@ -45,16 +45,21 @@ from test_allocator import (  # noqa: E402
 from test_allocator_external_v2 import _issuer  # noqa: E402
 import dispatch_arl2_external_execution as driver  # noqa: E402
 
-# The workload appends one line per invocation: after a resumed dispatch the
-# file must still hold exactly one line, proving the workload ran once.
-WORKLOAD_SCRIPT = """
-import json, os
-out = os.environ["ALETHEIA_WORKLOAD_OUTPUT"]
-with open(os.path.join(out, "invocations.txt"), "a") as handle:
-    handle.write(os.environ["ALETHEIA_ATTEMPT_ID"] + "\\n")
-with open(os.path.join(out, "diagnostic_report.json"), "w") as handle:
-    json.dump({"attempt": os.environ["ALETHEIA_ATTEMPT_ID"], "rows": 4}, handle, sort_keys=True)
-"""
+# The workload writes exactly the intent's declared artifact keys (the
+# dispatch custody contract is filename == artifact key) and embeds the
+# attempt id in each artifact: after a resumed dispatch the content must
+# still carry the FIRST attempt id, proving the workload ran once.
+def _workload_script(declared_keys: tuple[str, ...]) -> str:
+    return (
+        "import json, os\n"
+        "out = os.environ['ALETHEIA_WORKLOAD_OUTPUT']\n"
+        "attempt = os.environ['ALETHEIA_ATTEMPT_ID']\n"
+        + "".join(
+            f"with open(os.path.join(out, {key!r}), 'w') as handle:\n"
+            f"    json.dump({{'attempt': attempt, 'rows': 4}}, handle, sort_keys=True)\n"
+            for key in declared_keys
+        )
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -102,11 +107,16 @@ class _Harness:
             artifact_quota_bytes=MINIMUM_LOOP_OUTPUT_FILESYSTEM_BYTES,
         )
         self.prepared = prepared
+        self.declared = tuple(
+            sorted(
+                prepared.bundle.intent.expected_artifacts, key=lambda item: item.artifact_key
+            )
+        )
+        self.declared_keys = tuple(item.artifact_key for item in self.declared)
         self.working_root = tmp_path / "working"
         self.working_root.mkdir()
         workload_output = tmp_path / "workload-output"
         workload_output.mkdir()
-        (tmp_path / "invocations.txt").write_text("")
         self.workload_output = workload_output
 
         configs = self.working_root / "configs"
@@ -157,7 +167,7 @@ class _Harness:
             "database_url": os.environ["ALETHEIA_DATABASE_URL"],
             "bundle": str(self.working_root / "bundle.json"),
             "grant": str(self.working_root / "grant.json"),
-            "workload_command": [sys.executable, "-c", WORKLOAD_SCRIPT],
+            "workload_command": [sys.executable, "-c", _workload_script(self.declared_keys)],
             "workload_output": str(self.workload_output),
             "evidence": None,
             **overrides,
@@ -194,7 +204,7 @@ def test_dispatch_drives_the_ladder_and_prints_reader_evidence(
     assert first["status"] == "succeeded"
     assert first["disposition"] == "process_succeeded"
     assert first["outbox_authority_kind"] == "accepted_terminal_submission"
-    assert first["artifact_count"] == 2  # diagnostic_report.json + invocations.txt
+    assert first["artifact_count"] == len(harness.declared_keys)
     assert first["workload"]["exit_code"] == 0
     assert json.loads(evidence_path.read_text()) == first
 
@@ -215,7 +225,9 @@ def test_dispatch_drives_the_ladder_and_prints_reader_evidence(
         "terminal-submission",
     ):
         assert (records / f"{name}.json").exists(), name
-    assert (harness.workload_output / "invocations.txt").read_text().count("\n") == 1
+    assert json.loads(
+        (harness.workload_output / harness.declared_keys[0]).read_text()
+    ) == {"attempt": first["attempt_id"], "rows": 4}
 
     with session_factory()() as session:
         row = session.execute(
@@ -244,7 +256,69 @@ def test_re_run_replays_the_persisted_ladder_without_rerunning_the_workload(
         "outbox_id",
     ):
         assert second[field] == first[field], field
-    assert (harness.workload_output / "invocations.txt").read_text().count("\n") == 1
+    assert json.loads(
+        (harness.workload_output / harness.declared_keys[0]).read_text()
+    ) == {"attempt": first["attempt_id"], "rows": 4}
+
+
+def test_manifest_entries_bind_the_declared_expectations(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """The #26 pin: a dispatch-built manifest must close against the envelope.
+
+    The raw-run envelope's closure validator requires every manifest entry to
+    equal its declared expectation (key, derived expected-artifact id, role,
+    media type, schema sha); the dispatch custody writer used to invent its
+    own path-keyed entries, which no external run could ever assemble.
+    """
+
+    from aletheia.execution.schemas import ArtifactManifest
+    from aletheia.observations.scientific_bridge import (
+        _validate_artifact_manifest_against_intent,
+    )
+
+    harness = _Harness(monkeypatch, tmp_path)
+    first = _run(monkeypatch, harness, capsys)
+
+    manifest = ArtifactManifest.model_validate_json(
+        (Path(first["dispatch_records"]) / "artifact-manifest.json").read_bytes()
+    )
+    intent = harness.prepared.bundle.intent
+    assert tuple(entry.artifact_key for entry in manifest.entries) == tuple(
+        sorted(harness.declared_keys)
+    )
+    for entry in manifest.entries:
+        requirement = next(
+            item for item in intent.expected_artifacts if item.artifact_key == entry.artifact_key
+        )
+        assert entry.expected_artifact_id == requirement.expected_artifact_id
+        assert entry.role is requirement.role
+        assert entry.media_type == requirement.media_type
+        assert entry.schema_sha256 == requirement.schema_sha256
+    # the closure check the live envelope assembly performs (success form)
+    _validate_artifact_manifest_against_intent(
+        intent=intent, manifest=manifest, success=True
+    )
+
+
+def test_undeclared_workload_output_fails_loudly(monkeypatch, tmp_path) -> None:
+    """A file outside the declared artifact keys refuses the dispatch."""
+
+    harness = _Harness(monkeypatch, tmp_path)
+    argv = harness.argv(
+        workload_command=[
+            sys.executable,
+            "-c",
+            _workload_script(harness.declared_keys)
+            + (
+                "with open(os.path.join(out, 'rogue.txt'), 'w') as handle:\n"
+                "    handle.write('undeclared')\n"
+            ),
+        ]
+    )
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(SystemExit, match="outside the intent's declared artifact keys"):
+        driver.main()
 
 
 def test_custody_failures_close_exactly(monkeypatch, tmp_path) -> None:
