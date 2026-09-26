@@ -32,6 +32,7 @@ from aletheia.observations.adapters import ObservationAdapterVerificationError
 from aletheia.observations.scientific_bridge import (
     BridgeValidationDisposition,
     RawRunEnvelope,
+    ExternalRawRunEnvelope,
     ScientificBridgeModel,
     VerifiedObservationValidationCampaignProjection,
     validate_raw_run_structure,
@@ -123,7 +124,7 @@ class ContentAddressedF9ValidationCampaignArchiveAdapter:
         self,
         *,
         committed_campaign: CommittedObservationValidationCampaign,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
         bound_at: datetime,
     ) -> ArchivedF9ValidationCampaignBinding:
         """Fresh-read an F9 campaign and publish its immutable graph-scoped lookup."""
@@ -181,7 +182,7 @@ class ContentAddressedF9ValidationCampaignArchiveAdapter:
         self,
         *,
         campaign_sha256: str,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
         expected_validator_manifest_sha256: str,
         expected_observation_validation_policy_sha256: str,
         observed_at: datetime,
@@ -412,7 +413,7 @@ def _selected_prediction(campaign: ObservationValidationCampaign):
 def _verify_f9_raw_binding(
     *,
     campaign: ObservationValidationCampaign,
-    raw_run: RawRunEnvelope,
+    raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
 ) -> tuple[object, object, object]:
     authorization = raw_run.scientific_authorization.message
     artifact_binding = authorization.scientific_observation_artifact_binding
@@ -478,7 +479,7 @@ def _verify_f9_raw_binding(
 def _campaign_binding(
     *,
     committed: CommittedObservationValidationCampaign,
-    raw_run: RawRunEnvelope,
+    raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
     material: tuple[object, object, object],
     bound_at: datetime,
 ) -> ArchivedF9ValidationCampaignBinding:
@@ -523,7 +524,7 @@ def _campaign_binding(
 def _campaign_projection(
     *,
     committed: CommittedObservationValidationCampaign,
-    raw_run: RawRunEnvelope,
+    raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
     material: tuple[object, object, object],
 ) -> VerifiedObservationValidationCampaignProjection:
     prediction, entry, artifact_receipt = material

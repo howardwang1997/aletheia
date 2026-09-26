@@ -26,6 +26,7 @@ from aletheia.observations.f9_v2_assessor import (
 from aletheia.observations.scientific_bridge import (
     BridgeValidationDisposition,
     RawRunEnvelope,
+    ExternalRawRunEnvelope,
 )
 from aletheia.research_controller.external_rpc import CuprateDiagnosticResult
 from aletheia.research_kernel.schemas import canonical_json_bytes, canonical_sha256
@@ -64,7 +65,7 @@ def combined_outcome_bin_id(result: CuprateDiagnosticResult) -> str:
 
 def diagnostic_assessment_template(
     *,
-    raw_run: RawRunEnvelope,
+    raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
     result: CuprateDiagnosticResult,
     disposition: BridgeValidationDisposition,
     blocker_codes: tuple[str, ...] = (),

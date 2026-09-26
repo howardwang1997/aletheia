@@ -22,6 +22,11 @@ from aletheia.execution.runtime_contracts import (
     artifact_output_tree_sha256,
     issue_engineering_qualification_grant,
 )
+from aletheia.execution.external_bridge_contracts import (
+    AcceptedExternalQualificationTerminalSubmission,
+    AcceptedExternalRuntimeTermination,
+    ExternalQualificationTerminalSubmission,
+)
 from aletheia.execution.runtime_v2_contracts import (
     AcceptedQualificationTerminalSubmission,
     AcceptedRuntimeTermination,
@@ -64,8 +69,10 @@ from aletheia.observations.scientific_bridge import (
     ObservationDatabaseAuthorityPin,
     ObservationValidationCampaignVerificationPort,
     ObservationValidationReceipt,
+    ExternalRawRunEnvelope,
     RawRunCustodyVerificationPort,
     RawRunEnvelope,
+    parse_raw_run_envelope,
     ResearchActionAuthorityVerificationPort,
     ScientificActionProtocolBinding,
     ScientificBridgeAuthorityPin,
@@ -2272,3 +2279,207 @@ def test_adapter_ports_do_not_themselves_claim_database_or_cas_authority() -> No
     )
     assert all(item.__doc__ and item.__doc__.startswith("Port for") for item in ports)
     assert all("Future adapter" not in item.__doc__ for item in ports)
+
+
+def _external_raw_run(
+    case: BridgeCase,
+    disposition: str = "process_succeeded",
+    *,
+    omit_artifacts: bool = False,
+    signing_key_id: str | None = None,
+    assembled_at_override: datetime | None = None,
+    bridge_manifest_sha256: str | None = None,
+) -> ExternalRawRunEnvelope:
+    """Nodeless twin of ``_raw_run``: bridge-signed contracts replace the node contracts."""
+
+    intent = case.qualification.bundle.intent
+    if disposition == "timeout":
+        runtime_ended_at = NOW + timedelta(minutes=61)
+    else:
+        runtime_ended_at = NOW + timedelta(minutes=20)
+    accepted = AcceptedExternalRuntimeTermination(
+        challenge_sha256=_digest(f"external-runtime-challenge:{disposition}"),
+        attempt_id=intent.infrastructure_attempt.infrastructure_attempt_id,
+        runtime_preparation_sha256=_digest("external-runtime-preparation"),
+        external_runtime_launch_receipt_sha256=_digest("external-launch-receipt"),
+        runtime_launch_authorization_request_sha256=_digest("external-launch-authorization-request"),
+        external_launch_authorization_sha256=_digest("external-launch-authorization"),
+        external_runtime_termination_receipt_sha256=_digest("external-termination-receipt"),
+        executor_identity_sha256=_digest("external-executor-identity"),
+        termination_evidence_sha256=_digest("external-termination-evidence"),
+        result_content_sha256=_digest("external-result-content"),
+        fencing_epoch=1,
+        lease_token_sha256=_digest("external-runtime-lease-token"),
+        runtime_ended_at=runtime_ended_at,
+        exit_code=1 if disposition == "process_failed" else 0,
+        hard_deadline=NOW + timedelta(hours=1),
+        artifact_submission_deadline=NOW + timedelta(minutes=90),
+        proof_signed_at=runtime_ended_at + timedelta(seconds=1),
+        proof_expires_at=runtime_ended_at + timedelta(minutes=10),
+        accepted_at=runtime_ended_at + timedelta(seconds=2),
+        billable_ended_at=runtime_ended_at + timedelta(seconds=2),
+        runtime_control_policy_sha256=_digest("external-runtime-control-policy"),
+        accepted_by_principal_id="principal:external-runtime-control",
+        acceptance_key_id=_digest("external-runtime-control-key"),
+        signature_ed25519_hex="1" * 128,
+    )
+    if disposition == "invalid_output" or omit_artifacts:
+        entries: tuple[ArtifactManifestEntry, ...] = ()
+    else:
+        entries = tuple(
+            ArtifactManifestEntry(
+                expected_artifact_id=item.expected_artifact_id,
+                artifact_key=item.artifact_key,
+                role=item.role,
+                content_sha256=_digest(f"external-raw-run-content:{item.artifact_key}"),
+                bytes=1_024,
+                media_type=item.media_type,
+                schema_sha256=item.schema_sha256,
+                quarantine_ref=f"quarantine/{item.artifact_key}",
+            )
+            for item in intent.expected_artifacts
+        )
+        entries = tuple(sorted(entries, key=lambda item: item.artifact_key))
+    manifest = ArtifactManifest(
+        intent_sha256=intent.intent_sha256,
+        execution_id=intent.execution_id,
+        replicate_slot_id=intent.replicate_slot.replicate_slot_id,
+        infrastructure_attempt_id=intent.infrastructure_attempt.infrastructure_attempt_id,
+        entries=entries,
+        produced_at=runtime_ended_at,
+    )
+    receipts = tuple(
+        ArtifactVerifiedReceipt(
+            artifact_manifest_sha256=manifest.manifest_sha256,
+            producer_attempt_id=manifest.infrastructure_attempt_id,
+            artifact=entry,
+            custody_mode=ArtifactCustodyMode.CENTRAL_REHASH,
+            verifier_principal_id="principal:artifact-verifier",
+            object_store_id="store:scientific-bridge-test",
+            final_object_ref=f"objects/{entry.content_sha256}",
+            final_object_version="generation-1",
+            verified_at=runtime_ended_at + timedelta(minutes=1),
+        )
+        for entry in entries
+    )
+    receipt_hashes = tuple(sorted(item.verified_receipt_sha256 for item in receipts))
+    submission = ExternalQualificationTerminalSubmission(
+        bridge_manifest_sha256=(
+            bridge_manifest_sha256 or _digest("external-bridge-manifest")
+        ),
+        intent_sha256=intent.intent_sha256,
+        execution_id=intent.execution_id,
+        attempt_id=accepted.attempt_id,
+        resource_lease_sha256=_digest("external-resource-lease"),
+        fencing_epoch=accepted.fencing_epoch,
+        lease_token_sha256=accepted.lease_token_sha256,
+        accepted_external_runtime_termination_sha256=accepted.accepted_termination_sha256,
+        artifact_manifest_sha256=manifest.manifest_sha256,
+        output_tree_sha256=artifact_output_tree_sha256(manifest),
+        artifact_verified_receipt_sha256s=receipt_hashes,
+        disposition=disposition,
+        submitted_at=runtime_ended_at + timedelta(minutes=2),
+        signing_key_id=(signing_key_id or _digest("external-bridge-submission-key")),
+        signature_ed25519_hex="2" * 128,
+    )
+    accepted_terminal = AcceptedExternalQualificationTerminalSubmission(
+        attempt_id=accepted.attempt_id,
+        bridge_manifest_sha256=submission.bridge_manifest_sha256,
+        terminal_submission_sha256=submission.terminal_submission_sha256,
+        accepted_external_runtime_termination_sha256=accepted.accepted_termination_sha256,
+        artifact_manifest_sha256=manifest.manifest_sha256,
+        output_tree_sha256=submission.output_tree_sha256,
+        artifact_verified_receipt_sha256s=receipt_hashes,
+        disposition=disposition,
+        bridge_submitted_at=submission.submitted_at,
+        artifact_submission_deadline=accepted.artifact_submission_deadline,
+        accepted_at=runtime_ended_at + timedelta(minutes=3),
+        runtime_control_policy_sha256=accepted.runtime_control_policy_sha256,
+        accepted_by_principal_id=accepted.accepted_by_principal_id,
+        acceptance_key_id=accepted.acceptance_key_id,
+        signature_ed25519_hex="3" * 128,
+    )
+    return ExternalRawRunEnvelope(
+        scientific_authorization=case.authorization,
+        qualification_admission_sha256=case.qualification_admission_sha256,
+        accepted_runtime_termination=accepted,
+        terminal_submission=submission,
+        accepted_terminal_submission=accepted_terminal,
+        artifact_manifest=manifest,
+        artifact_verified_receipts=receipts,
+        assembled_at=(assembled_at_override or runtime_ended_at + timedelta(minutes=4)),
+    )
+
+
+def test_external_raw_run_envelope_closes_and_round_trips() -> None:
+    case = _bridge_case()
+    envelope = _external_raw_run(case)
+    replayed = ExternalRawRunEnvelope.model_validate(envelope.model_dump(mode="python"))
+    assert replayed == envelope
+    assert replayed.raw_run_sha256 == envelope.raw_run_sha256
+    assert replayed.accepted_runtime_termination.exit_code == 0
+
+    failed = _external_raw_run(case, "process_failed")
+    assert failed.accepted_terminal_submission.disposition == "process_failed"
+    invalid = _external_raw_run(case, "invalid_output")
+    assert invalid.artifact_manifest.entries == ()
+    timed_out = _external_raw_run(case, "timeout")
+    assert timed_out.accepted_runtime_termination.runtime_ended_at > NOW + timedelta(hours=1)
+
+
+def test_external_raw_run_envelope_rejects_rebinding_and_key_reuse() -> None:
+    case = _bridge_case()
+    envelope = _external_raw_run(case)
+    payload = envelope.model_dump(mode="python")
+
+    rebound = {**payload, "terminal_submission": {
+        **payload["terminal_submission"],
+        "accepted_external_runtime_termination_sha256": _digest("other-termination"),
+    }}
+    with pytest.raises(ValidationError, match="does not bind the exact raw run"):
+        ExternalRawRunEnvelope.model_validate(rebound)
+
+    late = {**payload, "assembled_at": (
+        case.authorization.message.observation_admission_deadline + timedelta(seconds=1)
+    )}
+    with pytest.raises(ValidationError, match="out of order"):
+        ExternalRawRunEnvelope.model_validate(late)
+
+    with pytest.raises(ValidationError, match="reuses the bridge submission key"):
+        _external_raw_run(
+            case, signing_key_id=case.authorization.message.admission_key_id
+        )
+
+
+def test_parse_raw_run_envelope_discriminates_both_kinds() -> None:
+    case = _bridge_case()
+    node = _raw_run(case)
+    external = _external_raw_run(case)
+    node_payload = node.model_dump(mode="python")
+    external_payload = external.model_dump(mode="python")
+
+    assert isinstance(parse_raw_run_envelope(node_payload), RawRunEnvelope)
+    assert isinstance(parse_raw_run_envelope(external_payload), ExternalRawRunEnvelope)
+    assert isinstance(parse_raw_run_envelope(node), RawRunEnvelope)
+    assert isinstance(parse_raw_run_envelope(external), ExternalRawRunEnvelope)
+
+    mislabeled = {**node_payload, "schema_name": "aletheia.external_raw_run_envelope"}
+    with pytest.raises(ScientificBridgeVerificationError):
+        parse_raw_run_envelope(mislabeled)
+    with pytest.raises(ScientificBridgeVerificationError):
+        parse_raw_run_envelope({"schema_name": "aletheia.raw_run_envelope"})
+
+
+def test_external_raw_run_envelope_survives_the_rpc_wire_discriminated() -> None:
+    from aletheia.research_controller.external_rpc import RawRunLoadResult
+
+    case = _bridge_case()
+    external = _external_raw_run(case)
+    ready = RawRunLoadResult(disposition="ready", raw_run=external)
+    assert isinstance(ready.raw_run, ExternalRawRunEnvelope)
+    assert ready.raw_run == external
+
+    node = _raw_run(case)
+    assert isinstance(
+        RawRunLoadResult(disposition="ready", raw_run=node).raw_run, RawRunEnvelope
+    )

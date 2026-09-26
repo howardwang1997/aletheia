@@ -30,7 +30,7 @@ from aletheia.observations.scientific_bridge import (
     CommittedObservationValidationReceipt,
     ObservationAdmissionDecision,
     ObservationValidationReceipt,
-    RawRunEnvelope,
+    AnyRawRunEnvelope,
     ScientificExecutionAuthorization,
     ValidationIssuanceChallenge,
 )
@@ -113,7 +113,7 @@ class ScientificSlotLookupRPCPayload(ControllerModel):
 
 
 class RawRunRPCPayload(ControllerModel):
-    raw_run: RawRunEnvelope
+    raw_run: AnyRawRunEnvelope
 
 
 class CuprateDiagnosticRPCPayload(ControllerModel):
@@ -140,13 +140,13 @@ class CuprateDiagnosticRPCPayload(ControllerModel):
 
 
 class ValidationReceiptIssuanceRPCPayload(ControllerModel):
-    raw_run: RawRunEnvelope
+    raw_run: AnyRawRunEnvelope
     validation_campaign_sha256: str | None = Field(default=None, pattern=_SHA256_PATTERN)
     issuance_challenge: ValidationIssuanceChallenge
 
 
 class ValidationChallengeIssuanceRPCPayload(ControllerModel):
-    raw_run: RawRunEnvelope
+    raw_run: AnyRawRunEnvelope
     validation_campaign_sha256: str | None = Field(default=None, pattern=_SHA256_PATTERN)
 
 

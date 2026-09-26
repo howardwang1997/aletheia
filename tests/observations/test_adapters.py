@@ -14,7 +14,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 import aletheia.epistemics as e
 from aletheia.epistemics.belief_update import CommittedObservationValidationCampaign
-from aletheia.execution.allocator import VerifiedQualificationRunLineage
+from aletheia.execution.allocator import (
+    VerifiedExternalQualificationRunLineage,
+    VerifiedQualificationRunLineage,
+)
 from aletheia.execution.artifact_store import LocalArtifactStore
 from aletheia.knowledge.response_archive import ContentAddressedResponseArchive
 from aletheia.migration.f9_v1_observation_compatibility import (
@@ -26,10 +29,16 @@ from aletheia.observations.adapters import (
     PostgreSQLRawRunCustodyVerificationAdapter,
     PostgreSQLResearchActionAuthorityAdapter,
 )
+from aletheia.execution.external_bridge_contracts import (
+    AcceptedExternalQualificationTerminalSubmission,
+    ExternalQualificationTerminalSubmission,
+)
 from aletheia.observations.scientific_bridge import (
     BridgeValidationDisposition,
+    ExternalRawRunEnvelope,
     ObservationAdmissionPolicy,
     RawRunEnvelope,
+    VerifiedExternalRawRunCustodyProjection,
     ScientificObservationArtifactBinding,
     VerifiedExecutionAuthorityProjection,
     issue_scientific_execution_authorization,
@@ -1043,6 +1052,239 @@ def test_raw_run_custody_fresh_rehash_rejects_artifact_byte_tamper(
 
     with pytest.raises(ObservationAdapterVerificationError):
         _raw_custody_adapter(case).verify_raw_run_custody(
+            raw_run=case.raw_run,
+            observed_at=case.observed_at,
+        )
+
+
+def _external_raw_run_with_local_cas(
+    *,
+    case: BridgeCase,
+    artifact_store: LocalArtifactStore,
+    output_root: Path,
+) -> ExternalRawRunEnvelope:
+    base = bridge_test_module._external_raw_run(
+        case, bridge_manifest_sha256=case.worker_manifest.manifest_sha256
+    )
+    intent = case.qualification.bundle.intent
+    output_root.mkdir()
+    artifact_paths: dict[str, str] = {}
+    for index, expected in enumerate(intent.expected_artifacts, start=1):
+        relative_path = f"artifact-{index:03d}.bin"
+        (output_root / relative_path).write_bytes(f"raw-{index}".encode())
+        artifact_paths[expected.artifact_key] = relative_path
+    manifest = artifact_store.quarantine_outputs(
+        intent=intent,
+        output_root=output_root,
+        artifact_paths=artifact_paths,
+        produced_at=base.accepted_runtime_termination.runtime_ended_at,
+    )
+    receipts = artifact_store.verify_manifest(intent=intent, manifest=manifest)
+    receipt_hashes = tuple(sorted(item.verified_receipt_sha256 for item in receipts))
+    submission = ExternalQualificationTerminalSubmission.model_validate(
+        base.terminal_submission.model_copy(
+            update={
+                "artifact_manifest_sha256": manifest.manifest_sha256,
+                "output_tree_sha256": runtime_test_module.artifact_output_tree_sha256(manifest),
+                "artifact_verified_receipt_sha256s": receipt_hashes,
+            }
+        ).model_dump(mode="python")
+    )
+    terminal = AcceptedExternalQualificationTerminalSubmission.model_validate(
+        base.accepted_terminal_submission.model_copy(
+            update={
+                "terminal_submission_sha256": submission.terminal_submission_sha256,
+                "artifact_manifest_sha256": manifest.manifest_sha256,
+                "output_tree_sha256": submission.output_tree_sha256,
+                "artifact_verified_receipt_sha256s": receipt_hashes,
+            }
+        ).model_dump(mode="python")
+    )
+    return ExternalRawRunEnvelope(
+        scientific_authorization=base.scientific_authorization,
+        qualification_admission_sha256=base.qualification_admission_sha256,
+        accepted_runtime_termination=base.accepted_runtime_termination,
+        terminal_submission=submission,
+        accepted_terminal_submission=terminal,
+        artifact_manifest=manifest,
+        artifact_verified_receipts=receipts,
+        assembled_at=base.assembled_at,
+    )
+
+
+def _external_run_lineage(
+    *,
+    case: BridgeCase,
+    raw_run: ExternalRawRunEnvelope,
+    observed_at,
+) -> VerifiedExternalQualificationRunLineage:
+    authorization = raw_run.scientific_authorization.message
+    bundle = authorization.qualification_bundle
+    grant = authorization.qualification_grant.message
+    intent = bundle.intent
+    accepted = raw_run.accepted_runtime_termination
+    submission = raw_run.terminal_submission
+    terminal = raw_run.accepted_terminal_submission
+    manifest = case.worker_manifest
+    admitted_at = authorization.authorized_at + timedelta(seconds=30)
+    launched_at = authorization.authorized_at + timedelta(minutes=2)
+    verified = case.qualification_custody._verified(
+        bundle=bundle,
+        grant=authorization.qualification_grant,
+        verified_at=admitted_at,
+    )
+    return VerifiedExternalQualificationRunLineage(
+        execution_id=intent.execution_id,
+        attempt_id=intent.infrastructure_attempt.infrastructure_attempt_id,
+        intent_sha256=intent.intent_sha256,
+        qualification_bundle_sha256=bundle.bundle_sha256,
+        qualification_grant_sha256=authorization.qualification_grant.grant_sha256,
+        qualification_admission_sha256=raw_run.qualification_admission_sha256,
+        verified_engineering_qualification=verified,
+        qualification_admitted_at=admitted_at,
+        resource_reservation_sha256=submission.resource_lease_sha256,
+        resource_reserved_at=admitted_at,
+        runtime_launch_sha256=accepted.external_runtime_launch_receipt_sha256,
+        runtime_launched_at=launched_at,
+        accepted_runtime_termination_sha256=accepted.accepted_termination_sha256,
+        terminal_submission_sha256=submission.terminal_submission_sha256,
+        terminal_acceptance_sha256=terminal.terminal_authority_sha256,
+        terminal_accepted_at=terminal.accepted_at,
+        cost_quote_sha256=bundle.cost_quote.quote_sha256,
+        bridge_manifest_sha256=submission.bridge_manifest_sha256,
+        bridge_manifest=manifest,
+        allocator_principal_id=bundle.cost_quote.quoted_by_principal_id,
+        allocator_policy_sha256=bundle.cost_quote.pricing_policy_sha256,
+        qualification_principal_id=grant.authorized_by_principal_id,
+        qualification_key_id=grant.authorization_key_id,
+        qualification_policy_sha256=grant.qualification_authority_policy_sha256,
+        bridge_authority_principal_id=manifest.principal_id,
+        bridge_authority_key_id=manifest.node_signing_key_id,
+        bridge_authority_policy_sha256=manifest.sandbox_policy_sha256,
+        runtime_control_principal_id=accepted.accepted_by_principal_id,
+        runtime_control_key_id=accepted.acceptance_key_id,
+        runtime_control_policy_sha256=accepted.runtime_control_policy_sha256,
+        terminal_submission_principal_id=manifest.principal_id,
+        terminal_submission_key_id=manifest.node_signing_key_id,
+        terminal_submission_policy_sha256=manifest.sandbox_policy_sha256,
+        terminal_acceptance_principal_id=terminal.accepted_by_principal_id,
+        terminal_acceptance_key_id=terminal.acceptance_key_id,
+        terminal_acceptance_policy_sha256=terminal.runtime_control_policy_sha256,
+        artifact_manifest_sha256=raw_run.artifact_manifest.manifest_sha256,
+        output_tree_sha256=submission.output_tree_sha256,
+        artifact_verified_receipt_sha256s=submission.artifact_verified_receipt_sha256s,
+        artifact_manifest=raw_run.artifact_manifest,
+        artifact_verified_receipts=raw_run.artifact_verified_receipts,
+        verified_at=observed_at,
+    )
+
+
+@dataclass(frozen=True)
+class _ExternalRawCustodyCase:
+    bridge: BridgeCase
+    raw_run: ExternalRawRunEnvelope
+    artifact_store: LocalArtifactStore
+    sea_sessions: sessionmaker[Session]
+    lineage: VerifiedExternalQualificationRunLineage
+    allocator_authority: VerifiedExecutionAuthorityProjection
+    artifact_authority: VerifiedExecutionAuthorityProjection
+    observed_at: object
+
+
+@pytest.fixture
+def external_raw_custody_case(tmp_path: Path) -> _ExternalRawCustodyCase:
+    bridge = _bridge_case()
+    artifact_store = LocalArtifactStore(
+        tmp_path / "external-raw-cas",
+        verifier_principal_id="principal:artifact-verifier",
+        object_store_id="store:external-raw-custody-test",
+    )
+    raw_run = _external_raw_run_with_local_cas(
+        case=bridge,
+        artifact_store=artifact_store,
+        output_root=tmp_path / "external-raw-output",
+    )
+    observed_at = raw_run.assembled_at + timedelta(seconds=1)
+    authorization = raw_run.scientific_authorization.message
+    allocator_authority = VerifiedExecutionAuthorityProjection(
+        principal_id=authorization.qualification_bundle.cost_quote.quoted_by_principal_id,
+        key_id=_digest("external-raw-custody-pricing-key"),
+        policy_sha256=authorization.qualification_bundle.cost_quote.pricing_policy_sha256,
+    )
+    artifact_authority = VerifiedExecutionAuthorityProjection(
+        principal_id=artifact_store.verifier_principal_id,
+        key_id=_digest("external-raw-custody-artifact-key"),
+        policy_sha256=_digest("external-raw-custody-artifact-policy"),
+    )
+    return _ExternalRawCustodyCase(
+        bridge=bridge,
+        raw_run=raw_run,
+        artifact_store=artifact_store,
+        sea_sessions=_registered_sea_sessions(
+            raw_run,
+            registered_at=authorization.authorized_at + timedelta(seconds=1),
+        ),
+        lineage=_external_run_lineage(
+            case=bridge,
+            raw_run=raw_run,
+            observed_at=observed_at,
+        ),
+        allocator_authority=allocator_authority,
+        artifact_authority=artifact_authority,
+        observed_at=observed_at,
+    )
+
+
+def _external_raw_custody_adapter(
+    case: _ExternalRawCustodyCase,
+    *,
+    lineage: VerifiedExternalQualificationRunLineage | None = None,
+) -> PostgreSQLRawRunCustodyVerificationAdapter:
+    return PostgreSQLRawRunCustodyVerificationAdapter(
+        execution_lineage=_RunLineageArchive(lineage or case.lineage),
+        artifact_store=case.artifact_store,
+        sea_sessions=case.sea_sessions,
+        allocator_authority=case.allocator_authority,
+        artifact_authority=case.artifact_authority,
+    )
+
+
+def test_external_raw_run_custody_closes_registered_execution_and_fresh_cas(
+    external_raw_custody_case: _ExternalRawCustodyCase,
+) -> None:
+    case = external_raw_custody_case
+    projection = _external_raw_custody_adapter(case).verify_raw_run_custody(
+        raw_run=case.raw_run,
+        observed_at=case.observed_at,
+    )
+
+    assert isinstance(projection, VerifiedExternalRawRunCustodyProjection)
+    assert projection.raw_run_sha256 == case.raw_run.raw_run_sha256
+    assert projection.bridge_manifest.manifest_sha256 == (
+        case.raw_run.terminal_submission.bridge_manifest_sha256
+    )
+    assert projection.terminal_acceptance_sha256 == (
+        case.raw_run.accepted_terminal_submission.terminal_authority_sha256
+    )
+    assert projection.runtime_launch_sha256 == (
+        case.raw_run.accepted_runtime_termination.external_runtime_launch_receipt_sha256
+    )
+    assert projection.fresh_artifacts[0].content_sha256 == (
+        case.raw_run.artifact_manifest.entries[0].content_sha256
+    )
+
+
+def test_external_raw_run_custody_rejects_rebound_public_lineage(
+    external_raw_custody_case: _ExternalRawCustodyCase,
+) -> None:
+    case = external_raw_custody_case
+    rebound = VerifiedExternalQualificationRunLineage.model_validate(
+        case.lineage.model_copy(
+            update={"terminal_accepted_at": case.lineage.terminal_accepted_at + timedelta(seconds=5)}
+        ).model_dump(mode="python")
+    )
+    with pytest.raises(ObservationAdapterVerificationError, match="rebound"):
+        _external_raw_custody_adapter(case, lineage=rebound).verify_raw_run_custody(
             raw_run=case.raw_run,
             observed_at=case.observed_at,
         )

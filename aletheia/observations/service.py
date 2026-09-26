@@ -20,6 +20,7 @@ from aletheia.observations.scientific_bridge import (
     CommittedObservationValidationReceipt,
     ObservationValidationReceipt,
     RawRunEnvelope,
+    ExternalRawRunEnvelope,
     ScientificExecutionAuthorization,
     ScientificBridgeModel,
     ValidationIssuanceChallenge,
@@ -155,7 +156,7 @@ class PostgreSQLScientificBridgeService:
     def issue_validation_challenge(
         self,
         *,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
         validation_campaign_sha256: str | None,
     ) -> ValidationChallengeRegistrationReceipt:
         authorization = raw_run.scientific_authorization
@@ -515,7 +516,7 @@ class PostgreSQLScientificBridgeService:
         self,
         *,
         write: ObservationIssuanceChallengeWrite,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
         validation_campaign_sha256: str | None,
         observed_at: datetime,
     ) -> ValidationChallengeRegistrationReceipt:

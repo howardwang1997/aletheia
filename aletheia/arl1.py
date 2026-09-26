@@ -39,9 +39,11 @@ from aletheia.observations.scientific_bridge import (
     CommittedObservationAdmission,
     CommittedObservationValidationReceipt,
     RawRunEnvelope,
+    ExternalRawRunEnvelope,
     ScientificExecutionAuthorization,
     ScientificObservationOutcome,
     VerifiedRawRunCustodyProjection,
+    VerifiedExternalRawRunCustodyProjection,
 )
 from aletheia.qualification_campaign import (
     QualificationCampaignError,
@@ -258,8 +260,10 @@ class ARL1ReplicateExecutionEvidenceV1(KernelModel):
     schema_version: Literal[1] = 1
     authorization: ScientificExecutionAuthorization
     registration_receipt: AtomicScientificExecutionRegistrationReceipt
-    raw_run: RawRunEnvelope
-    raw_run_custody: VerifiedRawRunCustodyProjection
+    raw_run: RawRunEnvelope | ExternalRawRunEnvelope
+    raw_run_custody: (
+        VerifiedRawRunCustodyProjection | VerifiedExternalRawRunCustodyProjection
+    )
     committed_validation: CommittedObservationValidationReceipt
     outcome: ARL1Outcome
     synthetic_evidence: Literal[False] = False

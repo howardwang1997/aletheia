@@ -16,6 +16,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from aletheia.execution.allocator import (
+    VerifiedExternalQualificationRawRunMaterial,
+    VerifiedExternalQualificationRunLineage,
     VerifiedQualificationRawRunMaterial,
     VerifiedQualificationRunLineage,
 )
@@ -29,6 +31,7 @@ from aletheia.execution.runtime_contracts import (
 from aletheia.observations.scientific_bridge import (
     CommittedObservationValidationReceipt,
     EngineeringQualificationCustodyVerificationPort,
+    ExternalRawRunEnvelope,
     ObservationDatabaseAuthorityPin,
     ObservationValidationCampaignVerificationPort,
     RawRunCustodyVerificationPort,
@@ -39,6 +42,7 @@ from aletheia.observations.scientific_bridge import (
     ScientificExecutionAuthorization,
     VerifiedArtifactCustodyProjection,
     VerifiedExecutionAuthorityProjection,
+    VerifiedExternalRawRunCustodyProjection,
     VerifiedRawRunCustodyProjection,
     engineering_qualification_admission_sha256,
     validate_raw_run_structure,
@@ -81,7 +85,7 @@ class QualificationRunLineageArchive(Protocol):
         execution_id: str,
         attempt_id: str,
         observed_at: datetime,
-    ) -> VerifiedQualificationRunLineage | None: ...
+    ) -> VerifiedQualificationRunLineage | VerifiedExternalQualificationRunLineage | None: ...
 
 
 class QualificationRawRunMaterialArchive(Protocol):
@@ -93,7 +97,11 @@ class QualificationRawRunMaterialArchive(Protocol):
         execution_id: str,
         attempt_id: str,
         observed_at: datetime,
-    ) -> VerifiedQualificationRawRunMaterial | None: ...
+    ) -> (
+        VerifiedQualificationRawRunMaterial
+        | VerifiedExternalQualificationRawRunMaterial
+        | None
+    ): ...
 
 
 DatabaseClock = Callable[[Session], datetime]
@@ -151,7 +159,7 @@ class PostgreSQLRawRunEnvelopeSourceAdapter:
         quest_id: str,
         action_sha256: str,
         scientific_slot_id: str,
-    ) -> RawRunEnvelope:
+    ) -> RawRunEnvelope | ExternalRawRunEnvelope:
         try:
             with self._sea_sessions() as session:
                 observed_at = self._database_clock(session)
@@ -209,8 +217,19 @@ class PostgreSQLRawRunEnvelopeSourceAdapter:
                 raise RawRunTerminalMaterialPending(
                     "raw-run source has no verified PR-4 terminal material"
                 )
-            material = VerifiedQualificationRawRunMaterial.model_validate(
-                material_candidate.model_dump(mode="python")
+            external_material = (
+                VerifiedExternalQualificationRawRunMaterial.model_validate(
+                    material_candidate.model_dump(mode="python")
+                )
+                if isinstance(material_candidate, VerifiedExternalQualificationRawRunMaterial)
+                else None
+            )
+            material = (
+                VerifiedQualificationRawRunMaterial.model_validate(
+                    material_candidate.model_dump(mode="python")
+                )
+                if external_material is None
+                else external_material
             )
             if (
                 material.execution_id != intent.execution_id
@@ -233,18 +252,19 @@ class PostgreSQLRawRunEnvelopeSourceAdapter:
                 raise ObservationAdapterVerificationError(
                     "raw-run material was verified before its durable terminal artifacts"
                 )
-            return validate_raw_run_structure(
-                RawRunEnvelope(
-                    scientific_authorization=authorization,
-                    qualification_admission_sha256=(material.qualification_admission_sha256),
-                    accepted_runtime_termination=material.accepted_runtime_termination,
-                    terminal_submission=material.terminal_submission,
-                    accepted_terminal_submission=material.accepted_terminal_submission,
-                    artifact_manifest=material.artifact_manifest,
-                    artifact_verified_receipts=material.artifact_verified_receipts,
-                    assembled_at=assembled_at,
-                )
-            )
+            envelope_fields = {
+                "scientific_authorization": authorization,
+                "qualification_admission_sha256": material.qualification_admission_sha256,
+                "accepted_runtime_termination": material.accepted_runtime_termination,
+                "terminal_submission": material.terminal_submission,
+                "accepted_terminal_submission": material.accepted_terminal_submission,
+                "artifact_manifest": material.artifact_manifest,
+                "artifact_verified_receipts": material.artifact_verified_receipts,
+                "assembled_at": assembled_at,
+            }
+            if external_material is None:
+                return validate_raw_run_structure(RawRunEnvelope(**envelope_fields))
+            return validate_raw_run_structure(ExternalRawRunEnvelope(**envelope_fields))
         except ObservationAdapterVerificationError:
             raise
         except Exception as exc:  # noqa: BLE001 - fail closed across independent DB authorities
@@ -390,9 +410,9 @@ class PostgreSQLRawRunCustodyVerificationAdapter:
     def verify_raw_run_custody(
         self,
         *,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
         observed_at: datetime,
-    ) -> VerifiedRawRunCustodyProjection:
+    ) -> VerifiedRawRunCustodyProjection | VerifiedExternalRawRunCustodyProjection:
         _require_utc(observed_at, label="raw-run custody observation time")
         try:
             raw_run = validate_raw_run_structure(raw_run)
@@ -420,6 +440,17 @@ class PostgreSQLRawRunCustodyVerificationAdapter:
             if candidate is None:
                 raise ObservationAdapterVerificationError(
                     "registered SEA has no completed qualification run lineage"
+                )
+            if isinstance(raw_run, ExternalRawRunEnvelope):
+                return self._verify_external_raw_run_custody(
+                    raw_run=raw_run,
+                    registration=registration,
+                    candidate=candidate,
+                    observed_at=observed_at,
+                )
+            if not isinstance(candidate, VerifiedQualificationRunLineage):
+                raise ObservationAdapterVerificationError(
+                    "node raw run has no completed node qualification run lineage"
                 )
             lineage = VerifiedQualificationRunLineage.model_validate(
                 candidate.model_dump(mode="python")
@@ -473,6 +504,185 @@ class PostgreSQLRawRunCustodyVerificationAdapter:
             raise ObservationAdapterVerificationError(
                 "raw-run custody could not prove the exact registered execution lineage"
             ) from exc
+
+    def _verify_external_raw_run_custody(
+        self,
+        *,
+        raw_run: ExternalRawRunEnvelope,
+        registration: ScientificExecutionAuthorizationWrite,
+        candidate: object,
+        observed_at: datetime,
+    ) -> VerifiedExternalRawRunCustodyProjection:
+        if not isinstance(candidate, VerifiedExternalQualificationRunLineage):
+            raise ObservationAdapterVerificationError(
+                "external raw run has no completed external qualification run lineage"
+            )
+        lineage = VerifiedExternalQualificationRunLineage.model_validate(
+            candidate.model_dump(mode="python")
+        )
+        self._verify_exact_external_lineage(raw_run=raw_run, lineage=lineage)
+        if not (
+            registration.registered_at < lineage.qualification_admitted_at
+            and registration.registered_at < lineage.resource_reserved_at
+            and registration.registered_at < lineage.runtime_launched_at
+        ):
+            raise ObservationAdapterVerificationError(
+                "SEA was not durably registered before admission, reservation, and launch"
+            )
+        fresh_artifacts = self._fresh_artifact_custody(raw_run)
+        authorities = self._external_authority_projections(raw_run=raw_run, lineage=lineage)
+        authorization = raw_run.scientific_authorization
+        return VerifiedExternalRawRunCustodyProjection(
+            raw_run_sha256=raw_run.raw_run_sha256,
+            scientific_execution_authorization_sha256=authorization.authorization_sha256,
+            scientific_slot_id=authorization.message.scientific_slot_id,
+            qualification_admission_sha256=raw_run.qualification_admission_sha256,
+            sea_registration_sha256=canonical_sha256(registration),
+            sea_registered_at=registration.registered_at,
+            qualification_admitted_at=lineage.qualification_admitted_at,
+            resource_reservation_sha256=lineage.resource_reservation_sha256,
+            resource_reserved_at=lineage.resource_reserved_at,
+            runtime_launch_sha256=lineage.runtime_launch_sha256,
+            runtime_launched_at=lineage.runtime_launched_at,
+            terminal_submission_sha256=lineage.terminal_submission_sha256,
+            terminal_acceptance_sha256=lineage.terminal_acceptance_sha256,
+            terminal_accepted_at=lineage.terminal_accepted_at,
+            cost_quote_sha256=lineage.cost_quote_sha256,
+            bridge_manifest_sha256=lineage.bridge_manifest_sha256,
+            bridge_manifest=lineage.bridge_manifest,
+            allocator_authority=authorities[0],
+            qualification_authority=authorities[1],
+            bridge_authority=authorities[2],
+            runtime_control_authority=authorities[3],
+            terminal_submission_authority=authorities[4],
+            terminal_acceptance_authority=authorities[5],
+            artifact_manifest_sha256=lineage.artifact_manifest_sha256,
+            output_tree_sha256=lineage.output_tree_sha256,
+            artifact_verified_receipt_sha256s=(lineage.artifact_verified_receipt_sha256s),
+            fresh_artifacts=fresh_artifacts,
+            verified_at=observed_at,
+        )
+
+    def _verify_exact_external_lineage(
+        self,
+        *,
+        raw_run: ExternalRawRunEnvelope,
+        lineage: VerifiedExternalQualificationRunLineage,
+    ) -> None:
+        message = raw_run.scientific_authorization.message
+        bundle = message.qualification_bundle
+        grant = message.qualification_grant
+        intent = bundle.intent
+        accepted = raw_run.accepted_runtime_termination
+        submission = raw_run.terminal_submission
+        terminal = raw_run.accepted_terminal_submission
+        receipts = raw_run.artifact_verified_receipts
+        if (
+            lineage.execution_id != intent.execution_id
+            or lineage.attempt_id != intent.infrastructure_attempt.infrastructure_attempt_id
+            or lineage.intent_sha256 != intent.intent_sha256
+            or lineage.qualification_bundle_sha256 != bundle.bundle_sha256
+            or lineage.qualification_grant_sha256 != grant.grant_sha256
+            or lineage.qualification_admission_sha256 != raw_run.qualification_admission_sha256
+            or lineage.resource_reservation_sha256 != submission.resource_lease_sha256
+            or lineage.runtime_launch_sha256
+            != accepted.external_runtime_launch_receipt_sha256
+            or lineage.accepted_runtime_termination_sha256 != accepted.accepted_termination_sha256
+            or lineage.terminal_submission_sha256 != submission.terminal_submission_sha256
+            or lineage.terminal_acceptance_sha256 != terminal.terminal_authority_sha256
+            or lineage.terminal_accepted_at != terminal.accepted_at
+            or lineage.cost_quote_sha256 != bundle.cost_quote.quote_sha256
+            or lineage.bridge_manifest.manifest_sha256 != submission.bridge_manifest_sha256
+            or lineage.bridge_manifest_sha256 != submission.bridge_manifest_sha256
+            or lineage.artifact_manifest_sha256 != raw_run.artifact_manifest.manifest_sha256
+            or lineage.output_tree_sha256 != submission.output_tree_sha256
+            or lineage.artifact_verified_receipt_sha256s
+            != submission.artifact_verified_receipt_sha256s
+            or lineage.artifact_manifest != raw_run.artifact_manifest
+            or lineage.artifact_verified_receipts != receipts
+            or lineage.verified_at < raw_run.assembled_at
+        ):
+            raise ObservationAdapterVerificationError(
+                "public external execution lineage was rebound from the exact raw run"
+            )
+
+    def _external_authority_projections(
+        self,
+        *,
+        raw_run: ExternalRawRunEnvelope,
+        lineage: VerifiedExternalQualificationRunLineage,
+    ) -> tuple[VerifiedExecutionAuthorityProjection, ...]:
+        def authority(principal_id: str, key_id: str, policy_sha256: str):
+            return VerifiedExecutionAuthorityProjection(
+                principal_id=principal_id,
+                key_id=key_id,
+                policy_sha256=policy_sha256,
+            )
+
+        if (
+            self._allocator_authority.principal_id != lineage.allocator_principal_id
+            or self._allocator_authority.policy_sha256 != lineage.allocator_policy_sha256
+        ):
+            raise ObservationAdapterVerificationError(
+                "pricing/allocator external lineage differs from its deployment authority pin"
+            )
+        projections = (
+            self._allocator_authority,
+            authority(
+                lineage.qualification_principal_id,
+                lineage.qualification_key_id,
+                lineage.qualification_policy_sha256,
+            ),
+            authority(
+                lineage.bridge_authority_principal_id,
+                lineage.bridge_authority_key_id,
+                lineage.bridge_authority_policy_sha256,
+            ),
+            authority(
+                lineage.runtime_control_principal_id,
+                lineage.runtime_control_key_id,
+                lineage.runtime_control_policy_sha256,
+            ),
+            authority(
+                lineage.terminal_submission_principal_id,
+                lineage.terminal_submission_key_id,
+                lineage.terminal_submission_policy_sha256,
+            ),
+            authority(
+                lineage.terminal_acceptance_principal_id,
+                lineage.terminal_acceptance_key_id,
+                lineage.terminal_acceptance_policy_sha256,
+            ),
+        )
+        groups = (
+            projections[0],
+            projections[1],
+            projections[2],
+            projections[3],
+            self._artifact_authority,
+            authority(
+                raw_run.scientific_authorization.message.authorized_by_principal_id,
+                raw_run.scientific_authorization.message.authorization_key_id,
+                raw_run.scientific_authorization.message.execution_authority_policy_sha256,
+            ),
+            authority(
+                raw_run.scientific_authorization.message.validator_principal_id,
+                raw_run.scientific_authorization.message.validator_key_id,
+                raw_run.scientific_authorization.message.validator_authority_policy_sha256,
+            ),
+            authority(
+                raw_run.scientific_authorization.message.admission_principal_id,
+                raw_run.scientific_authorization.message.admission_key_id,
+                raw_run.scientific_authorization.message.admission_authority_policy_sha256,
+            ),
+        )
+        if len({item.principal_id for item in groups}) != len(groups) or len(
+            {item.key_id for item in groups}
+        ) != len(groups):
+            raise ObservationAdapterVerificationError(
+                "external raw-run trust roots violate deployment principal/key separation"
+            )
+        return projections
 
     def verify_engineering_qualification_custody(
         self,
@@ -530,9 +740,14 @@ class PostgreSQLRawRunCustodyVerificationAdapter:
                 raise ObservationAdapterVerificationError(
                     "qualification custody has no complete terminal lineage"
                 )
-            lineage = VerifiedQualificationRunLineage.model_validate(
-                lineage.model_dump(mode="python")
-            )
+            if isinstance(lineage, VerifiedExternalQualificationRunLineage):
+                lineage = VerifiedExternalQualificationRunLineage.model_validate(
+                    lineage.model_dump(mode="python")
+                )
+            else:
+                lineage = VerifiedQualificationRunLineage.model_validate(
+                    lineage.model_dump(mode="python")
+                )
             verified = VerifiedEngineeringQualification.model_validate(
                 lineage.verified_engineering_qualification.model_dump(mode="python")
             )
@@ -662,7 +877,7 @@ class PostgreSQLRawRunCustodyVerificationAdapter:
 
     def _fresh_artifact_custody(
         self,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
     ) -> tuple[VerifiedArtifactCustodyProjection, ...]:
         manifest = self._artifact_store.load_manifest(
             manifest_sha256=raw_run.artifact_manifest.manifest_sha256

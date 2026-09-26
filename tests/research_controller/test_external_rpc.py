@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -39,6 +41,11 @@ from aletheia.research_controller.step_executor import (
     ControllerStepAuthorityBinding,
     ControllerStepAuthorityRole,
 )
+from aletheia.observations.scientific_bridge import (
+    ExternalRawRunEnvelope,
+    RawRunEnvelope,
+)
+from aletheia.research_controller.external_rpc_server import RawRunRPCPayload
 from aletheia.research_kernel.schemas import canonical_json_bytes, canonical_sha256
 
 NOW = datetime(2026, 8, 26, 4, 0, 0, tzinfo=timezone.utc)
@@ -612,3 +619,29 @@ def test_atomic_bridge_translates_only_the_empty_admission_slot_to_none(blocker_
     else:
         with pytest.raises(ControllerWorkerRPCBlocked):
             atomic.load_committed_admission(**lookup)
+
+
+def test_raw_run_wire_payloads_carry_either_envelope_kind() -> None:
+    """Nodeless attempts ride the same RPC wire as node envelopes, discriminated."""
+
+    _tests_root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(_tests_root / "observations"))
+    try:
+        from test_scientific_bridge import _bridge_case, _external_raw_run, _raw_run
+    finally:
+        sys.path.remove(str(_tests_root / "observations"))
+
+    case = _bridge_case()
+    external = _external_raw_run(case)
+    node = _raw_run(case)
+
+    ready = RawRunLoadResult(disposition="ready", raw_run=external)
+    assert isinstance(ready.raw_run, ExternalRawRunEnvelope)
+    wire = RawRunLoadResult.model_validate_json(
+        RawRunLoadResult(disposition="ready", raw_run=node).model_dump_json()
+    )
+    assert isinstance(wire.raw_run, RawRunEnvelope)
+    assert RawRunRPCPayload(raw_run=external).raw_run == external
+    assert RawRunRPCPayload.model_validate(
+        {"raw_run": node.model_dump(mode="python")}
+    ).raw_run == node

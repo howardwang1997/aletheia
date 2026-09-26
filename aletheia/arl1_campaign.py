@@ -40,10 +40,14 @@ from aletheia.observations.scientific_bridge import (
     ObservationAdmissionDisposition,
     ObservationValidationReceipt,
     RawRunEnvelope,
+    ExternalRawRunEnvelope,
     ScientificExecutionAuthorization,
     ScientificObservationOutcome,
     ValidationIssuanceChallenge,
     VerifiedRawRunCustodyProjection,
+    VerifiedExternalRawRunCustodyProjection,
+    parse_raw_run_envelope,
+    validate_raw_run_structure,
 )
 from aletheia.observations.service import (
     AdmissionChallengeRegistrationReceipt,
@@ -237,23 +241,23 @@ class RawRunSourcePort(Protocol):
         quest_id: str,
         action_sha256: str,
         scientific_slot_id: str,
-    ) -> RawRunEnvelope: ...
+    ) -> RawRunEnvelope | ExternalRawRunEnvelope: ...
 
 
 class RawRunCustodyPort(Protocol):
     def verify_raw_run_custody(
         self,
         *,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
         observed_at: datetime,
-    ) -> VerifiedRawRunCustodyProjection: ...
+    ) -> VerifiedRawRunCustodyProjection | VerifiedExternalRawRunCustodyProjection: ...
 
 
 class ReplicateValidationPort(Protocol):
     def commit_or_load_validation(
         self,
         *,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
     ) -> CommittedObservationValidationReceipt: ...
 
 
@@ -275,7 +279,7 @@ class DatabaseObservationBridgePort(Protocol):
     def issue_validation_challenge(
         self,
         *,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
         validation_campaign_sha256: str | None,
     ) -> ValidationChallengeRegistrationReceipt: ...
 
@@ -301,12 +305,14 @@ class DatabaseObservationBridgePort(Protocol):
 class IndependentValidatorPort(Protocol):
     authority_binding: ControllerStepAuthorityBinding
 
-    def prepare_validation_campaign(self, *, raw_run: RawRunEnvelope) -> str | None: ...
+    def prepare_validation_campaign(
+        self, *, raw_run: RawRunEnvelope | ExternalRawRunEnvelope
+    ) -> str | None: ...
 
     def issue_validation_receipt(
         self,
         *,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
         validation_campaign_sha256: str | None,
         issuance_challenge: ValidationIssuanceChallenge,
     ) -> ObservationValidationReceipt: ...
@@ -386,10 +392,10 @@ class ARL1IndependentValidationCoordinator:
     def commit_or_load_validation(
         self,
         *,
-        raw_run: RawRunEnvelope,
+        raw_run: RawRunEnvelope | ExternalRawRunEnvelope,
     ) -> CommittedObservationValidationReceipt:
         try:
-            raw_run = RawRunEnvelope.model_validate(raw_run.model_dump(mode="python"))
+            raw_run = validate_raw_run_structure(raw_run.model_dump(mode="python"))
             authorization = raw_run.scientific_authorization.message
             validator = self._validator_binding
             database = self._database_binding
@@ -795,7 +801,7 @@ class ARL1ProtocolCampaignService:
     def _load_replicate(self, *, authorization, registration):
         message = authorization.message
         binding = message.action_protocol_binding
-        raw_run = RawRunEnvelope.model_validate(
+        raw_run = parse_raw_run_envelope(
             self._raw_run_source.load_raw_run(
                 quest_id=binding.action.quest_id,
                 action_sha256=binding.action.object_sha256,

@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session
 from aletheia.execution.allocator import (
     PostgreSQLExecutionAllocator,
     QualificationTerminalOutboxItem,
+    VerifiedExternalQualificationRawRunMaterial,
+    VerifiedExternalQualificationRunLineage,
     VerifiedQualificationRawRunMaterial,
     VerifiedQualificationRunLineage,
     VerifiedQualificationTerminalSource,
@@ -83,7 +85,7 @@ class VerifiedQualificationRawRunMaterialReader:
         execution_id: str,
         attempt_id: str,
         observed_at: datetime,
-    ) -> VerifiedQualificationRawRunMaterial | None:
+    ) -> VerifiedQualificationRawRunMaterial | VerifiedExternalQualificationRawRunMaterial | None:
         candidate = self._allocator.load_verified_qualification_raw_run_material(
             execution_id=execution_id,
             attempt_id=attempt_id,
@@ -91,6 +93,10 @@ class VerifiedQualificationRawRunMaterialReader:
         )
         if candidate is None:
             return None
+        if isinstance(candidate, VerifiedExternalQualificationRawRunMaterial):
+            return VerifiedExternalQualificationRawRunMaterial.model_validate(
+                candidate.model_dump(mode="python")
+            )
         return VerifiedQualificationRawRunMaterial.model_validate(
             candidate.model_dump(mode="python")
         )
@@ -114,7 +120,7 @@ class VerifiedQualificationRunLineageReader:
         execution_id: str,
         attempt_id: str,
         observed_at: datetime,
-    ) -> VerifiedQualificationRunLineage | None:
+    ) -> VerifiedQualificationRunLineage | VerifiedExternalQualificationRunLineage | None:
         candidate = self._allocator.load_verified_qualification_run_lineage(
             execution_id=execution_id,
             attempt_id=attempt_id,
@@ -122,10 +128,48 @@ class VerifiedQualificationRunLineageReader:
         )
         if candidate is None:
             return None
+        if isinstance(candidate, VerifiedExternalQualificationRunLineage):
+            return VerifiedExternalQualificationRunLineage.model_validate(
+                candidate.model_dump(mode="python")
+            )
         return VerifiedQualificationRunLineage.model_validate(candidate.model_dump(mode="python"))
 
 
+class VerifiedExternalQualificationRunLineageReader:
+    """Narrow facade exposing only the nodeless twin of the run-lineage verifier."""
+
+    def __init__(self, allocator: PostgreSQLExecutionAllocator) -> None:
+        if not isinstance(allocator, PostgreSQLExecutionAllocator):
+            raise TypeError("external run-lineage reader requires the PostgreSQL execution facade")
+        if allocator.runtime_control_issuance_enabled:
+            raise ValueError("external run-lineage reader cannot retain runtime-control issuance")
+        if not allocator.runtime_control_verification_enabled:
+            raise ValueError(
+                "external run-lineage reader requires pinned runtime-control verification"
+            )
+        self._allocator = allocator
+
+    def load_verified_external_qualification_run_lineage(
+        self,
+        *,
+        execution_id: str,
+        attempt_id: str,
+        observed_at: datetime,
+    ) -> VerifiedExternalQualificationRunLineage | None:
+        candidate = self._allocator.load_verified_external_qualification_run_lineage(
+            execution_id=execution_id,
+            attempt_id=attempt_id,
+            observed_at=observed_at,
+        )
+        if candidate is None:
+            return None
+        return VerifiedExternalQualificationRunLineage.model_validate(
+            candidate.model_dump(mode="python")
+        )
+
+
 __all__ = [
+    "VerifiedExternalQualificationRunLineageReader",
     "VerifiedQualificationRawRunMaterialReader",
     "VerifiedQualificationRunLineageReader",
     "VerifiedQualificationTerminalOutboxReader",
