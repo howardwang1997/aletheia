@@ -944,7 +944,9 @@ class F9V2IndependentValidationService:
         self._validator_private_key = validator_private_key
         self._clock = clock
 
-    def prepare_validation_campaign(self, *, raw_run: RawRunEnvelope) -> str | None:
+    def prepare_validation_campaign(
+        self, *, raw_run: RawRunEnvelope | ExternalRawRunEnvelope
+    ) -> str | None:
         try:
             raw_run = validate_raw_run_structure(raw_run)
             if raw_run.accepted_terminal_submission.disposition != "process_succeeded":
