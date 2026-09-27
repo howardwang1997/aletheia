@@ -21,7 +21,11 @@ from aletheia.research_controller.external_rpc import (
 from aletheia.research_kernel.schemas import canonical_json_bytes, canonical_sha256
 
 _TESTS = Path(__file__).resolve().parents[2]
-for _fixture_dir in (_TESTS / "observations", _TESTS / "research_controller"):
+for _fixture_dir in (
+    _TESTS / "observations",
+    _TESTS / "research_controller",
+    _TESTS.parent / "scripts",
+):
     sys.path.insert(0, str(_fixture_dir))
 
 from test_f9_v2_validation import _f9_case  # noqa: E402
@@ -164,3 +168,37 @@ def test_template_pins_the_result_bytes_and_the_authored_disposition(
     )
     assert rejected.blocker_codes == ("f9-v2:sample-blocker",)
     assert rejected.template_sha256 != template.template_sha256
+
+
+def test_author_script_parses_the_external_envelope_kind(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """The #26 companion pin: the authoring kit reads the nodeless envelope.
+
+    The author script used to validate its --raw-run input as the node
+    RawRunEnvelope only, so an exported external envelope died at the pydantic
+    schema-name tag before authoring. The parse now dispatches on schema name;
+    with the fixture's external envelope the script must reach the kit's own
+    content cross-check (the manifest entry does not carry the result's
+    canonical bytes) rather than a structural rejection.
+    """
+
+    import author_cuprate_exact_content as author  # noqa: E402  (scripts/ dir)
+    from test_scientific_bridge import _external_raw_run  # noqa: E402
+
+    raw_run = _external_raw_run(_f9_case(monkeypatch))
+    raw_path = tmp_path / "raw_run.json"
+    raw_path.write_bytes(raw_run.model_dump_json().encode("utf-8"))
+    result_path = tmp_path / "diagnostic_result.json"
+    result_path.write_bytes(canonical_json_bytes(_result()))
+    with pytest.raises(ValueError, match="canonical diagnostic result bytes"):
+        author.main(
+            [
+                "--raw-run",
+                str(raw_path),
+                "--result",
+                str(result_path),
+                "--disposition",
+                "validated_confirmation",
+            ]
+        )
