@@ -244,6 +244,11 @@ class PostgreSQLRawRunEnvelopeSourceAdapter:
                 raise ObservationAdapterVerificationError(
                     "verified PR-4 material was rebound or not preregistered by the SEA"
                 )
+            if not material.artifact_verified_receipts:
+                raise ObservationAdapterVerificationError(
+                    "raw-run material carries no verified artifact receipts "
+                    "(the attempt settled without producing any verified artifact)"
+                )
             assembled_at = max(
                 material.accepted_terminal_submission.accepted_at,
                 *(item.verified_at for item in material.artifact_verified_receipts),
