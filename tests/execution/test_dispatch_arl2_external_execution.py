@@ -301,6 +301,41 @@ def test_manifest_entries_bind_the_declared_expectations(
     )
 
 
+def test_terminal_submission_output_tree_matches_the_envelope_digest(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """The #29 pin: the submission's output-tree digest must be the envelope's.
+
+    The raw-run envelope's closure validator recomputes the output tree from
+    the artifact manifest via artifact_output_tree_sha256 (identity/content
+    fields under the aletheia.artifact_output_tree schema) and requires the
+    terminal submission to carry exactly that digest; the dispatch used to
+    hash its own {path, content_sha256} list, which no external run could
+    ever assemble (first seen live on take-12: process_succeeded with a
+    submission the envelope refused to close).
+    """
+
+    from aletheia.execution.external_bridge_contracts import (
+        ExternalQualificationTerminalSubmission,
+    )
+    from aletheia.execution.runtime_contracts import artifact_output_tree_sha256
+    from aletheia.execution.schemas import ArtifactManifest
+
+    harness = _Harness(monkeypatch, tmp_path)
+    first = _run(monkeypatch, harness, capsys)
+
+    records = Path(first["dispatch_records"])
+    manifest = ArtifactManifest.model_validate_json(
+        (records / "artifact-manifest.json").read_bytes()
+    )
+    submission = ExternalQualificationTerminalSubmission.model_validate_json(
+        (records / "terminal-submission.json").read_bytes()
+    )
+    assert (
+        submission.output_tree_sha256 == artifact_output_tree_sha256(manifest)
+    )
+
+
 def test_undeclared_workload_output_fails_loudly(monkeypatch, tmp_path) -> None:
     """A file outside the declared artifact keys refuses the dispatch."""
 
