@@ -263,6 +263,41 @@ def test_raw_run_source_rejects_rebound_action_and_exported_material(
         )
 
 
+def test_raw_run_source_rejects_material_without_verified_artifact_receipts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _bridge_case()
+    failed = _raw_run(case, "process_failed", omit_artifacts=True)
+    verified_at = failed.assembled_at + timedelta(seconds=1)
+    empty_receipts = _material(failed, verified_at=verified_at)
+    registration = ScientificExecutionAuthorizationWrite.from_contract(
+        case.authorization,
+        registered_at=case.authorization.message.authorized_at + timedelta(seconds=1),
+    )
+    monkeypatch.setattr(
+        adapters_module,
+        "get_scientific_execution_authorization_by_slot",
+        lambda *_args, **_kwargs: registration,
+    )
+    source = PostgreSQLRawRunEnvelopeSourceAdapter(
+        execution_material=_MaterialArchive(empty_receipts),
+        sea_sessions=_sessions,
+        verification=_verification(case),
+        database_clock=lambda _session: verified_at,
+    )
+    binding = case.authorization.message.action_protocol_binding
+
+    with pytest.raises(
+        ObservationAdapterVerificationError,
+        match="no verified artifact receipts",
+    ):
+        source.load_raw_run(
+            quest_id=binding.action.quest_id,
+            action_sha256=binding.action.object_sha256,
+            scientific_slot_id=case.authorization.message.scientific_slot_id,
+        )
+
+
 def test_raw_run_source_rejects_invalid_sea_signature_and_late_registration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
