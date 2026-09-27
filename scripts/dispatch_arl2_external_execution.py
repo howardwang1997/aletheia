@@ -419,6 +419,9 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
         issue_external_runtime_termination_receipt,
         recompute_external_disposition,
     )
+    from aletheia.execution.runtime_contracts import (
+        artifact_output_tree_sha256,
+    )
     from aletheia.execution.runtime_v2_contracts import (
         RuntimeLaunchAuthorizationRequest,
     )
@@ -767,10 +770,6 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
         str(path.relative_to(workload_output)): (_sha256_bytes(_read_bytes(path)), path.stat().st_size)
         for path in produced_files
     }
-    tree = [
-        {"path": relative_path, "content_sha256": digest}
-        for relative_path, (digest, _size) in produced.items()
-    ]
     # The manifest must bind every produced file to its declared expectation:
     # artifact key, role, media type, schema sha, and the derived
     # expected-artifact id all come from the intent (the raw-run envelope's
@@ -868,7 +867,7 @@ def _dispatch(allocator, reader, bridge_authority, bridge_key, args) -> int:
                 termination.accepted_termination.accepted_termination_sha256
             ),
             artifact_manifest_sha256=artifact_manifest.manifest_sha256,
-            output_tree_sha256=_canonical_digest(tree),
+            output_tree_sha256=artifact_output_tree_sha256(artifact_manifest),
             artifact_verified_receipt_sha256s=tuple(
                 item.verified_receipt_sha256 for item in receipts
             ),
